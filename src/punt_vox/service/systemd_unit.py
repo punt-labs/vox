@@ -14,6 +14,8 @@ import shlex
 import textwrap
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
+from punt_vox.service.backend import BackendCommandError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -96,6 +98,11 @@ class SystemdUnit:
         bind_lines: list[str] = []
         if bind and self.safe_value(bind):
             bind_lines = [f'{self._BIND_PREFIX}{bind.replace("%", "%%")}"']
+        elif bind:
+            logger.warning(
+                "Skipping VOXD_BIND: value contains unsafe characters; "
+                "voxd will bind its default loopback address"
+            )
         env_block = ("\n" + " " * 8).join(
             [
                 f'Environment="PATH={raw_path.replace("%", "%%")}"',
@@ -126,9 +133,14 @@ class SystemdUnit:
         644, so this reads it without sudo. ``%%`` is undone because the unit
         escapes ``%`` that way.
         """
-        if not self._path.exists():
+        try:
+            text = self._path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return ""
-        for raw in self._path.read_text(encoding="utf-8").splitlines():
+        except OSError as exc:
+            argv = ["read", str(self._path)]
+            raise BackendCommandError.of(argv, 1, str(exc)) from exc
+        for raw in text.splitlines():
             line = raw.strip()
             if line.startswith(self._BIND_PREFIX) and line.endswith('"'):
                 return line[len(self._BIND_PREFIX) : -1].replace("%%", "%")

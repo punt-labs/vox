@@ -25,6 +25,7 @@ import sys
 import weakref
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 
 if TYPE_CHECKING:
@@ -37,9 +38,17 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["DaemonProcess", "PidfdProcess", "StartTimeProcess"]
 
-# SIGTERM grace, then the wait for SIGKILL to take effect.
+# SIGTERM grace, then the wait for SIGKILL to take effect, when the caller's
+# budget allows both in full.
 _TERM_GRACE_S = 5.0
 _KILL_WAIT_S = 2.0
+
+
+def _split(within_s: float) -> tuple[float, float]:
+    """Split a terminate budget into (SIGTERM grace, SIGKILL wait)."""
+    kill_wait = min(_KILL_WAIT_S, within_s * 0.3)
+    return min(_TERM_GRACE_S, max(0.0, within_s - kill_wait)), kill_wait
+
 
 type IdentityReader = Callable[[int], ProcessIdentity | None]
 """Read a pid's identity; ``None`` when the pid is gone."""
@@ -49,10 +58,11 @@ type IdentityReader = Callable[[int], ProcessIdentity | None]
 class PidfdProcess:
     """A voxd process pinned by a Linux pidfd."""
 
-    __slots__ = ("__weakref__", "_fd", "_pid")
+    __slots__ = ("__weakref__", "_fd", "_pid", "_seen")
 
     _fd: int
     _pid: int
+    _seen: ProcessIdentity
 
     @classmethod
     def open(cls, pid: int, identity: IdentityReader) -> Self | None:
@@ -81,7 +91,17 @@ class PidfdProcess:
         # that inherited its number.
         if seen is None or self.exited() or not seen.is_voxd():
             return None
+        self._seen = seen
         return self
+
+    def __eq__(self, other: object) -> bool:
+        """Equal when both pin the same process: same pid, same identity."""
+        if not isinstance(other, PidfdProcess):
+            return NotImplemented
+        return (self._pid, self._seen) == (other._pid, other._seen)
+
+    def __hash__(self) -> int:
+        return hash((PidfdProcess, self._pid, self._seen))
 
     @property
     def pid(self) -> int:
@@ -92,16 +112,20 @@ class PidfdProcess:
         """Return True once the pinned process has exited."""
         return self._wait(0.0)
 
-    def terminate(self) -> bool:
-        """SIGTERM through the pidfd, SIGKILL after the grace; return exited."""
+    def terminate(self, within_s: float) -> bool:
+        """SIGTERM through the pidfd, SIGKILL after the grace; return exited.
+
+        The whole call takes at most *within_s* seconds.
+        """
+        grace, kill_wait = _split(within_s)
         if not self._send(signal.SIGTERM):
             return self.exited()
-        if self._wait(_TERM_GRACE_S):
+        if self._wait(grace):
             return True
         logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
         if not self._send(signal.SIGKILL):
             return self.exited()
-        return self._wait(_KILL_WAIT_S)
+        return self._wait(kill_wait)
 
     def _send(self, sig: signal.Signals) -> bool:
         """Signal the pinned process; return False when permission is denied."""
@@ -153,20 +177,33 @@ class StartTimeProcess:
         """Return the recorded process id."""
         return self._pid
 
+    def __eq__(self, other: object) -> bool:
+        """Equal when both identify the same process: pid and identity."""
+        if not isinstance(other, StartTimeProcess):
+            return NotImplemented
+        return (self._pid, self._seen) == (other._pid, other._seen)
+
+    def __hash__(self) -> int:
+        return hash((StartTimeProcess, self._pid, self._seen))
+
     def exited(self) -> bool:
         """Return True when the pid is gone or now names a different process."""
         return self._identity(self._pid) != self._seen
 
-    def terminate(self) -> bool:
-        """SIGTERM, then SIGKILL after the grace, each after a re-check."""
+    def terminate(self, within_s: float) -> bool:
+        """SIGTERM, then SIGKILL after the grace, each after a re-check.
+
+        The whole call takes at most *within_s* seconds.
+        """
+        grace, kill_wait = _split(within_s)
         if not self._send(signal.SIGTERM):
             return self.exited()
-        if self._poll.until(self.exited, _TERM_GRACE_S):
+        if self._poll.until(self.exited, grace):
             return True
         logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
         if not self._send(signal.SIGKILL):
             return self.exited()
-        return self._poll.until(self.exited, _KILL_WAIT_S)
+        return self._poll.until(self.exited, kill_wait)
 
     def _send(self, sig: signal.Signals) -> bool:
         """Signal the pid only if it is still the identified process."""
@@ -209,5 +246,6 @@ class DaemonProcess:
                 return PidfdProcess.open(pid, self._identity)
             except OSError as exc:
                 if exc.errno != errno.ENOSYS:
-                    raise
+                    msg = f"cannot pin voxd pid {pid}: {exc}"
+                    raise PortProbeError(msg) from exc
         return StartTimeProcess.open(pid, self._identity, self._clock)

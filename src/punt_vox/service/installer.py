@@ -20,7 +20,7 @@ from punt_vox.service.backend import (
     PortProbeError,
     PrivilegeDeniedError,
 )
-from punt_vox.service.health_verify import HealthVerifier
+from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
 from punt_vox.service.keys_env import KeysEnvWriter
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -32,9 +32,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A backend command, a refused privilege, or a broken port probe: each fails
-# install and uninstall loudly, with its message, never as an empty port.
-_SERVICE_ERRORS = (BackendCommandError, PrivilegeDeniedError, PortProbeError)
+# A backend command, a refused privilege, a broken port probe, or a unit that
+# never ran or served: each fails install and uninstall loudly with its cause
+# (SystemExit carries it to the CLI's JSON and text), never as a traceback.
+_SERVICE_ERRORS = (
+    BackendCommandError,
+    PrivilegeDeniedError,
+    PortProbeError,
+    ServiceHealthError,
+)
 
 
 class ServiceInstaller:
@@ -154,17 +160,12 @@ class ServiceInstaller:
             backend.request_stop()
         self._process_mgr.ensure_port_free()
         backend.install(user)
-        running = backend.is_active()
+        # Registration alone does not prove voxd runs or serves: wait for the
+        # unit to be active and for gated health to answer, or fail with why.
+        HealthVerifier.for_backend(backend).verify()
 
-        # Registration alone does not prove voxd serves; verify it answers
-        # health before reporting "running", so a silent-down daemon fails
-        # the install loudly instead of masquerading as healthy.
-        if running:
-            HealthVerifier.for_backend(backend).verify()
-
-        status = "running" if running else "installed (not yet running)"
         lines = [
-            f"voxd daemon {status} on port {DEFAULT_PORT}.",
+            f"voxd daemon running on port {DEFAULT_PORT}.",
             f"  Service: {backend.service_path}",
             f"  Keys:    {keys.path}",
             *keys.notice_lines(),

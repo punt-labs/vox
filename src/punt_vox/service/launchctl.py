@@ -60,6 +60,11 @@ class LaunchctlAgent:
     # launchctl "Bootstrap failed: 5: Input/output error" -- the domain still
     # holds a registration for the label being bootstrapped.
     _IO_ERROR: ClassVar[int] = 5
+    # launchctl print/list: "Could not find service" -- the only exit that
+    # means the job is absent; every other non-zero exit is a failed query.
+    _NOT_FOUND: ClassVar[int] = 113
+    # A launchctl command that hangs must not hang the verb past its deadline.
+    _COMMAND_TIMEOUT_S: ClassVar[float] = 10.0
     # The running pid in `launchctl print` output: a "pid = N" line.
     _PID_LINE: ClassVar[re.Pattern[str]] = re.compile(r"^\s*pid = (\S+)\s*$", re.M)
 
@@ -86,19 +91,24 @@ class LaunchctlAgent:
         """Return True if launchd still has this job in the GUI domain.
 
         ``launchctl print <target>`` exits 0 while the job is registered and
-        non-zero once it has been fully unregistered.
+        113 ("could not find service") once it is gone. Any other exit is a
+        failed query and raises ``LaunchctlError``: it is never read as
+        "absent".
         """
-        return self._print().returncode == 0
+        return self._present(self._print())
 
     def pid(self) -> int | None:
         """Return the job's running pid, read from ``launchctl print``.
 
         ``None`` is the documented answer when the job is not registered or is
-        registered with no running process. A ``pid = ...`` line that is not
-        a number raises ``LaunchctlError`` rather than reading as "no process".
+        registered with no running process. A failed query, or a ``pid = ...``
+        line that is not a number, raises ``LaunchctlError`` rather than
+        reading as "no process".
         """
         result = self._print()
-        found = self._PID_LINE.search(result.stdout) if result.returncode == 0 else None
+        if not self._present(result):
+            return None
+        found = self._PID_LINE.search(result.stdout)
         if found is None:
             return None
         if not found.group(1).isdecimal():
@@ -108,29 +118,45 @@ class LaunchctlAgent:
 
     def _print(self) -> subprocess.CompletedProcess[str]:
         """Run ``launchctl print`` on this job's service target."""
-        return subprocess.run(  # noqa: S603
-            ["launchctl", "print", self._service_target()],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        return self._run("print", self._service_target())
 
     def is_loaded(self) -> bool:
         """Return True if launchd currently has this job loaded.
 
-        ``launchctl list <label>`` exits 0 while the job is loaded under
-        launchd and non-zero once it is gone. Distinct from
+        ``launchctl list <label>`` exits 0 while the job is loaded and 113
+        once it is gone; any other exit raises. Distinct from
         ``is_registered()``: that probes the GUI-domain service target to
         serialise the bootout/bootstrap race, whereas this is the external
         "is voxd up?" status query keyed on the bare label.
         """
-        result = subprocess.run(  # noqa: S603
-            ["launchctl", "list", self._label],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
+        return self._present(self._run("list", self._label))
+
+    def _present(self, result: subprocess.CompletedProcess[str]) -> bool:
+        """Classify a print/list query: 0 present, 113 absent, else raise."""
+        if result.returncode == 0:
+            return True
+        if result.returncode == self._NOT_FOUND:
+            return False
+        msg = (
+            f"launchctl query of {self._label} failed "
+            f"(exit {result.returncode}): {result.stderr.strip()}"
         )
-        return result.returncode == 0
+        raise LaunchctlError(msg)
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """Run one ``launchctl`` command, bounded; raise if it cannot run."""
+        argv = ["launchctl", *args]
+        try:
+            return subprocess.run(  # noqa: S603
+                argv,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self._COMMAND_TIMEOUT_S,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            msg = f"{' '.join(argv)} could not run: {exc}"
+            raise LaunchctlError(msg) from exc
 
     def wait_until_unregistered(self) -> bool:
         """Block until the job leaves the GUI domain, bounded. Return success.
@@ -159,19 +185,17 @@ class LaunchctlAgent:
         ``bootstrap`` race-free.
         """
         was_loaded = self.is_registered()
-        result = subprocess.run(  # noqa: S603
-            ["launchctl", "bootout", self._service_target()],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = self._run("bootout", self._service_target())
         if result.returncode != 0 and was_loaded:
             msg = (
                 f"launchctl bootout of {self._label} failed "
                 f"(exit {result.returncode}): {result.stderr.strip()}"
             )
             raise LaunchctlError(msg)
-        logger.info("Booted out %s (exit %d)", self._label, result.returncode)
+        if result.returncode == 0:
+            logger.info("Booted out %s", self._label)
+        else:
+            logger.debug("%s was not loaded; nothing to boot out", self._label)
         if not self.wait_until_unregistered():
             logger.warning(
                 "%s still registered after bootout; a bootstrap may race the teardown",
@@ -217,12 +241,7 @@ class LaunchctlAgent:
 
     def _bootstrap_once(self) -> subprocess.CompletedProcess[str]:
         """Run a single ``launchctl bootstrap`` and capture its result."""
-        return subprocess.run(  # noqa: S603
-            ["launchctl", "bootstrap", self._domain(), self._plist],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        return self._run("bootstrap", self._domain(), self._plist)
 
     def kickstart(self) -> None:
         """Kickstart (restart) the bootstrapped job.
@@ -230,12 +249,7 @@ class LaunchctlAgent:
         Raises ``LaunchctlError`` on failure so ``start()`` reports a single
         error type to callers.
         """
-        result = subprocess.run(  # noqa: S603
-            ["launchctl", "kickstart", "-k", self._service_target()],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = self._run("kickstart", "-k", self._service_target())
         if result.returncode != 0:
             raise LaunchctlError(
                 f"launchctl kickstart of {self._label} failed "

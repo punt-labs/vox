@@ -10,9 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.service.backend import PortProbeError, PrivilegeDeniedError
+from punt_vox.service.backend import (
+    BackendCommandError,
+    PortProbeError,
+    PrivilegeDeniedError,
+)
 from punt_vox.service.daemon_probe import DaemonProbe
-from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
+from punt_vox.service.health_verify import HealthVerifier
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
@@ -213,16 +217,35 @@ def test_install_status_reports_skipped_keys_by_name_only(
     assert "sk bad" not in result
 
 
-def test_install_reports_not_running(
+def test_install_fails_when_the_unit_never_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """install() reports 'not yet running' when the service is down."""
-    _setup_fake_env(tmp_path, monkeypatch)
+    """B12: an installed unit that is not active is a failed install."""
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
     _on(monkeypatch, "macos")
     _fake_backend(monkeypatch, LaunchdBackend, active=False)
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
 
-    assert "not yet running" in ServiceInstaller().install()
+    with pytest.raises(SystemExit, match="not active"):
+        ServiceInstaller().install()
+
+
+def test_install_launchctl_failure_is_a_clean_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B11: a launchctl failure during install never escapes as a traceback."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+
+    def broken(self: LaunchdBackend, user: str) -> None:
+        raise BackendCommandError.of(["launchctl", "bootstrap"], 5, "I/O error")
+
+    monkeypatch.setattr(LaunchdBackend, "install", broken)
+    with pytest.raises(SystemExit, match="I/O error"):
+        ServiceInstaller().install()
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +289,7 @@ def test_install_raises_when_daemon_never_healthy(
     _write_run_token(fake_home, "run-token")
     captured = _clients(monkeypatch, VoxdConnectionError("connection refused"))
 
-    with pytest.raises(ServiceHealthError, match="never became reachable"):
+    with pytest.raises(SystemExit, match="never became reachable"):
         ServiceInstaller().install()
 
     assert captured
@@ -507,7 +530,7 @@ def test_install_health_poll_without_run_file_builds_no_client(
     monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
     captured = _clients(monkeypatch, _OK)
 
-    with pytest.raises(ServiceHealthError):
+    with pytest.raises(SystemExit, match="never became reachable"):
         ServiceInstaller().install()
 
     assert captured == []
@@ -526,7 +549,7 @@ def test_install_health_poll_sends_no_token_without_a_visible_voxd(
     _write_run_token(fake_home, "run-token")
     captured = _clients(monkeypatch, _OK)
 
-    with pytest.raises(ServiceHealthError):
+    with pytest.raises(SystemExit, match="never became reachable"):
         ServiceInstaller().install()
 
     assert captured == []

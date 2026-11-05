@@ -314,3 +314,53 @@ def test_launchd_uninstall_noop_when_plist_missing(
     be.uninstall()
 
     agent.bootout.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# round 2: every launchctl failure leaves the backend as BackendCommandError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "agent_call"),
+    [("is_active", "is_loaded"), ("main_pid", "pid")],
+)
+def test_launchd_query_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    agent_call: str,
+) -> None:
+    """A3: a failed launchctl query is the lifecycle's typed error, not raw."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    getattr(agent, agent_call).side_effect = LaunchctlError("query failed (exit 1)")
+    with pytest.raises(BackendCommandError, match="query failed"):
+        getattr(be, method)()
+
+
+def test_launchd_install_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B11: install's launchctl failure is typed, so install reports it."""
+    agents_dir = tmp_path / "Library" / "LaunchAgents"
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_DIR", agents_dir)
+    be, agent = _backend_with_mock_agent(
+        monkeypatch, agents_dir / "com.punt-labs.voxd.plist"
+    )
+    agent.start.side_effect = LaunchctlError("bootstrap failed (exit 5)")
+    with pytest.raises(BackendCommandError, match="bootstrap failed"):
+        be.install("someone")
+
+
+def test_launchd_uninstall_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    be, agent = _backend_with_mock_agent(monkeypatch, plist)
+    agent.bootout.side_effect = LaunchctlError("bootout failed (exit 37)")
+    with pytest.raises(BackendCommandError, match="bootout failed"):
+        be.uninstall()
+    assert plist.exists(), "a failed bootout must not remove the plist"

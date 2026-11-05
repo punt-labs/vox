@@ -107,8 +107,8 @@ def test_is_registered_true_when_print_exits_zero(
 def test_is_registered_false_when_print_nonzero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
-    """launchctl print non-zero means the job has left the domain."""
-    mock_run.return_value = _completed(1)
+    """launchctl print exit 113 ("could not find service") means it left."""
+    mock_run.return_value = _completed(113)
     assert agent.is_registered() is False
 
 
@@ -126,8 +126,8 @@ def test_is_loaded_true_when_list_exits_zero(
 def test_is_loaded_false_when_list_nonzero(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
-    """launchctl list non-zero means the job is not loaded."""
-    mock_run.return_value = _completed(1)
+    """launchctl list exit 113 means the job is not loaded."""
+    mock_run.return_value = _completed(113)
     assert agent.is_loaded() is False
 
 
@@ -136,7 +136,7 @@ def test_wait_returns_immediately_when_already_unregistered(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """A clear domain returns True on the first poll without sleeping."""
-    mock_run.return_value = _completed(1)  # not registered
+    mock_run.return_value = _completed(113)  # not registered
     with patch("punt_vox.service.launchctl.time.sleep") as mock_sleep:
         assert agent.wait_until_unregistered() is True
     mock_sleep.assert_not_called()
@@ -161,7 +161,7 @@ def test_bootout_waits_for_unregister(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """bootout issues the bootout then confirms the job left the domain."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[])
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[])
     agent.bootout()
     verbs = [_verb(c) for c in mock_run.call_args_list]
     assert "bootout" in verbs
@@ -186,7 +186,7 @@ def test_bootout_of_unloaded_job_is_idempotent(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """Booting out a job that was never loaded exits non-zero and is ignored."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[], bootout_rc=3)
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[], bootout_rc=3)
     agent.bootout()  # must not raise
 
 
@@ -234,7 +234,7 @@ def test_pid_malformed_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> Non
 @patch("punt_vox.service.launchctl.subprocess.run")
 def test_bootstrap_happy_path(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     """Clean domain, bootstrap succeeds first try -- no error, one bootstrap."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[0])
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0])
     agent.bootstrap()
     verbs = [_verb(c) for c in mock_run.call_args_list]
     assert verbs.count("bootstrap") == 1
@@ -248,7 +248,7 @@ def test_bootstrap_retries_once_on_exit_5(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """Exit 5 (stale registration) then success after the job clears."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[5, 0])
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[5, 0])
     agent.bootstrap()  # must not raise
     verbs = [_verb(c) for c in mock_run.call_args_list]
     assert verbs.count("bootstrap") == 2  # first hit 5, retry succeeded
@@ -269,7 +269,7 @@ def test_bootstrap_raises_when_exit_5_persists(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """A non-transient bootstrap failure surfaces as LaunchctlError."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[5, 5])
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[5, 5])
     with pytest.raises(LaunchctlError, match="bootstrap"):
         agent.bootstrap()
 
@@ -279,7 +279,7 @@ def test_bootstrap_raises_on_non_io_error(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """A non-5 bootstrap exit is not retried and raises immediately."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[9])
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[9])
     with pytest.raises(LaunchctlError, match="exit 9"):
         agent.bootstrap()
     verbs = [_verb(c) for c in mock_run.call_args_list]
@@ -296,7 +296,7 @@ def test_start_bootstraps_then_kickstarts(
     mock_run: MagicMock, agent: LaunchctlAgent
 ) -> None:
     """start brings the job up: bootstrap then kickstart, both succeeding."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[0], kickstart_rc=0)
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0], kickstart_rc=0)
     agent.start()
     verbs = [_verb(c) for c in mock_run.call_args_list]
     assert verbs.count("bootstrap") == 1
@@ -307,6 +307,55 @@ def test_start_bootstraps_then_kickstarts(
 @patch("punt_vox.service.launchctl.subprocess.run")
 def test_kickstart_failure_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
     """A failed kickstart surfaces as LaunchctlError so start() reports it."""
-    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[0], kickstart_rc=1)
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0], kickstart_rc=1)
     with pytest.raises(LaunchctlError, match="kickstart"):
         agent.start()
+
+
+# ---------------------------------------------------------------------------
+# round 2: a failed query is never "absent"; every command is bounded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("probe", ["is_registered", "is_loaded", "pid"])
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_failed_query_raises_not_absent(
+    mock_run: MagicMock, agent: LaunchctlAgent, probe: str
+) -> None:
+    """B1: only exit 113 means absent; exit 1 is a failed query."""
+    mock_run.return_value = _completed(1, "launchctl: bootstrap port error")
+    with pytest.raises(LaunchctlError, match="exit 1"):
+        getattr(agent, probe)()
+
+
+@patch(
+    "punt_vox.service.launchctl.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=10),
+)
+def test_hung_launchctl_raises(_mock_run: MagicMock, agent: LaunchctlAgent) -> None:
+    """B14: a launchctl that hangs is bounded and typed."""
+    with pytest.raises(LaunchctlError, match="could not run"):
+        agent.is_loaded()
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_every_launchctl_call_has_a_timeout(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[0])
+    agent.start()
+    agent.bootout()
+    assert all(c.kwargs.get("timeout") for c in mock_run.call_args_list)
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_bootout_of_unloaded_job_does_not_claim_a_bootout(
+    mock_run: MagicMock,
+    agent: LaunchctlAgent,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """B18: a non-zero bootout of a job that was not loaded logs no "Booted out"."""
+    mock_run.side_effect = _dispatch(print_rc=113, bootstrap_rcs=[], bootout_rc=3)
+    with caplog.at_level("DEBUG", logger="punt_vox.service.launchctl"):
+        agent.bootout()
+    assert not any("Booted out" in r.getMessage() for r in caplog.records)

@@ -9,11 +9,13 @@ outcome on its own.
 Once the manager is inactive, a voxd still on the port is not the manager's
 (an unmanaged voxd), and is terminated through its pinned handle. The
 manager's main process is never signalled: while the manager reports one,
-the job counts as active and no escalation runs.
+the job counts as active and no escalation runs, and immediately before any
+signal the manager is asked again, and a process it still owns is spared.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import (
@@ -29,6 +31,8 @@ if TYPE_CHECKING:
     from punt_vox.service.lifecycle_report import LifecycleReport, LifecycleVerb
     from punt_vox.service.lifecycle_system import LifecycleSystem, Observation
 
+logger = logging.getLogger(__name__)
+
 __all__ = ["StopVerb"]
 
 
@@ -38,36 +42,50 @@ class StopVerb:
 
     __slots__ = (
         "_captured",
+        "_deadline_at",
         "_deadline_s",
         "_doomed",
         "_killed",
         "_main",
+        "_notes",
+        "_requested",
         "_system",
     )
 
     _system: LifecycleSystem
     _deadline_s: float
+    _deadline_at: float
     _captured: frozenset[ProcessHandle]
     _main: frozenset[ProcessHandle]
     _killed: list[int]
     _doomed: set[ProcessHandle]
+    _notes: list[str]
+    _requested: bool
 
     def __new__(cls, system: LifecycleSystem, deadline_s: float) -> Self:
         self = super().__new__(cls)
         self._system = system
         self._deadline_s = deadline_s
+        self._deadline_at = 0.0
         self._captured = frozenset()
         self._main = frozenset()
         self._killed = []
         self._doomed = set()
+        self._notes = []
+        self._requested = False
         return self
 
     def run(self, verb: LifecycleVerb) -> LifecycleReport:
-        """Stop voxd and return the confirmed outcome."""
+        """Stop voxd and return the confirmed outcome.
+
+        A failing probe or manager query ends the verb as ``backend_failed``,
+        saying whether the stop had already been requested.
+        """
         try:
             return self._run(verb)
-        except PortProbeError as exc:
-            return self._system.report(verb, LifecycleOutcome.BACKEND_FAILED, str(exc))
+        except (PortProbeError, BackendCommandError) as exc:
+            detail = f"after requesting stop: {exc}" if self._requested else str(exc)
+            return self._report(verb, LifecycleOutcome.BACKEND_FAILED, detail)
 
     def _run(self, verb: LifecycleVerb) -> LifecycleReport:
         obs = self._system.observe()
@@ -80,7 +98,9 @@ class StopVerb:
             )
         previous = obs.mainpid or min((p.pid for p in obs.procs), default=None)
         self._capture(obs)
-        refused = self._request(verb)
+        # An inactive manager has nothing to stop: only an unmanaged voxd or a
+        # holder vox cannot see is left, and neither needs a privileged call.
+        refused = self._request(verb) if obs.active else None
         if refused is not None:
             return refused.naming(previous_pid=previous)
         if self._system.poll.until(self._settled, self._deadline_s):
@@ -91,6 +111,7 @@ class StopVerb:
     def _capture(self, obs: Observation) -> None:
         """Pin the port holders and the manager's main process before acting."""
         self._captured = obs.procs
+        self._deadline_at = self._system.poll.now() + self._deadline_s
         main = None
         if obs.mainpid is not None:
             main = self._system.probe.open_handle(obs.mainpid)
@@ -100,17 +121,26 @@ class StopVerb:
         """Ask the manager to stop; return a report only if it refused.
 
         A refusal counts only if the job is still active afterwards: when
-        another actor stopped it in the same instant, the stop carries on.
+        another actor stopped it in the same instant, the stop carries on and
+        the refusal is kept for the report.
         """
+        self._requested = True
         try:
             self._system.backend.request_stop()
         except PrivilegeDeniedError as exc:
             if self._system.is_active():
                 return self._report(verb, LifecycleOutcome.PERMISSION_DENIED, str(exc))
+            self._overruled(exc)
         except BackendCommandError as exc:
             if self._system.is_active():
                 return self._report(verb, LifecycleOutcome.BACKEND_FAILED, str(exc))
+            self._overruled(exc)
         return None
+
+    def _overruled(self, exc: Exception) -> None:
+        """Record a refusal the re-observation contradicted."""
+        logger.warning("stop request failed, but the unit went down: %s", exc)
+        self._notes.append(f"the stop request failed ({exc}) but the unit went down")
 
     def _settled(self) -> bool:
         """Return True once the stop is confirmed; escalate when it can."""
@@ -118,31 +148,46 @@ class StopVerb:
             return False
         holders = self._system.probe.voxd_processes()
         lingering = frozenset(h for h in self._captured if not h.exited())
-        targets = holders | lingering
-        if targets:
-            self._terminate(targets)
+        if holders or lingering:
+            self._escalate((holders | lingering) - self._doomed)
             return False
         if any(not h.exited() for h in self._main):
             return False
         return not self._system.probe.port_listening()
 
-    def _terminate(self, targets: frozenset[ProcessHandle]) -> None:
+    def _escalate(self, targets: frozenset[ProcessHandle]) -> None:
         """Terminate, once each, voxd processes the inactive manager left.
 
-        A handle that survives its own ``terminate()`` is not signalled again;
-        it keeps the stop from confirming and is named at the deadline.
+        The manager is asked again right before any signal: if it became
+        active, nothing is signalled and the next tick decides afresh. A
+        process the manager still owns (its main pid, or a member of its
+        cgroup) is never signalled. A handle that survives ``terminate()`` is
+        not signalled again; it keeps the stop from confirming.
         """
-        for handle in targets - self._doomed:
+        if not targets or self._system.is_active():
+            return
+        probe = self._system.probe
+        for handle in sorted(targets, key=self._pid_of):
+            if probe.service_owned(handle.pid):
+                logger.warning("voxd pid %d belongs to the service; spared", handle.pid)
+                continue
             self._doomed.add(handle)
             self._killed.append(handle.pid)
-            handle.terminate()
+            budget = max(0.0, self._deadline_at - self._system.poll.now())
+            handle.terminate(budget)
+        if self._killed:
+            probe.clear_port_file()
+
+    @staticmethod
+    def _pid_of(handle: ProcessHandle) -> int:
+        return handle.pid
 
     def _stopped_detail(self) -> str:
         detail = f"voxd.service stopped; port {DEFAULT_PORT} free"
         if self._killed:
             pids = ", ".join(str(p) for p in self._killed)
             detail += f"; killed unmanaged voxd pid {pids}"
-        return detail + self._off_port_note()
+        return detail + self._off_port_note() + self._carried()
 
     def _timeout(self, verb: LifecycleVerb) -> LifecycleReport:
         """Name what is still up at the deadline."""
@@ -159,8 +204,12 @@ class StopVerb:
                     f"port {DEFAULT_PORT} still accepts connections but no "
                     "visible voxd process holds it"
                 )
-        detail = f"{what} after {self._deadline_s:.0f}s"
+        detail = f"{what} after {self._deadline_s:.0f}s{self._carried()}"
         return self._report(verb, LifecycleOutcome.TIMEOUT, detail)
+
+    def _carried(self) -> str:
+        """Return the overruled refusals, appended to the final detail."""
+        return "".join(f"; {note}" for note in self._notes)
 
     def _off_port_note(self) -> str:
         """Name any voxd on another port; it is never signalled."""

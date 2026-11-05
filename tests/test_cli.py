@@ -2673,3 +2673,22 @@ class TestDaemonLifecycleCommands:
         group = build_daemon_app(MagicMock(), MagicMock())
         verbs = {c.name for c in group.registered_commands}
         assert verbs == {"install", "uninstall", "start", "stop", "restart", "status"}
+
+    @pytest.mark.parametrize(
+        ("verb", "key", "target"),
+        [
+            ("install", "installed", "svc_install"),
+            ("uninstall", "uninstalled", "svc_uninstall"),
+        ],
+    )
+    def test_install_failure_json_is_a_payload_not_a_traceback(
+        self, verb: str, key: str, target: str
+    ) -> None:
+        """B11: a failed install/uninstall emits ``{key: false, reason}``."""
+        failure = SystemExit("vox daemon install failed: launchctl bootstrap")
+        with patch(f"{_CLI_DAEMON}.{target}", side_effect=failure):
+            result = CliRunner().invoke(app, ["daemon", verb, "--json"])
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload[key] is False
+        assert "launchctl bootstrap" in payload["reason"]

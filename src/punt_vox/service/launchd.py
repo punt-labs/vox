@@ -60,11 +60,13 @@ class LaunchdBackend:
 
     def is_active(self) -> bool:
         """Return True while the job is loaded or its process is still present."""
-        return self._agent.is_loaded() or self._agent.pid() is not None
+        return self._query("list", self._agent.is_loaded) or (
+            self.main_pid() is not None
+        )
 
     def main_pid(self) -> int | None:
         """Return the job's pid; ``None`` when launchd reports no process."""
-        return self._agent.pid()
+        return self._query("print", self._agent.pid)
 
     def installed_bind(self) -> str:
         """Return the ``VOXD_BIND`` written into the installed plist."""
@@ -84,7 +86,7 @@ class LaunchdBackend:
         """Write the plist and bring the job up.  No sudo required."""
         del user  # a LaunchAgent always runs as the logged-in session user
         self._plist.write()
-        self._agent.start()
+        self._drive("bootstrap", self._agent.start)
         logger.info("Bootstrapped and kickstarted %s into launchd", _LABEL)
 
     def uninstall(self) -> None:
@@ -94,8 +96,17 @@ class LaunchdBackend:
                 "No plist found at %s -- nothing to uninstall", self._plist.path
             )
             return
-        self._agent.bootout()
+        self._drive("bootout", self._agent.bootout)
         self._plist.remove()
+
+    @staticmethod
+    def _query[T](verb: str, query: Callable[[], T]) -> T:
+        """Run a launchctl query, translating its failure for the lifecycle."""
+        try:
+            return query()
+        except LaunchctlError as exc:
+            argv = ["launchctl", verb, _LABEL]
+            raise BackendCommandError.of(argv, 1, str(exc)) from exc
 
     @staticmethod
     def _drive(verb: str, action: Callable[[], None]) -> None:

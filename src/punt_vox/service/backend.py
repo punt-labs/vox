@@ -93,8 +93,11 @@ class ProcessHandle(Protocol):
         """Return True once the pinned process has exited."""
         ...
 
-    def terminate(self) -> bool:
-        """SIGTERM, then SIGKILL after a grace; return whether it exited."""
+    def terminate(self, within_s: float) -> bool:
+        """SIGTERM, then SIGKILL after a grace; return whether it exited.
+
+        Takes at most *within_s* seconds, so a caller's deadline holds.
+        """
         ...
 
 
@@ -116,6 +119,14 @@ class LifecycleProbe(Protocol):
         """
         ...
 
+    def service_owned(self, pid: int) -> bool:
+        """Return True when the service manager still counts *pid* as its own."""
+        ...
+
+    def clear_port_file(self) -> None:
+        """Remove ``serve.port`` when it names the service port."""
+        ...
+
     def port_listening(self) -> bool:
         """Return True when anything accepts a TCP connection on the port."""
         ...
@@ -124,6 +135,13 @@ class LifecycleProbe(Protocol):
         """Return voxd's health, sent only when *holders* is non-empty.
 
         ``None`` is the documented answer for "no health reply".
+        """
+        ...
+
+    def health_miss(self) -> Exception | None:
+        """Return why the last health request got no answer.
+
+        ``None`` is the documented answer when no request has failed.
         """
         ...
 

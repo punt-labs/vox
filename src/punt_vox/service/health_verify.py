@@ -50,44 +50,55 @@ class ServiceHealthError(RuntimeError):
 
 @final
 class HealthVerifier:
-    """Poll a freshly installed voxd until it serves or the deadline lapses."""
+    """Wait for a freshly installed unit to run and serve, or fail with why."""
 
-    __slots__ = ("_probe", "_service_path")
+    __slots__ = ("_backend", "_probe")
 
+    _backend: InstallableBackend
     _probe: DaemonProbe
-    _service_path: str
 
-    def __new__(cls, probe: DaemonProbe, service_path: str) -> Self:
-        # *probe* targets the daemon the backend runs (its installed bind, the
-        # service port, the run-file token); *service_path* names the plist or
-        # unit the failure message points the operator at.
+    def __new__(cls, backend: InstallableBackend, probe: DaemonProbe) -> Self:
+        # *backend* reports whether the unit runs and names the unit file the
+        # failure message points at; *probe* targets the daemon the backend
+        # runs (its installed bind, the service port, the run-file token).
         self = super().__new__(cls)
+        self._backend = backend
         self._probe = probe
-        self._service_path = service_path
         return self
 
     @classmethod
     def for_backend(cls, backend: InstallableBackend) -> Self:
         """Return the verifier for the daemon *backend* just installed."""
-        probe = DaemonProbe.for_bind(backend.installed_bind())
-        return cls(probe, backend.service_path)
+        return cls(backend, DaemonProbe.for_backend(backend))
 
     def verify(self) -> HealthStatus:
-        """Poll voxd's gated health until it answers; return what it reported.
+        """Wait for the unit to be active and voxd to answer; return its health.
 
-        Without this poll, ``install()`` reports "running" for a daemon that
-        died on startup -- the silent-down failure mode. Raise
-        ``ServiceHealthError`` so the caller can surface a non-zero exit (or
-        degrade gracefully) when voxd never becomes reachable.
+        Without this, ``install()`` reports success for a unit that never ran
+        or a daemon that died on startup -- the silent-down failure mode.
+        Raise ``ServiceHealthError``, chained to the last health failure, so
+        the caller can surface a non-zero exit (or degrade gracefully).
         """
+        service = self._backend.service_path
+        if not self._probe.poll.until(self._backend.is_active, _HEALTH_DEADLINE_S):
+            msg = (
+                f"voxd is not active {_HEALTH_DEADLINE_S:.0f}s after install. "
+                f"Service: {service}. Check the daemon logs in {_paths_log_dir()}."
+            )
+            raise ServiceHealthError(msg)
         status = self._probe.wait_up(_HEALTH_DEADLINE_S)
         if status is not None:
             return status
+        miss = self._probe.health_miss()
+        raise ServiceHealthError(self._unreachable(miss)) from miss
+
+    def _unreachable(self, miss: Exception | None) -> str:
+        """Return the never-reachable message, naming the last health failure."""
         target = self._probe.target
-        msg = (
+        cause = "" if miss is None else f" (last error: {miss})"
+        return (
             f"voxd registered but never became reachable within "
-            f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}. "
-            f"Service: {self._service_path}. Check the daemon logs in "
+            f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}{cause}. "
+            f"Service: {self._backend.service_path}. Check the daemon logs in "
             f"{_paths_log_dir()}."
         )
-        raise ServiceHealthError(msg)

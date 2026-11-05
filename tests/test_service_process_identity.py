@@ -37,3 +37,20 @@ def test_a_reused_pid_is_a_different_identity() -> None:
     first = ProcessIdentity(_LSTART, "/bin/voxd")
     later = ProcessIdentity("Tue Nov  4 16:00:00 2026", "/bin/voxd")
     assert first != later
+
+
+@pytest.mark.parametrize(
+    ("command", "voxd"),
+    [
+        ("/usr/local/bin/voxd --port 8421", True),
+        ("voxd", True),
+        ("/opt/py/bin/python3.13 /home/u/.local/bin/voxd --port 8421", True),
+        ("/Library/Frameworks/Python.framework/Python /u/bin/voxd", True),
+        ("/usr/bin/someserver --name voxd", False),
+        ("/usr/bin/python3 -m tool voxd", False),
+        ("/usr/bin/python3 /tmp/notvoxd.py", False),
+    ],
+)
+def test_is_voxd_matches_the_program_not_an_argument(command: str, voxd: bool) -> None:
+    """Only the program voxd matches: an argument named voxd does not (B4)."""
+    assert ProcessIdentity(_LSTART, command).is_voxd() is voxd

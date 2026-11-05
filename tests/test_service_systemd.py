@@ -7,6 +7,7 @@ NOPASSWD, password with and without a terminal -- runs here with no real sudo.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -281,3 +282,79 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
     assert observed_during_sudo, "no subprocess.run calls were observed"
     assert observed_during_sudo[0] is True
     assert not tmp_unit_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# round 2: queries fail closed, sudo calls are bounded and typed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "stdout"), [(1, ""), (1, "Failed to connect to bus"), (4, "")]
+)
+@patch("punt_vox.service.systemd.subprocess.run")
+def test_is_active_query_error_raises(
+    mock_run: MagicMock, code: int, stdout: str
+) -> None:
+    """B12: a failed is-active query is an error, never "inactive"."""
+    mock_run.return_value = _ran(code, stdout, "bus error")
+    with pytest.raises(BackendCommandError, match="is-active"):
+        _backend().is_active()
+
+
+@patch(
+    "punt_vox.service.systemd.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="systemctl", timeout=10),
+)
+def test_hung_systemctl_query_raises(_mock_run: MagicMock) -> None:
+    """B14: a hung systemctl is bounded and typed."""
+    with pytest.raises(BackendCommandError, match="could not run"):
+        _backend().main_pid()
+
+
+@patch("punt_vox.service.systemd.subprocess.run")
+def test_every_systemctl_query_has_a_timeout(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, "4242\n")
+    _backend().main_pid()
+    assert mock_run.call_args.kwargs.get("timeout")
+
+
+@patch(
+    "punt_vox.service.systemd.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="sudo", timeout=60),
+)
+def test_hung_sudo_is_backend_command_error(_mock_run: MagicMock) -> None:
+    """B14: the privileged call is bounded too."""
+    with pytest.raises(BackendCommandError, match="could not run"):
+        PrivilegedRun.on_this_host()("stop")
+
+
+@patch("punt_vox.service.systemd.subprocess.run")
+@patch("punt_vox.service.systemd._SYSTEMD_UNIT")
+def test_uninstall_failure_is_reported(
+    mock_unit: MagicMock, mock_run: MagicMock
+) -> None:
+    """B13: a failing disable or daemon-reload is not silently ignored."""
+    mock_unit.exists.return_value = True
+
+    def run(argv: list[str], **kwargs: object) -> MagicMock:
+        if "disable" in argv:
+            raise subprocess.CalledProcessError(1, argv, stderr="Access denied")
+        return _ran(0)
+
+    mock_run.side_effect = run
+    with pytest.raises(BackendCommandError, match="disable"):
+        _backend().uninstall()
+
+
+@patch("punt_vox.service.systemd.subprocess.run")
+def test_install_failure_is_backend_command_error(
+    mock_run: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B11: a failing sudo step is typed, so install reports it."""
+    fake_home = tmp_path / "home"
+    (fake_home / ".punt-labs" / "vox").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    mock_run.side_effect = FileNotFoundError(2, "No such file: 'sudo'")
+    with pytest.raises(BackendCommandError, match="sudo"):
+        _backend().install("someone")

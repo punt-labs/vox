@@ -143,7 +143,6 @@ def test_find_pid_on_port_macos(mock_run: MagicMock, _mock_sys: MagicMock) -> No
     mgr = ProcessManager()
     mock_run.return_value = _ran(0, "12345\n")
     assert mgr.find_pid_on_port(8421) == [12345]
-    assert mock_run.call_args.args[0] == ["lsof", "-ti", ":8421"]
     assert mock_run.call_args.kwargs["timeout"] == 5
 
 
@@ -308,7 +307,7 @@ def test_kill_pid_terminates_through_handle(monkeypatch: pytest.MonkeyPatch) -> 
     handle.terminate.return_value = True
     monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: handle)
     assert ProcessManager().kill_pid(100) is True
-    handle.terminate.assert_called_once_with()
+    handle.terminate.assert_called_once_with(7.0)
 
 
 def test_kill_pid_gone_or_not_voxd_signals_nothing(
@@ -543,3 +542,88 @@ def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
         f"find_pid_on_port was called with {captured_port}, not [9999]."
     )
     assert DEFAULT_PORT not in captured_port
+
+
+# ---------------------------------------------------------------------------
+# round 2: fail closed on stderr, listeners only, port file errors surface
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+@patch("punt_vox.service.process.subprocess.run")
+def test_find_pid_exit_1_with_stderr_raises(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    """Exit 1 is "found nothing" only when the tool also said nothing (B3)."""
+    mock_run.return_value = _ran(1, stderr="fuser: permission denied")
+    with pytest.raises(PortProbeError, match="permission denied"):
+        ProcessManager().find_pid_on_port(8421)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_identity_exit_1_with_stderr_raises(mock_run: MagicMock) -> None:
+    """A ps error exiting 1 must not read as "gone" (B3)."""
+    mock_run.return_value = _ran(1, stderr="ps: fatal error")
+    with pytest.raises(PortProbeError, match="fatal error"):
+        ProcessManager().identity(123)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_identity_unparseable_ps_line_is_port_probe_error(mock_run: MagicMock) -> None:
+    """A malformed ps line fails the probe, never escapes as ValueError (A3)."""
+    mock_run.return_value = _ran(0, "garbage")
+    with pytest.raises(PortProbeError, match="unparseable"):
+        ProcessManager().identity(123)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_find_pid_on_port_macos_lists_listeners_only(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    """lsof matches only the TCP listener, not clients whose peer is 8421 (B5)."""
+    mock_run.return_value = _ran(0, "12345\n")
+    ProcessManager().find_pid_on_port(8421)
+    assert mock_run.call_args.args[0] == [
+        "lsof",
+        "-nP",
+        "-t",
+        "-iTCP:8421",
+        "-sTCP:LISTEN",
+    ]
+
+
+def test_read_port_file_missing_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    assert ProcessManager().read_port_file() is None
+
+
+def test_read_port_file_unparseable_is_surfaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A port file that cannot be read or parsed fails loudly (B16)."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text("not-a-port")
+    with pytest.raises(PortProbeError, match=r"serve\.port"):
+        ProcessManager().read_port_file()
+
+
+def test_remove_port_file_failure_does_not_claim_removal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed unlink is warned about, never followed by "Removed" (B16)."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with caplog.at_level("INFO", logger="punt_vox.service.process"):
+        ProcessManager().remove_port_file()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Could not remove" in m for m in messages)
+    assert not any(m.startswith("Removed") for m in messages)

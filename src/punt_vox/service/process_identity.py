@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import ClassVar, Self, final
 
 __all__ = ["ProcessIdentity"]
@@ -25,9 +26,12 @@ class ProcessIdentity:
 
     # ``lstart`` under LC_ALL=C is fixed width: "Tue Nov  4 15:53:01 2026".
     _LSTART_WIDTH: ClassVar[int] = 24
-    # Loose on purpose: it only ever runs on processes ``fuser``/``lsof``
-    # reported on the daemon port, never on the whole process table.
-    _VOXD: ClassVar[re.Pattern[str]] = re.compile(r"\bvoxd\b")
+    # The program the unit and plist run: ServiceInstaller._voxd_exec_args
+    # writes ``<dist>/bin/voxd --port 8421`` as ExecStart/ProgramArguments.
+    # voxd is a console script, so the kernel shows it either as itself or as
+    # its interpreter followed by the script path.
+    _PROGRAM: ClassVar[str] = "voxd"
+    _INTERPRETER: ClassVar[re.Pattern[str]] = re.compile(r"^python[0-9.]*$")
 
     @classmethod
     def from_ps(cls, line: str) -> Self:
@@ -40,5 +44,18 @@ class ProcessIdentity:
         return cls(started=started, command=command)
 
     def is_voxd(self) -> bool:
-        """Return True when the command line runs voxd."""
-        return bool(self._VOXD.search(self.command))
+        """Return True when the program is voxd, not merely an argument.
+
+        Accepts ``.../voxd ...`` and ``.../python[3.x] .../voxd ...``. A
+        process that only passes ``voxd`` as an argument (``--name voxd``,
+        ``python -m tool voxd``) is not voxd.
+        """
+        argv = self.command.split()
+        program = PurePosixPath(argv[0]).name
+        if program == self._PROGRAM:
+            return True
+        return (
+            len(argv) > 1
+            and bool(self._INTERPRETER.match(program.lower()))
+            and PurePosixPath(argv[1]).name == self._PROGRAM
+        )

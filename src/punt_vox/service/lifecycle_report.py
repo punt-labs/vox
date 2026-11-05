@@ -128,12 +128,18 @@ class LifecycleReport:
         return replace(self, pid=status.pid, daemon_version=status.daemon_version)
 
     def restarted_after(self, stop: LifecycleReport) -> Self:
-        """Return this start report as ``restart``'s, naming *stop*'s process."""
+        """Return this start report as ``restart``'s, carrying *stop*'s half.
+
+        The previous pid and what the stop did (an unmanaged voxd killed, a
+        voxd on another port left alone) stay in the restart report.
+        """
+        halves = [f"{half.verb}: {half.detail}" for half in (stop, self) if half.detail]
         return replace(
             self,
             verb="restart",
             outcome=LifecycleOutcome.RESTARTED,
             previous_pid=stop.previous_pid,
+            detail="; ".join(halves),
         )
 
     def to_json(self) -> LifecycleReportJson:

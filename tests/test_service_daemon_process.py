@@ -7,11 +7,13 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from _lifecycle_fakes import FakeClock
 
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import SystemClock
 from punt_vox.service.daemon_process import (
     DaemonProcess,
@@ -78,7 +80,7 @@ def test_pidfd_handle_signals_through_the_pidfd(
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
     assert handle.exited() is False
-    assert handle.terminate() is True
+    assert handle.terminate(7.0) is True
     assert fake.sent == [signal.SIGTERM]
     assert handle.exited() is True
 
@@ -88,7 +90,7 @@ def test_pidfd_handle_escalates_to_sigkill(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("punt_vox.service.daemon_process._TERM_GRACE_S", 0.01)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
-    assert handle.terminate() is True
+    assert handle.terminate(7.0) is True
     assert fake.sent == [signal.SIGTERM, signal.SIGKILL]
 
 
@@ -122,22 +124,22 @@ def test_pidfd_permission_denied_reports_not_exited(
     monkeypatch.setattr(signal, "pidfd_send_signal", _denied, raising=False)
     handle = PidfdProcess.open(4242, _Identities(_VOXD))
     assert handle is not None
-    assert handle.terminate() is False
+    assert handle.terminate(7.0) is False
 
 
-def test_handle_terminates_a_real_process() -> None:
+def test_handle_terminates_a_real_process(tmp_path: Path) -> None:
     """End to end on this host: open the strongest handle, terminate, reap.
 
     The pidfd handle where this interpreter has ``os.pidfd_open``; the
     start-time handle otherwise (macOS, or a Python built without it).
     """
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)", "voxd"]
-    )
+    voxd = tmp_path / "voxd"
+    voxd.symlink_to(sys.executable)
+    proc = subprocess.Popen([str(voxd), "-c", "import time; time.sleep(30)"])
     try:
         handle = DaemonProcess(SystemClock(), ProcessManager().identity).open(proc.pid)
         assert handle is not None
-        assert handle.terminate() is True
+        assert handle.terminate(7.0) is True
         assert handle.exited() is True
     finally:
         proc.kill()
@@ -168,7 +170,7 @@ def test_start_time_handle_skips_sigkill_when_start_time_changed(
     identities = _Identities(_VOXD, _VOXD, _VOXD, _REUSED)
     handle = StartTimeProcess.open(4242, identities, FakeClock())
     assert handle is not None
-    assert handle.terminate() is True
+    assert handle.terminate(7.0) is True
     assert kills == [(4242, signal.SIGTERM)]
 
 
@@ -189,7 +191,7 @@ def test_start_time_handle_escalates_when_same_process_survives(
 ) -> None:
     handle = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
     assert handle is not None
-    assert handle.terminate() is False
+    assert handle.terminate(7.0) is False
     assert kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
 
 
@@ -238,3 +240,59 @@ def test_daemon_process_macos_uses_start_time(
 def _forbidden_kill(pid: int, sig: int) -> None:
     msg = f"os.kill({pid}, {sig}) on a bare pid"
     raise AssertionError(msg)
+
+
+# ---------------------------------------------------------------------------
+# round 2: value identity, typed open failure, bounded terminate
+# ---------------------------------------------------------------------------
+
+
+def test_start_time_handles_on_one_process_are_equal() -> None:
+    """Two opens of one process compare equal, so a set holds it once (A1)."""
+    first = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
+    again = StartTimeProcess.open(4242, _Identities(_VOXD), FakeClock())
+    later = StartTimeProcess.open(4242, _Identities(_REUSED), FakeClock())
+    assert first is not None
+    assert again is not None
+    assert later is not None
+    assert first == again
+    assert len({first, again}) == 1
+    assert first != later
+
+
+def test_pidfd_handles_on_one_process_are_equal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
+    first = PidfdProcess.open(4242, _Identities(_VOXD))
+    again = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert first is not None
+    assert again is not None
+    assert first == again
+    assert len({first, again}) == 1
+
+
+def test_pidfd_open_failure_is_port_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pidfd_open error other than ENOSYS fails the probe, typed (A3)."""
+    monkeypatch.setattr("punt_vox.service.daemon_process.sys.platform", "linux")
+
+    def _emfile(pid: int, flags: int = 0) -> int:
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    monkeypatch.setattr(os, "pidfd_open", _emfile, raising=False)
+    with pytest.raises(PortProbeError, match="Too many open files"):
+        DaemonProcess(FakeClock(), _Identities(_VOXD)).open(4242)
+
+
+def test_start_time_terminate_is_bounded_by_the_budget(
+    kills: list[tuple[int, int]],
+) -> None:
+    """A survivor costs at most the budget it was given, not 5 s + 2 s (B14)."""
+    clock = FakeClock()
+    handle = StartTimeProcess.open(4242, _Identities(_VOXD), clock)
+    assert handle is not None
+    assert handle.terminate(1.0) is False
+    assert clock.monotonic() <= 1.2
+    assert kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]

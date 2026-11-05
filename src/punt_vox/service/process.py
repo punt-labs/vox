@@ -8,7 +8,7 @@ import platform
 import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, ClassVar, Self
 
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
@@ -30,6 +30,9 @@ class ProcessManager:
 
     __slots__ = ()
 
+    # SIGTERM grace plus the SIGKILL wait for an install/uninstall kill.
+    _KILL_BUDGET_S: ClassVar[float] = 7.0
+
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
@@ -38,41 +41,51 @@ class ProcessManager:
         return _user_run_dir()
 
     def read_port_file(self) -> int | None:
-        """Read the daemon port from the port file.  Return None if missing."""
+        """Read the daemon port from ``serve.port``.
+
+        ``None`` is the documented answer when the file does not exist. A file
+        that exists but cannot be read or parsed raises ``PortProbeError``: it
+        is never read as "no other port".
+        """
         port_file = self._run_dir() / "serve.port"
         try:
             return int(port_file.read_text().strip())
-        except (FileNotFoundError, ValueError, OSError):
+        except FileNotFoundError:
             return None
+        except (OSError, ValueError) as exc:
+            msg = f"cannot read {port_file}: {exc}"
+            raise PortProbeError(msg) from exc
 
     def remove_port_file(self) -> None:
-        """Remove the daemon port file."""
+        """Remove the daemon port file; warn (never claim removal) on failure."""
         port_file = self._run_dir() / "serve.port"
         try:
             port_file.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Could not remove %s", port_file)
-        logger.info("Removed port file")
+        except OSError as exc:
+            logger.warning("Could not remove %s: %s", port_file, exc)
+            return
+        logger.info("Removed port file %s", port_file)
 
     def find_pid_on_port(self, port: int) -> list[int]:
         """Return all PIDs with connections to *port*.
 
-        On macOS ``lsof -ti :<port>`` returns one PID per line (daemon
-        *and* connected clients).  On Linux ``fuser <port>/tcp`` returns
-        space-separated PIDs.  Returns **all** of them so the caller can
-        check each for voxd identity.
+        On macOS ``lsof`` lists only the TCP listener on *port* (a client
+        whose peer port is *port* would otherwise match). On Linux ``fuser
+        <port>/tcp`` returns space-separated PIDs, the daemon and connected
+        clients alike. Returns **all** of them so the caller can check each
+        for voxd identity.
 
         Fails closed: a missing tool, a timeout, or an error exit raises
-        ``PortProbeError``. Only a clean "found nothing" (exit 1, no output)
-        reads as an empty port.
+        ``PortProbeError``. Only a silent "found nothing" (exit 1, no stdout
+        and no stderr) reads as an empty port.
         """
         if platform.system() == "Darwin":
-            cmd = ["lsof", "-ti", f":{port}"]
+            cmd = ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"]
         else:
             cmd = ["fuser", f"{port}/tcp"]
         result = self._probe(cmd)
         out = result.stdout.strip()
-        if result.returncode == 1 and not out:
+        if self._found_nothing(result):
             return []
         if result.returncode != 0:
             msg = (
@@ -87,17 +100,23 @@ class ProcessManager:
     def identity(self, pid: int) -> ProcessIdentity | None:
         """Return *pid*'s start time and command line; ``None`` once it is gone.
 
-        ``ps`` exits 1 with no output for a pid that does not exist; any other
-        failure raises ``PortProbeError`` rather than reading as "gone".
+        ``ps`` exits 1 and says nothing for a pid that does not exist; any
+        other failure, or a line that does not parse, raises ``PortProbeError``
+        rather than reading as "gone".
         """
         result = self._probe(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="])
-        out = result.stdout.strip()
-        if result.returncode == 1 and not out:
+        if self._found_nothing(result):
             return None
         if result.returncode != 0:
-            msg = f"cannot inspect pid {pid}: ps exited {result.returncode}"
+            msg = (
+                f"cannot inspect pid {pid}: ps exited {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
             raise PortProbeError(msg)
-        return ProcessIdentity.from_ps(out)
+        try:
+            return ProcessIdentity.from_ps(result.stdout.strip())
+        except ValueError as exc:
+            raise PortProbeError(f"cannot inspect pid {pid}: {exc}") from exc
 
     def is_vox_daemon_process(self, pid: int) -> bool:
         """Return True when *pid* is alive and its command line runs voxd."""
@@ -126,7 +145,20 @@ class ProcessManager:
             logger.info("PID %d is gone or is not voxd; nothing to kill", pid)
             return True
         logger.info("Terminating voxd PID %d", pid)
-        return handle.terminate()
+        return handle.terminate(self._KILL_BUDGET_S)
+
+    @staticmethod
+    def _found_nothing(result: subprocess.CompletedProcess[str]) -> bool:
+        """Return True for the tools' silent "no match": exit 1, no output.
+
+        An emptiness check, not a text match: any stderr at all means the
+        tool failed, whatever its locale said.
+        """
+        return (
+            result.returncode == 1
+            and not result.stdout.strip()
+            and not result.stderr.strip()
+        )
 
     @staticmethod
     def _probe(cmd: list[str]) -> subprocess.CompletedProcess[str]:

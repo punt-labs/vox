@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,8 +17,11 @@ from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.types_health import HealthStatus
 
 
-def _probe(mgr: MagicMock, target: HealthTarget | None = None) -> DaemonProbe:
-    return DaemonProbe(mgr, target or HealthTarget(""), Poll(FakeClock()))
+def _probe(
+    mgr: MagicMock, target: HealthTarget | MagicMock | None = None
+) -> DaemonProbe:
+    pinned = target or HealthTarget("")
+    return DaemonProbe(mgr, lambda: pinned, Poll(FakeClock()))
 
 
 def test_voxd_processes_keeps_only_voxd_handles() -> None:
@@ -94,6 +98,87 @@ def test_port_listening_sees_a_bare_listener() -> None:
         assert _probe(MagicMock(), target).port_listening() is True
     target = MagicMock(host="127.0.0.1", port=port)
     assert _probe(MagicMock(), target).port_listening() is False
+
+
+# -- round 2 ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("timed out"),
+        ConnectionResetError("reset"),
+        OSError(113, "no route"),
+    ],
+)
+def test_port_listening_fails_closed_except_on_refusal(
+    failure: OSError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B2: only a refused connection means "nothing listens"."""
+
+    def connect(address: object, timeout: float) -> object:
+        raise failure
+
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    with pytest.raises(PortProbeError, match="cannot connect"):
+        _probe(MagicMock()).port_listening()
+
+
+def test_health_miss_keeps_the_last_cause() -> None:
+    """B9: the probe remembers why the last gated request got no answer."""
+    target = MagicMock()
+    rejected = VoxdConnectionError("auth rejected (4401)")
+    target.client.return_value.health.side_effect = rejected
+    probe = _probe(MagicMock(), target)
+    assert probe.health_miss() is None
+    assert probe.health(frozenset({MagicMock()})) is None
+    assert probe.health_miss() is rejected
+
+
+def test_health_miss_names_the_closed_gate() -> None:
+    probe = _probe(MagicMock())
+    assert probe.health(frozenset()) is None
+    assert "no visible voxd" in str(probe.health_miss())
+
+
+def test_service_owned_reads_the_cgroup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2: a pid in voxd.service's cgroup is the manager's, not unmanaged."""
+    monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
+    (tmp_path / "42").mkdir()
+    (tmp_path / "42" / "cgroup").write_text("0::/system.slice/voxd.service\n")
+    (tmp_path / "43").mkdir()
+    (tmp_path / "43" / "cgroup").write_text("0::/user.slice/user-1000.slice\n")
+    probe = _probe(MagicMock())
+    assert probe.service_owned(42) is True
+    assert probe.service_owned(43) is False
+    assert probe.service_owned(44) is False  # gone, or no /proc (macOS)
+
+
+def test_clear_port_file_only_for_the_service_port() -> None:
+    """B6: serve.port is removed only when it names 8421."""
+    mgr = MagicMock()
+    mgr.read_port_file.return_value = 8421
+    _probe(mgr).clear_port_file()
+    mgr.remove_port_file.assert_called_once_with()
+    mgr = MagicMock()
+    mgr.read_port_file.return_value = 9000
+    _probe(mgr).clear_port_file()
+    mgr.remove_port_file.assert_not_called()
+
+
+def test_bind_is_read_lazily_inside_the_verb() -> None:
+    """A3: an unreadable unit fails when the probe is used, not when built."""
+
+    def unreadable() -> HealthTarget:
+        raise PortProbeError("cannot read the unit")
+
+    probe = DaemonProbe(MagicMock(), unreadable, Poll(FakeClock()))
+    with pytest.raises(PortProbeError):
+        probe.port_listening()
 
 
 def test_wait_up_returns_the_first_gated_answer() -> None:

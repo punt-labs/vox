@@ -12,6 +12,7 @@ stale version is ``version_mismatch``; a standalone ``start`` reports it as
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import (
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from punt_vox.service.lifecycle_system import LifecycleSystem, Observation
     from punt_vox.types_health import HealthStatus
 
+logger = logging.getLogger(__name__)
+
 __all__ = ["StartVerb"]
 
 
@@ -34,12 +37,14 @@ __all__ = ["StartVerb"]
 class StartVerb:
     """One run of ``start``: observe, request if cold, wait, decide."""
 
-    __slots__ = ("_deadline_s", "_fresh", "_system", "_verb")
+    __slots__ = ("_deadline_s", "_fresh", "_notes", "_requested", "_system", "_verb")
 
     _system: LifecycleSystem
     _deadline_s: float
     _verb: LifecycleVerb
     _fresh: bool
+    _notes: list[str]
+    _requested: bool
 
     def __new__(
         cls, system: LifecycleSystem, deadline_s: float, *, require_fresh: bool
@@ -49,14 +54,21 @@ class StartVerb:
         self._deadline_s = deadline_s
         self._verb = "start"
         self._fresh = require_fresh
+        self._notes = []
+        self._requested = False
         return self
 
     def run(self) -> LifecycleReport:
-        """Start voxd and return the verified outcome."""
+        """Start voxd and return the verified outcome.
+
+        A failing probe or manager query ends the verb as ``backend_failed``,
+        saying whether the start had already been requested.
+        """
         try:
             return self._run()
-        except PortProbeError as exc:
-            return self._report(LifecycleOutcome.BACKEND_FAILED, str(exc))
+        except (PortProbeError, BackendCommandError) as exc:
+            detail = f"after requesting start: {exc}" if self._requested else str(exc)
+            return self._report(LifecycleOutcome.BACKEND_FAILED, detail)
 
     def _run(self) -> LifecycleReport:
         obs = self._system.observe()
@@ -78,17 +90,26 @@ class StartVerb:
         """Ask the manager to start; return a report only if it refused.
 
         A refusal counts only if the job is still inactive afterwards: when
-        another actor started it in the same instant, the start carries on.
+        another actor started it in the same instant, the start carries on and
+        the refusal is kept for the report.
         """
+        self._requested = True
         try:
             self._system.backend.request_start()
         except PrivilegeDeniedError as exc:
             if not self._system.is_active():
                 return self._report(LifecycleOutcome.PERMISSION_DENIED, str(exc))
+            self._overruled(exc)
         except BackendCommandError as exc:
             if not self._system.is_active():
                 return self._report(LifecycleOutcome.BACKEND_FAILED, str(exc))
+            self._overruled(exc)
         return None
+
+    def _overruled(self, exc: Exception) -> None:
+        """Record a refusal the re-observation contradicted."""
+        logger.warning("start request failed, but the unit came up: %s", exc)
+        self._notes.append(f"the start request failed ({exc}) but the unit came up")
 
     def _wait_up(self) -> HealthStatus | None:
         """Poll gated health until a visible voxd answers or the deadline passes.
@@ -103,9 +124,11 @@ class StartVerb:
     def _decide(self, status: HealthStatus | None, *, cold: bool) -> LifecycleReport:
         """Classify the health answer: timeout, foreign, stale, or fresh."""
         if status is None:
+            miss = self._system.probe.health_miss()
+            cause = f" (last: {miss})" if miss is not None else ""
             detail = (
                 f"no health answer on port {DEFAULT_PORT} within "
-                f"{self._deadline_s:.0f}s"
+                f"{self._deadline_s:.0f}s{cause}"
             )
             return self._report(LifecycleOutcome.TIMEOUT, detail)
         mainpid = self._system.backend.main_pid()
@@ -135,7 +158,11 @@ class StartVerb:
         return self._report(LifecycleOutcome.ALREADY_RUNNING, detail).serving(status)
 
     def _report(self, outcome: LifecycleOutcome, detail: str) -> LifecycleReport:
-        return self._system.report(self._verb, outcome, detail)
+        """Return the report, with any overruled refusal appended."""
+        carried = (
+            "; ".join([detail, *self._notes]) if detail else "; ".join(self._notes)
+        )
+        return self._system.report(self._verb, outcome, carried)
 
     @staticmethod
     def _holder(obs: Observation) -> str:

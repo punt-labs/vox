@@ -55,6 +55,10 @@ class Poll:
         self._interval = interval
         return self
 
+    def now(self) -> float:
+        """Return the poll's clock reading, for computing what remains."""
+        return self._clock.monotonic()
+
     def until(self, condition: Callable[[], bool], deadline_s: float) -> bool:
         """Return True once *condition* holds, False if it never does in time."""
         return self.first(lambda: True if condition() else None, deadline_s) is True

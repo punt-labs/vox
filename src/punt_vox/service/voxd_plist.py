@@ -9,6 +9,8 @@ import plistlib
 import textwrap
 from typing import TYPE_CHECKING, Self, cast, final
 
+from punt_vox.service.backend import BackendCommandError
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -16,6 +18,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _FALLBACK_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+# The LaunchAgent plist, with its XML declaration at column 0. Fields arrive
+# through str.format; the XML itself carries no braces.
+_TEMPLATE = textwrap.dedent("""\
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>Label</key>
+        <string>{label}</string>
+        <key>ProcessType</key>
+        <string>Interactive</string>
+        <key>LimitLoadToSessionType</key>
+        <string>Aqua</string>
+        <key>ProgramArguments</key>
+        <array>
+    {args}
+        </array>
+        <key>EnvironmentVariables</key>
+        <dict>
+            <key>PATH</key>
+            <string>{path}</string>{env}
+        </dict>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+    </dict>
+    </plist>
+""")
 
 # Env vars carried from the installing shell into the LaunchAgent. PATH is not
 # among them -- it is always written, with a fallback, because a plist with no
@@ -93,8 +126,8 @@ class VoxdPlist:
     def _captured_env_xml(self) -> str:
         """Return the trailing key/string pairs for EnvironmentVariables."""
         return "".join(
-            f"\n            <key>{html.escape(k)}</key>"
-            f"\n            <string>{html.escape(v)}</string>"
+            f"\n        <key>{html.escape(k)}</key>"
+            f"\n        <string>{html.escape(v)}</string>"
             for k, v in self.captured_env().items()
         )
 
@@ -117,34 +150,15 @@ class VoxdPlist:
         # at all, so every subprocess lookup it makes fails -- the same
         # empty-is-worse-than-absent trap as the CA vars in captured_env().
         path_value = html.escape(os.environ.get("PATH") or _FALLBACK_PATH)
-        return textwrap.dedent(f"""\
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-              "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>Label</key>
-                <string>{html.escape(self._label)}</string>
-                <key>ProcessType</key>
-                <string>Interactive</string>
-                <key>LimitLoadToSessionType</key>
-                <string>Aqua</string>
-                <key>ProgramArguments</key>
-                <array>
-            {self._program_args_xml()}
-                </array>
-                <key>EnvironmentVariables</key>
-                <dict>
-                    <key>PATH</key>
-                    <string>{path_value}</string>{self._captured_env_xml()}
-                </dict>
-                <key>RunAtLoad</key>
-                <true/>
-                <key>KeepAlive</key>
-                <true/>
-            </dict>
-            </plist>
-        """)
+        # Substitute into the already-dedented template: dedenting after
+        # substitution would let the argument lines set the common margin and
+        # indent the XML declaration, which plistlib rejects.
+        return _TEMPLATE.format(
+            label=html.escape(self._label),
+            args=self._program_args_xml(),
+            path=path_value,
+            env=self._captured_env_xml(),
+        )
 
     def write(self) -> None:
         """Author the plist on disk with 0644 permissions.
@@ -162,13 +176,18 @@ class VoxdPlist:
     def installed_bind(self) -> str:
         """Return ``EnvironmentVariables.VOXD_BIND`` from the installed plist.
 
-        ``""`` when the plist is absent or sets none. Leading whitespace is
-        stripped first: :meth:`content` can emit the XML declaration indented,
-        which launchd accepts and ``plistlib`` does not.
+        ``""`` when the plist is absent or sets none. A plist that cannot be
+        read or parsed raises ``BackendCommandError``.
         """
-        if not self._path.exists():
+        try:
+            raw = self._path.read_bytes()
+        except FileNotFoundError:
             return ""
-        return self._bind_in(plistlib.loads(self._path.read_bytes().lstrip()))
+        try:
+            return self._bind_in(plistlib.loads(raw))
+        except (OSError, ValueError) as exc:
+            argv = ["read", str(self._path)]
+            raise BackendCommandError.of(argv, 1, str(exc)) from exc
 
     @staticmethod
     def _bind_in(data: object) -> str:

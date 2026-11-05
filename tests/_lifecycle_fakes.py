@@ -26,11 +26,13 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle import DaemonLifecycle
+from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import ProcessHandle
+    from punt_vox.service.lifecycle_report import LifecycleReport
 
 WHEEL = "5.0.6"
 STALE = "5.0.5"
@@ -82,11 +84,48 @@ class FakeProcess:
     def exited(self) -> bool:
         return not self.alive
 
-    def terminate(self) -> bool:
+    def terminate(self, within_s: float) -> bool:
         self._world.signalled.append(self._pid)
+        self._world.budgets.append(within_s)
         if not self._survives:
             self.exit()
         return not self.alive
+
+
+@final
+class FakeHandle:
+    """A fresh handle per probe call, equal to every other handle on its process.
+
+    The real probe opens new handles on every tick, so a fake that hands back
+    the same object would hide a lifecycle that compares handles by identity.
+    """
+
+    __slots__ = ("_proc",)
+
+    _proc: FakeProcess
+
+    def __new__(cls, proc: FakeProcess) -> Self:
+        self = super().__new__(cls)
+        self._proc = proc
+        return self
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FakeHandle):
+            return NotImplemented
+        return self._proc is other._proc
+
+    def __hash__(self) -> int:
+        return hash(id(self._proc))
+
+    @property
+    def pid(self) -> int:
+        return self._proc.pid
+
+    def exited(self) -> bool:
+        return self._proc.exited()
+
+    def terminate(self, within_s: float) -> bool:
+        return self._proc.terminate(within_s)
 
 
 @final
@@ -110,11 +149,23 @@ class FakeWorld:
     start_version: str = WHEEL
     start_binds: bool = True
     next_pid: int = 500
-    # an actor other than vox: replaces the manager's stop, or acts between
-    # the stop and start halves of restart (at the second observation)
+    # processes systemd counts in voxd.service's cgroup
+    service_pids: set[int] = field(default_factory=set)
+    # serve.port as the run directory holds it; None: no file
+    port_file: int | None = None
+    # a manager query that fails (systemctl show, launchctl print)
+    query_error: Exception | None = None
+    # the cause the last gated health request failed with
+    health_error: str = "connection refused"
+    # an actor other than vox: replaces the manager's stop, acts between the
+    # stop and start halves of restart (at the second observation), or acts
+    # once, just before the probe next lists the port holders
     on_stop: Callable[[], None] | None = None
+    on_start: Callable[[], None] | None = None
     between: Callable[[], None] | None = None
+    before_holders: Callable[[], None] | None = None
     # recordings
+    budgets: list[float] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
     alive_at_start: list[int] = field(default_factory=list)
     signalled: list[int] = field(default_factory=list)
@@ -183,11 +234,17 @@ class FakeBackend:
 
     def is_active(self) -> bool:
         self._world.calls.append("is_active")
+        self._raise_query_error()
         return self._world.unit_active
 
     def main_pid(self) -> int | None:
         self._world.calls.append("main_pid")
+        self._raise_query_error()
         return self._world.mainpid
+
+    def _raise_query_error(self) -> None:
+        if self._world.query_error is not None:
+            raise self._world.query_error
 
     def installed_bind(self) -> str:
         return ""
@@ -206,6 +263,8 @@ class FakeBackend:
         world = self._world
         world.calls.append("request_start")
         world.alive_at_start.extend(p.pid for p in world.procs.values() if p.alive)
+        if world.on_start is not None:
+            world.on_start()
         if world.start_takes_effect:
             world.unit_starts()
         if world.start_error is not None:
@@ -216,44 +275,61 @@ class FakeBackend:
 class FakeProbe:
     """A ``LifecycleProbe`` over the shared world."""
 
-    __slots__ = ("_world",)
+    __slots__ = ("_miss", "_world")
 
     _world: FakeWorld
+    _miss: str
 
     def __new__(cls, world: FakeWorld) -> Self:
         self = super().__new__(cls)
         self._world = world
+        self._miss = ""
         return self
 
     def _check(self) -> None:
         if self._world.probe_error:
             raise PortProbeError(self._world.probe_error)
 
-    def voxd_processes(self) -> frozenset[FakeProcess]:
+    def voxd_processes(self) -> frozenset[FakeHandle]:
         self._check()
-        return frozenset(p for p in self._world.procs.values() if p.on_port)
+        hook, self._world.before_holders = self._world.before_holders, None
+        if hook is not None:
+            hook()
+        return frozenset(FakeHandle(p) for p in self._world.procs.values() if p.on_port)
 
     def off_port_voxd(self) -> frozenset[int]:
         self._check()
         return self._world.off_port
 
-    def open_handle(self, pid: int) -> FakeProcess | None:
+    def open_handle(self, pid: int) -> FakeHandle | None:
         proc = self._world.procs.get(pid)
-        return proc if proc is not None and proc.alive else None
+        return FakeHandle(proc) if proc is not None and proc.alive else None
+
+    def service_owned(self, pid: int) -> bool:
+        return pid in self._world.service_pids
+
+    def clear_port_file(self) -> None:
+        if self._world.port_file == 8421:
+            self._world.port_file = None
 
     def port_listening(self) -> bool:
         return self._world.foreign_listener or self._world.holder() is not None
 
     def health(self, holders: frozenset[ProcessHandle]) -> HealthStatus | None:
         if not holders:
+            self._miss = "no visible voxd process holds port 8421"
             return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
         holder = self._world.holder()
         if holder is None or not self._world.token_written:
+            self._miss = self._world.health_error
             return None
         return HealthStatus(
             status="ok", port=8421, pid=holder.pid, daemon_version=holder.version
         )
+
+    def health_miss(self) -> Exception | None:
+        return RuntimeError(self._miss) if self._miss else None
 
 
 @final
@@ -311,6 +387,76 @@ class FakeSudo:
         return answers.pop(0) if len(answers) > 1 else answers[0]
 
 
+# -- the modeled properties, shared by the per-verb row tests --------------
+
+_ALLOWED: dict[str, frozenset[LifecycleOutcome]] = {
+    "stop": frozenset(
+        {
+            LifecycleOutcome.STOPPED,
+            LifecycleOutcome.ALREADY_STOPPED,
+            LifecycleOutcome.NOT_INSTALLED,
+            LifecycleOutcome.PERMISSION_DENIED,
+            LifecycleOutcome.BACKEND_FAILED,
+            LifecycleOutcome.TIMEOUT,
+        }
+    ),
+    "start": frozenset(
+        {
+            LifecycleOutcome.STARTED,
+            LifecycleOutcome.ALREADY_RUNNING,
+            LifecycleOutcome.NOT_INSTALLED,
+            LifecycleOutcome.PERMISSION_DENIED,
+            LifecycleOutcome.BACKEND_FAILED,
+            LifecycleOutcome.TIMEOUT,
+            LifecycleOutcome.PORT_CONFLICT,
+            LifecycleOutcome.VERSION_MISMATCH,
+        }
+    ),
+    "restart": frozenset(
+        {
+            LifecycleOutcome.RESTARTED,
+            LifecycleOutcome.NOT_INSTALLED,
+            LifecycleOutcome.PERMISSION_DENIED,
+            LifecycleOutcome.BACKEND_FAILED,
+            LifecycleOutcome.TIMEOUT,
+            LifecycleOutcome.PORT_CONFLICT,
+            LifecycleOutcome.VERSION_MISMATCH,
+        }
+    ),
+}
+
+
+def denied() -> PrivilegeDeniedError:
+    return PrivilegeDeniedError("sudo: a password is required")
+
+
+def failed(verb: str) -> BackendCommandError:
+    return BackendCommandError.of(["systemctl", verb, "voxd"], 1, "Job failed")
+
+
+def assert_p1_one_outcome(report: LifecycleReport) -> None:
+    """P1 (and the section 4.4 table): the outcome is in the verb's closed set."""
+    assert report.outcome in _ALLOWED[report.verb]
+    assert report.exit_code == (0 if report.outcome.ok else 1)
+
+
+def assert_p2_start_after_exit(world: FakeWorld) -> None:
+    """P2: when start acted, no previous or main process was alive."""
+    assert world.alive_at_start == []
+
+
+def assert_p4_token_only_to_visible_voxd(world: FakeWorld, *allowed: int) -> None:
+    """P4: every token went to a visible voxd holding 8421, and only to it."""
+    for holders in world.tokens_to:
+        assert holders, "a token went out with no visible voxd on the port"
+        assert holders <= set(allowed)
+
+
+def assert_p5_no_signal(world: FakeWorld, *forbidden: int) -> None:
+    """P5: no signal reached the manager's main process or an off-port voxd."""
+    assert not set(world.signalled) & set(forbidden)
+
+
 def lifecycle(world: FakeWorld, clock: FakeClock | None = None) -> DaemonLifecycle:
     """Return a lifecycle over *world*, polling on a fake clock."""
     poll = Poll(clock if clock is not None else FakeClock())
@@ -324,10 +470,17 @@ __all__ = [
     "BackendCommandError",
     "FakeBackend",
     "FakeClock",
+    "FakeHandle",
     "FakeProbe",
     "FakeProcess",
     "FakeSudo",
     "FakeWorld",
     "PrivilegeDeniedError",
+    "assert_p1_one_outcome",
+    "assert_p2_start_after_exit",
+    "assert_p4_token_only_to_visible_voxd",
+    "assert_p5_no_signal",
+    "denied",
+    "failed",
     "lifecycle",
 ]

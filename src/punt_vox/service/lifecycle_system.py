@@ -93,7 +93,7 @@ class LifecycleSystem:
         """
         plat = cls._checked_platform()
         backend = ServiceInstaller.backend_for(plat)
-        probe = DaemonProbe.for_bind(backend.installed_bind())
+        probe = DaemonProbe.for_backend(backend)
         return cls(backend, probe, Poll(SystemClock()), installed_version())
 
     @staticmethod
@@ -150,9 +150,19 @@ class LifecycleSystem:
         """
         procs = self._probe.voxd_processes()
         listening = self._probe.port_listening()
+        if not self._backend.is_installed():
+            # No unit: never query the manager about it, so a failing
+            # ``systemctl show`` cannot hide "not installed".
+            return Observation(
+                installed=False,
+                active=False,
+                mainpid=None,
+                procs=procs,
+                listening=listening,
+            )
         mainpid = self._backend.main_pid()
         return Observation(
-            installed=self._backend.is_installed(),
+            installed=True,
             active=self._backend.is_active() or mainpid is not None,
             mainpid=mainpid,
             procs=procs,
