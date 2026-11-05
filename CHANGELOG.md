@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when launchctl cannot confirm the job left the GUI domain, instead of
   reporting success while launchd could respawn voxd.
 
+## [5.0.6] - 2026-11-04
+
+### Changed
+
 - `punt-lux` is now `>=0.33.0,<0.34`: the floor for
   `client.callback.register(..., frame_id=...)`, the ceiling because lux is
   pre-1.0 and has removed an API in a minor release.
