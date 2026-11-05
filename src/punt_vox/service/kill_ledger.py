@@ -31,15 +31,17 @@ class KillOutcome(Enum):
     # Written before terminate(): its identity re-check can fail before any
     # signal goes out, so this says stop began, not that a signal landed.
     SIGNALLING = "stop began signalling voxd pid {pid}; its exit was never confirmed"
-    SURVIVED = (
-        "voxd pid {pid} did not exit after SIGTERM/SIGKILL "
-        "(permission denied, or it ignored the signals)"
-    )
+    SURVIVED = "voxd pid {pid} did not exit after SIGTERM and SIGKILL were delivered"
     TERM_ONLY = (
         "voxd pid {pid} got SIGTERM only and had not exited: the stop deadline "
         "left no time for a grace period before SIGKILL"
     )
     REFUSED = "voxd pid {pid} refused the signal: permission denied"
+    KILL_REFUSED = (
+        "voxd pid {pid} got SIGTERM, but SIGKILL was refused: permission denied"
+    )
+    # A refused process that exited on its own: gone, but not stop's kill.
+    LEFT = "voxd pid {pid} refused the signal, then exited on its own"
     GONE = "voxd pid {pid} killed"
 
     def line(self, pid: int) -> str:
@@ -53,7 +55,22 @@ class KillOutcome(Enum):
             KillOutcome.SIGNALLING,
             KillOutcome.SURVIVED,
             KillOutcome.TERM_ONLY,
+            KillOutcome.REFUSED,
+            KillOutcome.KILL_REFUSED,
         }
+
+    @property
+    def exited(self) -> bool:
+        """Return True once the process is seen gone, killed or on its own."""
+        return self in {KillOutcome.GONE, KillOutcome.LEFT}
+
+    def seen_exiting(self) -> KillOutcome:
+        """Return this outcome once the process is seen gone.
+
+        A process that refused every signal left on its own; any other
+        signalled process counts as stop's kill.
+        """
+        return KillOutcome.LEFT if self is KillOutcome.REFUSED else KillOutcome.GONE
 
 
 @final
@@ -70,6 +87,7 @@ class KillLedger:
             Termination.SURVIVED: KillOutcome.SURVIVED,
             Termination.TERM_ONLY: KillOutcome.TERM_ONLY,
             Termination.REFUSED: KillOutcome.REFUSED,
+            Termination.KILL_REFUSED: KillOutcome.KILL_REFUSED,
         }
     )
 
@@ -104,16 +122,17 @@ class KillLedger:
     def confirm(self, exited: Iterable[ProcessHandle]) -> None:
         """Mark each signalled handle in *exited* as gone; ignore the rest."""
         for handle in exited:
-            if self._entries.get(handle, KillOutcome.SPARED).unconfirmed:
-                self._entries[handle] = KillOutcome.GONE
+            outcome = self._entries.get(handle, KillOutcome.SPARED)
+            if outcome.unconfirmed:
+                self._entries[handle] = outcome.seen_exiting()
 
     def gone(self, handle: ProcessHandle) -> bool:
         """Return True when stop signalled *handle* and saw it exit."""
-        return self._entries.get(handle) is KillOutcome.GONE
+        return self._entries.get(handle, KillOutcome.SPARED).exited
 
     def any_gone(self) -> bool:
         """Return True once any signalled process is confirmed gone."""
-        return KillOutcome.GONE in self._entries.values()
+        return any(outcome.exited for outcome in self._entries.values())
 
     def account(self) -> list[str]:
         """Return the report lines: the kills, then each other pid's reason."""

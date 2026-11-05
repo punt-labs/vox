@@ -82,5 +82,37 @@ def test_a_refused_signal_is_its_own_outcome() -> None:
     ledger.signalling(refused)
     ledger.settle(refused, Termination.REFUSED)
     assert ledger.account() == ["voxd pid 200 refused the signal: permission denied"]
-    ledger.confirm([refused])  # it exited on its own: stop did not kill it
-    assert not ledger.any_gone()
+
+
+def test_a_refused_process_stays_watched_and_is_never_called_killed() -> None:
+    """L2: a refusal is watched until it exits; its exit is its own, not a kill."""
+    world = FakeWorld()
+    ledger = KillLedger()
+    refused = _handle(world, 200)
+    ledger.signalling(refused)
+    ledger.settle(refused, Termination.REFUSED)
+    assert ledger.unconfirmed() == frozenset({refused})
+    ledger.confirm([refused])
+    assert ledger.gone(refused)
+    assert ledger.account() == [
+        "voxd pid 200 refused the signal, then exited on its own"
+    ]
+
+
+def test_survived_wording_says_both_signals_were_delivered() -> None:
+    """L4: permission denied is REFUSED now, so SURVIVED does not mention it."""
+    line = KillOutcome.SURVIVED.line(7)
+    assert line == "voxd pid 7 did not exit after SIGTERM and SIGKILL were delivered"
+
+
+def test_a_refused_sigkill_after_sigterm_says_so() -> None:
+    """L5: SIGTERM went out, then SIGKILL was refused."""
+    world = FakeWorld()
+    ledger = KillLedger()
+    handle = _handle(world, 200)
+    ledger.signalling(handle)
+    ledger.settle(handle, Termination.KILL_REFUSED)
+    assert handle in ledger.unconfirmed()
+    assert ledger.account() == [
+        "voxd pid 200 got SIGTERM, but SIGKILL was refused: permission denied"
+    ]

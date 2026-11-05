@@ -11,4 +11,5 @@ def test_the_four_outcomes_are_distinct() -> None:
         "survived",
         "term_only",
         "refused",
+        "kill_refused",
     }

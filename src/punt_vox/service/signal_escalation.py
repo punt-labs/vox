@@ -69,7 +69,7 @@ class SignalEscalation:
             return self._unless_gone(Termination.TERM_ONLY)
         logger.warning("voxd pid %d ignored SIGTERM; sending SIGKILL", self._pid)
         if not self._send(signal.SIGKILL):
-            return self._unless_gone(Termination.REFUSED)
+            return self._unless_gone(Termination.KILL_REFUSED)
         return Termination.EXITED if self._wait(kill_wait) else Termination.SURVIVED
 
     def _unless_gone(self, outcome: Termination) -> Termination:

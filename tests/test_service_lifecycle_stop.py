@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from _lifecycle_fakes import (
     FakeClock,
     FakeHandle,
+    FakeProbe,
     FakeProcess,
     FakeWorld,
     assert_p1_one_outcome,
@@ -23,6 +24,7 @@ from _lifecycle_fakes import (
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle_report import LifecycleOutcome as Outcome
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
@@ -459,7 +461,10 @@ def test_timeout_explains_a_survivor() -> None:
     world.spawn(200, survives=True)
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.TIMEOUT
-    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+    assert (
+        "voxd pid 200 did not exit after SIGTERM and SIGKILL were delivered"
+        in report.detail
+    )
 
 
 # -- the report reads only what was recorded when each signal was sent -------
@@ -524,7 +529,10 @@ def test_probe_failure_after_a_signal_names_every_signalled_pid(
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.BACKEND_FAILED
     assert "cgroup read" in report.detail
-    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+    assert (
+        "voxd pid 200 did not exit after SIGTERM and SIGKILL were delivered"
+        in report.detail
+    )
     assert world.signalled == [200]
     assert_p1_one_outcome(report)
 
@@ -537,7 +545,10 @@ def test_timeout_report_runs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.TIMEOUT
     assert "voxd pid 200 is still running" in report.detail
-    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+    assert (
+        "voxd pid 200 did not exit after SIGTERM and SIGKILL were delivered"
+        in report.detail
+    )
 
 
 def test_stopped_report_runs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -739,3 +750,52 @@ def test_a_refused_signal_is_reported_as_refused() -> None:
     assert "SIGTERM only" not in report.detail
     assert "ignored the signals" not in report.detail
     assert world.signalled == [200]
+
+
+# -- local review round 1 ----------------------------------------------------
+
+
+def test_a_refused_late_holder_that_releases_the_port_keeps_stop_waiting() -> None:
+    """L2: a voxd that refused the signal and left 8421 is still running.
+
+    It took the port after stop observed, so it is not a captured handle;
+    only the ledger keeps it watched, and stop must not call that stopped.
+    """
+    world = FakeWorld()
+    world.run_unit(100)
+
+    def late_refuser() -> None:
+        world.spawn(250, refuses=True)
+
+    def stop_then_arm() -> None:
+        world.unit_stops()
+        world.before_holders = late_refuser
+
+    def release(pid: int) -> None:
+        world.procs[pid].unbind()
+
+    world.on_stop = stop_then_arm
+    world.on_signal = release
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 250 is still running" in report.detail
+    assert "voxd pid 250 refused the signal: permission denied" in report.detail
+
+
+def test_a_cleanup_still_declined_when_the_port_is_free_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L3: the confirming tick retries a declined cleanup, then says why it
+    left serve.port -- a voxd seen only by the cleanup's own re-list."""
+    world = FakeWorld(port_file=8421)
+    world.spawn(200)
+
+    def held(self: FakeProbe) -> PortFileCleanup:
+        world.calls.append("clear_port_file")
+        return PortFileCleanup.HELD
+
+    monkeypatch.setattr(FakeProbe, "clear_port_file", held)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.STOPPED
+    assert world.calls.count("clear_port_file") == 2
+    assert "serve.port left in place" in report.detail

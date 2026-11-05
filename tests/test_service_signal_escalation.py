@@ -14,16 +14,21 @@ class _Target:
     """Scripted send/wait primitives for one process."""
 
     def __init__(
-        self, *, exits_on: signal.Signals | None, refuse: bool = False
+        self,
+        *,
+        exits_on: signal.Signals | None,
+        refuse: bool = False,
+        refuse_kill: bool = False,
     ) -> None:
         self.sent: list[signal.Signals] = []
         self.waits: list[float] = []
         self._exits_on = exits_on
         self._refuse = refuse
+        self._refuse_kill = refuse_kill
         self._gone = False
 
     def send(self, sig: signal.Signals) -> bool:
-        if self._refuse:
+        if self._refuse or (self._refuse_kill and sig == signal.SIGKILL):
             return False
         self.sent.append(sig)
         if sig == self._exits_on:
@@ -62,3 +67,10 @@ def test_a_refused_signal_is_refused() -> None:
     target = _Target(exits_on=None, refuse=True)
     assert target.escalation().run(7.0) is Termination.REFUSED
     assert target.sent == []
+
+
+def test_a_refused_sigkill_after_a_delivered_sigterm_is_kill_refused() -> None:
+    """L5: SIGTERM went out; only SIGKILL was refused."""
+    target = _Target(exits_on=None, refuse_kill=True)
+    assert target.escalation().run(7.0) is Termination.KILL_REFUSED
+    assert target.sent == [signal.SIGTERM]

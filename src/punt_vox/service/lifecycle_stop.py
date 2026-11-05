@@ -184,6 +184,7 @@ class StopVerb:
                 "voxd process holds it"
             )
             return False
+        self._finish_port_file()
         self._off_port = self._off_port_note()
         return True
 
@@ -262,6 +263,21 @@ class StopVerb:
         # A voxd that took the port since this tick looked is not spent on:
         # the cleanup waits for a later tick.
         self._port_file_done = cleared.settled
+
+    def _finish_port_file(self) -> None:
+        """On the confirming tick, try a declined cleanup once more, then say why.
+
+        The port is free now, so a decline here means a voxd only the
+        cleanup's own re-list saw; the stale file is named, not left silent.
+        """
+        if self._port_file_done or not self._ledger.any_gone():
+            return
+        self._clear_port_file(frozenset())
+        if not self._port_file_done:
+            self._notes.append(
+                f"serve.port left in place: a voxd held port {DEFAULT_PORT} "
+                "when stop cleared it"
+            )
 
     @staticmethod
     def _pid_of(handle: ProcessHandle) -> int:

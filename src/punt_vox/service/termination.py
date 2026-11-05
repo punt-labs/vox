@@ -25,3 +25,5 @@ class Termination(Enum):
     TERM_ONLY = "term_only"
     # The kernel refused the signal (permission denied); nothing was delivered.
     REFUSED = "refused"
+    # SIGTERM was delivered; the SIGKILL after the grace was refused.
+    KILL_REFUSED = "kill_refused"
