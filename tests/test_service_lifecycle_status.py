@@ -17,6 +17,7 @@ from _lifecycle_fakes import (
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_status import DaemonState
 from punt_vox.service.lifecycle import DaemonLifecycle
+from punt_vox.service.lifecycle_status import StatusCheck
 
 
 def test_status_a_voxd_that_answers_is_running() -> None:
@@ -96,3 +97,29 @@ def test_status_deadline_spent_on_probes_is_unknown_and_sends_no_token() -> None
     assert reading.state is DaemonState.UNKNOWN
     assert "timed out" in reading.reason
     assert world.tokens_to == []
+
+
+def test_status_deadline_spent_probing_is_unknown_not_unresponsive() -> None:
+    """A sliver left after vox's own probes is never blamed on voxd."""
+    world = FakeWorld()
+    world.run_unit(100)
+    clock = FakeClock()
+    world.before_holders = lambda: clock.advance(
+        DaemonLifecycle.STATUS_DEADLINE_S - 0.01
+    )
+    reading = lifecycle(world, clock).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert "before voxd could be asked" in reading.reason
+    assert world.tokens_to == []
+
+
+def test_status_with_the_minimum_health_budget_left_still_asks_voxd() -> None:
+    world = FakeWorld()
+    world.run_unit(100)
+    clock = FakeClock()
+    world.before_holders = lambda: clock.advance(
+        DaemonLifecycle.STATUS_DEADLINE_S - StatusCheck.MIN_HEALTH_S
+    )
+    reading = lifecycle(world, clock).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to == [frozenset({100})]

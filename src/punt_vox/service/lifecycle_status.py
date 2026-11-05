@@ -14,13 +14,13 @@ request each get only what is left. What the probe sees decides the state:
   is sent to it;
 - no voxd and no listener: ``not_running``, naming any voxd on the port
   ``serve.port`` names, as ``stop`` does;
-- a port, process or unit vox cannot inspect, or a deadline spent before
-  voxd could be asked: ``unknown``.
+- a port, process or unit vox cannot inspect, or a deadline spent on vox's
+  own probes before voxd could be asked: ``unknown``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
@@ -39,6 +39,10 @@ class StatusCheck:
     """Read voxd's state on the service port once, within one deadline."""
 
     __slots__ = ("_deadline", "_probe")
+
+    # The least a health request is given. With less left, a timeout would
+    # measure vox's own probing, not voxd, so voxd is not asked at all.
+    MIN_HEALTH_S: ClassVar[float] = 0.5
 
     _deadline: Deadline
     _probe: LifecycleProbe
@@ -75,8 +79,13 @@ class StatusCheck:
 
     def _ask(self, holders: frozenset[ProcessHandle]) -> DaemonStatus:
         """Ask the visible voxd for health; no answer is ``unresponsive``."""
+        left = self._deadline.remaining()
+        if left < self.MIN_HEALTH_S:
+            return DaemonStatus.unknown(
+                f"the status deadline was spent probing port {DEFAULT_PORT} "
+                f"before voxd could be asked ({left:.2f}s left)"
+            )
         probe = self._probe
-        left = self._deadline.cap(self._deadline.remaining(), "health request")
         health = probe.health(holders, left)
         if health is not None:
             return DaemonStatus.running(health)
