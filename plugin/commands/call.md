@@ -41,14 +41,19 @@ tool yet -- every verb shells out to the `vox call` CLI.
    a briefing -- a page or two, never whole files, never a secret value.
 
 2. **Start the call in the background**, with the snapshot on stdin through a
-   quoted heredoc so nothing in it is expanded by the shell. Run this Bash
-   command with `run_in_background: true` -- `vox call start` runs for the
-   whole call:
+   quoted heredoc so nothing in it is expanded by the shell. The heredoc
+   delimiter is fresh for every call: `VOX_CONTEXT_` followed by 8 hex digits
+   you choose at random now -- never a value written in this file -- so no text
+   folded into the snapshot -- a quarry hit, a file excerpt -- can contain the
+   line that ends it early and runs what follows as shell. Check that no line
+   of the snapshot is exactly the delimiter; if one is, pick another. Run this
+   Bash command with `run_in_background: true` -- `vox call start` runs for
+   the whole call:
 
    ```bash
-   vox call start --context - <<'VOX_CONTEXT'
+   vox call start --context - <<'VOX_CONTEXT_<8 random hex digits>'
    <the snapshot>
-   VOX_CONTEXT
+   VOX_CONTEXT_<the same 8 hex digits>
    ```
 
    Append `--script <path>` verbatim when it was given.
@@ -75,12 +80,16 @@ cleanly and writes its summary.
 
 One `pi --mode rpc` process, spawned when the call starts and held until it
 ends, so each turn reuses the warm context of the last. It runs read-only for
-its whole life: `--tools read,grep,find,ls`, no extensions, no MCP, no skills,
-no project-local pi configuration. The ElevenLabs, OpenAI, and AWS keys
-`voxd` holds are stripped from its environment. Paths that may hold secrets
-(`.env*`, key files, and the secret-looking patterns in the repo's
-`.gitignore`) are off limits: the rule is in its system prompt, and any
-attempt to touch one ends the call before a word of the reply is spoken.
+its whole life: `--tools read,grep,find,ls`, no MCP, no skills, no prompt
+templates, no project-local pi configuration, no repo context files, and no
+extensions but one: vox's own secret guard. Its environment is an allowlist
+(`PATH`, `HOME`, locale, terminal, temp and XDG directories, `PI_*`), so no
+token or key from your shell reaches it; pi authenticates from its own
+`~/.pi/agent` configuration. The guard confines every read to the repository
+and refuses paths that may hold secrets (`.env*`, key files, and the
+secret-looking patterns in the repo's `.gitignore`) before the read happens;
+the agent then tells the caller it can't open that file. If a denied read
+ever ran anyway, the call ends before a word of the reply is spoken.
 
 Summaries are written to `~/.punt-labs/vox/calls/<call-id>-summary.md`; the
 newest 50 are kept.
