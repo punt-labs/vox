@@ -647,3 +647,49 @@ def test_remove_port_file_failure_does_not_claim_removal(
     messages = [r.getMessage() for r in caplog.records]
     assert any("Could not remove" in m for m in messages)
     assert not any(m.startswith("Removed") for m in messages)
+
+
+@pytest.mark.parametrize(
+    ("content", "kept"),
+    [("8421", False), ("", False), ("84x", False), ("9000", True)],
+)
+def test_discard_port_file_removes_the_port_or_a_stale_leftover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str, kept: bool
+) -> None:
+    """A file naming the port, or one that does not parse, is removed."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text(content)
+    ProcessManager().discard_port_file(8421)
+    assert (tmp_path / "serve.port").exists() is kept
+
+
+def test_discard_port_file_without_a_file_is_a_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    ProcessManager().discard_port_file(8421)
+    assert not (tmp_path / "serve.port").exists()
+
+
+def test_discard_port_file_unlink_failure_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A removal that fails is reported to the caller, not only logged."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text("8421")
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with pytest.raises(PortProbeError, match="read-only"):
+        ProcessManager().discard_port_file(8421)
+
+
+def test_discard_port_file_read_failure_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").mkdir()
+    with pytest.raises(PortProbeError, match=r"serve\.port"):
+        ProcessManager().discard_port_file(8421)

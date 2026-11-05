@@ -181,16 +181,21 @@ def test_service_owned_matches_the_system_unit_only(
     assert _probe(MagicMock()).service_owned(42) is owned
 
 
-def test_clear_port_file_only_for_the_service_port() -> None:
-    """B6: serve.port is removed only when it names 8421."""
+def test_clear_port_file_discards_a_stale_service_port_file() -> None:
+    """B6: with no visible voxd on 8421, serve.port naming it is discarded."""
     mgr = MagicMock()
-    mgr.read_port_file.return_value = 8421
+    mgr.find_pid_on_port.return_value = []
     _probe(mgr).clear_port_file()
-    mgr.remove_port_file.assert_called_once_with()
+    mgr.discard_port_file.assert_called_once_with(8421)
+
+
+def test_clear_port_file_leaves_the_file_of_a_voxd_on_the_port() -> None:
+    """A visible voxd still on 8421 may own serve.port: it is not removed."""
     mgr = MagicMock()
-    mgr.read_port_file.return_value = 9000
+    mgr.find_pid_on_port.return_value = [20]
+    mgr.open_voxd.return_value = MagicMock()
     _probe(mgr).clear_port_file()
-    mgr.remove_port_file.assert_not_called()
+    mgr.discard_port_file.assert_not_called()
 
 
 def test_bind_is_read_lazily_inside_the_verb() -> None:

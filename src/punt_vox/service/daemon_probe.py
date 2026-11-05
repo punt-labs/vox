@@ -129,10 +129,16 @@ class DaemonProbe:
         return path == cls._SERVICE_CGROUP or path.startswith(cls._SERVICE_CGROUP + "/")
 
     def clear_port_file(self) -> None:
-        """Remove ``serve.port`` when it names the service port."""
-        mgr = self._process_mgr
-        if mgr.read_port_file() == DEFAULT_PORT:
-            mgr.remove_port_file()
+        """Remove a stale ``serve.port`` that names the service port.
+
+        Left alone while a visible voxd holds the port, since the file may be
+        that voxd's. Removed when it names the service port or does not parse
+        (a crash leftover). Raises ``PortProbeError`` when the file cannot be
+        read or removed.
+        """
+        if self.voxd_processes():
+            return
+        self._process_mgr.discard_port_file(DEFAULT_PORT)
 
     def port_listening(self) -> bool:
         """Return True when anything accepts a TCP connection on the port.

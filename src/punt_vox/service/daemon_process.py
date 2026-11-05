@@ -25,7 +25,7 @@ import sys
 import weakref
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
-from punt_vox.service.backend import PortProbeError
+from punt_vox.service.backend import KILL_GRACE_FLOOR_S, PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 
 if TYPE_CHECKING:
@@ -44,18 +44,14 @@ _TERM_GRACE_S = 5.0
 _KILL_WAIT_S = 2.0
 
 
-# Below this budget there is no room for a real SIGTERM grace, so no SIGKILL
-# is sent: the process gets SIGTERM only and the caller sees it survive.
-_MIN_GRACE_S = 1.0
-
-
 def _split(within_s: float) -> tuple[float, float | None]:
     """Split a terminate budget into (SIGTERM grace, SIGKILL wait).
 
     The SIGKILL wait is ``None`` -- send no SIGKILL -- when the budget is
-    below ``_MIN_GRACE_S``: a SIGKILL with no grace before it is never sent.
+    below ``KILL_GRACE_FLOOR_S``: a SIGKILL with no grace before it is never
+    sent, and the caller sees the process survive.
     """
-    if within_s < _MIN_GRACE_S:
+    if within_s < KILL_GRACE_FLOOR_S:
         return max(0.0, within_s), None
     kill_wait = min(_KILL_WAIT_S, within_s * 0.3)
     return min(_TERM_GRACE_S, within_s - kill_wait), kill_wait

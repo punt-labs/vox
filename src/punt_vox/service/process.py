@@ -63,6 +63,31 @@ class ProcessManager:
             logger.warning("Ignoring stale %s: unparseable %r", port_file, text)
             return None
 
+    def discard_port_file(self, port: int) -> None:
+        """Remove ``serve.port`` when it names *port* or does not parse.
+
+        An unparseable file is a crash leftover (voxd writes it
+        non-atomically), stale whoever wrote it; a file naming another port
+        belongs to another voxd and is left. A read or removal failure raises
+        ``PortProbeError`` so the caller can report it.
+        """
+        port_file = self._run_dir() / "serve.port"
+        try:
+            text = port_file.read_text()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            msg = f"cannot read {port_file}: {exc}"
+            raise PortProbeError(msg) from exc
+        if text.strip().isdecimal() and int(text) != port:
+            return
+        try:
+            port_file.unlink(missing_ok=True)
+        except OSError as exc:
+            msg = f"cannot remove {port_file}: {exc}"
+            raise PortProbeError(msg) from exc
+        logger.info("Removed stale port file %s", port_file)
+
     def remove_port_file(self) -> None:
         """Remove the daemon port file; warn (never claim removal) on failure."""
         port_file = self._run_dir() / "serve.port"

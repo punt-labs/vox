@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from punt_vox.types_health import HealthStatus
 
 __all__ = [
+    "KILL_GRACE_FLOOR_S",
     "BackendCommandError",
     "Clock",
     "CommandRunner",
@@ -89,6 +90,14 @@ class InstallableBackend(ServiceBackend, Protocol):
         ...
 
 
+KILL_GRACE_FLOOR_S = 1.0
+"""The shortest SIGTERM grace worth a SIGKILL after it.
+
+A ``terminate()`` budget below this sends SIGTERM only: SIGKILL is never sent
+without a real chance to exit cleanly first.
+"""
+
+
 class ProcessHandle(Protocol):
     """A handle pinned to one voxd process, never to a bare, reusable pid."""
 
@@ -104,7 +113,8 @@ class ProcessHandle(Protocol):
     def terminate(self, within_s: float) -> bool:
         """SIGTERM, then SIGKILL after a grace; return whether it exited.
 
-        Takes at most *within_s* seconds, so a caller's deadline holds.
+        Takes at most *within_s* seconds, so a caller's deadline holds. Below
+        ``KILL_GRACE_FLOOR_S`` it sends SIGTERM only.
         """
         ...
 
@@ -132,7 +142,11 @@ class LifecycleProbe(Protocol):
         ...
 
     def clear_port_file(self) -> None:
-        """Remove ``serve.port`` when it names the service port."""
+        """Remove a stale ``serve.port`` naming the service port.
+
+        Left alone while a visible voxd holds the port; an unparseable file is
+        stale and removed. Raises ``PortProbeError`` when it cannot be removed.
+        """
         ...
 
     def port_listening(self) -> bool:

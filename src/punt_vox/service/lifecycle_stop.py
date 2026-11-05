@@ -2,15 +2,21 @@
 
 A stop succeeds only when four things hold at once: the manager reports the
 job inactive, no visible voxd holds the port, every process handle captured
-before acting -- the manager's main process included -- has exited, and the
-port accepts no connection. A backend command's exit code never decides the
-outcome on its own.
+before acting -- the manager's main process included -- and every process stop
+signalled has exited, and the port accepts no connection. A backend command's
+exit code never decides the outcome on its own.
 
 Once the manager is inactive, a voxd still on the port is not the manager's
 (an unmanaged voxd), and is terminated through its pinned handle. The
 manager's main process is never signalled: while the manager reports one,
-the job counts as active and no escalation runs, and immediately before any
+the job counts as active and no escalation runs, and immediately before each
 signal the manager is asked again, and a process it still owns is spared.
+
+Every report is built from what the settle ticks recorded -- the
+:class:`~punt_vox.service.kill_ledger.KillLedger` written as each process was
+spared or signalled, and the last tick's account of what was still up. No probe
+runs while a report is built, so a probe failure after a signal still yields a
+report that names every signalled pid.
 """
 
 from __future__ import annotations
@@ -19,10 +25,12 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import (
+    KILL_GRACE_FLOOR_S,
     BackendCommandError,
     PortProbeError,
     PrivilegeDeniedError,
 )
+from punt_vox.service.kill_ledger import KillLedger
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.process import DEFAULT_PORT
 
@@ -44,12 +52,13 @@ class StopVerb:
         "_captured",
         "_deadline_at",
         "_deadline_s",
-        "_doomed",
-        "_killed",
+        "_ledger",
         "_main",
         "_notes",
+        "_off_port",
+        "_port_file_done",
         "_requested",
-        "_spared",
+        "_still_up",
         "_system",
     )
 
@@ -58,11 +67,12 @@ class StopVerb:
     _deadline_at: float
     _captured: frozenset[ProcessHandle]
     _main: frozenset[ProcessHandle]
-    _killed: list[int]
-    _doomed: set[ProcessHandle]
+    _ledger: KillLedger
     _notes: list[str]
     _requested: bool
-    _spared: set[int]
+    _port_file_done: bool
+    _still_up: str
+    _off_port: str
 
     def __new__(cls, system: LifecycleSystem, deadline_s: float) -> Self:
         self = super().__new__(cls)
@@ -71,11 +81,14 @@ class StopVerb:
         self._deadline_at = 0.0
         self._captured = frozenset()
         self._main = frozenset()
-        self._killed = []
-        self._doomed = set()
+        self._ledger = KillLedger()
         self._notes = []
         self._requested = False
-        self._spared = set()
+        self._port_file_done = False
+        # What the last settle tick found still up; the timeout detail.
+        self._still_up = "voxd did not stop"
+        # The off-port note the confirming tick took; the stopped detail.
+        self._off_port = ""
         return self
 
     def run(self, verb: LifecycleVerb) -> LifecycleReport:
@@ -83,7 +96,8 @@ class StopVerb:
 
         A failing probe or manager query ends the verb as ``backend_failed``,
         saying whether the stop had already been requested and what it had
-        already done (processes killed or spared, refusals overruled).
+        already done (processes killed, spared or left unconfirmed, refusals
+        overruled).
         """
         try:
             return self._run(verb)
@@ -114,7 +128,9 @@ class StopVerb:
         if self._system.poll.until(self._settled, self._deadline_s):
             done = self._report(verb, LifecycleOutcome.STOPPED, self._stopped_detail())
             return done.naming(previous_pid=previous)
-        return self._timeout(verb).naming(previous_pid=previous)
+        detail = f"{self._still_up} after {self._deadline_s:.0f}s{self._done()}"
+        timeout = self._report(verb, LifecycleOutcome.TIMEOUT, detail)
+        return timeout.naming(previous_pid=previous)
 
     def _capture(self, obs: Observation) -> None:
         """Pin the port holders and the manager's main process before acting."""
@@ -150,44 +166,93 @@ class StopVerb:
         self._notes.append(f"the stop request failed ({exc}) but the unit went down")
 
     def _settled(self) -> bool:
-        """Return True once the stop is confirmed; escalate when it can."""
+        """One settle tick: escalate when it can, record what is still up.
+
+        Returns True once the stop is confirmed. Every probe of the stop runs
+        here, never while a report is built; what a report needs is written
+        to the ledger and ``_still_up`` as the tick learns it.
+        """
         if self._system.is_active():
+            self._still_up = "voxd.service is still active"
             return False
+        up = self._clear_the_port()
+        if up:
+            self._still_up = f"voxd pid {self._join(up)} is still running"
+            return False
+        if self._system.probe.port_listening():
+            self._still_up = (
+                f"port {DEFAULT_PORT} still accepts connections but no visible "
+                "voxd process holds it"
+            )
+            return False
+        self._off_port = self._off_port_note()
+        return True
+
+    def _clear_the_port(self) -> list[int]:
+        """Escalate against every voxd left behind; return the pids still up.
+
+        A signalled process seen to exit is marked gone in the ledger here,
+        on whichever tick sees it -- the tick of the signal or a later one.
+        The manager's main process counts as up until it exits, but is never
+        a target.
+        """
         holders = self._system.probe.voxd_processes()
-        lingering = frozenset(h for h in self._captured if not h.exited())
-        if holders or lingering:
-            self._escalate((holders | lingering) - self._doomed)
-            return False
-        if any(not h.exited() for h in self._main):
-            return False
-        return not self._system.probe.port_listening()
+        watched = self._captured | self._ledger.unconfirmed()
+        lingering = frozenset(h for h in watched if not h.exited())
+        self._ledger.confirm(watched - lingering)
+        left = holders | lingering
+        if left:
+            self._escalate(left)
+        self._clear_port_file(holders)
+        up = {h.pid for h in left if not self._ledger.gone(h)}
+        up |= {h.pid for h in self._main if not h.exited()}
+        return sorted(up)
 
     def _escalate(self, targets: frozenset[ProcessHandle]) -> None:
         """Terminate, once each, voxd processes the inactive manager left.
 
-        The manager is asked again right before any signal: if it became
-        active, nothing is signalled and the next tick decides afresh. A
-        process the manager still owns (its main pid, or a member of its
-        cgroup) is never signalled. A handle that survives ``terminate()`` is
-        not signalled again; it keeps the stop from confirming.
+        Each process is judged once: spared or signalled, never both, never
+        twice. Immediately before each one the manager is asked again: if it
+        became active, nothing more is signalled and the next tick decides
+        afresh. A process the manager still owns (a member of its cgroup) is
+        spared.
         """
-        if not targets or self._system.is_active():
-            return
         probe = self._system.probe
         for handle in sorted(targets, key=self._pid_of):
+            if self._ledger.judged(handle):
+                continue
+            if self._system.is_active():
+                return
             if probe.service_owned(handle.pid):
                 logger.warning("voxd pid %d belongs to the service; spared", handle.pid)
-                self._spared.add(handle.pid)
+                self._ledger.spare(handle)
                 continue
-            self._doomed.add(handle)
-            budget = max(0.0, self._deadline_at - self._system.poll.now())
-            if handle.terminate(budget):
-                self._killed.append(handle.pid)
-        if self._killed:
-            self._clear_port_file()
+            self._signal(handle)
 
-    def _clear_port_file(self) -> None:
-        """Remove a stale ``serve.port``; after a kill, a failure only warns."""
+    def _signal(self, handle: ProcessHandle) -> None:
+        """Terminate *handle* within what is left of the stop's deadline.
+
+        The ledger entry is written before the signal goes out, so a failure
+        inside ``terminate()`` still leaves the pid named in the report.
+        """
+        budget = max(0.0, self._deadline_at - self._system.poll.now())
+        self._ledger.signalling(handle)
+        exited = handle.terminate(budget)
+        self._ledger.settle(handle, exited=exited, full=budget >= KILL_GRACE_FLOOR_S)
+
+    def _clear_port_file(self, holders: frozenset[ProcessHandle]) -> None:
+        """Remove a stale ``serve.port``, once per stop.
+
+        Runs only after a signalled voxd is confirmed gone, and only while no
+        visible voxd it has not killed holds the port (that voxd's file is
+        live). After the kill, a failure is a note in the detail, not a
+        failed stop.
+        """
+        if self._port_file_done or not self._ledger.any_gone():
+            return
+        if any(not self._ledger.gone(h) for h in holders):
+            return
+        self._port_file_done = True
         try:
             self._system.probe.clear_port_file()
         except PortProbeError as exc:
@@ -205,54 +270,25 @@ class StopVerb:
 
     def _stopped_detail(self) -> str:
         detail = f"voxd.service stopped; port {DEFAULT_PORT} free"
-        return detail + self._done() + self._off_port_note()
+        return detail + self._done() + self._off_port
 
     def _done(self) -> str:
         """Return what the stop did to voxd processes, and any carried notes.
 
         Every report names this -- success, timeout or failure -- so a stop
-        that killed something never ends without saying so, and a voxd it
-        deliberately left alive is named with the reason.
+        that signalled something never ends without saying so, and a voxd it
+        left alive or could not confirm gone is named with the reason. It
+        reads only the ledger and the notes: no probe.
         """
-        parts: list[str] = []
-        if self._killed:
-            parts.append(f"killed unmanaged voxd pid {self._join(self._killed)}")
-        parts.extend(
-            f"voxd pid {pid} spared: voxd.service still owns it"
-            for pid in sorted(self._spared)
-        )
-        survivors = sorted(h.pid for h in self._doomed if not h.exited())
-        parts.extend(
-            f"voxd pid {pid} did not exit after SIGTERM/SIGKILL "
-            "(permission denied, or it ignored the signals)"
-            for pid in survivors
-        )
-        parts.extend(self._notes)
+        parts = [*self._ledger.account(), *self._notes]
         return "".join(f"; {part}" for part in parts)
-
-    def _timeout(self, verb: LifecycleVerb) -> LifecycleReport:
-        """Name what is still up at the deadline."""
-        if self._system.is_active():
-            what = "voxd.service is still active"
-        else:
-            alive = {h.pid for h in self._captured | self._main if not h.exited()}
-            alive |= {h.pid for h in self._system.probe.voxd_processes()}
-            if alive:
-                what = f"voxd pid {self._join(sorted(alive))} is still running"
-            else:
-                what = (
-                    f"port {DEFAULT_PORT} still accepts connections but no "
-                    "visible voxd process holds it"
-                )
-        detail = f"{what} after {self._deadline_s:.0f}s{self._done()}"
-        return self._report(verb, LifecycleOutcome.TIMEOUT, detail)
 
     def _off_port_note(self) -> str:
         """Name any voxd on another port; it is never signalled."""
         others = self._system.probe.off_port_voxd()
         if not others:
             return ""
-        pids = ", ".join(str(p) for p in sorted(others))
+        pids = self._join(sorted(others))
         return f"; voxd pid {pids} on another port was not touched"
 
     @staticmethod

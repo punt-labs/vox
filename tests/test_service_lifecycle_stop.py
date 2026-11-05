@@ -6,8 +6,12 @@ asserts the model properties (P1, P5) its row can reach.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from _lifecycle_fakes import (
     FakeClock,
+    FakeHandle,
+    FakeProcess,
     FakeWorld,
     assert_p1_one_outcome,
     assert_p5_no_signal,
@@ -17,7 +21,13 @@ from _lifecycle_fakes import (
 )
 
 from punt_vox.service.backend import PortProbeError
+from punt_vox.service.clock import Poll
 from punt_vox.service.lifecycle_report import LifecycleOutcome as Outcome
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pytest
 
 
 def test_s1_not_installed() -> None:
@@ -449,3 +459,205 @@ def test_timeout_explains_a_survivor() -> None:
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.TIMEOUT
     assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+
+
+# -- the report reads only what was recorded when each signal was sent -------
+
+
+def _probes_break_after_the_wait(
+    monkeypatch: pytest.MonkeyPatch, world: FakeWorld
+) -> None:
+    """Once the settle poll returns, every probe and manager query fails.
+
+    A report built from the outcomes recorded at signal time is untouched by
+    this; a report that probes again turns into a failure or a traceback.
+    """
+    broken = {"now": False}
+    real_until = Poll.until
+    real_exited = FakeHandle.exited
+
+    def until(self: Poll, condition: Callable[[], bool], deadline_s: float) -> bool:
+        done = real_until(self, condition, deadline_s)
+        broken["now"] = True
+        world.probe_error = "ps timed out"
+        world.query_error = failed("show")
+        world.probe_failures["service_owned"] = PortProbeError("cgroup read")
+        return done
+
+    def exited(self: FakeHandle) -> bool:
+        if broken["now"]:
+            raise PortProbeError("cannot inspect pid: ps timed out")
+        return real_exited(self)
+
+    monkeypatch.setattr(Poll, "until", until)
+    monkeypatch.setattr(FakeHandle, "exited", exited)
+
+
+def test_probe_failure_after_a_signal_names_every_signalled_pid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """djb B1: exited() and service_owned(201) fail after 200 was terminated.
+
+    The failure is backend_failed, never a traceback, and its detail names
+    200 -- the pid stop signalled -- from the record made when it signalled.
+    """
+    state = {"boom": False}
+    real_terminate = FakeProcess.terminate
+    real_exited = FakeHandle.exited
+
+    def terminate(self: FakeProcess, within_s: float) -> bool:
+        exited = real_terminate(self, within_s)
+        state["boom"] = True
+        return exited
+
+    def exited(self: FakeHandle) -> bool:
+        if state["boom"]:
+            raise PortProbeError("cannot inspect pid: ps timed out")
+        return real_exited(self)
+
+    monkeypatch.setattr(FakeProcess, "terminate", terminate)
+    monkeypatch.setattr(FakeHandle, "exited", exited)
+    world = FakeWorld(probe_failures={("service_owned", 201): failed("cgroup read")})
+    world.spawn(200, survives=True)
+    world.spawn(201)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.BACKEND_FAILED
+    assert "cgroup read" in report.detail
+    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+    assert world.signalled == [200]
+    assert_p1_one_outcome(report)
+
+
+def test_timeout_report_runs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timeout detail comes from the last tick and the signal records."""
+    world = FakeWorld()
+    world.spawn(200, survives=True)
+    _probes_break_after_the_wait(monkeypatch, world)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 200 is still running" in report.detail
+    assert "voxd pid 200 did not exit after SIGTERM/SIGKILL" in report.detail
+
+
+def test_stopped_report_runs_no_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    world = FakeWorld()
+    world.spawn(200)
+    _probes_break_after_the_wait(monkeypatch, world)
+    report = lifecycle(world).stop()
+    assert report.outcome is Outcome.STOPPED
+    assert "killed unmanaged voxd pid 200" in report.detail
+
+
+def _sigterm_only_at_the_deadline(world: FakeWorld) -> FakeClock:
+    """The manager lets go at 9.3 s, leaving well under the 1 s kill floor."""
+    main = world.run_unit(100, on_port=False)
+    world.stop_takes_effect = False
+    clock = FakeClock()
+
+    def manager_stops() -> None:
+        main.exit()
+        world.unit_active = False
+        world.mainpid = None
+
+    clock.at(9.3, manager_stops)
+    return clock
+
+
+def test_sigterm_only_kill_that_exits_on_a_later_tick_is_named_killed() -> None:
+    """A below-floor terminate gets SIGTERM only; its exit is seen next tick."""
+    world = FakeWorld()
+    clock = _sigterm_only_at_the_deadline(world)
+    world.spawn(200, slow_exit=True)
+    report = lifecycle(world, clock).stop()
+    assert world.budgets
+    assert world.budgets[0] < 1.0
+    assert report.outcome is Outcome.STOPPED
+    assert "killed unmanaged voxd pid 200" in report.detail
+    assert_p5_no_signal(world, 100)
+
+
+def test_sigterm_only_survivor_is_explained_by_the_deadline() -> None:
+    """The reason is the missing grace period, not "ignored the signals"."""
+    world = FakeWorld()
+    clock = _sigterm_only_at_the_deadline(world)
+    world.spawn(200, survives=True)
+    report = lifecycle(world, clock).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "voxd pid 200 got SIGTERM only" in report.detail
+    assert "no time for a grace period" in report.detail
+    assert "ignored the signals" not in report.detail
+
+
+def test_port_file_cleanup_runs_once_and_notes_a_failure_once() -> None:
+    """A spared voxd keeps the stop ticking; the cleanup still runs once."""
+    world = FakeWorld(
+        port_file=8421,
+        service_pids={300},
+        probe_failures={"clear_port_file": PortProbeError("unlink denied")},
+    )
+    world.spawn(200)
+    spared = world.spawn(300)
+    clock = FakeClock()
+    clock.at(0.1, spared.unbind)  # leaves 8421, stays alive in the cgroup
+    report = lifecycle(world, clock).stop()
+    assert report.outcome is Outcome.TIMEOUT
+    assert world.calls.count("clear_port_file") == 1
+    assert report.detail.count("could not clear serve.port") == 1
+    assert world.signalled == [200]
+
+
+def test_port_file_kept_while_a_visible_voxd_holds_the_port() -> None:
+    """The serve.port of a voxd still on 8421 is not removed under it."""
+    world = FakeWorld(port_file=8421, service_pids={300})
+    world.spawn(200)
+    world.spawn(300)
+    lifecycle(world).stop()
+    assert world.port_file == 8421
+    assert "clear_port_file" not in world.calls
+
+
+def test_port_file_cleanup_waits_for_a_confirmed_exit() -> None:
+    """No serve.port is removed while every signalled voxd may still be up."""
+    world = FakeWorld(port_file=8421)
+    world.spawn(200, survives=True)
+    world.spawn(201, on_port=False, survives=True)
+    world.procs[200].unbind()
+    lifecycle(world).stop()
+    assert world.port_file == 8421
+
+
+def test_unparseable_port_file_is_removed_after_the_kill() -> None:
+    world = FakeWorld(port_file_stale=True)
+    world.spawn(200)
+    assert lifecycle(world).stop().outcome is Outcome.STOPPED
+    assert world.port_file_stale is False
+
+
+def test_spared_pid_is_never_also_reported_killed() -> None:
+    """A voxd spared as the service's is not signalled once it leaves the cgroup."""
+    world = FakeWorld(service_pids={300})
+    world.spawn(300)
+    clock = FakeClock()
+    clock.at(1.0, world.service_pids.clear)
+    report = lifecycle(world, clock).stop()
+    assert world.signalled == []
+    assert "voxd pid 300 spared" in report.detail
+    assert "killed unmanaged voxd pid 300" not in report.detail
+
+
+def test_manager_is_asked_again_before_each_signal() -> None:
+    """A unit started while 200 is being killed spares 201 in the same tick."""
+    world = FakeWorld()
+    world.spawn(200)
+    world.spawn(201)
+
+    def third_party_start(pid: int) -> None:
+        if pid == 200:
+            world.run_unit(600)
+
+    world.on_signal = third_party_start
+    report = lifecycle(world).stop()
+    assert world.signalled == [200]
+    assert_p5_no_signal(world, 201, 600)
+    assert report.outcome is Outcome.TIMEOUT
+    assert "killed unmanaged voxd pid 200" in report.detail

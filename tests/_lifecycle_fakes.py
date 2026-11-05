@@ -42,23 +42,42 @@ STALE = "5.0.5"
 class FakeProcess:
     """One voxd process: alive or not, on the port or not, killable or not."""
 
-    __slots__ = ("_on_port", "_pid", "_survives", "_world", "alive", "version")
+    __slots__ = (
+        "_exiting",
+        "_on_port",
+        "_pid",
+        "_slow_exit",
+        "_survives",
+        "_world",
+        "alive",
+        "version",
+    )
 
     _world: FakeWorld
     _pid: int
     _on_port: bool
     _survives: bool
+    _slow_exit: bool
+    _exiting: bool
     alive: bool
     version: str
 
     def __new__(
-        cls, world: FakeWorld, pid: int, *, version: str = WHEEL, survives: bool = False
+        cls,
+        world: FakeWorld,
+        pid: int,
+        *,
+        version: str = WHEEL,
+        survives: bool = False,
+        slow_exit: bool = False,
     ) -> Self:
         self = super().__new__(cls)
         self._world = world
         self._pid = pid
         self._on_port = False
         self._survives = survives
+        self._slow_exit = slow_exit
+        self._exiting = False
         self.alive = True
         self.version = version
         return self
@@ -69,7 +88,14 @@ class FakeProcess:
 
     @property
     def on_port(self) -> bool:
+        self._settle()
         return self.alive and self._on_port
+
+    def _settle(self) -> None:
+        """A slow exiter that outlived its terminate() is gone by the next look."""
+        if self._exiting:
+            self._exiting = False
+            self.exit()
 
     def bind(self) -> None:
         self._on_port = True
@@ -82,19 +108,26 @@ class FakeProcess:
         self._on_port = False
 
     def exited(self) -> bool:
+        self._settle()
         return not self.alive
 
     def terminate(self, within_s: float) -> bool:
-        """Exit at once, or -- a survivor -- block the whole budget as the real
-        handle would, so the fake clock shows what the kill cost."""
+        """Exit at once, or -- a survivor or slow exiter -- block the whole
+        budget as the real handle would, so the fake clock shows what the kill
+        cost. A slow exiter is still alive when terminate() returns and gone
+        by the next look."""
         world = self._world
         world.signalled.append(self._pid)
         world.budgets.append(within_s)
-        if not self._survives:
+        if world.on_signal is not None:
+            world.on_signal(self._pid)
+        if not (self._survives or self._slow_exit):
             self.exit()
-        elif world.clock is not None:
+            return True
+        if world.clock is not None:
             world.clock.advance(within_s)
-        return not self.alive
+        self._exiting = self._slow_exit
+        return False
 
 
 @final
@@ -158,6 +191,10 @@ class FakeWorld:
     service_pids: set[int] = field(default_factory=set)
     # serve.port as the run directory holds it; None: no file
     port_file: int | None = None
+    # serve.port holds unparseable content (a crash leftover); port_file unused
+    port_file_stale: bool = False
+    # called with the pid each time a process is signalled
+    on_signal: Callable[[int], None] | None = None
     # a manager query that fails (systemctl show, launchctl print)
     query_error: Exception | None = None
     # the cause the last gated health request failed with
@@ -187,8 +224,11 @@ class FakeWorld:
         on_port: bool = True,
         version: str = WHEEL,
         survives: bool = False,
+        slow_exit: bool = False,
     ) -> FakeProcess:
-        proc = FakeProcess(self, pid, version=version, survives=survives)
+        proc = FakeProcess(
+            self, pid, version=version, survives=survives, slow_exit=slow_exit
+        )
         if on_port:
             proc.bind()
         self.procs[pid] = proc
@@ -325,9 +365,14 @@ class FakeProbe:
         return pid in self._world.service_pids
 
     def clear_port_file(self) -> None:
+        world = self._world
+        world.calls.append("clear_port_file")
         self._fail("clear_port_file")
-        if self._world.port_file == 8421:
-            self._world.port_file = None
+        if world.holder() is not None:
+            return
+        if world.port_file_stale or world.port_file == 8421:
+            world.port_file = None
+            world.port_file_stale = False
 
     def port_listening(self) -> bool:
         self._fail("port_listening")
