@@ -720,3 +720,23 @@ def test_uninstall_refuses_to_run_as_root(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(ServiceInstaller, "backend_for", staticmethod(no_backend))
     with pytest.raises(SystemExit, match="uninstall must run as your normal user"):
         ServiceInstaller().uninstall()
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_says_the_unit_is_gone_when_the_daemon_could_not_be_stopped(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
+) -> None:
+    """A pre-kill failure after the unit is removed names both halves."""
+    _on(monkeypatch, plat)
+
+    def locked_out(self: ProcessManager) -> bool:
+        msg = "cannot lock /run/serve.port: another vox/punt process is writing"
+        raise PortProbeError(msg)
+
+    monkeypatch.setattr(ProcessManager, "kill_stale_daemon", locked_out)
+    with pytest.raises(SystemExit) as caught:
+        ServiceInstaller().uninstall()
+    message = str(caught.value)
+    assert "unit removed" in message
+    assert "daemon not stopped" in message
+    assert "cannot lock" in message

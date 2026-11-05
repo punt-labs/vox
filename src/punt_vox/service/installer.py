@@ -202,10 +202,22 @@ class ServiceInstaller:
     def _uninstall(self, backend: InstallableBackend) -> str:
         """Remove the unit, then kill and re-scan for a surviving voxd."""
         backend.uninstall()
-        killed = self._process_mgr.kill_stale_daemon()
-        # kill_stale_daemon() returns False both for "nothing to kill" and
-        # "kill failed"; re-scan the port to tell a survivor from an empty port.
-        if not killed and self._stale_daemon_survives():
+        try:
+            # kill_stale_daemon() returns False both for "nothing to kill" and
+            # "kill failed"; re-scan the port to tell a survivor from an empty
+            # port.
+            survives = (
+                not self._process_mgr.kill_stale_daemon()
+                and self._stale_daemon_survives()
+            )
+        except PortProbeError as exc:
+            # The unit is already gone: say so, never a bare "failed".
+            msg = (
+                f"vox daemon uninstall: voxd unit removed ({backend.service_path}); "
+                f"daemon not stopped: {exc}"
+            )
+            raise SystemExit(msg) from exc
+        if survives:
             msg = (
                 f"voxd files removed ({backend.service_path}), but a daemon is "
                 "still running and could not be stopped -- it may be owned by "

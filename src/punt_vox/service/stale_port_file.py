@@ -55,8 +55,9 @@ class StalePortFile:
 
         Read under the lock voxd publishes with, so the read never sees a file
         half-replaced. With no file there, nothing is pinned and no lock is
-        taken, so a host with no run directory gets none created. Any read
-        failure but "absent" raises ``PortProbeError``.
+        taken, so a host with no run directory gets none created. A lock that
+        cannot be taken raises ``PortProbeError`` saying "cannot lock"; any
+        read failure but "absent", "cannot read".
         """
         if cls._identity_of(path) is None:
             return cls(path, None, None)
@@ -64,18 +65,25 @@ class StalePortFile:
             with SiblingLock(path).held():
                 return cls._read_open(path)
         except OSError as exc:  # TimeoutError: a voxd held the lock throughout
-            msg = f"cannot read {path}: {exc}"
+            msg = f"cannot lock {path}: {exc}"
             raise PortProbeError(msg) from exc
 
     @classmethod
     def _read_open(cls, path: Path) -> Self:
-        """Open *path*, fstat that descriptor, and read the port from it."""
+        """Open *path*, fstat that descriptor, and read the port from it.
+
+        A read failure but "absent" raises ``PortProbeError`` -- never an
+        ``OSError``, which the caller would report as a lock failure.
+        """
         try:
             with path.open("rb") as handle:
                 st = os.fstat(handle.fileno())
                 text = handle.read().decode("utf-8", "replace").strip()
         except FileNotFoundError:
             return cls(path, None, None)
+        except OSError as exc:
+            msg = f"cannot read {path}: {exc}"
+            raise PortProbeError(msg) from exc
         port = int(text) if text.isdecimal() else None
         return cls(path, FileIdentity.of(st), port)
 
@@ -115,6 +123,10 @@ class StalePortFile:
             return PortFileCleanup.REPLACED
         if self._port is not None and self._port != port:
             return PortFileCleanup.OTHER_PORT
+        return self._remove()
+
+    def _remove(self) -> PortFileCleanup:
+        """Unlink the file; a failure raises ``PortProbeError`` naming it."""
         try:
             self._path.unlink(missing_ok=True)
         except OSError as exc:

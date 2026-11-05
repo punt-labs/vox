@@ -61,7 +61,7 @@ def test_a_lock_that_cannot_be_taken_raises_a_probe_error(
         raise OSError(errno.ENOLCK, "No locks available")
 
     monkeypatch.setattr(fcntl, "flock", no_locks)
-    with pytest.raises(PortProbeError, match=r"serve\.port.*No locks available"):
+    with pytest.raises(PortProbeError, match=r"cannot lock .*No locks available"):
         StalePortFile.read(port_file)
     assert port_file.read_text() == "8421"
 
@@ -110,3 +110,10 @@ def test_a_file_with_the_read_inode_but_new_times_is_left(tmp_path: Path) -> Non
     assert port_file.stat().st_ino == before.st_ino
     assert stale.discard(8421) is PortFileCleanup.REPLACED
     assert port_file.read_text() == "8421"
+
+
+def test_a_port_file_that_cannot_be_read_says_cannot_read(tmp_path: Path) -> None:
+    port_file = tmp_path / "serve.port"
+    port_file.mkdir()
+    with pytest.raises(PortProbeError, match=r"cannot read .*serve\.port"):
+        StalePortFile.read(port_file)
