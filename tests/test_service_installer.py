@@ -10,11 +10,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
+from punt_vox.service.backend import (
+    BackendCommandError,
+    PortProbeError,
+    PrivilegeDeniedError,
+)
+from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.health_verify import HealthVerifier
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
+from punt_vox.service.query_answer import QueryAnswer
 from punt_vox.service.systemd import SystemdBackend
+from punt_vox.types_health import HealthStatus
 
 # ---------------------------------------------------------------------------
 # Platform detection
@@ -96,9 +104,70 @@ def _setup_fake_env(
     monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 1000)
 
     if bypass_health:
-        monkeypatch.setattr(HealthVerifier, "verify", lambda self: None)
+        monkeypatch.setattr(HealthVerifier, "verify", lambda self: _OK)
 
     return fake_home
+
+
+def _fake_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type[LaunchdBackend] | type[SystemdBackend],
+    *,
+    active: bool = True,
+    installed: bool = False,
+    bind: str = "",
+) -> list[str]:
+    """Stub *cls*'s service-manager calls; return the order they ran in."""
+    calls: list[str] = []
+    monkeypatch.setattr(cls, "is_installed", lambda self: installed)
+    monkeypatch.setattr(cls, "request_stop", lambda self: calls.append("request_stop"))
+    monkeypatch.setattr(cls, "install", lambda self, user: calls.append("install"))
+    monkeypatch.setattr(cls, "is_active", lambda self: active)
+    monkeypatch.setattr(
+        cls, "is_active_within", lambda self, within_s: QueryAnswer.of(holds=active)
+    )
+    monkeypatch.setattr(cls, "installed_bind", lambda self: bind)
+    monkeypatch.setattr(
+        ProcessManager, "ensure_port_free", lambda self: calls.append("port_free")
+    )
+    return calls
+
+
+def _on(monkeypatch: pytest.MonkeyPatch, plat: str) -> None:
+    monkeypatch.setattr(ServiceInstaller, "detect_platform", staticmethod(lambda: plat))
+
+
+def _visible_voxd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A voxd holds 8421, so the gated health request may go out.
+
+    One handle, seen by every look -- attribution and the re-check made just
+    before the token goes out see the same process.
+    """
+    held = frozenset({MagicMock(pid=42)})
+    monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: held)
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+
+
+def _clients(
+    monkeypatch: pytest.MonkeyPatch, answer: object
+) -> list[dict[str, object]]:
+    """Route every health client to one mock answering *answer* in turn."""
+    captured: list[dict[str, object]] = []
+    client = MagicMock()
+    if isinstance(answer, list | BaseException):
+        client.health.side_effect = answer
+    else:
+        client.health.return_value = answer
+
+    def _factory(**kwargs: object) -> MagicMock:
+        captured.append(kwargs)
+        return client
+
+    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
+    return captured
+
+
+_OK = HealthStatus(status="ok", pid=42, daemon_version="5.0.6")
 
 
 # ---------------------------------------------------------------------------
@@ -106,31 +175,20 @@ def _setup_fake_env(
 # ---------------------------------------------------------------------------
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(SystemdBackend, "status", return_value=True)
-@patch.object(SystemdBackend, "install")
-@patch.object(SystemdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
+@pytest.mark.parametrize("plat", ["macos", "linux"])
 def test_install_runs_as_user_creates_keys_env(
-    _mock_port: MagicMock,
-    _mock_sd_stop: MagicMock,
-    _mock_sd_install: MagicMock,
-    _mock_sd_status: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
+    plat: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """install() writes keys.env under the current user's home, mode 0600."""
     fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, plat)
+    _fake_backend(monkeypatch, LaunchdBackend if plat == "macos" else SystemdBackend)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
     monkeypatch.setenv("TTS_PROVIDER", "openai")
 
-    inst = ServiceInstaller()
-    inst.install()
+    ServiceInstaller().install()
 
     keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
     assert keys_path.exists()
@@ -141,22 +199,14 @@ def test_install_runs_as_user_creates_keys_env(
     assert "TTS_PROVIDER=openai" in content
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
 def test_install_status_reports_skipped_keys_by_name_only(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Kept, refused, and empty keys reach the operator in the status output."""
     fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
     keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
     keys_path.parent.mkdir(parents=True)
     keys_path.write_text("ELEVENLABS_API_KEY=sk-stored-eleven\n")
@@ -174,26 +224,35 @@ def test_install_status_reports_skipped_keys_by_name_only(
     assert "sk bad" not in result
 
 
-@patch.object(LaunchdBackend, "status", return_value=False)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_install_reports_not_running(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
+def test_install_fails_when_the_unit_never_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """install() reports 'not yet running' when the service is down."""
-    _setup_fake_env(tmp_path, monkeypatch)
+    """An installed unit that is not active is a failed install."""
+    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend, active=False)
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
 
-    inst = ServiceInstaller()
-    result = inst.install()
-    assert "not yet running" in result
+    with pytest.raises(SystemExit, match="not active"):
+        ServiceInstaller().install()
+
+
+def test_install_launchctl_failure_is_a_clean_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A launchctl failure during install never escapes as a traceback."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+
+    def broken(self: LaunchdBackend, user: str) -> None:
+        raise BackendCommandError.of(["launchctl", "bootstrap"], 5, "I/O error")
+
+    monkeypatch.setattr(LaunchdBackend, "install", broken)
+    with pytest.raises(SystemExit, match="I/O error"):
+        ServiceInstaller().install()
 
 
 # ---------------------------------------------------------------------------
@@ -201,97 +260,56 @@ def test_install_reports_not_running(
 # ---------------------------------------------------------------------------
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
 def test_install_reports_running_when_daemon_healthy(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A registered daemon that answers health is reported 'running'."""
-    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    _visible_voxd(monkeypatch)
+    _write_run_token(fake_home, "run-token")
+    captured = _clients(monkeypatch, _OK)
 
-    healthy = MagicMock()
-    healthy.health.return_value = {"status": "ok"}
-    monkeypatch.setattr(
-        "punt_vox.service.health.VoxClientSync",
-        lambda **_kwargs: healthy,
-    )
+    result = ServiceInstaller().install()
 
-    inst = ServiceInstaller()
-    result = inst.install()
-
-    healthy.health.assert_called_once()
+    assert len(captured) == 1
     assert "running" in result
     assert "not yet running" not in result
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
 def test_install_raises_when_daemon_never_healthy(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A registered daemon that never serves fails the install loudly.
 
-    ``launchctl`` registration succeeds but voxd dies on startup, so the
-    health poll exhausts its deadline and ``install()`` raises rather than
-    reporting a false 'running' -- the silent-down regression guard.
+    Registration succeeds but voxd dies on startup, so the health poll
+    exhausts its deadline and ``install()`` raises rather than reporting a
+    false 'running' -- the silent-down regression guard.
     """
-    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
-    # Shrink the deadline and drop the sleep so the poll exhausts instantly.
-    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
-    monkeypatch.setattr("punt_vox.service.health_verify.time.sleep", lambda _s: None)
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    _visible_voxd(monkeypatch)
+    _write_run_token(fake_home, "run-token")
+    captured = _clients(monkeypatch, VoxdConnectionError("connection refused"))
 
-    down = MagicMock()
-    down.health.side_effect = VoxdConnectionError("connection refused")
-    monkeypatch.setattr(
-        "punt_vox.service.health.VoxClientSync",
-        lambda **_kwargs: down,
-    )
+    with pytest.raises(SystemExit, match="never became reachable"):
+        ServiceInstaller().install()
 
-    inst = ServiceInstaller()
-    with pytest.raises(ServiceHealthError, match="never became reachable"):
-        inst.install()
-
-    assert down.health.called
+    assert captured
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(SystemdBackend, "status", return_value=True)
-@patch.object(SystemdBackend, "install")
-@patch.object(SystemdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
 def test_install_does_not_chown_anything(
-    _mock_port: MagicMock,
-    _mock_sd_stop: MagicMock,
-    _mock_sd_install: MagicMock,
-    _mock_sd_status: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """install() must never invoke os.chown / os.lchown / os.fchown."""
     _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    _fake_backend(monkeypatch, SystemdBackend)
 
     chown_calls: list[tuple[str, object, int, int]] = []
 
@@ -308,89 +326,123 @@ def test_install_does_not_chown_anything(
     monkeypatch.setattr("os.lchown", _record_lchown)
     monkeypatch.setattr("os.fchown", _record_fchown)
 
-    inst = ServiceInstaller()
-    inst.install()
+    ServiceInstaller().install()
 
     assert chown_calls == []
 
 
 # ---------------------------------------------------------------------------
-# install() — pre-flight stop before port check
+# install() — pre-flight stop through request_stop, before the port check
 # ---------------------------------------------------------------------------
 
 
-def test_install_runs_systemd_stop_before_port_check(
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_install_requests_stop_before_port_check(
+    plat: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """install() must stop voxd via systemctl BEFORE the port check."""
+    """A previous install is stopped through the manager before the port check.
+
+    Otherwise launchd's KeepAlive respawns voxd the instant the cleanup kills it.
+    """
     _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, plat)
+    cls = LaunchdBackend if plat == "macos" else SystemdBackend
+    calls = _fake_backend(monkeypatch, cls, installed=True)
 
-    call_order: list[str] = []
+    ServiceInstaller().install()
 
-    monkeypatch.setattr(
-        ServiceInstaller,
-        "detect_platform",
-        staticmethod(lambda: "linux"),
-    )
-    monkeypatch.setattr(
-        SystemdBackend,
-        "stop",
-        lambda self: call_order.append("systemd_stop"),
-    )
-    monkeypatch.setattr(
-        ProcessManager,
-        "ensure_port_free",
-        lambda self: call_order.append("ensure_port_free"),
-    )
-    monkeypatch.setattr(SystemdBackend, "install", lambda self, user: None)
-    monkeypatch.setattr(SystemdBackend, "status", lambda self: True)
-
-    inst = ServiceInstaller()
-    inst.install()
-
-    assert "systemd_stop" in call_order
-    assert "ensure_port_free" in call_order
-    idx_stop = call_order.index("systemd_stop")
-    idx_port = call_order.index("ensure_port_free")
-    assert idx_stop < idx_port
+    assert calls == ["request_stop", "port_free", "install"]
 
 
-def test_install_runs_launchd_stop_before_port_check(
+def test_install_fresh_host_makes_no_stop_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """install() must unload voxd from launchd BEFORE the port check."""
     _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    calls = _fake_backend(monkeypatch, SystemdBackend, installed=False)
 
-    call_order: list[str] = []
+    ServiceInstaller().install()
 
-    monkeypatch.setattr(
-        ServiceInstaller,
-        "detect_platform",
-        staticmethod(lambda: "macos"),
+    assert calls == ["port_free", "install"]
+
+
+def test_install_failed_preflight_stop_fails_loudly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused pre-flight stop is a clean SystemExit naming why, not a traceback."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    _fake_backend(monkeypatch, SystemdBackend, installed=True)
+
+    def refuse(self: SystemdBackend) -> None:
+        raise PrivilegeDeniedError("sudo could not run `systemctl stop voxd`")
+
+    monkeypatch.setattr(SystemdBackend, "request_stop", refuse)
+    with pytest.raises(SystemExit, match="sudo could not run"):
+        ServiceInstaller().install()
+
+
+def test_install_broken_port_probe_fails_loudly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing fuser fails the install; it is never read as an empty port."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    _fake_backend(monkeypatch, SystemdBackend)
+
+    def broken(self: ProcessManager) -> None:
+        raise PortProbeError("cannot run fuser: not found (install psmisc)")
+
+    monkeypatch.setattr(ProcessManager, "ensure_port_free", broken)
+    with pytest.raises(SystemExit, match="install psmisc"):
+        ServiceInstaller().install()
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_install_refuses_a_hostname_bind_before_writing_anything(
+    plat: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A name in VOXD_BIND would be baked into the unit, which status and
+    health then refuse to poll; refuse it before keys, dirs, or the unit."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, plat)
+    calls = _fake_backend(
+        monkeypatch,
+        LaunchdBackend if plat == "macos" else SystemdBackend,
+        installed=True,
     )
-    monkeypatch.setattr(
-        LaunchdBackend,
-        "stop",
-        lambda self: call_order.append("launchd_stop"),
-    )
-    monkeypatch.setattr(
-        ProcessManager,
-        "ensure_port_free",
-        lambda self: call_order.append("ensure_port_free"),
-    )
-    monkeypatch.setattr(LaunchdBackend, "install", lambda self: None)
-    monkeypatch.setattr(LaunchdBackend, "status", lambda self: True)
+    monkeypatch.setenv("VOXD_BIND", "localhost")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
 
-    inst = ServiceInstaller()
-    inst.install()
+    with pytest.raises(
+        SystemExit,
+        match=r"VOXD_BIND 'localhost' is not an IP address.*e\.g\. 127\.0\.0\.1",
+    ):
+        ServiceInstaller().install()
 
-    assert "launchd_stop" in call_order
-    assert "ensure_port_free" in call_order
-    idx_stop = call_order.index("launchd_stop")
-    idx_port = call_order.index("ensure_port_free")
-    assert idx_stop < idx_port
+    assert calls == []
+    assert not (fake_home / ".punt-labs").exists()
+
+
+def test_install_accepts_an_ip_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    calls = _fake_backend(monkeypatch, SystemdBackend)
+    monkeypatch.setenv("VOXD_BIND", "10.0.0.5")
+
+    ServiceInstaller().install()
+
+    assert calls == ["port_free", "install"]
 
 
 # ---------------------------------------------------------------------------
@@ -431,93 +483,6 @@ def test_install_refuses_to_run_as_root(
 # ---------------------------------------------------------------------------
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_install_health_poll_pins_installed_port_over_env(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The health poll targets DEFAULT_PORT even when VOXD_PORT points elsewhere.
-
-    A stray VOXD_PORT in the install environment must not redirect the poll
-    to a different daemon than the one the service unit was started with.
-    """
-    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
-    monkeypatch.setenv("VOXD_PORT", "9999")
-    monkeypatch.setenv("VOXD_BIND", "192.168.1.50")
-
-    captured: list[dict[str, object]] = []
-
-    def _factory(**kwargs: object) -> MagicMock:
-        captured.append(kwargs)
-        client = MagicMock()
-        client.health.return_value = {"status": "ok"}
-        return client
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-
-    inst = ServiceInstaller()
-    inst.install()
-
-    assert captured, "VoxClientSync was never constructed"
-    assert captured[0]["port"] == DEFAULT_PORT
-    assert captured[0]["host"] == "192.168.1.50"
-
-
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_install_health_poll_retries_transient_protocol_error(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A transient VoxdProtocolError is retried, not fatal.
-
-    A receive timeout while voxd is still binding its port surfaces as
-    VoxdProtocolError. The poll must sleep and retry until the daemon
-    answers rather than failing the install on the first hiccup.
-    """
-    _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
-    monkeypatch.setattr("punt_vox.service.health_verify.time.sleep", lambda _s: None)
-
-    client = MagicMock()
-    client.health.side_effect = [
-        VoxdProtocolError("timeout waiting for response to 'health'"),
-        {"status": "ok"},
-    ]
-    monkeypatch.setattr(
-        "punt_vox.service.health.VoxClientSync",
-        lambda **_kwargs: client,
-    )
-
-    inst = ServiceInstaller()
-    result = inst.install()
-
-    assert client.health.call_count == 2
-    assert "running" in result
-    assert "not yet running" not in result
-
-
-# ---------------------------------------------------------------------------
-# install() — health poll auth token comes from the run file, not the shell
-# ---------------------------------------------------------------------------
-
-
 def _write_run_token(fake_home: Path, token: str) -> None:
     """Write ``serve.token`` under the install's run dir so the poll reads it."""
     run_dir = fake_home / ".punt-labs" / "vox" / "run"
@@ -525,216 +490,298 @@ def _write_run_token(fake_home: Path, token: str) -> None:
     (run_dir / "serve.token").write_text(token)
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_install_health_poll_uses_run_file_token_not_shell_env(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
+def test_install_health_poll_pins_installed_port_and_bind_over_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The health client authenticates with serve.token, not a stray VOXD_TOKEN.
+    """The poll targets DEFAULT_PORT and the unit's bind, never the shell's.
 
-    ``VoxClientSync``'s normal resolution prefers a shell ``VOXD_TOKEN`` over
-    the run file. Passing the run-file token explicitly means a stale/wrong
-    ``VOXD_TOKEN`` in the install environment cannot redirect auth and
-    false-fail a healthy daemon.
+    A stray VOXD_PORT or VOXD_BIND in the install environment must not
+    redirect the token-bearing poll to a different daemon than the one the
+    service unit runs.
     """
     fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
-    monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
-    _write_run_token(fake_home, "authoritative-run-token")
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend, bind="192.168.1.50")
+    _visible_voxd(monkeypatch)
+    _write_run_token(fake_home, "run-token")
+    monkeypatch.setenv("VOXD_PORT", "9999")
+    monkeypatch.setenv("VOXD_BIND", "10.0.0.9")
+    captured = _clients(monkeypatch, _OK)
 
-    captured: list[dict[str, object]] = []
-
-    def _factory(**kwargs: object) -> MagicMock:
-        captured.append(kwargs)
-        client = MagicMock()
-        client.health.return_value = {"status": "ok"}
-        return client
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-
-    inst = ServiceInstaller()
-    inst.install()
+    ServiceInstaller().install()
 
     assert captured, "VoxClientSync was never constructed"
-    # The run-file token wins; the stray shell VOXD_TOKEN never reaches auth.
+    assert captured[0]["port"] == DEFAULT_PORT
+    assert captured[0]["host"] == "192.168.1.50"
+
+
+def test_install_health_poll_retries_transient_protocol_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient VoxdProtocolError is retried, not fatal.
+
+    A receive timeout while voxd is still binding its port surfaces as
+    VoxdProtocolError. The poll retries until the daemon answers rather than
+    failing the install on the first hiccup.
+    """
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    _visible_voxd(monkeypatch)
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 5.0)
+    _write_run_token(fake_home, "run-token")
+    captured = _clients(
+        monkeypatch,
+        [VoxdProtocolError("timeout waiting for response to 'health'"), _OK],
+    )
+
+    result = ServiceInstaller().install()
+
+    assert len(captured) == 2
+    assert "running" in result
+    assert "not yet running" not in result
+
+
+def test_install_health_poll_uses_run_file_token_not_shell_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The health client authenticates with serve.token, not a stray VOXD_TOKEN."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    _visible_voxd(monkeypatch)
+    monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
+    _write_run_token(fake_home, "authoritative-run-token")
+    captured = _clients(monkeypatch, _OK)
+
+    ServiceInstaller().install()
+
+    assert captured, "VoxClientSync was never constructed"
     assert captured[0]["token"] == "authoritative-run-token"
 
 
-@patch.object(LaunchdBackend, "status", return_value=True)
-@patch.object(LaunchdBackend, "install")
-@patch.object(LaunchdBackend, "stop")
-@patch.object(ProcessManager, "ensure_port_free")
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_install_health_poll_token_none_when_run_file_absent(
-    _mock_platform: MagicMock,
-    _mock_port: MagicMock,
-    _mock_ld_stop: MagicMock,
-    _mock_ld_install: MagicMock,
-    _mock_ld_status: MagicMock,
+def test_install_health_poll_without_run_file_builds_no_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With no serve.token yet, the health client gets token=None, not VOXD_TOKEN.
+    """With no serve.token, no client is built, so VOXD_TOKEN cannot leak.
 
-    voxd writes serve.token on startup; an early probe may see no file. The
-    client must pass ``None`` (bypassing auth for the retry) rather than fall
-    back to a stray shell ``VOXD_TOKEN``. The poll's retry loop tolerates the
-    brief race until the run file appears.
+    voxd writes serve.token on startup; until it does the poll keeps waiting
+    rather than sending a request that would fall back to the shell's token.
     """
     _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    _visible_voxd(monkeypatch)
     monkeypatch.setenv("VOXD_TOKEN", "stray-shell-token")
+    captured = _clients(monkeypatch, _OK)
 
-    captured: list[dict[str, object]] = []
+    with pytest.raises(SystemExit, match="never became reachable"):
+        ServiceInstaller().install()
 
-    def _factory(**kwargs: object) -> MagicMock:
-        captured.append(kwargs)
-        client = MagicMock()
-        client.health.return_value = {"status": "ok"}
-        return client
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-
-    inst = ServiceInstaller()
-    inst.install()
-
-    assert captured, "VoxClientSync was never constructed"
-    assert captured[0]["token"] is None
+    assert captured == []
 
 
-# ---------------------------------------------------------------------------
-# uninstall — surface a surviving daemon (vox-qogn)
-# ---------------------------------------------------------------------------
-
-
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_uninstall_macos_clean_when_daemon_killed(
-    _mock_platform: MagicMock,
+def test_install_health_poll_sends_no_token_without_a_visible_voxd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """macOS uninstall reports success when the backend confirms the kill."""
-    inst = ServiceInstaller()
+    """A listener vox cannot see gets no token-bearing request at all."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
+    _on(monkeypatch, "macos")
+    _fake_backend(monkeypatch, LaunchdBackend)
+    monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: frozenset())
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+    _write_run_token(fake_home, "run-token")
+    captured = _clients(monkeypatch, _OK)
+
+    with pytest.raises(SystemExit, match="never became reachable"):
+        ServiceInstaller().install()
+
+    assert captured == []
+
+
+# ---------------------------------------------------------------------------
+# uninstall — surface a surviving daemon
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def no_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(LaunchdBackend, "uninstall", lambda self: None)
+    monkeypatch.setattr(SystemdBackend, "uninstall", lambda self: None)
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_clean_when_daemon_killed(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
+) -> None:
+    """A confirmed kill reports success and skips the survival re-scan."""
+    _on(monkeypatch, plat)
     with (
-        patch.object(LaunchdBackend, "uninstall", return_value=True) as mock_ld,
+        patch.object(ProcessManager, "kill_stale_daemon", return_value=True),
         patch.object(ProcessManager, "find_pid_on_port") as mock_scan,
     ):
-        msg = inst.uninstall()
+        msg = ServiceInstaller().uninstall()
 
-    mock_ld.assert_called_once()
-    # A confirmed kill short-circuits the survival re-scan.
     mock_scan.assert_not_called()
     assert "uninstalled" in msg
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_uninstall_macos_clean_when_nothing_to_kill(
-    _mock_platform: MagicMock,
+def test_uninstall_clean_when_nothing_to_kill(
+    monkeypatch: pytest.MonkeyPatch, no_unit: None
 ) -> None:
     """A False kill result with an empty port is a clean uninstall, not a failure."""
-    inst = ServiceInstaller()
+    _on(monkeypatch, "macos")
     with (
-        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "kill_stale_daemon", return_value=False),
         patch.object(ProcessManager, "read_port_file", return_value=None),
         patch.object(ProcessManager, "find_pid_on_port", return_value=[]),
     ):
-        msg = inst.uninstall()
+        msg = ServiceInstaller().uninstall()
 
     assert "uninstalled" in msg
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_uninstall_macos_raises_when_daemon_survives(
-    _mock_platform: MagicMock,
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_raises_when_daemon_survives(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
 ) -> None:
     """A surviving voxd daemon must surface as a failure, not plain success."""
-    inst = ServiceInstaller()
+    _on(monkeypatch, plat)
     with (
-        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "kill_stale_daemon", return_value=False),
         patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
         patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
         patch.object(ProcessManager, "is_vox_daemon_process", return_value=True),
         pytest.raises(SystemExit) as excinfo,
     ):
-        inst.uninstall()
+        ServiceInstaller().uninstall()
 
     assert "still running" in str(excinfo.value)
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_uninstall_macos_clean_when_survivor_is_not_voxd(
-    _mock_platform: MagicMock,
+def test_uninstall_clean_when_survivor_is_not_voxd(
+    monkeypatch: pytest.MonkeyPatch, no_unit: None
 ) -> None:
     """A non-voxd process on the port is not our survivor — uninstall succeeds."""
-    inst = ServiceInstaller()
+    _on(monkeypatch, "macos")
     with (
-        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "kill_stale_daemon", return_value=False),
         patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
         patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
         patch.object(ProcessManager, "is_vox_daemon_process", return_value=False),
     ):
-        msg = inst.uninstall()
+        msg = ServiceInstaller().uninstall()
 
     assert "uninstalled" in msg
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="macos")
-def test_uninstall_macos_raises_when_survivor_not_first_pid(
-    _mock_platform: MagicMock,
+def test_uninstall_raises_when_survivor_not_first_pid(
+    monkeypatch: pytest.MonkeyPatch, no_unit: None
 ) -> None:
     """A voxd survivor behind a client PID must still be found (any(), not [0])."""
-    inst = ServiceInstaller()
+    _on(monkeypatch, "macos")
     with (
-        patch.object(LaunchdBackend, "uninstall", return_value=False),
+        patch.object(ProcessManager, "kill_stale_daemon", return_value=False),
         patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
         patch.object(ProcessManager, "find_pid_on_port", return_value=[1111, 4321]),
-        # First PID is a connected client, second is the surviving daemon.
         patch.object(
             ProcessManager, "is_vox_daemon_process", side_effect=[False, True]
         ) as mock_is_vox,
         pytest.raises(SystemExit) as excinfo,
     ):
-        inst.uninstall()
+        ServiceInstaller().uninstall()
 
     assert "still running" in str(excinfo.value)
     assert mock_is_vox.call_count == 2
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="linux")
-def test_uninstall_linux_raises_when_daemon_survives(
-    _mock_platform: MagicMock,
+def test_uninstall_broken_port_probe_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, no_unit: None
 ) -> None:
-    """The systemd path can't report the kill result, so it always re-scans."""
+    """A broken probe never reads as "nothing survived"."""
+    _on(monkeypatch, "linux")
+
+    def broken(self: ProcessManager) -> bool:
+        raise PortProbeError("cannot run fuser: not found (install psmisc)")
+
+    monkeypatch.setattr(ProcessManager, "kill_stale_daemon", broken)
+    with pytest.raises(SystemExit, match="install psmisc"):
+        ServiceInstaller().uninstall()
+
+
+# ---------------------------------------------------------------------------
+# backend_for — the one platform dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_backend_for_picks_the_platform_backend() -> None:
     inst = ServiceInstaller()
-    with (
-        patch.object(SystemdBackend, "uninstall", return_value=None) as mock_sd,
-        patch.object(ProcessManager, "read_port_file", return_value=DEFAULT_PORT),
-        patch.object(ProcessManager, "find_pid_on_port", return_value=[4321]),
-        patch.object(ProcessManager, "is_vox_daemon_process", return_value=True),
-        pytest.raises(SystemExit) as excinfo,
-    ):
-        inst.uninstall()
-
-    mock_sd.assert_called_once()
-    assert "still running" in str(excinfo.value)
+    assert isinstance(inst.backend_for("macos"), LaunchdBackend)
+    assert isinstance(inst.backend_for("linux"), SystemdBackend)
 
 
-@patch.object(ServiceInstaller, "detect_platform", return_value="linux")
-def test_uninstall_linux_clean_when_port_empty(
-    _mock_platform: MagicMock,
+def test_install_proceeds_and_reports_a_serve_port_it_could_not_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Linux uninstall with an empty port reports success."""
-    inst = ServiceInstaller()
-    with (
-        patch.object(SystemdBackend, "uninstall", return_value=None),
-        patch.object(ProcessManager, "read_port_file", return_value=None),
-        patch.object(ProcessManager, "find_pid_on_port", return_value=[]),
-    ):
-        msg = inst.uninstall()
+    """The old daemon was killed; a stuck serve.port never aborts the install."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    calls = _fake_backend(monkeypatch, SystemdBackend)
+    note = "daemon stopped; could not clear serve.port: read-only"
+    monkeypatch.setattr(ProcessManager, "port_file_note", property(lambda self: note))
 
+    result = ServiceInstaller().install()
+
+    assert calls == ["port_free", "install"]
+    assert note in result
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_reports_a_serve_port_it_could_not_clear(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
+) -> None:
+    _on(monkeypatch, plat)
+    note = "daemon stopped; could not clear serve.port: read-only"
+    monkeypatch.setattr(ProcessManager, "port_file_note", property(lambda self: note))
+    with patch.object(ProcessManager, "kill_stale_daemon", return_value=True):
+        msg = ServiceInstaller().uninstall()
     assert "uninstalled" in msg
+    assert note in msg
+
+
+def test_uninstall_refuses_to_run_as_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """uninstall() raises SystemExit as root, before any backend is touched."""
+    monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 0)
+
+    def no_backend(plat: str) -> object:
+        msg = "uninstall reached the backend as root"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(ServiceInstaller, "backend_for", staticmethod(no_backend))
+    with pytest.raises(SystemExit, match="uninstall must run as your normal user"):
+        ServiceInstaller().uninstall()
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_says_the_unit_is_gone_when_the_daemon_could_not_be_stopped(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
+) -> None:
+    """A pre-kill failure after the unit is removed names both halves."""
+    _on(monkeypatch, plat)
+
+    def locked_out(self: ProcessManager) -> bool:
+        msg = "cannot lock /run/serve.port: another vox/punt process is writing"
+        raise PortProbeError(msg)
+
+    monkeypatch.setattr(ProcessManager, "kill_stale_daemon", locked_out)
+    with pytest.raises(SystemExit) as caught:
+        ServiceInstaller().uninstall()
+    message = str(caught.value)
+    assert "unit removed" in message
+    assert "daemon not stopped" in message
+    assert "cannot lock" in message

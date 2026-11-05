@@ -28,6 +28,7 @@ from punt_vox.client import (
     SynthesizeResult,
     VoxClient,
 )
+from punt_vox.client_call import BoundedCall
 from punt_vox.client_env import DaemonEnv
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -124,7 +125,13 @@ class VoxClientSync:
     def _make_client(self) -> VoxClient:
         return VoxClient(host=self._host, port=self._port, token=self._token)
 
-    def _drive[T](self, op: Callable[[VoxClient], Coroutine[Any, Any, T]]) -> T:
+    def _drive[T](
+        self,
+        op: Callable[[VoxClient], Coroutine[Any, Any, T]],
+        *,
+        # None: no overall bound; the client's own per-step timeouts apply.
+        within_s: float | None = None,
+    ) -> T:
         """Open a connection, drive *op* on it, close, return the value.
 
         The old ``_call(method_name, *args)`` used ``getattr(client,
@@ -135,20 +142,13 @@ class VoxClientSync:
         the caller's ``lambda c: c.synthesize(...)`` preserves the
         return type through the bridge and the ignore is unnecessary.
 
-        Same connection lifecycle as before: one fresh connection per
-        call, opened, awaited, closed in a ``finally``. Sync callers
-        are short-lived so pooling would add complexity for no gain.
+        One fresh connection per call: :class:`BoundedCall` opens it,
+        awaits *op*, and closes it, holding the whole call to *within_s*
+        seconds when given. Sync callers are short-lived so pooling would
+        add complexity for no gain.
         """
-
-        async def _op() -> T:
-            client = self._make_client()
-            await client.connect()
-            try:
-                return await op(client)
-            finally:
-                await client.close()
-
-        return self._runner.run(_op())
+        call = BoundedCall(within_s)
+        return self._runner.run(call.run(self._make_client(), op))
 
     def synthesize(
         self,
@@ -203,9 +203,14 @@ class VoxClientSync:
         """List *provider*'s voice roster; the wire always carries a provider."""
         return self._drive(lambda c: c.voices(provider))
 
-    def health(self) -> HealthStatus:
-        """Return the daemon's health snapshot (liveness, port, version)."""
-        return self._drive(lambda c: c.health())
+    def health(self, *, timeout: float | None = None) -> HealthStatus:
+        """Return the daemon's health snapshot (liveness, port, version).
+
+        *timeout* bounds the whole call, connect included, in seconds; a
+        bounded poll passes what is left of its wait. Absent (``None``), the
+        client's own per-step timeouts apply, as for every other call.
+        """
+        return self._drive(lambda c: c.health(), within_s=timeout)
 
     def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
         """Return the daemon's provider readiness set + its preferred proposal.

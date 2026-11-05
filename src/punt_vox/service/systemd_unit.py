@@ -1,0 +1,162 @@
+"""The voxd systemd unit: the env it captures, its text, and its bind.
+
+Holds no systemd knowledge beyond the unit file format: it authors the text
+the backend installs and reads back the ``VOXD_BIND`` it wrote. Every
+``systemctl`` and ``sudo`` call belongs to :class:`SystemdBackend`.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import pwd
+import shlex
+import textwrap
+from typing import TYPE_CHECKING, ClassVar, Self, final
+
+from punt_vox.service.backend import BackendCommandError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["SystemdUnit"]
+
+
+@final
+class SystemdUnit:
+    """Own the voxd unit file's content and read its installed bind."""
+
+    __slots__ = ("_exec_args_fn", "_path")
+
+    _AUDIO_VARS: ClassVar[tuple[str, ...]] = (
+        "XDG_RUNTIME_DIR",
+        "PULSE_SERVER",
+        "DBUS_SESSION_BUS_ADDRESS",
+    )
+    _BIND_PREFIX: ClassVar[str] = 'Environment="VOXD_BIND='
+
+    _path: Path
+    _exec_args_fn: Callable[[], list[str]]
+
+    def __new__(cls, path: Path, exec_args_fn: Callable[[], list[str]]) -> Self:
+        self = super().__new__(cls)
+        self._path = path
+        self._exec_args_fn = exec_args_fn
+        return self
+
+    @property
+    def path(self) -> Path:
+        """Return where the unit is installed."""
+        return self._path
+
+    def exists(self) -> bool:
+        """Return True when the unit file is present."""
+        return self._path.exists()
+
+    @staticmethod
+    def safe_value(value: str) -> bool:
+        """Return True if *value* is safe to embed in an ``Environment=`` line.
+
+        Rejects newlines, double quotes, and backslashes.
+        """
+        return not any(c in value for c in '\n\r"\\')
+
+    def audio_env_lines(self, user: str) -> list[str]:
+        """Build ``Environment=`` lines for audio-related env vars.
+
+        PulseAudio/PipeWire need XDG_RUNTIME_DIR to find the user socket.
+        """
+        lines = [line for name in self._AUDIO_VARS if (line := self._env_line(name))]
+        if not any(line.startswith('Environment="XDG_RUNTIME_DIR=') for line in lines):
+            lines[:0] = self._runtime_dir_fallback(user)
+        return lines
+
+    @classmethod
+    def _env_line(cls, name: str) -> str:
+        """Return the ``Environment=`` line for *name*; ``""`` to leave it out.
+
+        An unset, empty, or unsafe value is left out -- the empty string is the
+        documented skip, filtered by the caller.
+        """
+        value = os.environ.get(name)
+        if not value:
+            return ""
+        if not cls.safe_value(value):
+            logger.warning("Skipping %s: value contains unsafe characters", name)
+            return ""
+        return f'Environment="{name}={value.replace("%", "%%")}"'
+
+    @staticmethod
+    def _runtime_dir_fallback(user: str) -> list[str]:
+        """Return the deterministic ``XDG_RUNTIME_DIR`` line for *user*.
+
+        Empty, with a warning, when *user* has no passwd entry to take a uid
+        from.
+        """
+        try:
+            uid = pwd.getpwnam(user).pw_uid
+        except KeyError:
+            logger.warning(
+                "User %s not found — cannot compute XDG_RUNTIME_DIR fallback", user
+            )
+            return []
+        return [f'Environment="XDG_RUNTIME_DIR=/run/user/{uid}"']
+
+    def content(self, user: str) -> str:
+        """Generate the unit file content for *user*."""
+        exec_start = " ".join(shlex.quote(a) for a in self._exec_args_fn())
+        raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        bind = os.environ.get("VOXD_BIND")
+        bind_lines: list[str] = []
+        if bind and self.safe_value(bind):
+            bind_lines = [f'{self._BIND_PREFIX}{bind.replace("%", "%%")}"']
+        elif bind:
+            logger.warning(
+                "Skipping VOXD_BIND: value contains unsafe characters; "
+                "voxd will bind its default loopback address"
+            )
+        env_block = ("\n" + " " * 8).join(
+            [
+                f'Environment="PATH={raw_path.replace("%", "%%")}"',
+                *self.audio_env_lines(user),
+                *bind_lines,
+            ]
+        )
+        return textwrap.dedent(f"""\
+            [Unit]
+            Description=Voxd text-to-speech daemon
+            After=network.target
+
+            [Service]
+            User={user}
+            ExecStart={exec_start}
+            {env_block}
+            Restart=on-failure
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
+        """)
+
+    def installed_bind(self) -> str:
+        """Return the ``VOXD_BIND`` the installed unit passes to voxd.
+
+        ``""`` when the unit is absent or sets none. The unit is installed mode
+        644, so this reads it without sudo. ``%%`` is undone because the unit
+        escapes ``%`` that way.
+        """
+        try:
+            text = self._path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+        except OSError as exc:
+            argv = ["read", str(self._path)]
+            raise BackendCommandError.of(argv, 1, str(exc)) from exc
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line.startswith(self._BIND_PREFIX) and line.endswith('"'):
+                return line[len(self._BIND_PREFIX) : -1].replace("%%", "%")
+        return ""

@@ -1,107 +1,260 @@
 """Unit tests for the post-install health verifier.
 
-``HealthVerifier.verify`` polls voxd's health endpoint after the service
-manager accepts the job. The contract: return quietly once voxd answers,
-retry transient startup errors until the deadline, and raise
-``ServiceHealthError`` (never a bare ``RuntimeError``) when the daemon
-registers but never serves -- the silent-down failure mode.
+``HealthVerifier.verify`` waits for the service manager to report the unit
+active, then polls voxd's gated health endpoint through
+``DaemonProbe.wait_up`` -- the one poll install, start and restart share. The
+contract: return the health snapshot once voxd answers, and raise
+``ServiceHealthError`` (never a bare ``RuntimeError``), carrying the last
+cause, when the unit never runs or the daemon never serves.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.service.health_verify import (
-    HealthVerifier,
-    ServiceHealthError,
-)
+from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.service.clock import Poll
+from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.health import HealthTarget
+from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
+from punt_vox.service.launchd import LaunchdBackend
+from punt_vox.service.query_answer import QueryAnswer
+from punt_vox.service.systemd import PrivilegedRun, SystemdBackend
+from punt_vox.types_health import HealthStatus
 
-_SERVICE_PATH = Path("/Library/LaunchAgents/com.punt-labs.voxd.plist")
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
+    from punt_vox.service.backend import InstallableBackend
 
-def _stub_health(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    side_effect: object = None,
-    return_value: object = None,
-) -> MagicMock:
-    """Route ``HealthTarget.client().health()`` through a controllable mock.
-
-    Also drops the retry sleep and stubs the token read so the poll neither
-    blocks on real time nor touches the run-file filesystem.
-    """
-    client = MagicMock()
-    if side_effect is not None:
-        client.health.side_effect = side_effect
-    else:
-        client.health.return_value = return_value
-
-    def _factory(**_kwargs: object) -> MagicMock:
-        return client
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-    monkeypatch.setattr("punt_vox.service.health.read_token_file", lambda: None)
-    monkeypatch.setattr("punt_vox.service.health_verify.time.sleep", MagicMock())
-    return client
+_SERVICE_PATH = "/Library/LaunchAgents/com.punt-labs.voxd.plist"
 
 
-def test_verify_returns_when_daemon_answers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A daemon that answers health on the first probe verifies with no raise."""
-    client = _stub_health(monkeypatch, return_value={"status": "ok"})
-
-    HealthVerifier("macos", _SERVICE_PATH).verify()
-
-    client.health.assert_called_once()
-
-
-def test_verify_retries_transient_protocol_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A receive timeout during startup is retried, not fatal.
-
-    ``VoxdProtocolError`` surfaces while voxd is still binding its port. The
-    poll must sleep and retry until the daemon answers rather than failing on
-    the first hiccup.
-    """
-    client = _stub_health(
-        monkeypatch,
-        side_effect=[
-            VoxdProtocolError("timeout waiting for response to 'health'"),
-            {"status": "ok"},
-        ],
-    )
-
-    HealthVerifier("macos", _SERVICE_PATH).verify()
-
-    assert client.health.call_count == 2
+def _backend(*, active: bool = True, bind: str = "") -> MagicMock:
+    backend = MagicMock()
+    backend.is_active_within.return_value = QueryAnswer.of(holds=active)
+    backend.installed_bind.return_value = bind
+    backend.service_path = _SERVICE_PATH
+    return backend
 
 
-def test_verify_raises_service_health_error_on_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _probe(answer: HealthStatus | None, miss: Exception | None = None) -> MagicMock:
+    probe = MagicMock()
+    probe.wait_up.return_value = answer
+    probe.health_miss.return_value = miss
+    probe.target = HealthTarget("")
+    probe.poll = Poll(FakeClock())
+    return probe
+
+
+def test_verify_returns_what_the_daemon_reported() -> None:
+    status = HealthStatus(status="ok", pid=42, daemon_version="5.0.6")
+    probe = _probe(status)
+
+    assert HealthVerifier(_backend(), probe).verify() is status
+
+    probe.wait_up.assert_called_once_with(5.0)
+
+
+def test_verify_raises_service_health_error_on_deadline() -> None:
     """A daemon that never serves raises ``ServiceHealthError``, not RuntimeError.
 
     The typed error is what lets ``vox install`` degrade gracefully while
     ``vox daemon install`` fails loudly -- both catch by type, not message.
     """
-    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
-    connection_error = VoxdConnectionError("connection refused")
-    client = _stub_health(monkeypatch, side_effect=connection_error)
+    with pytest.raises(ServiceHealthError, match="never became reachable") as info:
+        HealthVerifier(_backend(), _probe(None)).verify()
 
-    with pytest.raises(ServiceHealthError, match="never became reachable") as exc_info:
-        HealthVerifier("macos", _SERVICE_PATH).verify()
+    # The failure message points the operator at the exact service unit.
+    assert _SERVICE_PATH in str(info.value)
+    assert "127.0.0.1:8421" in str(info.value)
 
-    # The failure message points the operator at the exact service unit, and the
-    # last transport error is chained so the root cause is not swallowed.
-    assert str(_SERVICE_PATH) in str(exc_info.value)
-    assert exc_info.value.__cause__ is connection_error
-    assert client.health.called
+
+def test_verify_carries_the_last_health_cause() -> None:
+    """The cause is in the message and chained, not discarded."""
+    rejected = VoxdConnectionError("auth rejected (4401)")
+    with pytest.raises(ServiceHealthError, match=r"auth rejected \(4401\)") as info:
+        HealthVerifier(_backend(), _probe(None, rejected)).verify()
+    assert info.value.__cause__ is rejected
+
+
+def test_verify_fails_when_the_unit_never_becomes_active() -> None:
+    """An installed unit that is not running is a failure, not success."""
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="not active"):
+        HealthVerifier(_backend(active=False), probe).verify()
+    probe.wait_up.assert_not_called()
+
+
+def test_for_backend_targets_the_installed_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verifier polls the bind the backend wrote, not the shell's."""
+    monkeypatch.setenv("VOXD_BIND", "10.0.0.9")
+
+    def never(self: DaemonProbe, deadline_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(DaemonProbe, "wait_up", never)
+    verifier = HealthVerifier.for_backend(_backend(bind="10.0.0.5"))
+    with pytest.raises(ServiceHealthError, match=r"10\.0\.0\.5:8421"):
+        verifier.verify()
 
 
 def test_service_health_error_is_runtime_error() -> None:
     """``ServiceHealthError`` stays a ``RuntimeError`` subtype for the tuple catch."""
     assert issubclass(ServiceHealthError, RuntimeError)
+
+
+def test_verify_never_lets_an_active_query_outlive_the_wait() -> None:
+    """Each is-active query is bounded by what is left of the 5 s wait."""
+    clock = FakeClock()
+    probe = _probe(HealthStatus(status="ok"))
+    probe.poll = Poll(clock)
+    seen: list[tuple[float, float]] = []
+
+    def not_yet(within_s: float) -> QueryAnswer:
+        seen.append((clock.monotonic(), within_s))
+        return QueryAnswer.of(holds=False)
+
+    backend = _backend()
+    backend.is_active_within.side_effect = not_yet
+    with pytest.raises(ServiceHealthError, match="not active"):
+        HealthVerifier(backend, probe).verify()
+    assert seen
+    assert all(budget > 0 and at + budget <= 5.0 for at, budget in seen)
+    assert clock.monotonic() <= 5.0
+
+
+def _systemd_hung(monkeypatch: pytest.MonkeyPatch) -> InstallableBackend:
+    monkeypatch.setattr(
+        "punt_vox.service.systemd.subprocess.run",
+        MagicMock(side_effect=subprocess.TimeoutExpired("systemctl", 0.1)),
+    )
+    return SystemdBackend(
+        lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+    )
+
+
+def _launchd_hung(monkeypatch: pytest.MonkeyPatch) -> InstallableBackend:
+    monkeypatch.setattr(
+        "punt_vox.service.launchctl_query.subprocess.run",
+        MagicMock(side_effect=subprocess.TimeoutExpired("launchctl", 0.1)),
+    )
+    return LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+
+
+@pytest.mark.parametrize(
+    ("hung", "query"),
+    [
+        (_systemd_hung, "systemctl is-active voxd"),
+        (_launchd_hung, "launchctl list com.punt-labs.voxd"),
+    ],
+)
+def test_verify_names_a_manager_query_that_never_answered(
+    monkeypatch: pytest.MonkeyPatch,
+    hung: Callable[[pytest.MonkeyPatch], InstallableBackend],
+    query: str,
+) -> None:
+    """A hung systemctl/launchctl is named, not blamed on voxd's logs."""
+    backend = hung(monkeypatch)
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match=f"{query} did not answer") as info:
+        HealthVerifier(backend, probe).verify()
+    assert "daemon logs" not in str(info.value)
+    probe.wait_up.assert_not_called()
+
+
+def _answers_until_the_last_sliver(
+    monkeypatch: pytest.MonkeyPatch, target: str, ran: subprocess.CompletedProcess[str]
+) -> None:
+    """The manager answers every query given a real budget; the last sliver hangs."""
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, float)
+        if timeout < 0.3:
+            raise subprocess.TimeoutExpired(cmd=argv[0], timeout=timeout)
+        return ran
+
+    monkeypatch.setattr(target, run)
+
+
+@pytest.mark.parametrize("platform", ["systemd", "launchd"])
+def test_verify_blames_the_unit_when_only_the_last_sliver_timed_out(
+    monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    """Real "inactive" answers, then a cut-short last query -> "not active"."""
+    backend: InstallableBackend
+    if platform == "systemd":
+        ran = subprocess.CompletedProcess(["systemctl"], 3, "inactive\n", "")
+        _answers_until_the_last_sliver(
+            monkeypatch, "punt_vox.service.systemd.subprocess.run", ran
+        )
+        backend = SystemdBackend(
+            lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+        )
+    else:
+        ran = subprocess.CompletedProcess(["launchctl"], 113, "", "")
+        _answers_until_the_last_sliver(
+            monkeypatch, "punt_vox.service.launchctl_query.subprocess.run", ran
+        )
+        backend = LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert "did not answer" not in str(info.value)
+    assert "stopped answering" not in str(info.value)
+
+
+def test_verify_names_a_manager_that_answered_then_hung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One real "inactive", then full-budget hangs -> both are named."""
+    calls = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls[0] += 1
+        if calls[0] == 1:
+            return subprocess.CompletedProcess(argv, 3, "inactive\n", "")
+        raise subprocess.TimeoutExpired(cmd=argv[0], timeout=1.0)
+
+    monkeypatch.setattr("punt_vox.service.systemd.subprocess.run", run)
+    backend = SystemdBackend(
+        lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+    )
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert (
+        "voxd was last seen not active; then systemctl is-active voxd stopped "
+        "answering before the 5s wait ended"
+    ) in str(info.value)
+
+
+def test_verify_names_a_launchd_that_answered_then_hung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real "not loaded, no pid", then launchctl list hangs with a full budget."""
+    calls = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls[0] += 1
+        if calls[0] <= 2:  # the first running_within: list, then print
+            return subprocess.CompletedProcess(argv, 113, "", "")
+        raise subprocess.TimeoutExpired(cmd=argv[0], timeout=1.0)
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    backend = LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="last seen not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert (
+        "then launchctl list com.punt-labs.voxd stopped answering before the 5s "
+        "wait ended"
+    ) in str(info.value)

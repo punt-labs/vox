@@ -3,21 +3,18 @@
 ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN`` let a caller point the client at a
 non-default daemon (a test harness, a remote host). :class:`DaemonEnv` is the one
 place that env-var policy lives, so :class:`~punt_vox.client.VoxClient` and its
-sync facade read an override the same way and an invalid port is logged and
-ignored rather than crashing a connect. Run-file resolution (``serve.port`` /
-``serve.token``) stays in :mod:`punt_vox.client`, next to the connection logic
-that falls back to it.
+sync facade read an override the same way. An invalid ``VOXD_PORT`` is refused,
+never replaced by the local ``serve.port``: the operator named a daemon, and the
+local file says nothing about it. Run-file resolution (``serve.port`` /
+``serve.token``) lives in :mod:`punt_vox.client_endpoint`.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import final
 
 __all__ = ["DaemonEnv"]
-
-logger = logging.getLogger(__name__)
 
 
 @final
@@ -39,25 +36,23 @@ class DaemonEnv:
 
     @staticmethod
     def port() -> int | None:
-        """Return ``VOXD_PORT`` as an int, or ``None`` to fall back to the file.
+        """Return ``VOXD_PORT`` as an int, or ``None`` when it is unset.
 
-        ``None`` is the documented "no override" contract, not a parse failure:
-        an unset var, a non-integer, or an out-of-range port all mean "use the
-        file", and the two malformed cases are logged so the fallback is not
-        silent.
+        ``None`` is the documented "no override" contract. A value that is not
+        an integer in 1-65535 raises ``ValueError`` naming it.
         """
         raw = os.environ.get("VOXD_PORT", "").strip()
         if not raw:
             return None
-        try:
-            port = int(raw)
-        except ValueError:
-            logger.warning("VOXD_PORT=%r is not an integer, ignoring", raw)
-            return None
-        if not 1 <= port <= 65535:
-            logger.warning("VOXD_PORT=%d is out of range (1-65535), ignoring", port)
-            return None
-        return port
+        if not raw.isdecimal() or not 1 <= int(raw) <= 65535:
+            msg = f"VOXD_PORT={raw!r} is not a port (1-65535)"
+            raise ValueError(msg)
+        return int(raw)
+
+    @staticmethod
+    def names_host() -> bool:
+        """Return True when ``VOXD_HOST`` names the daemon's host."""
+        return bool(os.environ.get("VOXD_HOST", "").strip())
 
     @staticmethod
     def token() -> str | None:

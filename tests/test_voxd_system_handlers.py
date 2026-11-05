@@ -367,7 +367,7 @@ class TestVoicesHandler:
         same underlying condition, so ``mic:voice`` and ``mic:unmute``
         return one text for one fact.
 
-        This test would have caught the round-1 defect where the type
+        This test catches the defect where the type
         was defined and caught but never raised: driving a real
         ``ProviderUnavailableError`` through the handler ensures the
         end-to-end path works, not just its pieces.

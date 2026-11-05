@@ -15,51 +15,60 @@ from punt_vox.paths import (
     keys_env_file as _paths_keys_env_file,
     user_state_dir as _paths_user_state_dir,
 )
-from punt_vox.service.health_verify import HealthVerifier
+from punt_vox.service.backend import (
+    BackendCommandError,
+    PortProbeError,
+    PrivilegeDeniedError,
+)
+from punt_vox.service.health_verify import HealthVerifier, ServiceHealthError
 from punt_vox.service.keys_env import KeysEnvWriter
-from punt_vox.service.launchd import (
-    _LAUNCHD_PLIST,  # pyright: ignore[reportPrivateUsage]
-    LaunchdBackend,
-)
+from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
-from punt_vox.service.systemd import (
-    _SYSTEMD_UNIT,  # pyright: ignore[reportPrivateUsage]
-    SystemdBackend,
-)
+from punt_vox.service.systemd import PrivilegedRun, SystemdBackend
 
 if TYPE_CHECKING:
+    from punt_vox.service.backend import InstallableBackend
     from punt_vox.service.types import PlatformName
 
 logger = logging.getLogger(__name__)
 
-# Sudo notice -- Linux only (macOS LaunchAgent installs need no sudo).
-_SUDO_NOTICE = (
-    "Installing voxd as a system service. You may be prompted for your sudo password."
+# A backend command, a refused privilege, a broken port probe, or a unit that
+# never ran or served: each fails install and uninstall loudly with its cause
+# (SystemExit carries it to the CLI's JSON and text), never as a traceback.
+_SERVICE_ERRORS = (
+    BackendCommandError,
+    PrivilegeDeniedError,
+    PortProbeError,
+    ServiceHealthError,
 )
 
 
 class ServiceInstaller:
-    """Compose ProcessManager, KeysEnvWriter, and platform backends."""
+    """Compose ProcessManager, KeysEnvWriter, and the platform's backend."""
 
-    __slots__ = (
-        "_keys_writer",
-        "_launchd",
-        "_process_mgr",
-        "_systemd",
-    )
+    __slots__ = ("_keys_writer", "_process_mgr")
 
     _keys_writer: KeysEnvWriter
-    _launchd: LaunchdBackend
     _process_mgr: ProcessManager
-    _systemd: SystemdBackend
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._process_mgr = ProcessManager()
         self._keys_writer = KeysEnvWriter()
-        self._launchd = LaunchdBackend(self._process_mgr, self._voxd_exec_args)
-        self._systemd = SystemdBackend(self._process_mgr, self._voxd_exec_args)
         return self
+
+    @staticmethod
+    def backend_for(plat: PlatformName) -> InstallableBackend:
+        """Return the service backend for *plat* -- the one platform dispatch."""
+        match plat:
+            case "macos":
+                return LaunchdBackend(ServiceInstaller._voxd_exec_args)
+            case "linux":
+                return SystemdBackend(
+                    ServiceInstaller._voxd_exec_args, PrivilegedRun.on_this_host()
+                )
+            case _:
+                assert_never(plat)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -118,76 +127,59 @@ class ServiceInstaller:
     # Install
     # ------------------------------------------------------------------
 
-    def _install_darwin(self) -> bool:
-        """Run the macOS install path.  Return True if running.
-
-        Writes the user LaunchAgent plist and bootstraps it.  No sudo:
-        the agent lives under ``~/Library/LaunchAgents`` and runs in the
-        session user's ``gui/<uid>`` domain.
-        """
-        self._launchd.stop()
-        self._process_mgr.ensure_port_free()
-        self._launchd.install()
-        return self._launchd.status()
-
-    def _install_linux(self, user: str) -> bool:
-        """Run the Linux install path.  Return True if running."""
-        self._systemd.stop()
-        self._process_mgr.ensure_port_free()
-        self._systemd.install(user)
-        return self._systemd.status()
-
     def install(self) -> str:
         """Install voxd as a system service.  Return a status message.
 
         Must be run as a normal user, not as root or under ``sudo``.
         """
-        if os.geteuid() == 0:
-            msg = (
-                "vox daemon install must run as your normal user, not root. "
-                "The service installs to your home directory and cannot "
-                "function under root. Re-run without sudo:\n\n"
-                "    vox daemon install\n"
-            )
-            raise SystemExit(msg)
+        self._refuse_root("install")
+        try:
+            return self._install(self.backend_for(self.detect_platform()))
+        except _SERVICE_ERRORS as exc:
+            raise SystemExit(f"vox daemon install failed: {exc}") from exc
 
-        plat = self.detect_platform()
+    @staticmethod
+    def _refuse_root(verb: str) -> None:
+        """Raise ``SystemExit`` before *verb* touches anything, when run as root."""
+        if os.geteuid() != 0:
+            return
+        msg = (
+            f"vox daemon {verb} must run as your normal user, not root. "
+            "The service lives in your home directory and cannot "
+            "function under root. Re-run without sudo:\n\n"
+            f"    vox daemon {verb}\n"
+        )
+        raise SystemExit(msg)
+
+    def _install(self, backend: InstallableBackend) -> str:
+        """Stop any previous voxd, install the unit, and verify it serves."""
+        HealthVerifier.preflight(os.environ)
         user = getpass.getuser()
         args = self._voxd_exec_args()
-
         state_root = self._ensure_user_dirs()
-
         keys = self._keys_writer.write(os.environ, _paths_keys_env_file())
         logger.info("Wrote provider keys to %s", keys.path)
 
-        if plat == "macos":
-            running = self._install_darwin()
-            service_path = _LAUNCHD_PLIST
-        elif plat == "linux":
-            logger.warning(_SUDO_NOTICE)
-            running = self._install_linux(user)
-            service_path = _SYSTEMD_UNIT
-        else:
-            assert_never(plat)
+        # Stop any previous voxd through the manager first, so launchd's
+        # KeepAlive does not respawn it the instant the port cleanup kills it.
+        if backend.is_installed():
+            backend.request_stop()
+        self._process_mgr.ensure_port_free()
+        backend.install(user)
+        # Registration alone does not prove voxd runs or serves: wait for the
+        # unit to be active and for gated health to answer, or fail with why.
+        HealthVerifier.for_backend(backend).verify()
 
-        # Registration alone does not prove voxd serves; verify it answers
-        # health before reporting "running", so a silent-down daemon fails
-        # the install loudly instead of masquerading as healthy.
-        if running:
-            HealthVerifier(plat, service_path).verify()
-
-        exec_display = " ".join(args)
-        status = "running" if running else "installed (not yet running)"
         lines = [
-            f"voxd daemon {status} on port {DEFAULT_PORT}.",
-            f"  Service: {service_path}",
+            f"voxd daemon running on port {DEFAULT_PORT}.",
+            f"  Service: {backend.service_path}",
             f"  Keys:    {keys.path}",
             *keys.notice_lines(),
             f"  State:   {state_root}",
-            f"  Command: {exec_display}",
+            f"  Command: {' '.join(args)}",
             f"  User:    {user}",
         ]
-        return os.linesep.join(lines)
+        return self._noted(os.linesep.join(lines))
 
     # ------------------------------------------------------------------
     # Uninstall
@@ -197,46 +189,53 @@ class ServiceInstaller:
         """Remove voxd system service.  Return a status message.
 
         Raise ``SystemExit`` if the service files are removed but a voxd
-        daemon survives the kill -- ``os.kill`` raises ``PermissionError``
-        for a process owned by another user, so reporting success would
-        strand a live daemon.
+        daemon survives the kill -- a voxd owned by another user cannot be
+        signalled, so reporting success would strand a live daemon. Must be
+        run as a normal user: as root its run-directory writes would follow
+        whatever the user left there.
         """
-        plat = self.detect_platform()
-        if plat == "macos":
-            killed = self._launchd.uninstall()
-            path = _LAUNCHD_PLIST
-        elif plat == "linux":
-            self._systemd.uninstall()
-            killed = False
-            path = _SYSTEMD_UNIT
-        else:
-            assert_never(plat)
-        # kill_stale_daemon() returns False both for "nothing to kill" and
-        # "kill failed"; re-scan the port to tell a survivor from an empty
-        # port (systemd can't report the result, so its branch always scans).
-        if not killed and self._stale_daemon_survives():
+        self._refuse_root("uninstall")
+        try:
+            return self._uninstall(self.backend_for(self.detect_platform()))
+        except _SERVICE_ERRORS as exc:
+            raise SystemExit(f"vox daemon uninstall failed: {exc}") from exc
+
+    def _uninstall(self, backend: InstallableBackend) -> str:
+        """Remove the unit, then kill and re-scan for a surviving voxd."""
+        backend.uninstall()
+        try:
+            # kill_stale_daemon() returns False both for "nothing to kill" and
+            # "kill failed"; re-scan the port to tell a survivor from an empty
+            # port.
+            survives = (
+                not self._process_mgr.kill_stale_daemon()
+                and self._stale_daemon_survives()
+            )
+        except PortProbeError as exc:
+            # The unit is already gone: say so, never a bare "failed".
             msg = (
-                f"voxd files removed ({path}), but a daemon is still running "
-                "and could not be stopped -- it may be owned by another user."
+                f"vox daemon uninstall: voxd unit removed ({backend.service_path}); "
+                f"daemon not stopped: {exc}"
+            )
+            raise SystemExit(msg) from exc
+        if survives:
+            msg = (
+                f"voxd files removed ({backend.service_path}), but a daemon is "
+                "still running and could not be stopped -- it may be owned by "
+                "another user."
             )
             raise SystemExit(msg)
-        return f"voxd daemon uninstalled. Removed {path}."
+        return self._noted(f"voxd daemon uninstalled. Removed {backend.service_path}.")
+
+    def _noted(self, message: str) -> str:
+        """Return *message*, plus why the stale-daemon kill left serve.port."""
+        note = self._process_mgr.port_file_note
+        if not note:
+            return message
+        return f"{message}{os.linesep}  Note:    {note}"
 
     def _stale_daemon_survives(self) -> bool:
         """Return True if a voxd daemon still occupies the daemon port."""
         port = self._process_mgr.read_port_file() or DEFAULT_PORT
         pids = self._process_mgr.find_pid_on_port(port)
         return any(self._process_mgr.is_vox_daemon_process(p) for p in pids)
-
-    # ------------------------------------------------------------------
-    # Status
-    # ------------------------------------------------------------------
-
-    def is_running(self) -> bool:
-        """Check if the daemon service is currently running."""
-        plat = self.detect_platform()
-        if plat == "macos":
-            return self._launchd.status()
-        if plat == "linux":
-            return self._systemd.status()
-        assert_never(plat)

@@ -11,17 +11,18 @@ install`` catches it and degrades to a skip.
 from __future__ import annotations
 
 import logging
-import time
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import log_dir as _paths_log_dir
-from punt_vox.service.health import HealthTarget
+from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.voxd_bind import VoxdBind
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Mapping
 
-    from punt_vox.service.types import PlatformName
+    from punt_vox.service.backend import InstallableBackend
+    from punt_vox.service.query_answer import QueryAnswer
+    from punt_vox.types_health import HealthStatus
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,6 @@ __all__ = ["HealthVerifier", "ServiceHealthError"]
 # dies on startup (bad env, missing binary) would otherwise be reported
 # "running". Poll the health endpoint until it answers or the deadline lapses.
 _HEALTH_DEADLINE_S = 5.0
-_HEALTH_POLL_INTERVAL_S = 0.2
 
 
 @final
@@ -54,48 +54,86 @@ class ServiceHealthError(RuntimeError):
 
 @final
 class HealthVerifier:
-    """Poll a freshly installed voxd until it serves or the deadline lapses."""
+    """Wait for a freshly installed unit to run and serve, or fail with why."""
 
-    __slots__ = ("_service_path", "_target")
+    __slots__ = ("_backend", "_probe")
 
-    _service_path: Path
-    _target: HealthTarget
+    _backend: InstallableBackend
+    _probe: DaemonProbe
 
-    def __new__(cls, platform: PlatformName, service_path: Path) -> Self:
-        # *platform* selects the backend whose VOXD_BIND gating the health host
-        # mirrors (see ``HealthTarget._effective_bind``); *service_path* names
-        # the plist/unit the failure message points the operator at.
+    def __new__(cls, backend: InstallableBackend, probe: DaemonProbe) -> Self:
+        # *backend* reports whether the unit runs and names the unit file the
+        # failure message points at; *probe* targets the daemon the backend
+        # runs (its installed bind, the service port, the run-file token).
         self = super().__new__(cls)
-        self._target = HealthTarget(platform)
-        self._service_path = service_path
+        self._backend = backend
+        self._probe = probe
         return self
 
-    def verify(self) -> None:
-        """Poll voxd's health endpoint until it answers or the deadline lapses.
+    @classmethod
+    def for_backend(cls, backend: InstallableBackend) -> Self:
+        """Return the verifier for the daemon *backend* just installed."""
+        return cls(backend, DaemonProbe.for_backend(backend))
 
-        Without this poll, ``install()`` reports "running" for a daemon that
-        died on startup -- the silent-down failure mode. Raise
-        ``ServiceHealthError`` so the caller can surface a non-zero exit (or
-        degrade gracefully) when voxd never becomes reachable.
+    @staticmethod
+    def preflight(environ: Mapping[str, str]) -> None:
+        """Refuse, before install writes anything, a unit health cannot poll.
+
+        The unit carries ``VOXD_BIND`` from *environ* verbatim, and health
+        polls only an IP address; a name raises ``PortProbeError`` here rather
+        than after keys, directories, and the unit are written.
         """
-        target = self._target
-        deadline = time.monotonic() + _HEALTH_DEADLINE_S
-        # None until the first probe fails: no exception has occurred yet.
-        last_exc: VoxdConnectionError | VoxdProtocolError | OSError | None = None
-        while time.monotonic() < deadline:
-            try:
-                target.client().health()
-                return
-            except (VoxdConnectionError, VoxdProtocolError, OSError) as exc:
-                # VoxdProtocolError covers a receive timeout while voxd is
-                # still binding its port -- transient during startup, so
-                # retry until the deadline rather than failing on the first.
-                last_exc = exc
-                time.sleep(_HEALTH_POLL_INTERVAL_S)
-        log_dir = _paths_log_dir()
-        msg = (
-            f"voxd registered but never became reachable within "
-            f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}. "
-            f"Service: {self._service_path}. Check the daemon logs in {log_dir}."
+        VoxdBind.from_environ(environ)
+
+    def verify(self) -> HealthStatus:
+        """Wait for the unit to be active and voxd to answer; return its health.
+
+        Without this, ``install()`` reports success for a unit that never ran
+        or a daemon that died on startup -- the silent-down failure mode.
+        Raise ``ServiceHealthError``, chained to the last health failure, so
+        the caller can surface a non-zero exit (or degrade gracefully).
+        """
+        # Each is-active query gets only what is left of the wait, so a slow
+        # systemctl/launchctl cannot carry install past its bound.
+        active = self._probe.poll.answer_within(
+            self._backend.is_active_within, _HEALTH_DEADLINE_S
         )
-        raise ServiceHealthError(msg) from last_exc
+        if not active.holds:
+            raise ServiceHealthError(self._inactive(active))
+        status = self._probe.wait_up(_HEALTH_DEADLINE_S)
+        if status is not None:
+            return status
+        miss = self._probe.health_miss()
+        raise ServiceHealthError(self._unreachable(miss)) from miss
+
+    def _inactive(self, answer: QueryAnswer) -> str:
+        """Return the never-active message: a hung manager, or a unit not running."""
+        service = self._backend.service_path
+        wait = f"{_HEALTH_DEADLINE_S:.0f}s"
+        if answer.timed_out:
+            return (
+                f"{answer.unanswered} did not answer within the {wait} wait after "
+                "install: the service manager is not responding, so whether voxd "
+                f"runs is unknown. Service: {service}."
+            )
+        if answer.stalled:
+            seen = (
+                f"voxd was last seen not active; then {answer.stalled} stopped "
+                f"answering before the {wait} wait ended"
+            )
+        else:
+            seen = f"voxd is not active {wait} after install"
+        return (
+            f"{seen}. Service: {service}. Check the daemon logs in {_paths_log_dir()}."
+        )
+
+    def _unreachable(self, miss: Exception | None) -> str:
+        """Return the never-reachable message, naming the last health failure."""
+        target = self._probe.target
+        cause = "" if miss is None else f" (last error: {miss})"
+        return (
+            f"voxd registered but never became reachable within "
+            f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}{cause}. "
+            f"Service: {self._backend.service_path}. Check the daemon logs in "
+            f"{_paths_log_dir()}."
+        )

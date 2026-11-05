@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator, Callable
@@ -38,6 +37,7 @@ from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music_player import MusicPlayerSubsystem
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.port_file import PortFile
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
@@ -71,6 +71,7 @@ class VoxDaemon:
         "_health",
         "_lux_clients",
         "_playback",
+        "_port_file",
         "_programs",
         "_router",
         "_synthesis",
@@ -83,6 +84,7 @@ class VoxDaemon:
     _router: WebSocketRouter
     _synthesis: SynthesisPipeline
     _lux_clients: LuxClientFactory | None
+    _port_file: PortFile
 
     def __new__(
         cls,
@@ -109,6 +111,7 @@ class VoxDaemon:
         self._health = health
         self._router = router
         self._lux_clients = lux_clients
+        self._port_file = PortFile(config.run_dir)
         return self
 
     def build_app(self) -> Starlette:
@@ -150,7 +153,7 @@ class VoxDaemon:
         server = uvicorn.Server(config)
 
         original_startup = server.startup
-        daemon_cfg = self._config
+        port_file = self._port_file
 
         async def _startup_with_port_file(
             sockets: list[socket] | None = None,
@@ -158,7 +161,7 @@ class VoxDaemon:
             await original_startup(sockets=sockets)
             if server.servers and server.servers[0].sockets:
                 actual_port = server.servers[0].sockets[0].getsockname()[1]
-                daemon_cfg.write_port_file(actual_port)
+                port_file.write(actual_port)
                 logger.info("voxd listening on http://%s:%d", host, actual_port)
             else:
                 logger.error("Server started but no bound sockets; shutting down")
@@ -202,8 +205,12 @@ class VoxDaemon:
             await producers.stop_all()
             service.shutdown()
             await consumer.stop_all()
-            with contextlib.suppress(Exception):
-                self._config.remove_port_file()
+            # Shutdown is the boundary: whatever the cleanup raises is logged
+            # with its traceback, never swallowed, and never stops the exit.
+            try:
+                self._port_file.remove()
+            except Exception:
+                logger.exception("Could not clean up serve.port at shutdown")
             logger.info("voxd stopped")
 
     @staticmethod

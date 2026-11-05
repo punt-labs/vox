@@ -193,7 +193,7 @@ class TestLoadKeysFileFormat:
 class TestVoxdStartupEnforces0700:
     """voxd.main() must tighten existing state dirs to mode 0700.
 
-    Copilot finding 3048101870 on PR #162: the existing helpers used
+    The existing helpers used
     ``Path.mkdir(..., exist_ok=True)`` which respects the process
     umask (``0022`` on most shells -> directories created as ``0755``).
     ``paths.ensure_user_dirs()`` creates-or-chmods each subdir with an
@@ -257,9 +257,8 @@ class TestVoxdStartupEnforces0700:
 class TestVoxdPathHelpersArePure:
     """``_log_dir``, ``_run_dir``, ``_config_dir`` must be side-effect free.
 
-    Closes Copilot 3047999704 (mode 0755 leak from `_log_dir`) and
-    Cursor Bugbot 3048161272 (helper is side-effectful, inconsistent
-    with sibling pure-path helpers). Once ``voxd.main()`` calls
+    A helper that creates directories leaks mode 0755 (``_log_dir``) and
+    is side-effectful, unlike its sibling pure-path helpers. Once ``voxd.main()`` calls
     ``paths.ensure_user_dirs()`` at startup, the helpers no longer
     need to create or chmod anything -- they are pure path views.
     """

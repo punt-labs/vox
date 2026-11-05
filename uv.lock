@@ -1390,7 +1390,7 @@ requires-dist = [
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "sounddevice", marker = "extra == 'call'", specifier = ">=0.5.6" },
     { name = "typer", specifier = ">=0.24.1" },
-    { name = "websockets", specifier = ">=14.0" },
+    { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["call"]
 

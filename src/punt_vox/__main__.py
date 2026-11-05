@@ -112,9 +112,8 @@ def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
     :class:`SessionSpec` from its own helper in :mod:`cli_rec`, matching
     the shape here.
 
-    An unconfigured provider is the F1 refusal -- reported on stderr and
-    exit 1 -- and an incompatible provider/model pair is the F7 refusal,
-    same treatment.
+    An unconfigured provider is refused -- reported on stderr and exit 1 --
+    and an incompatible provider/model pair is refused the same way.
     """
     try:
         return SessionSpec.for_repo().fill(spec)
@@ -809,7 +808,7 @@ def install() -> None:
     typer.echo("[2/3] Registering vox daemon...")
     from punt_vox.service import install as svc_install
     from punt_vox.service.health_verify import ServiceHealthError
-    from punt_vox.service.launchctl import LaunchctlError
+    from punt_vox.service.launchctl_query import LaunchctlError
 
     try:
         msg = svc_install()

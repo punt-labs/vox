@@ -370,7 +370,7 @@ class TestScopedUpdate:
 
     def test_update_refuses_broken_touched_file_keeps_row(self, fx: GitFixture) -> None:
         # A touched file that is on disk but unparseable is not a deletion:
-        # update must refuse and preserve its baseline row (Bugbot #2).
+        # update must refuse and preserve its baseline row.
         fx.write("sub/w.py", GOOD)
         fx.snapshot("sub")
         base = fx.commit("base")
@@ -403,7 +403,7 @@ class TestScopedUpdate:
     ) -> None:
         # reconcile without a resolvable base (no origin/main) and a baseline
         # present must fail closed -- not run with empty rename provenance and
-        # launder a regressed rename as new (Bugbot #1).
+        # launder a regressed rename as new.
         fx.write("sub/w.py", GOOD)
         fx.snapshot("sub")
         fx.commit("base")  # no origin/main set -> merge-base unresolvable
@@ -417,7 +417,7 @@ class TestScopedUpdate:
         self, fx: GitFixture
     ) -> None:
         # Parity with check: scoped update must not silently whole-tree-sweep on
-        # an unresolvable base -- fail closed, baseline untouched (Bugbot #1).
+        # an unresolvable base -- fail closed, baseline untouched.
         fx.write("sub/w.py", GOOD)
         fx.snapshot("sub")
         fx.commit("base")
@@ -494,8 +494,7 @@ class TestRelaxWaiver:
 
     def test_relax_untracked_file_writes_no_relaxation(self, fx: GitFixture) -> None:
         # A file with no prior baseline entry has nothing to loosen: relax must
-        # refuse, forge no "relaxed" audit line, and add no waivable pair
-        # (Bugbot #3).
+        # refuse, forge no "relaxed" audit line, and add no waivable pair.
         fx.write("sub/w.py", GOOD)  # no snapshot -> no baseline entry for w.py
         fx.commit("base")
         outcome = fx.writer().relax(
@@ -569,7 +568,7 @@ class TestRelaxWaiver:
 
     def test_relaxing_one_metric_does_not_waive_another(self, fx: GitFixture) -> None:
         # Relax M1 (max_complexity); a fresh regression of M2 (module_size) on the
-        # same file, though locked in-tree, must NOT be waived (gvr / Bugbot #1).
+        # same file, though locked in-tree, must NOT be waived.
         fx.write("sub/w.py", WORSE)
         current = Baseline.metrics_by_file(fx.scorer().results)["sub/w.py"]
         base_metrics = {
@@ -648,8 +647,7 @@ class TestRenameCarry:
         self, fx: GitFixture
     ) -> None:
         # A refused rename must NOT drop the old baseline key -- otherwise a
-        # second --update run has no carried base and launders the regression
-        # (Copilot #1).
+        # second --update run has no carried base and launders the regression.
         fx.write("sub/old.py", GOOD)
         fx.snapshot("sub")
         base = fx.commit("base")
@@ -679,7 +677,7 @@ class TestRenameCarry:
 
     def test_rename_to_unparseable_target_keeps_old_entry(self, fx: GitFixture) -> None:
         # rename old->new where new is unparseable must NOT drop old's row: the
-        # drop is gated on the target being parse-clean AND written (Copilot #3).
+        # drop is gated on the target being parse-clean AND written.
         # Keep the target a near-copy of old so git still detects the rename.
         broken_similar = GOOD.replace('return "pos"', 'return "pos')  # unterminated
         fx.write("sub/old.py", GOOD)
@@ -704,7 +702,7 @@ class TestRenameCarry:
     ) -> None:
         # reconcile's prune must be rename-aware: a renamed+regressed module is
         # refused (new not added, old carry not pruned), and a later --update
-        # still refuses -- no laundering across reconcile (Bugbot #1).
+        # still refuses -- no laundering across reconcile.
         fx.write("sub/old.py", GOOD)
         fx.snapshot("sub")
         fork = fx.commit("fork")
@@ -734,7 +732,7 @@ class TestRenameCarry:
     ) -> None:
         # reconcile must not prune a rename source whose target is present on
         # disk but unparseable -- the target counts as "present" even though it
-        # is excluded from plan.current (Bugbot #2).
+        # is excluded from plan.current.
         broken_similar = GOOD.replace('return "pos"', 'return "pos')  # unterminated
         fx.write("sub/old.py", GOOD)
         fx.snapshot("sub")
@@ -841,7 +839,7 @@ class TestGitFailClosed:
 
     def test_corrupt_base_baseline_raises_giterror(self, fx: GitFixture) -> None:
         # A non-JSON baseline blob at the base is a controlled GitError, not a
-        # json traceback that crashes the gate (Bugbot #2).
+        # json traceback that crashes the gate.
         fx.write("sub/w.py", GOOD)
         fx.write_baseline({"sub/w.py": {"module_size": 5.0}})
         fx.commit("valid base")
@@ -935,7 +933,7 @@ class TestGitFailClosed:
         self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # A malformed in-tree .oo-audit.jsonl must surface as a clean non-zero
-        # exit through the CLI, not a JSONDecodeError traceback (Bugbot #2).
+        # exit through the CLI, not a JSONDecodeError traceback.
         fx.write("sub/w.py", WORSE)
         fx.snapshot("sub")
         base = fx.commit("base")
@@ -950,7 +948,7 @@ class TestGitFailClosed:
         self, fx: GitFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # A corrupt in-tree .oo-baseline.json must surface as a clean non-zero
-        # exit through the CLI, not a JSONDecodeError traceback (Bugbot #1).
+        # exit through the CLI, not a JSONDecodeError traceback.
         fx.write("sub/w.py", GOOD)
         fx.write(".oo-baseline.json", "{ not valid json")
         fx.commit("corrupt baseline")
@@ -992,8 +990,8 @@ class TestBootstrap:
         self, fx: GitFixture
     ) -> None:
         # Base has no baseline blob and origin/main is unresolvable, but an
-        # in-tree baseline exists: cannot confirm first-adoption -> fail closed
-        # (Bugbot #3). An unfetched origin/main must not read as "no tip baseline".
+        # in-tree baseline exists: cannot confirm first-adoption -> fail closed.
+        # An unfetched origin/main must not read as "no tip baseline".
         fx.write("sub/w.py", GOOD)
         base = fx.commit("base without baseline")
         fx.write("sub/w.py", WORSE)
