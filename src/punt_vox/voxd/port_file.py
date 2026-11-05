@@ -7,6 +7,10 @@ over it), and the daemon remembers that file's identity -- device and inode.
 At shutdown it removes ``serve.port`` only if the file there is still the one
 it wrote. A daemon that exits after another voxd has written its own file
 leaves that file alone, so clients keep finding the running daemon.
+
+Publishing and the check-and-unlink both run under one exclusive ``flock`` on
+a sibling lock file every voxd in the run directory shares, so no publish can
+land between a removal's ownership check and its unlink.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.sibling_lock import SiblingLock
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,14 +33,18 @@ __all__ = ["PortFile"]
 class PortFile:
     """One daemon's claim on ``serve.port`` in its run directory."""
 
-    __slots__ = ("_mine", "_path")
+    __slots__ = ("_lock", "_mine", "_path")
 
     _path: Path
+    _lock: SiblingLock
     _mine: tuple[int, int] | None  # (st_dev, st_ino) written; None: never written
 
     def __new__(cls, run_dir: Path) -> Self:
         self = super().__new__(cls)
         self._path = run_dir / "serve.port"
+        # A sibling, never the file itself: the rename swaps serve.port's
+        # inode, and a lock on the old inode would serialize nothing.
+        self._lock = SiblingLock(self._path)
         self._mine = None
         return self
 
@@ -48,13 +58,14 @@ class PortFile:
         temporary file and raises.
         """
         tmp = self._path.with_name(f".serve.port.{os.getpid()}")
-        try:
-            tmp.write_text(str(port))
-            st = tmp.stat()
-            tmp.replace(self._path)
-        except OSError:
-            tmp.unlink(missing_ok=True)
-            raise
+        with self._lock.held():
+            try:
+                tmp.write_text(str(port))
+                st = tmp.stat()
+                tmp.replace(self._path)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                raise
         self._mine = (st.st_dev, st.st_ino)
         logger.info("Wrote port file: %s (port %d)", self._path, port)
 
@@ -64,16 +75,17 @@ class PortFile:
         A file another voxd has written since -- the same port after a restart
         or a different one -- is left in place.
         """
-        try:
-            st = self._path.stat()
-        except FileNotFoundError:
-            return
-        if (st.st_dev, st.st_ino) != self._mine:
-            logger.info("%s now belongs to another voxd; left in place", self._path)
-            return
-        try:
-            self._path.unlink()
-        except OSError as exc:
-            logger.warning("Could not remove %s: %s", self._path, exc)
-            return
+        with self._lock.held():
+            try:
+                st = self._path.stat()
+            except FileNotFoundError:
+                return
+            if (st.st_dev, st.st_ino) != self._mine:
+                logger.info("%s now belongs to another voxd; left in place", self._path)
+                return
+            try:
+                self._path.unlink()
+            except OSError as exc:
+                logger.warning("Could not remove %s: %s", self._path, exc)
+                return
         logger.info("Removed port file %s", self._path)

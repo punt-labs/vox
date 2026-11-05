@@ -9,6 +9,7 @@ or every client loses the running daemon.
 from __future__ import annotations
 
 import errno
+import threading
 from pathlib import Path
 
 import pytest
@@ -62,9 +63,19 @@ def test_a_daemon_that_never_wrote_removes_nothing(tmp_path: Path) -> None:
     assert (tmp_path / "serve.port").read_text() == "8421"
 
 
+def _temporaries(run_dir: Path) -> list[str]:
+    """Return the half-published ``.serve.port.<pid>`` files left behind."""
+    return [
+        p.name
+        for p in run_dir.iterdir()
+        if p.name.startswith(".serve.port.") and not p.name.endswith(".lock")
+    ]
+
+
 def test_write_leaves_no_temporary_file(tmp_path: Path) -> None:
     PortFile(tmp_path).write(8421)
-    assert [p.name for p in tmp_path.iterdir()] == ["serve.port"]
+    assert (tmp_path / "serve.port").read_text() == "8421"
+    assert _temporaries(tmp_path) == []
 
 
 def test_write_records_the_file_it_wrote_not_a_later_rename(
@@ -97,5 +108,35 @@ def test_a_failed_rename_leaves_no_temporary_file_and_raises(
     monkeypatch.setattr(Path, "replace", refuse)
     with pytest.raises(OSError, match="cross-device"):
         PortFile(tmp_path).write(8421)
-    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".serve.port.")]
+    assert _temporaries(tmp_path) == []
     assert not (tmp_path / "serve.port").exists()
+
+
+def test_removal_paused_after_its_check_never_deletes_a_newer_daemons_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Check-and-unlink is one step: a publish cannot land between them."""
+    a, b = PortFile(tmp_path), PortFile(tmp_path)
+    a.write(8421)
+    checked, resume = threading.Event(), threading.Event()
+    real_unlink = Path.unlink
+
+    def unlink_after_a_pause(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "serve.port" and not checked.is_set():
+            checked.set()
+            resume.wait(timeout=5.0)
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink_after_a_pause)
+    remover = threading.Thread(target=a.remove)
+    remover.start()
+    assert checked.wait(timeout=5.0)
+    publisher = threading.Thread(target=b.write, args=(9000,))
+    publisher.start()
+    publisher.join(timeout=0.5)
+    resume.set()
+    remover.join(timeout=10.0)
+    publisher.join(timeout=10.0)
+    assert not remover.is_alive()
+    assert not publisher.is_alive()
+    assert (tmp_path / "serve.port").read_text() == "9000"
