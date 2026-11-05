@@ -44,6 +44,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **On macOS, `vox daemon uninstall` fails and keeps the LaunchAgent plist**
   when launchctl cannot confirm the job left the GUI domain, instead of
   reporting success while launchd could respawn voxd.
+- **`vox daemon status` answers with four states**: `running`,
+  `unresponsive` (a voxd holds the port but did not answer, with its pids),
+  `unknown` (something holds the port that vox cannot attribute, or vox
+  could not finish checking), and `not_running`. Only `running` exits 0. The
+  whole check is bounded by one 5-second deadline, and it names a voxd found
+  on another port. With `VOXD_HOST`/`VOXD_PORT` set, only a refused
+  connection reads as `not_running`.
+- **`vox doctor`** says "not running" only when nothing is listening, and
+  "running but rejected the connection" for a stale token.
+- **A hostname `VOXD_BIND` is refused.** Set it to an IP address
+  (e.g. `127.0.0.1`); `install` refuses a hostname before writing anything.
+- **`vox daemon uninstall` refuses to run as root**, like `install`.
+- **websockets 15.0 or newer is required.**
+
+### Fixed
+
+- **A newer voxd's `serve.port` is no longer deleted** by an older voxd's
+  shutdown or by the CLI's stale-file cleanup; both now take a shared lock
+  and remove only the exact file they found.
+- **The voxd token no longer appears in error messages or tracebacks**, and
+  the client never connects to voxd through an HTTP/SOCKS proxy from the
+  environment.
 
 ## [5.0.6] - 2026-11-04
 

@@ -554,7 +554,7 @@ vox daemon stop                                # Stop voxd and confirm it exited
 vox daemon start                               # Start voxd and confirm it serves this wheel (--json)
 vox daemon restart                             # stop, then start (--json)
 vox daemon status --json                       # Daemon health as JSON (mic:status daemon block shape)
-vox daemon status                              # Check if daemon is running
+vox daemon status                              # running | unresponsive | unknown | not_running (exit 0 only when running)
 ```
 
 ## Environment Variables
@@ -567,7 +567,7 @@ vox daemon status                              # Check if daemon is running
 | `VOXD_HOST` | Remote voxd host (client) | `127.0.0.1` |
 | `VOXD_PORT` | Remote voxd port (client) | read `serve.port` file |
 | `VOXD_TOKEN` | Remote voxd auth token (client) | read `serve.token` file |
-| `VOXD_BIND` | voxd bind address (server) | `127.0.0.1` |
+| `VOXD_BIND` | voxd bind address (server); must be an IP address, not a hostname | `127.0.0.1` |
 
 Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.punt-labs/vox/keys.env`, not in your shell rc. See [Configure providers](#configure-providers) for the full walkthrough.
 
