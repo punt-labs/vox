@@ -9,7 +9,7 @@ count. All of them read
 which is refreshed off the hot path via ``asyncio.to_thread`` and resubmits
 once the refresh lands, so a render fired the instant a state change (or a
 menu click, or a hub handshake) arrives can be a render or two behind the true
-disk count, converging shortly after (round 9 finding 3: ``install`` used to
+disk count, converging shortly after (``install`` used to
 await that refresh inline, which stalled the same event loop that holds the
 hub connection's session lease and its future event dispatch).
 """
@@ -432,7 +432,7 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_an_album_added_during_an_in_flight_refresh_is_not_stuck_at_zero(
         self, album_of: AlbumFactory
     ) -> None:
-        # Round 9 finding 2: _schedule_track_count_refresh used to close over
+        # _schedule_track_count_refresh used to close over
         # the ``albums`` snapshot captured at SCHEDULE time and feed it
         # straight into the refresh itself (not just the resubmit). Sequence:
         # notify_changed schedules a refresh over catalog {kept}; before that
@@ -462,7 +462,7 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_an_album_added_mid_refresh_is_not_left_stale_by_a_coalesced_call(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Round 10 finding 4: the drop window that matters isn't just the gap
+        # The drop window that matters isn't just the gap
         # between notify_changed calls -- it spans the ENTIRE in-flight run,
         # including while _try_refresh_cache is awaiting the (here, slowed)
         # disk read. Sequence: notify_changed schedules a refresh over catalog
@@ -537,7 +537,7 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_a_menu_click_shows_the_cached_count_at_once_then_converges(
         self, album_of: AlbumFactory
     ) -> None:
-        # install() must never block on the disk read (finding 3, round 9): the
+        # install() must never block on the disk read: the
         # immediate install carries whatever _cache already holds -- the default
         # zero, since nothing has refreshed it yet -- and the live count only
         # lands a beat later once the background refresh resubmits.
@@ -561,7 +561,7 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_install_does_not_wait_on_a_slow_disk_read(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Round 9 finding 3: install() used to await the refresh inline -- on
+        # install() used to await the refresh inline -- on
         # the same event loop as the hub connection's handshake and dispatch,
         # a slow (bounded 5s) disk read there stalled the click/reconnect that
         # reached it. asyncio.wait_for with a timeout far under that 5s proves

@@ -225,8 +225,7 @@ class TestSayCommand:
         path, fall through to file/stdin or anonymous". Replaces the
         previous behavior that raised BadParameter, which shadowed
         mutual-exclusion errors when the env var happened to be set to
-        the empty string in CI. Regression guard for Cursor Bugbot on
-        PR #175.
+        the empty string in CI.
         """
         from punt_vox.client import SynthesizeResult
 
@@ -300,7 +299,6 @@ class TestSayCommand:
 # ---------------------------------------------------------------------------
 # API key input path tests
 #
-# Regression guard for the Cursor Automation security review of PR #175.
 # The concern: ``--api-key <value>`` on the command line exposes the
 # secret via ``ps``, ``/proc/*/cmdline``, shell history, and terminal
 # recordings. Fix keeps ``--api-key`` for back-compat but adds three
@@ -427,8 +425,7 @@ class TestApiKeyInputPaths:
         Only 0600 is silent. A narrower ``mode & 0o004`` check would
         miss the group-readable case, exposing credentials on shared
         Unix systems where the file's group contains ``nobody``,
-        ``www-data``, or a shared-dev account. Regression guard for
-        Copilot on PR #175.
+        ``www-data``, or a shared-dev account.
 
         The warning is advisory, not blocking: the call still succeeds
         and the key reaches the client. Matches the keys.env
@@ -609,8 +606,8 @@ class TestApiKeyInputPaths:
         "mutually exclusive" split across lines, breaking substring
         matches. ``standalone_mode=False`` makes Click re-raise
         BadParameter instead of rendering it and calling ``sys.exit`` —
-        so ``result.exception`` holds the unwrapped message. Fixes
-        intermittent CI failures on PR #175.
+        so ``result.exception`` holds the unwrapped message, which keeps
+        the check deterministic in CI.
         """
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("VOX_API_KEY", raising=False)
@@ -721,8 +718,7 @@ class TestApiKeyInputPaths:
     # the fix the empty env var short-circuited to a "cannot be empty"
     # BadParameter before the mutual exclusion check ran. After the
     # fix the empty env string is normalized to None and the file or
-    # stdin path proceeds. Regression guard for Cursor Bugbot on PR
-    # #175.
+    # stdin path proceeds.
     # ------------------------------------------------------------------
 
     @patch(f"{_CLI}.VoxClientSync")

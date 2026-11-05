@@ -585,7 +585,7 @@ class TestSynthesizeHandlerTypedErrorRouting:
         # would swallow genuine daemon-side bugs, which is why the
         # typed class exists. Without this catch, F4 falls through to
         # the broad except and reaches the caller as "operation
-        # failed" -- the F3 twin the review round-2 caught.
+        # failed" -- the twin of the F3 case.
         handler, _ = self._handler_that_raises(
             UnknownProviderError("ploly", ["elevenlabs", "openai", "polly"])
         )
