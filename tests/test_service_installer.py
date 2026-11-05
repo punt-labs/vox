@@ -678,3 +678,32 @@ def test_backend_for_picks_the_platform_backend() -> None:
     inst = ServiceInstaller()
     assert isinstance(inst.backend_for("macos"), LaunchdBackend)
     assert isinstance(inst.backend_for("linux"), SystemdBackend)
+
+
+def test_install_proceeds_and_reports_a_serve_port_it_could_not_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old daemon was killed; a stuck serve.port never aborts the install."""
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    calls = _fake_backend(monkeypatch, SystemdBackend)
+    note = "daemon stopped; could not clear serve.port: read-only"
+    monkeypatch.setattr(ProcessManager, "port_file_note", property(lambda self: note))
+
+    result = ServiceInstaller().install()
+
+    assert calls == ["port_free", "install"]
+    assert note in result
+
+
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_uninstall_reports_a_serve_port_it_could_not_clear(
+    plat: str, monkeypatch: pytest.MonkeyPatch, no_unit: None
+) -> None:
+    _on(monkeypatch, plat)
+    note = "daemon stopped; could not clear serve.port: read-only"
+    monkeypatch.setattr(ProcessManager, "port_file_note", property(lambda self: note))
+    with patch.object(ProcessManager, "kill_stale_daemon", return_value=True):
+        msg = ServiceInstaller().uninstall()
+    assert "uninstalled" in msg
+    assert note in msg

@@ -14,7 +14,7 @@ from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.deadline import Deadline
 from punt_vox.service.installer import ServiceInstaller
-from punt_vox.service.port_file_cleanup import PortFileCleanup
+from punt_vox.service.port_file_cleanup import PortFileCleanup, StalePortFile
 from punt_vox.service.process import ProcessManager
 from punt_vox.service.termination import Termination
 from punt_vox.voxd.port_file import PortFile
@@ -782,3 +782,71 @@ def test_discard_paused_after_its_check_never_deletes_a_publishing_voxds_file(
     assert not publisher.is_alive()
     assert outcome == [PortFileCleanup.REMOVED]
     assert (tmp_path / "serve.port").read_text() == "8421"
+
+
+# ---------------------------------------------------------------------------
+# A cleanup failure after a successful kill never undoes the kill
+# ---------------------------------------------------------------------------
+
+
+def _one_voxd_on_8421(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Script one voxd on 8421 that the kill stops; return the killed pids."""
+    killed: list[int] = []
+
+    def kill(self: ProcessManager, pid: int) -> bool:
+        killed.append(pid)
+        return True
+
+    monkeypatch.setattr(ProcessManager, "read_port_file", lambda self: 8421)
+    monkeypatch.setattr(ProcessManager, "find_pid_on_port", lambda self, port: [999])
+    monkeypatch.setattr(ProcessManager, "is_vox_daemon_process", lambda self, p: True)
+    monkeypatch.setattr(ProcessManager, "kill_pid", kill)
+    return killed
+
+
+def test_kill_stale_daemon_survives_a_cleanup_failure_after_the_kill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The daemon is gone; a serve.port that cannot be cleared is a note."""
+    (tmp_path / "serve.port").write_text("8421")
+    _one_voxd_on_8421(monkeypatch)
+
+    def refuse(self: StalePortFile, port: int) -> PortFileCleanup:
+        msg = f"cannot remove {tmp_path / 'serve.port'}: read-only"
+        raise PortProbeError(msg)
+
+    monkeypatch.setattr(StalePortFile, "discard", refuse)
+    mgr = ProcessManager()
+    with caplog.at_level("WARNING", logger="punt_vox.service.process"):
+        assert mgr.kill_stale_daemon() is True
+    assert mgr.port_file_note.startswith("daemon stopped; could not clear serve.port")
+    assert "read-only" in mgr.port_file_note
+    assert any("serve.port" in r.getMessage() for r in caplog.records)
+
+
+def test_kill_stale_daemon_with_a_clean_cleanup_has_no_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "serve.port").write_text("8421")
+    _one_voxd_on_8421(monkeypatch)
+    mgr = ProcessManager()
+    assert mgr.kill_stale_daemon() is True
+    assert mgr.port_file_note == ""
+
+
+def test_kill_stale_daemon_aborts_before_killing_when_the_look_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing is killed while serve.port cannot even be looked at."""
+    killed = _one_voxd_on_8421(monkeypatch)
+
+    def unreadable(cls: type[StalePortFile], path: Path) -> StalePortFile:
+        msg = f"cannot read {path}: Permission denied"
+        raise PortProbeError(msg)
+
+    monkeypatch.setattr(StalePortFile, "as_found", classmethod(unreadable))
+    with pytest.raises(PortProbeError, match=r"serve\.port"):
+        ProcessManager().kill_stale_daemon()
+    assert killed == []

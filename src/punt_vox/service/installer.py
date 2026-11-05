@@ -173,7 +173,7 @@ class ServiceInstaller:
             f"  Command: {' '.join(args)}",
             f"  User:    {user}",
         ]
-        return os.linesep.join(lines)
+        return self._noted(os.linesep.join(lines))
 
     # ------------------------------------------------------------------
     # Uninstall
@@ -204,7 +204,14 @@ class ServiceInstaller:
                 "another user."
             )
             raise SystemExit(msg)
-        return f"voxd daemon uninstalled. Removed {backend.service_path}."
+        return self._noted(f"voxd daemon uninstalled. Removed {backend.service_path}.")
+
+    def _noted(self, message: str) -> str:
+        """Return *message*, plus why the stale-daemon kill left serve.port."""
+        note = self._process_mgr.port_file_note
+        if not note:
+            return message
+        return f"{message}{os.linesep}  Note:    {note}"
 
     def _stale_daemon_survives(self) -> bool:
         """Return True if a voxd daemon still occupies the daemon port."""

@@ -31,17 +31,24 @@ DEFAULT_PORT = 8421
 class ProcessManager:
     """Manage voxd daemon processes: find, verify, kill, and port-file I/O."""
 
-    __slots__ = ("_deadline",)
+    __slots__ = ("_deadline", "_note")
 
     # SIGTERM grace plus the SIGKILL wait for an install/uninstall kill.
     _KILL_BUDGET_S: ClassVar[float] = 7.0
 
     _deadline: Deadline
+    _note: str  # "" unless the last kill left serve.port behind
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._deadline = Deadline.never()
+        self._note = ""
         return self
+
+    @property
+    def port_file_note(self) -> str:
+        """Return why the last confirmed kill left ``serve.port`` behind; ``""``."""
+        return self._note
 
     def within(self, deadline: Deadline) -> ProcessManager:
         """Return a manager whose probe commands all finish by *deadline*.
@@ -217,29 +224,46 @@ class ProcessManager:
         if it is still that file: a voxd the service manager respawns while
         the old one dies publishes its own, which is left in place.
         """
+        self._note = ""
         port = self.read_port_file()
         if port is None:
             port = DEFAULT_PORT
         stale = StalePortFile.as_found(self._run_dir() / "serve.port")
-        pids = self.find_pid_on_port(port)
-        if not pids:
+        pid = self._stale_voxd(port)
+        if pid is None:
             return False
-        for pid in pids:
-            if not self.is_vox_daemon_process(pid):
-                logger.debug(
-                    "PID %d on port %d is not a voxd process — skipping",
-                    pid,
-                    port,
-                )
-                continue
-            logger.info("Found stale daemon PID %d on port %d", pid, port)
-            if self.kill_pid(pid):
-                stale.discard(port)
-                return True
+        if not self.kill_pid(pid):
             logger.warning("Failed to kill PID %d — leaving state files intact", pid)
             return False
-        logger.warning("No voxd process found among PIDs %s on port %d", pids, port)
-        return False
+        self._clear_after_kill(stale, port)
+        return True
+
+    def _stale_voxd(self, port: int) -> int | None:
+        """Return the first voxd pid on *port*; ``None`` when no holder is voxd."""
+        pids = self.find_pid_on_port(port)
+        for pid in pids:
+            if self.is_vox_daemon_process(pid):
+                logger.info("Found stale daemon PID %d on port %d", pid, port)
+                return pid
+            logger.debug(
+                "PID %d on port %d is not a voxd process — skipping", pid, port
+            )
+        if pids:
+            logger.warning("No voxd process found among PIDs %s on port %d", pids, port)
+        return None
+
+    def _clear_after_kill(self, stale: StalePortFile, port: int) -> None:
+        """Clear ``serve.port`` once the daemon is confirmed gone.
+
+        The kill already happened, so a file that cannot be cleared must not
+        fail the caller -- install would abort with no daemon and no unit. It
+        is logged and kept as :attr:`port_file_note` for the caller to report.
+        """
+        try:
+            stale.discard(port)
+        except PortProbeError as exc:
+            logger.warning("voxd stopped, but serve.port was not cleared: %s", exc)
+            self._note = f"daemon stopped; could not clear serve.port: {exc}"
 
     def ensure_port_free(self) -> None:
         """Kill stale daemon if present; abort if port remains occupied.
