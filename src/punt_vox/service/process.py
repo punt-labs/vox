@@ -14,12 +14,13 @@ from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.port_file_cleanup import PortFileCleanup, StalePortFile
 from punt_vox.service.process_identity import ProcessIdentity
+from punt_vox.service.stale_port_file import StalePortFile
 from punt_vox.service.termination import Termination
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import ProcessHandle
+    from punt_vox.service.port_file_cleanup import PortFileCleanup
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class ProcessManager:
         :class:`StalePortFile`). Returns what it did; a lock, read or removal
         failure raises ``PortProbeError`` so the caller can report it.
         """
-        return StalePortFile.as_found(self._run_dir() / "serve.port").discard(port)
+        return StalePortFile.read(self._run_dir() / "serve.port").discard(port)
 
     def find_pid_on_port(self, port: int) -> list[int]:
         """Return all PIDs with connections to *port*.
@@ -220,15 +221,15 @@ class ProcessManager:
     def kill_stale_daemon(self) -> bool:
         """Kill a daemon process occupying the port.  Return True if killed.
 
-        ``serve.port`` is looked at before the kill and cleared after it only
-        if it is still that file: a voxd the service manager respawns while
-        the old one dies publishes its own, which is left in place.
+        ``serve.port`` is read once, before the port is probed: the port acted
+        on and the file pinned for removal come from that one open file. It
+        is cleared after the kill only if it is still that file, so a voxd
+        that binds and publishes at any point after the read -- the service
+        manager respawning it while the old one dies -- keeps its own.
         """
         self._note = ""
-        port = self.read_port_file()
-        if port is None:
-            port = DEFAULT_PORT
-        stale = StalePortFile.as_found(self._run_dir() / "serve.port")
+        stale = StalePortFile.read(self._run_dir() / "serve.port")
+        port = stale.port if stale.port is not None else DEFAULT_PORT
         pid = self._stale_voxd(port)
         if pid is None:
             return False

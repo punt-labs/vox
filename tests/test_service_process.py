@@ -14,8 +14,9 @@ from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.deadline import Deadline
 from punt_vox.service.installer import ServiceInstaller
-from punt_vox.service.port_file_cleanup import PortFileCleanup, StalePortFile
+from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import ProcessManager
+from punt_vox.service.stale_port_file import StalePortFile
 from punt_vox.service.termination import Termination
 from punt_vox.voxd.port_file import PortFile
 
@@ -846,7 +847,53 @@ def test_kill_stale_daemon_aborts_before_killing_when_the_look_fails(
         msg = f"cannot read {path}: Permission denied"
         raise PortProbeError(msg)
 
-    monkeypatch.setattr(StalePortFile, "as_found", classmethod(unreadable))
+    monkeypatch.setattr(StalePortFile, "read", classmethod(unreadable))
     with pytest.raises(PortProbeError, match=r"serve\.port"):
         ProcessManager().kill_stale_daemon()
     assert killed == []
+
+
+# ---------------------------------------------------------------------------
+# The port acted on and the pinned file come from one read of one file
+# ---------------------------------------------------------------------------
+
+
+def test_kill_stale_daemon_keeps_a_replacement_published_after_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replacement voxd binds and publishes while the old one is probed."""
+    (tmp_path / "serve.port").write_text("8421")
+    killed = _one_voxd_on_8421(monkeypatch)
+
+    def second_read(self: ProcessManager) -> int | None:
+        msg = "the port must come from the pinned read of serve.port"
+        raise AssertionError(msg)
+
+    def probe_as_a_replacement_publishes(self: ProcessManager, port: int) -> list[int]:
+        PortFile(tmp_path).write(port)
+        return [999]
+
+    monkeypatch.setattr(ProcessManager, "read_port_file", second_read)
+    monkeypatch.setattr(
+        ProcessManager, "find_pid_on_port", probe_as_a_replacement_publishes
+    )
+    assert ProcessManager().kill_stale_daemon() is True
+    assert killed == [999]
+    assert (tmp_path / "serve.port").read_text() == "8421"
+
+
+def test_kill_stale_daemon_probes_the_port_the_pinned_file_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "serve.port").write_text("9000")
+    _one_voxd_on_8421(monkeypatch)
+    probed: list[int] = []
+
+    def probe(self: ProcessManager, port: int) -> list[int]:
+        probed.append(port)
+        return [999]
+
+    monkeypatch.setattr(ProcessManager, "find_pid_on_port", probe)
+    assert ProcessManager().kill_stale_daemon() is True
+    assert probed == [9000]
+    assert not (tmp_path / "serve.port").exists()
