@@ -81,10 +81,17 @@ def test_answer_within_returns_the_moment_the_check_holds() -> None:
     assert clock.monotonic() == 1.0
 
 
-def test_answer_within_returns_the_last_answer_when_none_holds() -> None:
-    """A wait that ran out says why: the last check timed out, or answered no."""
+def test_answer_within_keeps_a_real_no_over_a_last_sliver_timeout() -> None:
+    """L1: a final query cut short by the last sliver does not erase a real "no"."""
     clock = FakeClock()
-    answers = iter([QueryAnswer.of(holds=False)] + [QueryAnswer.no_answer("q")] * 9)
+    answers = iter([QueryAnswer.of(holds=False)] * 2 + [QueryAnswer.no_answer("q")])
     answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.5)
+    assert answer.holds is False
+    assert answer.timed_out is False
+
+
+def test_answer_within_reports_a_timeout_only_when_nothing_answered() -> None:
+    clock = FakeClock()
+    answer = Poll(clock, 1.0).answer_within(lambda _: QueryAnswer.no_answer("q"), 2.5)
     assert answer.holds is False
     assert answer.unanswered == "q"

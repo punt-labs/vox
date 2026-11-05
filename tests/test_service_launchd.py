@@ -7,9 +7,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import BackendCommandError
+from punt_vox.service.clock import SystemClock
 from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.query_answer import QueryAnswer
@@ -423,5 +425,41 @@ def test_launchd_uninstall_keeps_the_plist_when_bootout_is_unconfirmed(
     monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
     be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
     with pytest.raises(BackendCommandError, match="did not answer"):
+        be.uninstall()
+    assert plist.exists()
+
+
+def test_launchd_uninstall_names_a_job_that_stayed_despite_a_last_sliver_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1: prints that said "registered", then one cut short at the end ->
+    the reason is "still registered", not "did not answer"."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.1)
+    clock = FakeClock()
+
+    def monotonic(self: SystemClock) -> float:
+        return clock.monotonic()
+
+    def sleep(self: SystemClock, seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+    monkeypatch.setattr(SystemClock, "sleep", sleep)
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, float)
+        if argv[1] != "bootout" and timeout < 0.08:
+            raise subprocess.TimeoutExpired(cmd="launchctl", timeout=timeout)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="still registered"):
         be.uninstall()
     assert plist.exists()

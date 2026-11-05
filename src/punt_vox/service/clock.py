@@ -88,19 +88,26 @@ class Poll:
         For a check that itself blocks (a ``systemctl`` or ``launchctl``
         query): each call gets the time left before the deadline as its own
         bound, so no check can carry the wait past it. Returns the first
-        answer that holds, or else the last answer given -- which says whether
-        the wait ran out on a "no" or on a query that never answered. A check
-        is never run with no time left, so there is no extra check at the
-        deadline.
+        answer that holds. Otherwise it returns the last answer that came back
+        in time -- a real "no" -- and reports a query that never answered only
+        when none did: the last query gets only the sliver left after the
+        final sleep, and running out of that sliver must not blame a manager
+        that had been answering all along. A check is never run with no time
+        left, so there is no extra check at the deadline.
         """
         deadline = self._clock.monotonic() + deadline_s
-        answer = QueryAnswer.of(holds=False)
+        last = QueryAnswer.of(holds=False)
+        heard = False
         while (remaining := deadline - self._clock.monotonic()) > 0:
             answer = ask(remaining)
             if answer.holds:
                 return answer
+            if not answer.timed_out:
+                last, heard = answer, True
+            elif not heard:
+                last = answer
             self._nap(deadline)
-        return answer
+        return last
 
     def _nap(self, deadline: float) -> None:
         """Sleep one interval, cut short so the sleep never passes *deadline*."""

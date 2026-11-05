@@ -168,3 +168,44 @@ def test_verify_names_a_manager_query_that_never_answered(
         HealthVerifier(backend, probe).verify()
     assert "daemon logs" not in str(info.value)
     probe.wait_up.assert_not_called()
+
+
+def _answers_until_the_last_sliver(
+    monkeypatch: pytest.MonkeyPatch, target: str, ran: subprocess.CompletedProcess[str]
+) -> None:
+    """The manager answers every query given a real budget; the last sliver hangs."""
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, float)
+        if timeout < 0.3:
+            raise subprocess.TimeoutExpired(cmd=argv[0], timeout=timeout)
+        return ran
+
+    monkeypatch.setattr(target, run)
+
+
+@pytest.mark.parametrize("platform", ["systemd", "launchd"])
+def test_verify_blames_the_unit_when_only_the_last_sliver_timed_out(
+    monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    """L1: real "inactive" answers, then a cut-short last query -> "not active"."""
+    backend: InstallableBackend
+    if platform == "systemd":
+        ran = subprocess.CompletedProcess(["systemctl"], 3, "inactive\n", "")
+        _answers_until_the_last_sliver(
+            monkeypatch, "punt_vox.service.systemd.subprocess.run", ran
+        )
+        backend = SystemdBackend(
+            lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+        )
+    else:
+        ran = subprocess.CompletedProcess(["launchctl"], 113, "", "")
+        _answers_until_the_last_sliver(
+            monkeypatch, "punt_vox.service.launchctl_query.subprocess.run", ran
+        )
+        backend = LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert "did not answer" not in str(info.value)
