@@ -42,6 +42,7 @@ class TestReadOnly:
             "--no-skills",
             "--no-prompt-templates",
             "--no-approve",
+            "--no-context-files",
         ],
     )
     def test_every_surface_widening_source_is_switched_off(

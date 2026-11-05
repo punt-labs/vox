@@ -6,8 +6,9 @@ launch, never toggled per turn, so there is no window in which a write tool
 exists. Everything else that could widen that surface is switched off at
 launch too -- extensions (one of which, ``biff-bridge``, was found to stall
 the RPC stream outright), pi's built-in MCP support (``--tools`` keeps MCP
-tools unless told otherwise), skills, prompt templates, and any
-project-local pi configuration the repo might carry (``--no-approve``).
+tools unless told otherwise), skills, prompt templates, project-local pi
+config (``--no-approve``), and the repo's AGENTS.md/CLAUDE.md (the snapshot
+carries the context; those files instruct a coding agent with write access).
 
 The environment is an allowlist (:class:`~.call_agent_env.CallAgentEnv`):
 nothing secret from the developer's shell rides along by default.
@@ -36,6 +37,7 @@ _SURFACE_OFF: tuple[str, ...] = (
     "--no-skills",
     "--no-prompt-templates",
     "--no-approve",
+    "--no-context-files",
 )
 
 _ROLE = (
