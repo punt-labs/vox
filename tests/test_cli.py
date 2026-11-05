@@ -1038,7 +1038,7 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        # Setting a voice with no provider configured refuses (F1); seed
+        # Setting a voice with no provider configured refuses; seed
         # provider so the set path exercises the write, not the refusal.
         (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
 
@@ -1485,7 +1485,6 @@ class TestDoctorCommand:
         # daemon restart`` refuses to run as root and invokes sudo
         # internally only for the service-manager calls that need it.
         # A literal copy-paste of the hint must work unprivileged.
-        # Regression guard for Copilot round-2 finding on PR #175.
         # Built dynamically so the source of this test file does not
         # itself contain the forbidden phrase.
         forbidden_hint = " ".join(["sudo", "vox", "daemon", "restart"])

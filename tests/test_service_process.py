@@ -514,7 +514,8 @@ def test_ensure_port_free_reads_port_file_before_kill_stale_daemon(
 ) -> None:
     """Port file read MUST happen BEFORE ``kill_stale_daemon`` runs.
 
-    Regression guard for Cursor Bugbot on PR #175.
+    A successful kill removes the port file, so reading it afterwards would
+    re-check the default port instead of the one voxd last bound.
     """
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
     port_file = tmp_path / "serve.port"
