@@ -15,3 +15,11 @@ def test_a_query_with_no_answer_confirms_nothing_and_names_itself() -> None:
     assert answer.holds is False
     assert answer.timed_out is True
     assert answer.unanswered == "systemctl is-active voxd"
+
+
+def test_a_stall_keeps_the_answer_and_names_the_hung_command() -> None:
+    answer = QueryAnswer.of(holds=False).then_stalled("systemctl is-active voxd")
+    assert answer.holds is False
+    assert answer.timed_out is False
+    assert answer.stall_note == "; then systemctl is-active voxd stopped answering"
+    assert QueryAnswer.of(holds=False).stall_note == ""

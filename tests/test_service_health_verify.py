@@ -209,3 +209,26 @@ def test_verify_blames_the_unit_when_only_the_last_sliver_timed_out(
     with pytest.raises(ServiceHealthError, match="not active") as info:
         HealthVerifier(backend, probe).verify()
     assert "did not answer" not in str(info.value)
+    assert "stopped answering" not in str(info.value)
+
+
+def test_verify_names_a_manager_that_answered_then_hung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M2: one real "inactive", then full-budget hangs -> both are named."""
+    calls = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls[0] += 1
+        if calls[0] == 1:
+            return subprocess.CompletedProcess(argv, 3, "inactive\n", "")
+        raise subprocess.TimeoutExpired(cmd=argv[0], timeout=1.0)
+
+    monkeypatch.setattr("punt_vox.service.systemd.subprocess.run", run)
+    backend = SystemdBackend(
+        lambda: ["/usr/local/bin/voxd"], PrivilegedRun(MagicMock(), lambda: False)
+    )
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert "then systemctl is-active voxd stopped answering" in str(info.value)

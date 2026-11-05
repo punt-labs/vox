@@ -461,6 +461,44 @@ def test_launchd_uninstall_names_a_job_that_stayed_despite_a_last_sliver_timeout
 
     monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
     be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
-    with pytest.raises(BackendCommandError, match="still registered"):
+    with pytest.raises(BackendCommandError, match="still registered") as info:
         be.uninstall()
+    assert "stopped answering" not in str(info.value)
     assert plist.exists()
+
+
+def test_launchd_uninstall_names_a_launchctl_that_answered_then_hung(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M2: a print said "registered", then later prints hung with a full budget."""
+    plist = tmp_path / "com.punt-labs.voxd.plist"
+    plist.write_text("<plist/>")
+    monkeypatch.setattr("punt_vox.service.launchd._LAUNCHD_PLIST", plist)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.1)
+    clock = FakeClock()
+
+    def monotonic(self: SystemClock) -> float:
+        return clock.monotonic()
+
+    def sleep(self: SystemClock, seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+    monkeypatch.setattr(SystemClock, "sleep", sleep)
+    prints = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[1] == "print":
+            prints[0] += 1
+            if prints[0] > 2:  # the was-loaded print and one wait print answer
+                raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.2)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
+    with pytest.raises(BackendCommandError, match="still registered") as info:
+        be.uninstall()
+    assert "then launchctl print" in str(info.value)
+    assert "stopped answering" in str(info.value)

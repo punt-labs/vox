@@ -88,6 +88,17 @@ def test_answer_within_keeps_a_real_no_over_a_last_sliver_timeout() -> None:
     answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.5)
     assert answer.holds is False
     assert answer.timed_out is False
+    assert answer.stalled == ""
+
+
+def test_answer_within_names_a_full_budget_hang_after_a_real_no() -> None:
+    """M2: answered "no", then hung on a query given a whole interval or more."""
+    clock = FakeClock()
+    answers = iter([QueryAnswer.of(holds=False), QueryAnswer.no_answer("q")])
+    answer = Poll(clock, 1.0).answer_within(lambda _: next(answers), 2.0)
+    assert answer.holds is False
+    assert answer.timed_out is False
+    assert answer.stalled == "q"
 
 
 def test_answer_within_reports_a_timeout_only_when_nothing_answered() -> None:

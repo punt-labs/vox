@@ -104,8 +104,8 @@ class HealthVerifier:
                 f"runs is unknown. Service: {service}."
             )
         return (
-            f"voxd is not active {wait} after install. Service: {service}. "
-            f"Check the daemon logs in {_paths_log_dir()}."
+            f"voxd is not active {wait} after install{answer.stall_note}. "
+            f"Service: {service}. Check the daemon logs in {_paths_log_dir()}."
         )
 
     def _unreachable(self, miss: Exception | None) -> str:

@@ -92,7 +92,9 @@ class Poll:
         in time -- a real "no" -- and reports a query that never answered only
         when none did: the last query gets only the sliver left after the
         final sleep, and running out of that sliver must not blame a manager
-        that had been answering all along. A check is never run with no time
+        that had been answering all along. A query that hung with at least one
+        interval of budget after a real answer is a real hang: the answer
+        stands and names it as ``stalled``. A check is never run with no time
         left, so there is no extra check at the deadline.
         """
         deadline = self._clock.monotonic() + deadline_s
@@ -102,10 +104,9 @@ class Poll:
             answer = ask(remaining)
             if answer.holds:
                 return answer
-            if not answer.timed_out:
-                last, heard = answer, True
-            elif not heard:
-                last = answer
+            full = remaining >= self._interval
+            last = last.followed_by(answer, heard=heard, full_budget=full)
+            heard = heard or not answer.timed_out
             self._nap(deadline)
         return last
 
