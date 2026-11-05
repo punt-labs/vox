@@ -798,4 +798,8 @@ def test_a_cleanup_still_declined_when_the_port_is_free_is_named(
     report = lifecycle(world).stop()
     assert report.outcome is Outcome.STOPPED
     assert world.calls.count("clear_port_file") == 2
-    assert "serve.port left in place" in report.detail
+    assert (
+        "a voxd took port 8421 after stop confirmed it free; serve.port left in place"
+        in report.detail
+    )
+    assert "a voxd held port 8421" not in report.detail

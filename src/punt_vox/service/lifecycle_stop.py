@@ -275,8 +275,8 @@ class StopVerb:
         self._clear_port_file(frozenset())
         if not self._port_file_done:
             self._notes.append(
-                f"serve.port left in place: a voxd held port {DEFAULT_PORT} "
-                "when stop cleared it"
+                f"a voxd took port {DEFAULT_PORT} after stop confirmed it free; "
+                "serve.port left in place"
             )
 
     @staticmethod

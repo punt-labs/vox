@@ -5,7 +5,7 @@ from __future__ import annotations
 from punt_vox.service.termination import Termination
 
 
-def test_the_four_outcomes_are_distinct() -> None:
+def test_termination_has_exactly_these_outcomes() -> None:
     assert {t.value for t in Termination} == {
         "exited",
         "survived",

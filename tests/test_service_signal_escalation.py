@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import signal
+from typing import Self, final
 
 import pytest
 
@@ -10,22 +11,34 @@ from punt_vox.service.signal_escalation import SignalEscalation
 from punt_vox.service.termination import Termination
 
 
+@final
 class _Target:
     """Scripted send/wait primitives for one process."""
 
-    def __init__(
-        self,
+    __slots__ = ("_exits_on", "_gone", "_refuse", "_refuse_kill", "sent", "waits")
+
+    sent: list[signal.Signals]
+    waits: list[float]
+    _exits_on: signal.Signals | None  # None: no signal makes it exit
+    _refuse: bool
+    _refuse_kill: bool
+    _gone: bool
+
+    def __new__(
+        cls,
         *,
         exits_on: signal.Signals | None,
         refuse: bool = False,
         refuse_kill: bool = False,
-    ) -> None:
-        self.sent: list[signal.Signals] = []
-        self.waits: list[float] = []
+    ) -> Self:
+        self = super().__new__(cls)
+        self.sent = []
+        self.waits = []
         self._exits_on = exits_on
         self._refuse = refuse
         self._refuse_kill = refuse_kill
         self._gone = False
+        return self
 
     def send(self, sig: signal.Signals) -> bool:
         if self._refuse or (self._refuse_kill and sig == signal.SIGKILL):
