@@ -1,7 +1,7 @@
 ---
 description: "Start or stop a Conversation Mode call with a read-only call agent"
 argument-hint: "start <topic> [--script <path>] | stop"
-allowed-tools: ["Bash(vox call:*)", "Bash(quarry:*)", "Read"]
+allowed-tools: ["Bash(vox call:*)", "Read"]
 ---
 
 # /call command
@@ -33,9 +33,11 @@ tool yet -- every verb shells out to the `vox call` CLI.
    - the files that matter, by path;
    - the gist of the recent conversation: decisions made, open questions.
 
-   Before writing it, run `quarry --json find "<a query from the topic>"` and
-   fold the relevant hits in (what each says, and its source path). Look up
-   external library docs as well if the topic needs them. Keep the snapshot to
+   Before writing it, search with the quarry MCP `find` tool (a query drawn
+   from the topic) and fold the relevant hits in: what each says, and its
+   source path. Never put the query on a shell command line -- topic text in
+   a shell string can run as a command. Look up external library docs as well
+   if the topic needs them. Keep the snapshot to
    a briefing -- a page or two, never whole files, never a secret value.
 
 2. **Start the call in the background**, with the snapshot on stdin through a
