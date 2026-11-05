@@ -8,9 +8,10 @@ unsupported OS) raises :class:`LifecycleRefusedError` before anything is observe
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal, Self, TypedDict, final
+from typing import TYPE_CHECKING, Final, Literal, Self, TypedDict, final
 
 if TYPE_CHECKING:
     from punt_vox.types_health import HealthStatus
@@ -52,6 +53,15 @@ class LifecycleOutcome(StrEnum):
         """Return 0 for a successful outcome and 1 for every failure."""
         return 0 if self.ok else 1
 
+
+# The summary line of each successful outcome; every failure shares one.
+_HEADLINES: Final[Mapping[LifecycleOutcome, str]] = {
+    LifecycleOutcome.STOPPED: "voxd stopped{was}",
+    LifecycleOutcome.ALREADY_STOPPED: "voxd already stopped",
+    LifecycleOutcome.STARTED: "voxd started ({running})",
+    LifecycleOutcome.ALREADY_RUNNING: "voxd already running ({running})",
+    LifecycleOutcome.RESTARTED: "voxd restarted ({running}){was}",
+}
 
 _OK_OUTCOMES = frozenset(
     {
@@ -167,18 +177,10 @@ class LifecycleReport:
 
     def _headline(self) -> str:
         """Return the summary line for this outcome."""
-        was = f" (was pid {self.previous_pid})" if self.previous_pid else ""
-        running = f"pid {self.pid}, port {self.port}, version {self.daemon_version}"
-        match self.outcome:
-            case LifecycleOutcome.STOPPED:
-                return f"voxd stopped{was}"
-            case LifecycleOutcome.ALREADY_STOPPED:
-                return "voxd already stopped"
-            case LifecycleOutcome.STARTED:
-                return f"voxd started ({running})"
-            case LifecycleOutcome.ALREADY_RUNNING:
-                return f"voxd already running ({running})"
-            case LifecycleOutcome.RESTARTED:
-                return f"voxd restarted ({running}){was}"
-            case _:
-                return f"vox daemon {self.verb} failed: {self.outcome.value}"
+        template = _HEADLINES.get(self.outcome, "vox daemon {verb} failed: {outcome}")
+        return template.format(
+            was=f" (was pid {self.previous_pid})" if self.previous_pid else "",
+            running=f"pid {self.pid}, port {self.port}, version {self.daemon_version}",
+            verb=self.verb,
+            outcome=self.outcome.value,
+        )

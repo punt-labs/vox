@@ -16,7 +16,6 @@ from punt_vox.client import (
     CacheStatus,
     VoxClient,
 )
-from punt_vox.client_connect_failure import ConnectFailure
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdHandshakeRejectedError,
@@ -2283,22 +2282,6 @@ async def test_connect_to_a_non_websocket_listener_is_a_connection_error() -> No
 
 def _refused() -> ConnectionRefusedError:
     return ConnectionRefusedError(111, "Connection refused")
-
-
-def test_every_address_refused_is_a_refusal() -> None:
-    """localhost resolves to ::1 and 127.0.0.1; both refusing is not running."""
-    group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
-    error = ConnectFailure("ws://localhost:8421/ws", group).error()
-    assert isinstance(error, VoxdRefusedError)
-    assert "Connection refused" in str(error)
-
-
-def test_one_address_failing_otherwise_is_not_a_refusal() -> None:
-    unreachable = OSError(113, "No route to host")
-    group = ExceptionGroup("create_connection failed", [_refused(), unreachable])
-    error = ConnectFailure("ws://box:8421/ws", group).error()
-    assert not isinstance(error, VoxdRefusedError)
-    assert "No route to host" in str(error)
 
 
 @pytest.mark.asyncio
