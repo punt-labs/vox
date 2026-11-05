@@ -6,17 +6,20 @@ import logging
 import os
 import platform
 import re
-import signal
 import subprocess
-import time
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.paths import run_dir as _user_run_dir
+from punt_vox.service.backend import PortProbeError
+from punt_vox.service.daemon_process import DaemonProcess
+from punt_vox.service.process_identity import ProcessIdentity
+
+if TYPE_CHECKING:
+    from punt_vox.service.backend import ProcessHandle
 
 logger = logging.getLogger(__name__)
 
-_KILL_TIMEOUT_SECONDS = 5
 _SUBPROCESS_TIMEOUT_SECONDS = 5
 
 DEFAULT_PORT = 8421
@@ -58,112 +61,94 @@ class ProcessManager:
         *and* connected clients).  On Linux ``fuser <port>/tcp`` returns
         space-separated PIDs.  Returns **all** of them so the caller can
         check each for voxd identity.
+
+        Fails closed: a missing tool, a timeout, or an error exit raises
+        ``PortProbeError``. Only a clean "found nothing" (exit 1, no output)
+        reads as an empty port.
         """
         if platform.system() == "Darwin":
             cmd = ["lsof", "-ti", f":{port}"]
         else:
             cmd = ["fuser", f"{port}/tcp"]
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT_SECONDS
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            # Probe TOOL failed -- a broken probe must not read as an empty port.
-            logger.warning(
-                "Could not probe port %d for PIDs via %s: %s", port, cmd[0], exc
-            )
-            return []
+        result = self._probe(cmd)
         out = result.stdout.strip()
-        if result.returncode != 0 or not out:
-            return []  # tool ran cleanly, found nothing -- port genuinely empty
+        if result.returncode == 1 and not out:
+            return []
+        if result.returncode != 0:
+            msg = (
+                f"cannot inspect port {port}: {cmd[0]} exited "
+                f"{result.returncode}: {result.stderr.strip()}"
+            )
+            raise PortProbeError(msg)
         # isdecimal (not isdigit) is the strict subset int() always accepts:
         # it rejects superscripts like "²" that isdigit would pass.
         return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
 
-    def is_vox_daemon_process(self, pid: int) -> bool:
-        """Check whether *pid* is a voxd daemon process.
+    def identity(self, pid: int) -> ProcessIdentity | None:
+        """Return *pid*'s start time and command line; ``None`` once it is gone.
 
-        Uses ``ps`` to inspect the command line.  Returns False if the
-        process doesn't look like ``voxd``.
+        ``ps`` exits 1 with no output for a pid that does not exist; any other
+        failure raises ``PortProbeError`` rather than reading as "gone".
+        """
+        result = self._probe(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="])
+        out = result.stdout.strip()
+        if result.returncode == 1 and not out:
+            return None
+        if result.returncode != 0:
+            msg = f"cannot inspect pid {pid}: ps exited {result.returncode}"
+            raise PortProbeError(msg)
+        return ProcessIdentity.from_ps(out)
+
+    def is_vox_daemon_process(self, pid: int) -> bool:
+        """Return True when *pid* is alive and its command line runs voxd."""
+        seen = self.identity(pid)
+        if seen is not None and seen.is_voxd():
+            return True
+        logger.warning(
+            "PID %d is not a voxd process (command: %s)",
+            pid,
+            seen.command if seen is not None else "<gone>",
+        )
+        return False
+
+    def open_voxd(self, pid: int) -> ProcessHandle | None:
+        """Return a handle pinned to *pid*; ``None`` when it is gone or not voxd."""
+        return DaemonProcess.on_this_host(self.identity).open(pid)
+
+    def kill_pid(self, pid: int) -> bool:
+        """Terminate the voxd process *pid* through a pinned handle.
+
+        Return True when no voxd process remains under that handle (killed, or
+        already gone), False when it survived (e.g. permission denied).
+        """
+        handle = self.open_voxd(pid)
+        if handle is None:
+            logger.info("PID %d is gone or is not voxd; nothing to kill", pid)
+            return True
+        logger.info("Terminating voxd PID %d", pid)
+        return handle.terminate()
+
+    @staticmethod
+    def _probe(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        """Run one probe command; raise ``PortProbeError`` if it cannot run.
+
+        The C locale fixes ``ps -o lstart`` at its 24-character form.
         """
         try:
-            result = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
+            return subprocess.run(
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                env={**os.environ, "LC_ALL": "C"},
             )
-            cmd_line = result.stdout.strip()
-            if re.search(r"\bvoxd\b", cmd_line):
-                return True
-            # Also match the old "vox serve" pattern for upgrade transitions.
-            if re.search(r"\bserve\b", cmd_line) and (
-                "punt_vox" in cmd_line
-                or "punt-vox" in cmd_line
-                or re.search(r"\bvox\b.*\bserve\b", cmd_line)
-            ):
-                return True
-            logger.warning(
-                "PID %d is not a voxd process (command: %s)", pid, cmd_line or "<empty>"
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            logger.warning("Could not verify PID %d identity via ps", pid)
-        return False
-
-    def kill_pid(self, pid: int) -> bool:
-        """Send SIGTERM then SIGKILL after timeout.
-
-        Return True if the process is confirmed gone (killed or was
-        already dead).  Return False if the kill could not be performed
-        (e.g. PermissionError).
-        """
-        logger.info("Sending SIGTERM to PID %d", pid)
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            logger.info("PID %d already gone", pid)
-            return True
-        except PermissionError:
-            logger.warning(
-                "No permission to signal PID %d — owned by another user?",
-                pid,
-            )
-            return False
-
-        deadline = time.monotonic() + _KILL_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)  # probe — raises if gone
-            except ProcessLookupError:
-                logger.info("PID %d exited after SIGTERM", pid)
-                return True
-            time.sleep(0.25)
-
-        logger.warning(
-            "PID %d did not exit after %ds — sending SIGKILL",
-            pid,
-            _KILL_TIMEOUT_SECONDS,
-        )
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            logger.info("PID %d already gone before SIGKILL", pid)
-            return True
-        except PermissionError:
-            logger.warning("No permission to SIGKILL PID %d", pid)
-            return False
-
-        # Probe briefly to confirm SIGKILL took effect.
-        kill_deadline = time.monotonic() + 2
-        while time.monotonic() < kill_deadline:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                logger.info("PID %d exited after SIGKILL", pid)
-                return True
-            time.sleep(0.25)
-        logger.warning("PID %d still alive after SIGKILL", pid)
-        return False
+        except FileNotFoundError as exc:
+            hint = " (install psmisc)" if cmd[0] == "fuser" else ""
+            msg = f"cannot run {cmd[0]}: not found{hint}"
+            raise PortProbeError(msg) from exc
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            msg = f"cannot run {cmd[0]}: {exc}"
+            raise PortProbeError(msg) from exc
 
     def kill_stale_daemon(self) -> bool:
         """Kill a daemon process occupying the port.  Return True if killed."""

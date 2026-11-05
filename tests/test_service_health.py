@@ -1,4 +1,9 @@
-"""Tests for punt_vox.service.health — host/port/token for the install poll."""
+"""Tests for punt_vox.service.health -- where the token-bearing request goes.
+
+Every connection value comes from a trusted source: the host from the bind the
+backend wrote into the installed unit, the port from ``DEFAULT_PORT``, the
+token from ``serve.token``. Nothing is read from the calling shell.
+"""
 
 from __future__ import annotations
 
@@ -7,56 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from punt_vox.service.health import HealthTarget
+from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.service.process import DEFAULT_PORT
-from punt_vox.service.systemd import SystemdBackend
-
-# ---------------------------------------------------------------------------
-# port derivation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("platform", ["macos", "linux"])
-def test_health_target_pins_installed_default_port(
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The poll port is DEFAULT_PORT regardless of a stray VOXD_PORT env."""
-    monkeypatch.setenv("VOXD_PORT", "9999")
-    assert HealthTarget(platform).port == DEFAULT_PORT
-
-
-# ---------------------------------------------------------------------------
-# host derivation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("platform", ["macos", "linux"])
-def test_health_target_unset_bind_maps_to_loopback(
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unset VOXD_BIND resolves the loopback health host on both backends."""
-    monkeypatch.delenv("VOXD_BIND", raising=False)
-    assert HealthTarget(platform).host == "127.0.0.1"
-
-
-@pytest.mark.parametrize("platform", ["macos", "linux"])
-@pytest.mark.parametrize("bind", ["", "   "])
-def test_health_target_empty_bind_maps_to_loopback(
-    bind: str,
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A set-but-empty or whitespace-only VOXD_BIND resolves loopback.
-
-    A stray shell ``export VOXD_BIND=""`` (or whitespace) leaves the unit with
-    no concrete bind, so voxd falls back to its loopback -- the health host
-    must follow it there rather than polling an empty address.
-    """
-    monkeypatch.setenv("VOXD_BIND", bind)
-    assert HealthTarget(platform).host == "127.0.0.1"
-
 
 # Construct the unspecified addresses rather than spelling "0.0.0.0" as a
 # literal, which trips ruff S104 (bind-all-interfaces) even in a test value.
@@ -64,145 +21,91 @@ _IPV4_WILDCARD = str(ipaddress.IPv4Address(0))
 _IPV6_WILDCARD = str(ipaddress.IPv6Address(0))
 
 
-@pytest.mark.parametrize("platform", ["macos", "linux"])
+def test_health_target_pins_installed_default_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll port is DEFAULT_PORT regardless of a stray VOXD_PORT env."""
+    monkeypatch.setenv("VOXD_PORT", "9999")
+    assert HealthTarget("").port == DEFAULT_PORT
+
+
+@pytest.mark.parametrize("bind", ["", "   "])
+def test_health_target_empty_bind_maps_to_loopback(bind: str) -> None:
+    """A unit with no concrete bind leaves voxd on loopback."""
+    assert HealthTarget(bind).host == "127.0.0.1"
+
+
 @pytest.mark.parametrize(
     "wildcard",
     [_IPV4_WILDCARD, _IPV6_WILDCARD, f"  {_IPV4_WILDCARD}  "],
 )
-def test_health_target_wildcard_bind_maps_to_loopback(
-    wildcard: str,
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Wildcard (unspecified) binds resolve loopback — voxd accepts it there."""
-    monkeypatch.setenv("VOXD_BIND", wildcard)
-    assert HealthTarget(platform).host == "127.0.0.1"
+def test_health_target_wildcard_bind_maps_to_loopback(wildcard: str) -> None:
+    """Wildcard (unspecified) binds resolve loopback -- voxd accepts it there."""
+    assert HealthTarget(wildcard).host == "127.0.0.1"
 
 
-@pytest.mark.parametrize("platform", ["macos", "linux"])
 @pytest.mark.parametrize("bind", ["192.168.1.50", "  192.168.1.50  "])
-def test_health_target_concrete_bind_used_directly(
-    bind: str,
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A concrete, safe bind is polled directly, stripped of surrounding space."""
-    monkeypatch.setenv("VOXD_BIND", bind)
-    assert HealthTarget(platform).host == "192.168.1.50"
+def test_health_target_concrete_bind_used_directly(bind: str) -> None:
+    """A concrete bind is polled directly, stripped of surrounding space."""
+    assert HealthTarget(bind).host == "192.168.1.50"
 
 
-@pytest.mark.parametrize("platform", ["macos", "linux"])
-def test_health_target_hostname_bind_used_directly(
-    platform: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_health_target_hostname_bind_used_directly() -> None:
     """A non-IP bind value (hostname) is polled as given, not loopback."""
-    monkeypatch.setenv("VOXD_BIND", "voxd.internal")
-    assert HealthTarget(platform).host == "voxd.internal"
+    assert HealthTarget("voxd.internal").host == "voxd.internal"
 
 
-def test_health_target_systemd_rejected_bind_maps_to_loopback(
+def test_health_target_bind_comes_from_backend_not_shell(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A VOXD_BIND rejected by safe_systemd_value resolves to loopback (linux).
-
-    ``SystemdBackend.unit_content`` embeds ``VOXD_BIND`` only when
-    ``safe_systemd_value`` accepts it. A trailing newline is rejected, so the
-    unit drops the variable and voxd binds its DEFAULT_HOST loopback. The
-    health host must match that -- 127.0.0.1 -- not the rejected raw address,
-    or the poll false-fails a healthy daemon.
-    """
-    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
-    assert not SystemdBackend.safe_systemd_value("192.168.1.50\n")
-    assert HealthTarget("linux").host == "127.0.0.1"
-
-
-def test_health_target_launchd_does_not_apply_systemd_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """launchd embeds VOXD_BIND verbatim, so the systemd gate must not apply.
-
-    The same value the systemd gate rejects is passed through by launchd,
-    which has no safety gate. The health host must therefore resolve the
-    address (whitespace-normalized), not loopback -- the resolution diverges
-    by backend exactly as the units do.
-    """
-    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
-    assert HealthTarget("macos").host == "192.168.1.50"
+    """The shell's VOXD_BIND never redirects the request: only the unit's does."""
+    monkeypatch.setenv("VOXD_BIND", "10.0.0.9")
+    assert HealthTarget("").host == "127.0.0.1"
+    assert HealthTarget("10.0.0.5").host == "10.0.0.5"
 
 
 # ---------------------------------------------------------------------------
-# platform domain — the constructor rejects anything but the two known values
+# client() -- token only from the run file
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", ["Linux", "Darwin", "bsd", "windows", ""])
-def test_health_target_rejects_unknown_platform(
-    bad: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unrecognized platform fails loud, never mis-branching the host gate.
+def _capture_clients(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    captured: list[dict[str, object]] = []
 
-    ``_effective_bind`` gates the systemd path on ``platform == "linux"``; a
-    miscapitalized ``"Linux"`` or a future ``"bsd"`` would skip that gate and
-    resolve the wrong host against a healthy daemon. The constructor is the
-    boundary, so it rejects the value before any branch runs.
-    """
-    monkeypatch.setenv("VOXD_BIND", "192.168.1.50\n")
-    with pytest.raises(ValueError, match="unknown platform"):
-        HealthTarget(bad)
+    def _factory(**kwargs: object) -> MagicMock:
+        captured.append(kwargs)
+        return MagicMock()
 
-
-# ---------------------------------------------------------------------------
-# client() — token resolution from the run file
-# ---------------------------------------------------------------------------
+    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
+    return captured
 
 
 def test_health_target_client_reads_run_file_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """client() passes the run-file token, never a stray shell VOXD_TOKEN."""
-    monkeypatch.delenv("VOXD_BIND", raising=False)
+    monkeypatch.setenv("VOXD_TOKEN", "shell-token")
     monkeypatch.setattr(
-        "punt_vox.service.health.read_token_file",
-        lambda: "authoritative-run-token",
+        "punt_vox.service.health.read_token_file", lambda: "authoritative-run-token"
     )
+    captured = _capture_clients(monkeypatch)
 
-    captured: list[dict[str, object]] = []
+    HealthTarget("").client()
 
-    def _factory(**kwargs: object) -> MagicMock:
-        captured.append(kwargs)
-        return MagicMock()
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-
-    HealthTarget("macos").client()
-
-    assert captured, "VoxClientSync was never constructed"
-    assert captured[0]["host"] == "127.0.0.1"
-    assert captured[0]["port"] == DEFAULT_PORT
-    assert captured[0]["token"] == "authoritative-run-token"
+    assert captured == [
+        {"host": "127.0.0.1", "port": DEFAULT_PORT, "token": "authoritative-run-token"}
+    ]
 
 
-def test_health_target_client_token_none_when_run_file_absent(
+def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With no serve.token yet, client() passes token=None, not a shell env."""
-    monkeypatch.delenv("VOXD_BIND", raising=False)
-    monkeypatch.setattr(
-        "punt_vox.service.health.read_token_file",
-        lambda: None,
-    )
+    """With no serve.token, no client exists, so VOXD_TOKEN cannot leak."""
+    monkeypatch.setenv("VOXD_TOKEN", "shell-token")
+    monkeypatch.setattr("punt_vox.service.health.read_token_file", lambda: None)
+    captured = _capture_clients(monkeypatch)
 
-    captured: list[dict[str, object]] = []
+    with pytest.raises(DaemonNotUpError, match=r"serve\.token"):
+        HealthTarget("").client()
 
-    def _factory(**kwargs: object) -> MagicMock:
-        captured.append(kwargs)
-        return MagicMock()
-
-    monkeypatch.setattr("punt_vox.service.health.VoxClientSync", _factory)
-
-    HealthTarget("macos").client()
-
-    assert captured, "VoxClientSync was never constructed"
-    assert captured[0]["token"] is None
+    assert captured == []

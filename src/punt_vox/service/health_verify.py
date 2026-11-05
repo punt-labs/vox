@@ -11,17 +11,14 @@ install`` catches it and degrades to a skip.
 from __future__ import annotations
 
 import logging
-import time
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import log_dir as _paths_log_dir
-from punt_vox.service.health import HealthTarget
+from punt_vox.service.daemon_probe import DaemonProbe
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from punt_vox.service.types import PlatformName
+    from punt_vox.service.backend import InstallableBackend
+    from punt_vox.types_health import HealthStatus
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +29,6 @@ __all__ = ["HealthVerifier", "ServiceHealthError"]
 # dies on startup (bad env, missing binary) would otherwise be reported
 # "running". Poll the health endpoint until it answers or the deadline lapses.
 _HEALTH_DEADLINE_S = 5.0
-_HEALTH_POLL_INTERVAL_S = 0.2
 
 
 @final
@@ -56,46 +52,42 @@ class ServiceHealthError(RuntimeError):
 class HealthVerifier:
     """Poll a freshly installed voxd until it serves or the deadline lapses."""
 
-    __slots__ = ("_service_path", "_target")
+    __slots__ = ("_probe", "_service_path")
 
-    _service_path: Path
-    _target: HealthTarget
+    _probe: DaemonProbe
+    _service_path: str
 
-    def __new__(cls, platform: PlatformName, service_path: Path) -> Self:
-        # *platform* selects the backend whose VOXD_BIND gating the health host
-        # mirrors (see ``HealthTarget._effective_bind``); *service_path* names
-        # the plist/unit the failure message points the operator at.
+    def __new__(cls, probe: DaemonProbe, service_path: str) -> Self:
+        # *probe* targets the daemon the backend runs (its installed bind, the
+        # service port, the run-file token); *service_path* names the plist or
+        # unit the failure message points the operator at.
         self = super().__new__(cls)
-        self._target = HealthTarget(platform)
+        self._probe = probe
         self._service_path = service_path
         return self
 
-    def verify(self) -> None:
-        """Poll voxd's health endpoint until it answers or the deadline lapses.
+    @classmethod
+    def for_backend(cls, backend: InstallableBackend) -> Self:
+        """Return the verifier for the daemon *backend* just installed."""
+        probe = DaemonProbe.for_bind(backend.installed_bind())
+        return cls(probe, backend.service_path)
+
+    def verify(self) -> HealthStatus:
+        """Poll voxd's gated health until it answers; return what it reported.
 
         Without this poll, ``install()`` reports "running" for a daemon that
         died on startup -- the silent-down failure mode. Raise
         ``ServiceHealthError`` so the caller can surface a non-zero exit (or
         degrade gracefully) when voxd never becomes reachable.
         """
-        target = self._target
-        deadline = time.monotonic() + _HEALTH_DEADLINE_S
-        # None until the first probe fails: no exception has occurred yet.
-        last_exc: VoxdConnectionError | VoxdProtocolError | OSError | None = None
-        while time.monotonic() < deadline:
-            try:
-                target.client().health()
-                return
-            except (VoxdConnectionError, VoxdProtocolError, OSError) as exc:
-                # VoxdProtocolError covers a receive timeout while voxd is
-                # still binding its port -- transient during startup, so
-                # retry until the deadline rather than failing on the first.
-                last_exc = exc
-                time.sleep(_HEALTH_POLL_INTERVAL_S)
-        log_dir = _paths_log_dir()
+        status = self._probe.wait_up(_HEALTH_DEADLINE_S)
+        if status is not None:
+            return status
+        target = self._probe.target
         msg = (
             f"voxd registered but never became reachable within "
             f"{_HEALTH_DEADLINE_S:.0f}s on {target.host}:{target.port}. "
-            f"Service: {self._service_path}. Check the daemon logs in {log_dir}."
+            f"Service: {self._service_path}. Check the daemon logs in "
+            f"{_paths_log_dir()}."
         )
-        raise ServiceHealthError(msg) from last_exc
+        raise ServiceHealthError(msg)

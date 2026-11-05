@@ -1,19 +1,21 @@
-"""Linux systemd backend for voxd system service."""
+"""Linux systemd backend for the voxd system service."""
 
 from __future__ import annotations
 
 import logging
 import os
-import pwd
-import shlex
 import subprocess
-import textwrap
-from collections.abc import Callable
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.paths import user_state_dir as _paths_user_state_dir
-from punt_vox.service.process import ProcessManager
+from punt_vox.service.backend import BackendCommandError, PrivilegeDeniedError
+from punt_vox.service.systemd_unit import SystemdUnit
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from punt_vox.service.backend import CommandRunner, TerminalCheck
 
 logger = logging.getLogger(__name__)
 
@@ -21,156 +23,195 @@ _SYSTEMD_DIR = Path("/etc/systemd/system")
 _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 
 _SUDO_NOTICE = (
-    "Installing voxd as a system service. You may be prompted for your sudo password."
+    "Running systemctl for voxd through sudo. You may be prompted for your "
+    "sudo password."
 )
 
 
+@final
+class PrivilegedRun:
+    """Run one ``systemctl <verb> voxd`` through sudo, never probing privilege.
+
+    ``sudo -n`` runs first and never prompts, so a scoped NOPASSWD rule or a
+    cached timestamp is the whole path. Exit 4 (access denied) and 5 (unit not
+    loaded) come only from systemctl. Exit 1 is ambiguous -- sudo wanting a
+    password, or a generic systemctl failure -- and no probe separates them
+    (``sudo -n -l`` reports permission, not password-free-ness), so: with no
+    terminal it is a refusal carrying sudo's stderr verbatim; with one, the
+    interactive ``sudo`` runs exactly once. Classification reads exit codes
+    only, never the localised stderr text.
+    """
+
+    __slots__ = ("_has_tty", "_run")
+
+    _ACCESS_DENIED: ClassVar[int] = 4
+    _NOT_LOADED: ClassVar[int] = 5
+    _AMBIGUOUS: ClassVar[int] = 1
+    _TAIL_CHARS: ClassVar[int] = 400
+
+    _run: CommandRunner
+    _has_tty: TerminalCheck
+
+    def __new__(cls, run: CommandRunner, has_tty: TerminalCheck) -> Self:
+        self = super().__new__(cls)
+        self._run = run
+        self._has_tty = has_tty
+        return self
+
+    @classmethod
+    def on_this_host(cls) -> Self:
+        """Return the runner that drives the real ``sudo``."""
+        return cls(cls._subprocess_run, cls._has_terminal)
+
+    def __call__(self, verb: str) -> None:
+        """Run ``systemctl <verb> voxd``; raise a typed error if it fails."""
+        argv = ["systemctl", verb, "voxd"]
+        code, stderr = self._run(["sudo", "-n", *argv], capture=True)
+        if code == 0:
+            return
+        tail = stderr.strip()[-self._TAIL_CHARS :]
+        self._raise_systemctl(argv, code, tail)
+        if code != self._AMBIGUOUS:
+            raise BackendCommandError.of(["sudo", "-n", *argv], code, tail)
+        if not self._has_tty():
+            msg = (
+                f"sudo could not run `systemctl {verb} voxd` non-interactively, "
+                f"or systemctl failed (see detail); run `vox daemon {verb}` from "
+                f"a terminal, or grant NOPASSWD for `systemctl {verb} voxd`. "
+                f"detail: {tail}"
+            )
+            raise PrivilegeDeniedError(msg)
+        logger.warning(_SUDO_NOTICE)
+        code, _ = self._run(["sudo", *argv], capture=False)
+        if code == 0:
+            return
+        self._raise_systemctl(argv, code, "")
+        raise BackendCommandError.of(
+            ["sudo", *argv], code, "sudo or systemctl refused; see the terminal"
+        )
+
+    def _raise_systemctl(self, argv: list[str], code: int, tail: str) -> None:
+        """Raise for the two exit codes only systemctl produces."""
+        if code == self._ACCESS_DENIED:
+            msg = f"{' '.join(argv)}: access denied (exit 4). {tail}".strip()
+            raise PrivilegeDeniedError(msg)
+        if code == self._NOT_LOADED:
+            raise BackendCommandError.of(
+                argv, code, "voxd.service not loaded; run `vox daemon install`"
+            )
+
+    @staticmethod
+    def _subprocess_run(argv: Sequence[str], *, capture: bool) -> tuple[int, str]:
+        """Run *argv*; capture stderr, or leave it on the terminal for sudo."""
+        try:
+            result = subprocess.run(
+                list(argv),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE if capture else None,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise BackendCommandError.of(argv, 127, str(exc)) from exc
+        return result.returncode, result.stderr or ""
+
+    @staticmethod
+    def _has_terminal() -> bool:
+        """Return True when a controlling terminal can carry a sudo prompt."""
+        try:
+            fd = os.open("/dev/tty", os.O_RDWR)
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+
+
+@final
 class SystemdBackend:
-    """Install, uninstall, stop, and query voxd under Linux systemd."""
+    """Install, query, and drive voxd under Linux systemd."""
 
-    __slots__ = ("_process_mgr", "_voxd_exec_args_fn")
+    __slots__ = ("_privileged", "_unit")
 
-    _process_mgr: ProcessManager
-    _voxd_exec_args_fn: Callable[[], list[str]]
+    # States in which the unit has a process, or is about to or is losing one.
+    _LIVE_STATES: ClassVar[frozenset[str]] = frozenset(
+        {"active", "activating", "reloading", "deactivating"}
+    )
+
+    _unit: SystemdUnit
+    _privileged: PrivilegedRun
 
     def __new__(
         cls,
-        process_mgr: ProcessManager,
         voxd_exec_args_fn: Callable[[], list[str]],
+        privileged: PrivilegedRun,
     ) -> Self:
         self = super().__new__(cls)
-        self._process_mgr = process_mgr
-        self._voxd_exec_args_fn = voxd_exec_args_fn
+        self._unit = SystemdUnit(_SYSTEMD_UNIT, voxd_exec_args_fn)
+        self._privileged = privileged
         return self
 
-    # ------------------------------------------------------------------
-    # Systemd value safety
-    # ------------------------------------------------------------------
+    @property
+    def unit(self) -> SystemdUnit:
+        """Return the unit file this backend installs."""
+        return self._unit
 
-    @staticmethod
-    def safe_systemd_value(value: str) -> bool:
-        """Return True if *value* is safe to embed in a systemd Environment= line.
+    @property
+    def service_path(self) -> str:
+        """Return the installed unit's path."""
+        return str(self._unit.path)
 
-        Rejects newlines, double quotes, and backslashes.
-        """
-        return not any(c in value for c in '\n\r"\\')
+    # -- the lifecycle seam -------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Unit content generation
-    # ------------------------------------------------------------------
+    def is_installed(self) -> bool:
+        """Return True when the unit file is present."""
+        return self._unit.exists()
 
-    def audio_env_lines(self, user: str) -> list[str]:
-        """Build Environment= lines for audio-related env vars.
+    def is_active(self) -> bool:
+        """Return True while systemd runs, starts, reloads, or stops voxd."""
+        state = self._systemctl("is-active", "voxd", check=False)
+        return state in self._LIVE_STATES
 
-        PulseAudio/PipeWire need XDG_RUNTIME_DIR to find the user socket.
-        """
-        audio_vars = ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS")
-        lines: list[str] = []
-        for name in audio_vars:
-            value = os.environ.get(name)
-            if value:
-                if not self.safe_systemd_value(value):
-                    logger.warning(
-                        "Skipping %s: value contains unsafe characters", name
-                    )
-                    continue
-                lines.append(f'Environment="{name}={value.replace("%", "%%")}"')
-        # Deterministic fallback for XDG_RUNTIME_DIR.
-        if not any(line.startswith('Environment="XDG_RUNTIME_DIR=') for line in lines):
-            try:
-                uid = pwd.getpwnam(user).pw_uid
-                lines.insert(0, f'Environment="XDG_RUNTIME_DIR=/run/user/{uid}"')
-            except KeyError:
-                logger.warning(
-                    "User %s not found — cannot compute XDG_RUNTIME_DIR fallback",
-                    user,
-                )
-        return lines
+    def main_pid(self) -> int | None:
+        """Return systemd's ``MainPID``; ``None`` when it reports 0 (none)."""
+        raw = self._systemctl("show", "-p", "MainPID", "--value", "voxd", check=True)
+        try:
+            pid = int(raw)
+        except ValueError as exc:
+            argv = ["systemctl", "show", "-p", "MainPID", "--value", "voxd"]
+            raise BackendCommandError.of(argv, 0, f"unparseable {raw!r}") from exc
+        return pid or None
 
-    def unit_content(self, user: str) -> str:
-        """Generate the systemd unit file content for *user*."""
-        args = self._voxd_exec_args_fn()
-        exec_start = " ".join(shlex.quote(a) for a in args)
-        raw_path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-        path_value = raw_path.replace("%", "%%")
-        audio_lines = self.audio_env_lines(user)
-        bind = os.environ.get("VOXD_BIND")
-        bind_lines: list[str] = []
-        if bind and self.safe_systemd_value(bind):
-            bind_lines = [f'Environment="VOXD_BIND={bind.replace("%", "%%")}"']
-        env_block = ("\n" + " " * 8).join(
-            [f'Environment="PATH={path_value}"', *audio_lines, *bind_lines]
-        )
-        return textwrap.dedent(f"""\
-            [Unit]
-            Description=Voxd text-to-speech daemon
-            After=network.target
+    def installed_bind(self) -> str:
+        """Return the ``VOXD_BIND`` written into the installed unit."""
+        return self._unit.installed_bind()
 
-            [Service]
-            User={user}
-            ExecStart={exec_start}
-            {env_block}
-            Restart=on-failure
-            RestartSec=5
+    def request_stop(self) -> None:
+        """Ask systemd to stop voxd; raise a typed error on failure."""
+        self._privileged("stop")
 
-            [Install]
-            WantedBy=multi-user.target
-        """)
+    def request_start(self) -> None:
+        """Ask systemd to start voxd; raise a typed error on failure."""
+        self._privileged("start")
 
-    # ------------------------------------------------------------------
-    # Service lifecycle
-    # ------------------------------------------------------------------
-
-    def stop(self) -> None:
-        """Stop voxd under systemd if running.  Idempotent."""
-        if not _SYSTEMD_UNIT.exists():
-            return
-        subprocess.run(
-            ["sudo", "systemctl", "stop", "voxd"],
-            check=False,
-        )
-        logger.info("Stopped any previously-running voxd.service")
+    # -- install / uninstall ----------------------------------------------
 
     def install(self, user: str) -> None:
-        """Install the systemd unit.  Sudo is invoked four times."""
-        state_root = _paths_user_state_dir()
-        tmp_unit = state_root / "voxd.service.tmp"
-        tmp_unit.write_text(self.unit_content(user))
+        """Install the unit, enable it, and (re)start voxd.  Sudo runs 4 times."""
+        logger.warning(_SUDO_NOTICE)
+        tmp_unit = _paths_user_state_dir() / "voxd.service.tmp"
+        tmp_unit.write_text(self._unit.content(user))
         logger.info("Wrote unit to %s", tmp_unit)
-
+        target = str(self._unit.path)
         try:
-            subprocess.run(
-                [
-                    "sudo",
-                    "install",
-                    "-m",
-                    "644",
-                    "-o",
-                    "root",
-                    "-g",
-                    "root",
-                    str(tmp_unit),
-                    str(_SYSTEMD_UNIT),
-                ],
-                check=True,
-            )
-            logger.info("Installed %s", _SYSTEMD_UNIT)
-
-            subprocess.run(
-                ["sudo", "systemctl", "daemon-reload"],
-                check=True,
-            )
-
-            subprocess.run(
-                ["sudo", "systemctl", "enable", "voxd"],
-                check=True,
-            )
-
-            subprocess.run(
-                ["sudo", "systemctl", "restart", "voxd"],
-                check=True,
-            )
-            logger.info("Enabled and restarted voxd.service")
+            for argv in (
+                ["install", "-m", "644", "-o", "root", "-g", "root"],
+                ["systemctl", "daemon-reload"],
+                ["systemctl", "enable", "voxd"],
+                ["systemctl", "restart", "voxd"],
+            ):
+                extra = [str(tmp_unit), target] if argv[0] == "install" else []
+                subprocess.run(["sudo", *argv, *extra], check=True)
+            logger.info("Installed %s, enabled and restarted voxd.service", target)
         finally:
             try:
                 tmp_unit.unlink(missing_ok=True)
@@ -178,31 +219,24 @@ class SystemdBackend:
                 logger.warning("Could not remove tmp unit %s", tmp_unit)
 
     def uninstall(self) -> None:
-        """Remove the systemd unit and kill any stale daemon."""
-        if _SYSTEMD_UNIT.exists():
-            logger.warning(_SUDO_NOTICE)
-            subprocess.run(
-                ["sudo", "systemctl", "disable", "--now", "voxd"],
-                check=False,
-            )
-            subprocess.run(
-                ["sudo", "rm", "-f", str(_SYSTEMD_UNIT)],
-                check=True,
-            )
-            subprocess.run(
-                ["sudo", "systemctl", "daemon-reload"],
-                check=False,
-            )
-            logger.info("Removed %s", _SYSTEMD_UNIT)
-        else:
-            logger.info("No unit found at %s — nothing to uninstall", _SYSTEMD_UNIT)
-        self._process_mgr.kill_stale_daemon()
+        """Disable voxd and remove the unit."""
+        if not self._unit.exists():
+            logger.info("No unit found at %s — nothing to uninstall", self._unit.path)
+            return
+        logger.warning(_SUDO_NOTICE)
+        subprocess.run(["sudo", "systemctl", "disable", "--now", "voxd"], check=False)
+        subprocess.run(["sudo", "rm", "-f", str(self._unit.path)], check=True)
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=False)
+        logger.info("Removed %s", self._unit.path)
 
-    def status(self) -> bool:
-        """Return True if voxd is active under systemd."""
-        result = subprocess.run(
-            ["systemctl", "is-active", "voxd"],
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip() == "active"
+    @staticmethod
+    def _systemctl(*args: str, check: bool) -> str:
+        """Run an unprivileged ``systemctl`` query and return its stdout."""
+        argv = ["systemctl", *args]
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            raise BackendCommandError.of(argv, 127, str(exc)) from exc
+        if check and result.returncode != 0:
+            raise BackendCommandError.of(argv, result.returncode, result.stderr.strip())
+        return result.stdout.strip()

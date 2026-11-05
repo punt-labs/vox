@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -15,6 +14,13 @@ from _cli_introspect import command_opts
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
+from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.service.lifecycle_report import (
+    LifecycleOutcome,
+    LifecycleRefusedError,
+    LifecycleReport,
+    LifecycleVerb,
+)
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
@@ -24,7 +30,6 @@ if TYPE_CHECKING:
 _CLI = "punt_vox.__main__"
 _CLI_DAEMON = "punt_vox.cli_daemon"
 _CLI_DESKTOP = "punt_vox.cli_desktop"
-_DR = "punt_vox.daemon_restarter"
 
 
 # ---------------------------------------------------------------------------
@@ -2576,450 +2581,95 @@ class TestCacheCommands:
 
 
 # ---------------------------------------------------------------------------
-# daemon restart tests
+# daemon start / stop / restart -- emit the LifecycleReport, exit its code
 # ---------------------------------------------------------------------------
 
+_LOG = "/home/u/.punt-labs/vox/logs/vox.log"
 
-class TestDaemonRestartCommand:
-    """``vox daemon restart`` cycles voxd via the service manager.
 
-    Regression guard for vox-nmb: a stale voxd survived v4.2.0's
-    release-day verification because doctor reported "Daemon: running"
-    without checking whether the running process matched the on-disk
-    wheel. The restart command is the second half of the fix (the first
-    half is the version-mismatch warning in commit 3).
-    """
+def _report(
+    verb: LifecycleVerb,
+    outcome: LifecycleOutcome,
+    *,
+    detail: str = "",
+    pid: int | None = None,
+    previous_pid: int | None = None,
+) -> LifecycleReport:
+    return LifecycleReport(
+        verb=verb,
+        outcome=outcome,
+        port=8421,
+        log_path=_LOG,
+        detail=detail,
+        pid=pid,
+        previous_pid=previous_pid,
+    )
 
-    def test_refuses_to_run_as_root(self) -> None:
-        """Refuse running as root — sudo is invoked internally only."""
-        runner = CliRunner()
-        with patch(f"{_DR}.os.geteuid", return_value=0):
-            result = runner.invoke(app, ["daemon", "restart"])
-        assert result.exit_code != 0
-        assert "without sudo" in result.output or "not root" in result.output
 
-    def test_daemon_restart_refuses_windows(self) -> None:
-        """Windows gets a clear platform error, not an AttributeError crash.
+class TestDaemonLifecycleCommands:
+    """Each verb runs one ``DaemonLifecycle`` method and reports it verbatim."""
 
-        ``os.geteuid`` is POSIX-only; on Windows it raises
-        ``AttributeError``. The platform guard must fire BEFORE
-        ``os.geteuid`` is called so the user sees a typed BadParameter
-        explaining that vox daemon restart only supports macOS and
-        Linux. Regression guard for Cursor Bugbot on PR #175.
-
-        Uses ``standalone_mode=False`` so the raised BadParameter is
-        exposed on ``result.exception`` (same pattern as the mutual
-        exclusion tests above).
-        """
-        runner = CliRunner()
-        with patch(f"{_DR}.sys.platform", "win32"):
-            result = runner.invoke(app, ["daemon", "restart"], standalone_mode=False)
-        assert result.exit_code != 0
-        assert isinstance(result.exception, typer.BadParameter), (
-            f"expected BadParameter, got "
-            f"{type(result.exception).__name__}: {result.exception}"
-        )
-        assert "Windows" in str(result.exception)
-
-    def test_unsupported_platform_fails(self) -> None:
-        """Windows (or anything else) raises SystemExit from detect_platform."""
-        runner = CliRunner()
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch(
-                "punt_vox.service.detect_platform",
-                side_effect=SystemExit("Unsupported platform: Windows."),
-            ),
+    @staticmethod
+    def _invoke(
+        verb: LifecycleVerb, report: LifecycleReport, *args: str
+    ) -> tuple[Result, MagicMock]:
+        lifecycle = MagicMock()
+        getattr(lifecycle, verb).return_value = report
+        with patch(
+            f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host", return_value=lifecycle
         ):
-            result = runner.invoke(app, ["daemon", "restart"])
-        assert result.exit_code != 0
+            result = CliRunner().invoke(app, ["daemon", verb, *args])
+        return result, lifecycle
 
-    def test_linux_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Linux path invokes ``sudo systemctl start voxd`` exactly once.
-
-        This test intentionally stubs out ``_systemd_stop`` and
-        ``_ensure_port_free`` via ``monkeypatch.setattr`` on the real
-        module object — not ``patch(...)`` with a string path — so a
-        rename of either private helper fails at import time instead of
-        silently neutering the test. The assertion target is the
-        subprocess argv shape for the service-manager start step, which
-        is the only CLI-boundary behavior this test isolates. The full
-        happy-path sequence (including the real ``_systemd_stop`` and
-        ``_ensure_port_free``) is exercised by
-        ``test_happy_path_drives_full_sequence_through_health_probe``.
-        """
-        from punt_vox import service
-
-        runner = CliRunner()
-
-        mock_client = MagicMock()
-        mock_client.health.return_value = HealthStatus.from_wire(
-            {"pid": 42, "port": 8421, "daemon_version": "9.9.9-test"}
-        )
-
-        calls: list[tuple[str, ...]] = []
-
-        def fake_run(
-            argv: list[str],
-            *,
-            check: bool = False,
-            **_: object,
-        ) -> MagicMock:
-            calls.append(tuple(argv))
-            return MagicMock(returncode=0)
-
-        # Rename-safe stubs: AttributeError at import/setup, not at call.
-        monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
-        monkeypatch.setattr(service, "ensure_port_free", lambda: None)
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 0, result.output
-        # The only subprocess invocation should be the systemctl start
-        # step — that is the CLI-boundary contract this test pins down.
-        assert calls == [("sudo", "systemctl", "start", "voxd")]
-        # User-visible confirmation also includes the version, so a
-        # regression that drops the version from the success line is
-        # caught here too.
-        assert "pid=42" in result.output
-        assert "port 8421" in result.output
-        assert "9.9.9-test" in result.output
-
-    def test_macos_subprocess_argv_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """macOS path drives launchctl through the race-free LaunchctlAgent.
-
-        The bring-up now lives in ``LaunchctlAgent`` (its own subprocess), so
-        this test stubs ``punt_vox.service.launchctl.subprocess.run`` and
-        asserts the bootstrap + kickstart argv shapes. The registration probe
-        (``launchctl print``) reports the job absent so bootstrap proceeds
-        immediately -- the same clean-domain path a real first restart takes
-        once bootout has waited for the job to leave the domain.
-        """
-        from punt_vox import service
-
-        runner = CliRunner()
-
-        mock_client = MagicMock()
-        mock_client.health.return_value = HealthStatus.from_wire(
-            {"pid": 99, "port": 8421, "daemon_version": "9.9.9-test"}
-        )
-
-        calls: list[tuple[str, ...]] = []
-
-        def fake_run(
-            argv: list[str],
-            **_: object,
-        ) -> MagicMock:
-            calls.append(tuple(argv))
-            # `print` reports the job absent (rc 1); all else succeeds (rc 0).
-            return MagicMock(returncode=1 if argv[1] == "print" else 0)
-
-        monkeypatch.setattr(service, "stop_daemon", lambda plat="": None)
-        monkeypatch.setattr(service, "ensure_port_free", lambda: None)
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=501),
-            patch("punt_vox.service.launchctl.os.getuid", return_value=501),
-            patch("punt_vox.service.detect_platform", return_value="macos"),
-            patch("punt_vox.service.launchctl.subprocess.run", side_effect=fake_run),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 0, result.output
-        plist = str(
-            Path.home() / "Library" / "LaunchAgents" / "com.punt-labs.voxd.plist"
-        )
-        launchctl_verbs = [c[1] for c in calls if c[0] == "launchctl"]
-        assert "bootstrap" in launchctl_verbs
-        assert "kickstart" in launchctl_verbs
-        # bootstrap targets gui/<uid> with the plist; no sudo anywhere.
-        assert ("launchctl", "bootstrap", "gui/501", plist) in calls
-        assert (
-            "launchctl",
-            "kickstart",
-            "-k",
-            "gui/501/com.punt-labs.voxd",
-        ) in calls
-        assert all(c[0] != "sudo" for c in calls)
-        assert "pid=99" in result.output
-        assert "9.9.9-test" in result.output
-
-    def test_happy_path_drives_full_sequence_through_health_probe(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("verb", "outcome"),
+        [
+            ("stop", LifecycleOutcome.STOPPED),
+            ("start", LifecycleOutcome.STARTED),
+            ("restart", LifecycleOutcome.RESTARTED),
+        ],
+    )
+    def test_json_emits_the_report_and_exits_zero(
+        self, verb: LifecycleVerb, outcome: LifecycleOutcome
     ) -> None:
-        """End-to-end: run the real stop + ensure-port-free helpers.
-
-        The other restart tests stub ``_systemd_stop`` and
-        ``_ensure_port_free`` to isolate the CLI-boundary behavior.
-        This test does NOT — it patches only the low-level primitives
-        each helper calls (``subprocess.run`` for systemctl, unit-file
-        existence, and ``_find_pid_on_port`` for the port re-check).
-        That way a regression inside either helper, or a control-flow
-        error that skips calling one of them, is caught here instead
-        of having to read the assertion annotations to decide whether
-        ``assert_called_once`` covers the thing the PR changed.
-
-        The linux path is the exhaustive sequence because macOS
-        ``launchctl`` has its own argv-shape coverage above.
-        """
-        from punt_vox import service
-
-        runner = CliRunner()
-
-        # Happy health response: matches the (patched) wheel version.
-        mock_client = MagicMock()
-        mock_client.health.return_value = HealthStatus.from_wire(
-            {"pid": 1234, "port": 8421, "daemon_version": "9.9.9-test"}
-        )
-
-        subprocess_calls: list[tuple[str, ...]] = []
-
-        def fake_run(
-            argv: list[str],
-            **kwargs: object,
-        ) -> MagicMock:
-            subprocess_calls.append(tuple(argv))
-            return MagicMock(returncode=0)
-
-        # Pretend the systemd unit file exists so ``_systemd_stop``
-        # actually drives ``subprocess.run`` for the stop step instead
-        # of short-circuiting on a missing unit file.
-        fake_unit = MagicMock()
-        fake_unit.exists.return_value = True
-        monkeypatch.setattr("punt_vox.service.systemd._SYSTEMD_UNIT", fake_unit)
-
-        # No daemon on the host port, nothing to kill — exercises the
-        # "empty kill path" branch of ``_ensure_port_free`` without
-        # the test depending on whatever happens to bind 8421 on CI.
-        # Patch at the ProcessManager class level since the shims
-        # delegate to the singleton instance.
-        from punt_vox.service.process import ProcessManager
-
-        monkeypatch.setattr(ProcessManager, "read_port_file", lambda self: None)  # pyright: ignore[reportUnknownLambdaType]
-        monkeypatch.setattr(ProcessManager, "kill_stale_daemon", lambda self: False)  # pyright: ignore[reportUnknownLambdaType]
-        monkeypatch.setattr(ProcessManager, "find_pid_on_port", lambda self, port: [])  # pyright: ignore[reportUnknownLambdaType]
-        # subprocess.run is called from BOTH the service submodules
-        # (for ``_systemd_stop``) and __main__ (for the start step).
-        # Patch the systemd submodule's subprocess.run to capture the
-        # complete argv history.
-        monkeypatch.setattr("punt_vox.service.systemd.subprocess.run", fake_run)
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
+        report = _report(verb, outcome, pid=500, previous_pid=100)
+        result, lifecycle = self._invoke(verb, report, "--json")
         assert result.exit_code == 0, result.output
-        # Rename-safety check: referencing the real module attribute.
-        # If ``_ensure_port_free`` or ``_systemd_stop`` is renamed in
-        # service.py, the ``from punt_vox import service`` attribute
-        # access below raises AttributeError at test setup — well
-        # before the subprocess expectations even get checked.
-        assert callable(service.stop_daemon)  # pyright: ignore[reportPrivateUsage]
-        assert callable(service.ensure_port_free)  # pyright: ignore[reportPrivateUsage]
-        # Full subprocess sequence: stop voxd (from _systemd_stop),
-        # then start voxd (from daemon_restart_cmd). Anything else
-        # means the sequence changed and the user-visible contract
-        # with it.
-        assert subprocess_calls == [
-            ("sudo", "systemctl", "stop", "voxd"),
-            ("sudo", "systemctl", "start", "voxd"),
-        ], f"unexpected subprocess sequence: {subprocess_calls}"
-        assert "pid=1234" in result.output
-        assert "9.9.9-test" in result.output
+        assert json.loads(result.output) == report.to_json()
+        getattr(lifecycle, verb).assert_called_once_with()
 
-    def test_health_retry_before_success(self) -> None:
-        """Daemon takes two poll cycles to come back — restart still succeeds."""
-        from punt_vox.client_errors import VoxdConnectionError
-
-        runner = CliRunner()
-
-        mock_client = MagicMock()
-        # First two polls fail, third succeeds.
-        mock_client.health.side_effect = [
-            VoxdConnectionError("not yet"),
-            VoxdConnectionError("not yet"),
-            HealthStatus.from_wire(
-                {"pid": 7, "port": 8421, "daemon_version": "9.9.9-test"}
-            ),
-        ]
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch("punt_vox.service.ensure_port_free"),
-            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.time.sleep") as mock_sleep,
-            patch(f"{_DR}.installed_version", return_value="9.9.9-test"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 0, result.output
-        assert mock_client.health.call_count == 3
-        assert mock_sleep.call_count == 2
-        assert "pid=7" in result.output
-
-    def test_restart_fails_on_version_mismatch(self) -> None:
-        """Running daemon version differs from wheel: restart must fail closed.
-
-        vox-nmb: a silent stop failure can leave the OLD daemon alive,
-        in which case ``systemctl start voxd`` exits 0 as a no-op on an
-        already-active unit. Without this check, the command would
-        print success while the stale daemon continues to answer — the
-        exact bug the feature exists to prevent.
-        """
-        runner = CliRunner()
-
-        mock_client = MagicMock()
-        # Running daemon is v4.1.1 but wheel is v4.2.0 — simulated
-        # stale process that the service manager failed to restart.
-        mock_client.health.return_value = HealthStatus.from_wire(
-            {"pid": 42, "port": 8421, "daemon_version": "4.1.1"}
-        )
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch("punt_vox.service.ensure_port_free"),
-            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.installed_version", return_value="4.2.0"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
+    @pytest.mark.parametrize("verb", ["stop", "start", "restart"])
+    def test_failure_exits_with_the_report_code(self, verb: LifecycleVerb) -> None:
+        report = _report(verb, LifecycleOutcome.TIMEOUT, detail="still active")
+        result, _ = self._invoke(verb, report, "--json")
         assert result.exit_code == 1
-        # Error message must call out BOTH versions so the operator can
-        # tell what's stale without cracking open logs.
-        assert "4.1.1" in result.output
-        assert "4.2.0" in result.output
-        assert "vox.log" in result.output
+        payload = json.loads(result.output)
+        assert (payload["outcome"], payload["ok"]) == ("timeout", False)
 
-    def test_restart_reports_port_contention(self) -> None:
-        """``_ensure_port_free`` raising ``SystemExit`` must reach the user.
-
-        Typer's runner swallows raw SystemExit without printing the
-        message argument. Without the explicit try/except translation,
-        the user would see a silent exit-1 with no indication that
-        port contention was the cause — a poor experience for the
-        load-bearing new command.
-        """
-        runner = CliRunner()
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch(
-                "punt_vox.service.ensure_port_free",
-                side_effect=SystemExit("Port 8421 is still in use (PIDs: [5555])."),
-            ),
-            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
+    def test_text_names_the_outcome_and_log(self) -> None:
+        report = _report("stop", LifecycleOutcome.TIMEOUT, detail="still active")
+        result, _ = self._invoke("stop", report)
         assert result.exit_code == 1
-        assert "Error" in result.output
-        assert "port still occupied" in result.output.lower() or (
-            "still in use" in result.output
-        )
-        assert "8421" in result.output
-        assert "vox.log" in result.output
+        assert "vox daemon stop failed: timeout" in result.output
+        assert _LOG in result.output
 
-    def test_restart_fails_on_absent_version(self) -> None:
-        """Health response missing ``daemon_version``: restart must fail closed.
+    def test_text_stopped_names_previous_pid(self) -> None:
+        report = _report("stop", LifecycleOutcome.STOPPED, previous_pid=1471111)
+        result, _ = self._invoke("stop", report)
+        assert result.exit_code == 0
+        assert "voxd stopped (was pid 1471111)" in result.output
 
-        A daemon built from pre-cef3e8a code cannot self-report its
-        version — the health route returns no ``daemon_version`` field.
-        We cannot prove the running process matches the wheel, and the
-        stale-daemon symptom we're trying to detect looks exactly like
-        this. Fail closed instead of printing success on ambiguous data.
-        """
-        runner = CliRunner()
+    @pytest.mark.parametrize("verb", ["stop", "start", "restart"])
+    def test_refused_exits_2(self, verb: str) -> None:
+        """Root or an unsupported OS is a usage error: exit 2, nothing touched."""
+        refusal = LifecycleRefusedError("vox daemon must run as your normal user")
+        with patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host", side_effect=refusal):
+            result = CliRunner().invoke(app, ["daemon", verb])
+        assert result.exit_code == 2
+        assert "normal user" in result.output
 
-        mock_client = MagicMock()
-        mock_client.health.return_value = HealthStatus.from_wire(
-            {"pid": 42, "port": 8421}
-        )
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch("punt_vox.service.ensure_port_free"),
-            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.installed_version", return_value="4.2.0"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 1
-        assert "did not report a version" in result.output
-        assert "4.2.0" in result.output
-
-    def test_start_subprocess_failure_exits_with_log_hint(self) -> None:
-        """systemctl start failure exits 1 and points at the voxd log."""
-        runner = CliRunner()
-
-        def fake_run(
-            argv: list[str],
-            *,
-            check: bool = False,
-            **_: object,
-        ) -> MagicMock:
-            raise subprocess.CalledProcessError(1, argv)
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch("punt_vox.service.ensure_port_free"),
-            patch(f"{_DR}.subprocess.run", side_effect=fake_run),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 1
-        assert "vox.log" in result.output
-
-    def test_daemon_never_comes_back_exits_with_log_hint(self) -> None:
-        """Health never succeeds within the 5s window — exit 1 with log hint."""
-        from punt_vox.client_errors import VoxdConnectionError
-
-        runner = CliRunner()
-
-        mock_client = MagicMock()
-        mock_client.health.side_effect = VoxdConnectionError("refused")
-
-        # Fake time.monotonic to immediately expire the deadline.
-        ticks = iter([0.0, 0.0, 100.0])
-
-        with (
-            patch(f"{_DR}.os.geteuid", return_value=1000),
-            patch("punt_vox.service.detect_platform", return_value="linux"),
-            patch("punt_vox.service.stop_daemon"),
-            patch("punt_vox.service.ensure_port_free"),
-            patch(f"{_DR}.subprocess.run", return_value=MagicMock(returncode=0)),
-            patch(f"{_DR}.VoxClientSync", return_value=mock_client),
-            patch(f"{_DR}.time.monotonic", side_effect=lambda: next(ticks)),
-            patch(f"{_DR}.time.sleep"),
-        ):
-            result = runner.invoke(app, ["daemon", "restart"])
-
-        assert result.exit_code == 1
-        assert "vox.log" in result.output
-        assert "refused" in result.output
+    def test_daemon_verb_set(self) -> None:
+        """The daemon group: install, uninstall, start, stop, restart, status."""
+        group = build_daemon_app(MagicMock(), MagicMock())
+        verbs = {c.name for c in group.registered_commands}
+        assert verbs == {"install", "uninstall", "start", "stop", "restart", "status"}

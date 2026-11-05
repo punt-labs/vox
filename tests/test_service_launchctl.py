@@ -30,10 +30,12 @@ _PLIST = "/var/tmp/com.punt-labs.voxd.plist"  # test literal path, never written
 _LABEL = "com.punt-labs.voxd"
 
 
-def _completed(returncode: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
+def _completed(
+    returncode: int, stderr: str = "", stdout: str = ""
+) -> subprocess.CompletedProcess[str]:
     """Build a CompletedProcess with the given exit code."""
     return subprocess.CompletedProcess(
-        args=["launchctl"], returncode=returncode, stdout="", stderr=stderr
+        args=["launchctl"], returncode=returncode, stdout=stdout, stderr=stderr
     )
 
 
@@ -162,11 +164,66 @@ def test_bootout_waits_for_unregister(
     mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[])
     agent.bootout()
     verbs = [_verb(c) for c in mock_run.call_args_list]
-    assert verbs[0] == "bootout"
-    assert "print" in verbs  # the wait polled registration
+    assert "bootout" in verbs
+    assert "print" in verbs[verbs.index("bootout") :]  # the wait polled after
     # bootout targets the GUI domain and never shells out to sudo.
     for call in mock_run.call_args_list:
         assert call[0][0][0] == "launchctl"
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_bootout_of_loaded_job_failing_raises(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    """A loaded job whose bootout exits non-zero is not reported as stopped."""
+    mock_run.side_effect = _dispatch(print_rc=0, bootstrap_rcs=[], bootout_rc=37)
+    with pytest.raises(LaunchctlError, match=r"bootout .* failed \(exit 37\)"):
+        agent.bootout()
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_bootout_of_unloaded_job_is_idempotent(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    """Booting out a job that was never loaded exits non-zero and is ignored."""
+    mock_run.side_effect = _dispatch(print_rc=1, bootstrap_rcs=[], bootout_rc=3)
+    agent.bootout()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# pid -- from launchctl print
+# ---------------------------------------------------------------------------
+
+_PRINT = "gui/501/com.punt-labs.voxd = {\n\tstate = running\n\tpid = 4242\n}\n"
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_pid_reads_running_pid(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
+    mock_run.return_value = _completed(0, stdout=_PRINT)
+    assert agent.pid() == 4242
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_pid_absent_when_job_has_no_process(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    mock_run.return_value = _completed(0, stdout="{\n\tstate = waiting\n}\n")
+    assert agent.pid() is None
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_pid_absent_when_unregistered(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    mock_run.return_value = _completed(113)
+    assert agent.pid() is None
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_pid_malformed_raises(mock_run: MagicMock, agent: LaunchctlAgent) -> None:
+    mock_run.return_value = _completed(0, stdout="\tpid = four\n")
+    with pytest.raises(LaunchctlError, match="malformed pid"):
+        agent.pid()
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,9 @@
-"""Tests for punt_vox.service.systemd — Linux systemd backend."""
+"""Tests for punt_vox.service.systemd -- the Linux systemd backend.
+
+``PrivilegedRun`` is driven by ``FakeSudo`` (scripted exit codes per argv) and
+a scripted terminal check, so every sudoers policy -- scoped NOPASSWD, mixed
+NOPASSWD, password with and without a terminal -- runs here with no real sudo.
+"""
 
 from __future__ import annotations
 
@@ -6,238 +11,179 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeSudo
 
-from punt_vox.service import DEFAULT_PORT
-from punt_vox.service.process import ProcessManager
-from punt_vox.service.systemd import SystemdBackend
+from punt_vox.service.backend import BackendCommandError, PrivilegeDeniedError
+from punt_vox.service.systemd import PrivilegedRun, SystemdBackend
+
+_N_STOP = ("sudo", "-n", "systemctl", "stop", "voxd")
+_I_STOP = ("sudo", "systemctl", "stop", "voxd")
+_NEEDS_PASSWORD = "sudo: a password is required"
 
 
-@pytest.fixture()
-def backend() -> SystemdBackend:
+def _run(
+    script: dict[tuple[str, ...], list[tuple[int, str]]], *, tty: bool
+) -> tuple[PrivilegedRun, FakeSudo]:
+    sudo = FakeSudo(script)
+    return PrivilegedRun(sudo, lambda: tty), sudo
+
+
+def _argvs(sudo: FakeSudo) -> list[tuple[str, ...]]:
+    return [argv for argv, _ in sudo.calls]
+
+
+# ---------------------------------------------------------------------------
+# PrivilegedRun -- sudo -n first, never a privilege probe
+# ---------------------------------------------------------------------------
+
+
+def test_scoped_nopasswd_runs_once_no_probe_no_prompt() -> None:
+    """``sudo -n`` succeeds: exactly that one call, no -v, no -l, no prompt."""
+    run, sudo = _run({_N_STOP: [(0, "")]}, tty=True)
+    run("stop")
+    assert sudo.calls == [(_N_STOP, True)]
+    assert not any("-v" in a or "-l" in a for a in _argvs(sudo))
+
+
+def test_exit4_permission_denied() -> None:
+    run, sudo = _run({_N_STOP: [(4, "Access denied")]}, tty=True)
+    with pytest.raises(PrivilegeDeniedError, match="access denied"):
+        run("stop")
+    assert _argvs(sudo) == [_N_STOP]
+
+
+def test_exit5_not_loaded_backend_failed() -> None:
+    run, sudo = _run({_N_STOP: [(5, "Unit voxd.service not loaded.")]}, tty=True)
+    with pytest.raises(BackendCommandError, match="vox daemon install") as info:
+        run("stop")
+    assert info.value.code == 5
+    assert _argvs(sudo) == [_N_STOP]
+
+
+def test_exit1_no_tty_permission_denied_no_prompt() -> None:
+    """No terminal: refuse with sudo's stderr verbatim; never prompt or probe."""
+    run, sudo = _run({_N_STOP: [(1, _NEEDS_PASSWORD)]}, tty=False)
+    with pytest.raises(PrivilegeDeniedError) as info:
+        run("stop")
+    assert _NEEDS_PASSWORD in str(info.value)
+    assert "run `vox daemon stop` from a terminal" in str(info.value)
+    assert _argvs(sudo) == [_N_STOP]
+
+
+@pytest.mark.parametrize(
+    ("code", "raised"),
+    [(0, None), (4, PrivilegeDeniedError), (1, BackendCommandError)],
+)
+def test_exit1_tty_interactive_once(code: int, raised: type[Exception] | None) -> None:
+    """A terminal: exactly one interactive call follows the -n call.
+
+    Its exit 0 returns; its exit 4 is a refusal; any other non-zero exit is a
+    ``BackendCommandError`` the lifecycle answers by observing again.
+    """
+    run, sudo = _run({_N_STOP: [(1, _NEEDS_PASSWORD)], _I_STOP: [(code, "")]}, tty=True)
+    if raised is None:
+        run("stop")
+    else:
+        with pytest.raises(raised):
+            run("stop")
+    assert sudo.calls == [(_N_STOP, True), (_I_STOP, False)]
+
+
+def test_mixed_nopasswd_still_prompts() -> None:
+    """One unrelated NOPASSWD entry plus a password ``ALL``: sudo -n exits 1.
+
+    A ``sudo -n -l`` probe would answer "permitted" here and skip the prompt
+    the command still needs; with no probe, the interactive call is made.
+    """
+    run, sudo = _run({_N_STOP: [(1, _NEEDS_PASSWORD)], _I_STOP: [(0, "")]}, tty=True)
+    run("stop")
+    assert _argvs(sudo) == [_N_STOP, _I_STOP]
+    assert not any("-l" in argv for argv in _argvs(sudo))
+
+
+def test_never_reads_stderr_text() -> None:
+    """The same exit code with different stderr gives the same classification."""
+    outcomes = []
+    for stderr in (_NEEDS_PASSWORD, "sudo: Ein Passwort ist notwendig", ""):
+        run, _ = _run({_N_STOP: [(1, stderr)]}, tty=False)
+        with pytest.raises(PrivilegeDeniedError) as info:
+            run("stop")
+        outcomes.append(type(info.value))
+    assert len(set(outcomes)) == 1
+
+
+def test_unexpected_exit_is_backend_command_error() -> None:
+    run, _ = _run({_N_STOP: [(3, "weird")]}, tty=True)
+    with pytest.raises(BackendCommandError, match="exited 3"):
+        run("stop")
+
+
+# ---------------------------------------------------------------------------
+# SystemdBackend -- the lifecycle seam
+# ---------------------------------------------------------------------------
+
+
+def _backend(sudo: FakeSudo | None = None) -> SystemdBackend:
     return SystemdBackend(
-        ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+        PrivilegedRun(sudo or FakeSudo({}), lambda: False),
     )
 
 
-# ---------------------------------------------------------------------------
-# systemd unit content
-# ---------------------------------------------------------------------------
+def _ran(code: int, stdout: str = "", stderr: str = "") -> MagicMock:
+    return MagicMock(returncode=code, stdout=stdout, stderr=stderr)
 
 
-def test_systemd_unit_contains_exec_start(backend: SystemdBackend) -> None:
-    content = backend.unit_content("testuser")
-    assert "ExecStart=" in content
-    assert "voxd" in content
-    assert str(DEFAULT_PORT) in content
-
-
-def test_systemd_unit_restart_policy(backend: SystemdBackend) -> None:
-    content = backend.unit_content("testuser")
-    assert "Restart=on-failure" in content
-    assert "RestartSec=5" in content
-
-
-@patch.dict("os.environ", {"PATH": "/usr/local/bin:/usr/bin:/bin"})
-def test_systemd_unit_contains_path_from_env(backend: SystemdBackend) -> None:
-    content = backend.unit_content("testuser")
-    assert 'Environment="PATH=/usr/local/bin:/usr/bin:/bin"' in content
-
-
-def test_systemd_unit_description(backend: SystemdBackend) -> None:
-    content = backend.unit_content("testuser")
-    assert "Voxd text-to-speech daemon" in content
-
-
-def test_systemd_unit_no_runtime_directory(backend: SystemdBackend) -> None:
-    """RuntimeDirectory= must NOT be present — state lives in $HOME."""
-    content = backend.unit_content("testuser")
-    assert "RuntimeDirectory=" not in content
-    assert "RuntimeDirectoryMode=" not in content
-
-
-def test_systemd_unit_no_leading_whitespace(backend: SystemdBackend) -> None:
-    """Section headers must start at column 0 — no leading spaces."""
-    content = backend.unit_content("testuser")
-    for line in content.splitlines():
-        if line.startswith("["):
-            assert line == line.lstrip(), (
-                f"section header has leading whitespace: {line!r}"
-            )
-
-
-@patch.dict(
-    "os.environ",
-    {
-        "PATH": "/usr/bin:/bin",
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-        "PULSE_SERVER": "unix:/run/user/1000/pulse/native",
-        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
-    },
+@pytest.mark.parametrize(
+    ("state", "active"),
+    [
+        ("active", True),
+        ("activating", True),
+        ("reloading", True),
+        ("deactivating", True),
+        ("inactive", False),
+        ("failed", False),
+    ],
 )
-def test_systemd_unit_includes_audio_env_vars(backend: SystemdBackend) -> None:
-    """Audio env vars present in the environment appear in the unit file."""
-    content = backend.unit_content("testuser")
-    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in content
-    expected_pulse = 'Environment="PULSE_SERVER=unix:/run/user/1000/pulse/native"'
-    assert expected_pulse in content
-    expected_dbus = (
-        'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"'
-    )
-    assert expected_dbus in content
-
-
-@patch.dict(
-    "os.environ",
-    {
-        "PATH": "/usr/bin:/bin",
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-        "PULSE_SERVER": "unix:/run/user/1000/pulse/native",
-    },
-)
-def test_systemd_unit_multiline_env_indented(backend: SystemdBackend) -> None:
-    """Multiple Environment= lines each start at column 0 (after dedent)."""
-    content = backend.unit_content("testuser")
-    env_lines = [ln for ln in content.splitlines() if ln.startswith("Environment=")]
-    assert len(env_lines) >= 2
-    for line in env_lines:
-        assert line == line.lstrip(), (
-            f"Environment line has leading whitespace: {line!r}"
-        )
-
-
-@patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True)
-@patch("punt_vox.service.systemd.pwd.getpwnam")
-def test_systemd_unit_xdg_fallback_without_env(
-    mock_getpwnam: MagicMock,
-    backend: SystemdBackend,
+@patch("punt_vox.service.systemd.subprocess.run")
+def test_is_active_counts_a_stopping_unit(
+    mock_run: MagicMock, state: str, active: bool
 ) -> None:
-    """When XDG_RUNTIME_DIR is absent, compute from target user UID."""
-    mock_getpwnam.return_value = MagicMock(pw_uid=1000)
-    content = backend.unit_content("deploy")
-    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in content
-    assert "PULSE_SERVER" not in content
-    assert "DBUS_SESSION_BUS_ADDRESS" not in content
+    """A deactivating unit still has a main process: it has not stopped."""
+    mock_run.return_value = _ran(0 if state == "active" else 3, f"{state}\n")
+    assert _backend().is_active() is active
 
 
-# ---------------------------------------------------------------------------
-# audio env lines
-# ---------------------------------------------------------------------------
-
-
-@patch.dict(
-    "os.environ",
-    {"XDG_RUNTIME_DIR": "/run/user/1000"},
-    clear=True,
-)
-def test_systemd_audio_env_lines_xdg_from_env(backend: SystemdBackend) -> None:
-    """XDG_RUNTIME_DIR from env is used directly — no pwd fallback."""
-    lines = backend.audio_env_lines("testuser")
-    assert len(lines) == 1
-    assert 'Environment="XDG_RUNTIME_DIR=/run/user/1000"' in lines[0]
-
-
-@patch.dict("os.environ", {}, clear=True)
-@patch("punt_vox.service.systemd.pwd.getpwnam")
-def test_systemd_audio_env_lines_xdg_fallback(
-    mock_getpwnam: MagicMock,
-    backend: SystemdBackend,
-) -> None:
-    """No XDG_RUNTIME_DIR in env triggers pwd-based fallback."""
-    mock_getpwnam.return_value = MagicMock(pw_uid=1000)
-    lines = backend.audio_env_lines("deploy")
-    assert len(lines) == 1
-    assert lines[0] == 'Environment="XDG_RUNTIME_DIR=/run/user/1000"'
-    mock_getpwnam.assert_called_once_with("deploy")
-
-
-@patch.dict("os.environ", {}, clear=True)
-@patch(
-    "punt_vox.service.systemd.pwd.getpwnam",
-    side_effect=KeyError("no such user"),
-)
-def test_systemd_audio_env_lines_fallback_unknown_user(
-    _mock_getpwnam: MagicMock,
-    backend: SystemdBackend,
-) -> None:
-    """Unknown user produces empty list — no crash."""
-    assert backend.audio_env_lines("ghost") == []
-
-
-@patch.dict(
-    "os.environ",
-    {"XDG_RUNTIME_DIR": '/run/user/1000\nExecStartPre=/bin/evil"'},
-    clear=True,
-)
-def test_systemd_audio_env_lines_rejects_unsafe_value(
-    backend: SystemdBackend,
-) -> None:
-    """Values with newlines or quotes are rejected."""
-    lines = backend.audio_env_lines("testuser")
-    assert not any("evil" in line for line in lines)
-
-
-# ---------------------------------------------------------------------------
-# safe_systemd_value
-# ---------------------------------------------------------------------------
-
-
-def test_safe_systemd_value_accepts_normal() -> None:
-    assert SystemdBackend.safe_systemd_value("/run/user/1000") is True
-    assert SystemdBackend.safe_systemd_value("unix:path=/run/user/1000/bus") is True
-
-
-def test_safe_systemd_value_rejects_newline() -> None:
-    assert SystemdBackend.safe_systemd_value("foo\nbar") is False
-
-
-def test_safe_systemd_value_rejects_quote() -> None:
-    assert SystemdBackend.safe_systemd_value('foo"bar') is False
-
-
-def test_safe_systemd_value_rejects_carriage_return() -> None:
-    assert SystemdBackend.safe_systemd_value("foo\rbar") is False
-
-
-def test_safe_systemd_value_rejects_backslash() -> None:
-    assert SystemdBackend.safe_systemd_value("foo\\bar") is False
-
-
-# ---------------------------------------------------------------------------
-# _systemd_stop
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(("raw", "pid"), [("4242\n", 4242), ("0\n", None)])
+@patch("punt_vox.service.systemd.subprocess.run")
+def test_main_pid_zero_is_none(mock_run: MagicMock, raw: str, pid: int | None) -> None:
+    mock_run.return_value = _ran(0, raw)
+    assert _backend().main_pid() == pid
 
 
 @patch("punt_vox.service.systemd.subprocess.run")
+def test_main_pid_failure_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(1, "", "Failed to connect to bus")
+    with pytest.raises(BackendCommandError, match="Failed to connect to bus"):
+        _backend().main_pid()
+
+
+def test_request_stop_and_start_go_through_privileged_run() -> None:
+    sudo = FakeSudo(
+        {_N_STOP: [(0, "")], ("sudo", "-n", "systemctl", "start", "voxd"): [(0, "")]}
+    )
+    be = _backend(sudo)
+    be.request_stop()
+    be.request_start()
+    assert _argvs(sudo) == [_N_STOP, ("sudo", "-n", "systemctl", "start", "voxd")]
+
+
 @patch("punt_vox.service.systemd._SYSTEMD_UNIT")
-def test_systemd_stop_noop_when_unit_missing(
-    mock_unit: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Fresh install (no prior unit): stop skips the sudo call."""
+def test_is_installed_follows_the_unit_file(mock_unit: MagicMock) -> None:
     mock_unit.exists.return_value = False
-    be = SystemdBackend(ProcessManager(), list)
-    be.stop()
-    mock_run.assert_not_called()
-
-
-@patch("punt_vox.service.systemd.subprocess.run")
-@patch("punt_vox.service.systemd._SYSTEMD_UNIT")
-def test_systemd_stop_stops_when_unit_present(
-    mock_unit: MagicMock,
-    mock_run: MagicMock,
-) -> None:
-    """Existing unit: stop issues sudo systemctl stop voxd."""
+    assert _backend().is_installed() is False
     mock_unit.exists.return_value = True
-    mock_run.return_value = MagicMock(returncode=0)
-
-    be = SystemdBackend(ProcessManager(), list)
-    be.stop()
-
-    mock_run.assert_called_once()
-    call_args = mock_run.call_args
-    assert call_args[0][0] == ["sudo", "systemctl", "stop", "voxd"]
-    assert call_args[1]["check"] is False
+    assert _backend().is_installed() is True
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +206,8 @@ def test_systemd_install_invokes_expected_sudo_commands(
     mock_run.return_value = MagicMock(returncode=0)
 
     be = SystemdBackend(
-        ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+        PrivilegedRun(FakeSudo({}), lambda: False),
     )
     be.install("jfreeman")
 
@@ -291,8 +237,8 @@ def test_systemd_install_restarts_already_running_voxd(
     mock_run.return_value = MagicMock(returncode=0)
 
     be = SystemdBackend(
-        ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+        PrivilegedRun(FakeSudo({}), lambda: False),
     )
     be.install("jfreeman")
 
@@ -327,8 +273,8 @@ def test_systemd_install_writes_unit_to_user_tmp_first(
     mock_run.side_effect = _capture_install
 
     be = SystemdBackend(
-        ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+        PrivilegedRun(FakeSudo({}), lambda: False),
     )
     be.install("jfreeman")
 

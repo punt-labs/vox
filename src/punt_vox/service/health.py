@@ -1,102 +1,60 @@
-"""Resolve and reach the voxd instance for the post-install health poll."""
+"""Resolve and reach the voxd instance the service manager runs.
+
+The health request carries the daemon's token in its URL, so every connection
+value is pinned to a trusted source and none comes from the calling shell:
+
+- **host** from the bind written into the installed unit or plist (the
+  backend reports it), mapped to a reachable address;
+- **port** always ``DEFAULT_PORT``, the port every unit runs voxd on;
+- **token** only from voxd's ``serve.token`` run file. With no token file the
+  client is never built, because a client built with no token falls back to
+  the shell's ``VOXD_TOKEN`` and would send it to whatever holds the port.
+"""
 
 from __future__ import annotations
 
 import ipaddress
-import os
-from typing import TYPE_CHECKING, Self, assert_never, final
+from typing import Self, final
 
 from punt_vox.client import read_token_file
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service.process import DEFAULT_PORT
-from punt_vox.service.systemd import SystemdBackend
 
-if TYPE_CHECKING:
-    from punt_vox.service.types import PlatformName
+__all__ = ["DaemonNotUpError", "HealthTarget"]
+
+
+@final
+class DaemonNotUpError(RuntimeError):
+    """voxd has not written its token yet, so no health request is sent."""
+
+    __slots__ = ()
 
 
 @final
 class HealthTarget:
-    """Resolve host, port, and token of the voxd instance just installed.
-
-    The health poll must reach *the daemon the backend actually started* --
-    never whatever the install shell's ``VOXD_*`` env vars point at. All
-    three connection values are pinned from authoritative sources, bypassing
-    ``VoxClientSync``'s env/run-file resolution: ``port`` is ``DEFAULT_PORT``
-    (baked into every unit by ``_voxd_exec_args``); ``host`` is the bind the
-    *backend* applied, gated as its unit gates it (``_effective_bind``);
-    ``token`` is read from voxd's ``serve.token`` run file, never a stray
-    shell ``VOXD_TOKEN``.
-    """
+    """Host, port, and token of the voxd instance the service manager runs."""
 
     __slots__ = ("_host", "_port")
 
     _host: str
     _port: int
 
-    def __new__(cls, platform: str) -> Self:
-        # __new__ is the platform boundary: an unknown value would silently
-        # skip the systemd gate below and mis-resolve the host, so reject it
-        # here and narrow str -> Literal for every helper downstream.
-        checked = cls._require_platform(platform)
+    def __new__(cls, bind: str) -> Self:
         self = super().__new__(cls)
-        self._host = self._resolve_host(checked)
+        self._host = self._resolve_host(bind)
         self._port = DEFAULT_PORT
         return self
 
     @staticmethod
-    def _require_platform(platform: str) -> PlatformName:
-        """Return *platform* if it names a supported OS, else raise.
+    def _resolve_host(bind: str) -> str:
+        """Map the unit's ``VOXD_BIND`` to a reachable health host.
 
-        The health host resolution branches on exactly ``"macos"`` and
-        ``"linux"``; any other value (a miscapitalized ``"Linux"``, a future
-        ``"bsd"``) would fall through the systemd gate onto the launchd
-        verbatim path and poll the wrong host. Enforce the two-value domain
-        at runtime so a bad platform fails loud instead of mis-branching.
+        A wildcard bind (an unspecified address, or none) accepts loopback, so
+        poll ``127.0.0.1``. A concrete bind is the only address voxd listens
+        on -- poll it directly (loopback would false-fail). A non-IP value
+        (e.g. a hostname) is polled as given.
         """
-        if platform == "macos":
-            return "macos"
-        if platform == "linux":
-            return "linux"
-        msg = f"unknown platform: {platform!r}"
-        raise ValueError(msg)
-
-    @staticmethod
-    def _effective_bind(platform: PlatformName) -> str:
-        """Return the ``VOXD_BIND`` value the installed unit passes to voxd.
-
-        The install-shell value is not necessarily what voxd receives, because
-        each backend gates ``VOXD_BIND`` differently: systemd embeds it only
-        when ``safe_systemd_value`` accepts it (a rejected value is dropped, so
-        voxd binds its ``DEFAULT_HOST`` loopback); launchd embeds it verbatim
-        when non-empty, with no gate. The gate runs on the *raw* env value to
-        match the backends -- a trailing ``\\n`` fails ``safe_systemd_value``
-        yet vanishes under ``.strip()``, so stripping before gating would
-        disagree with the unit and resolve the wrong host.
-        """
-        raw = os.environ.get("VOXD_BIND")
-        if not raw:
-            return ""
-        match platform:
-            case "linux":
-                if not SystemdBackend.safe_systemd_value(raw):
-                    return ""
-            case "macos":
-                pass
-            case _:
-                assert_never(platform)
-        return raw.strip()
-
-    @classmethod
-    def _resolve_host(cls, platform: PlatformName) -> str:
-        """Map the unit's effective ``VOXD_BIND`` to a reachable health host.
-
-        A wildcard bind (unspecified addresses, or unset/dropped) accepts
-        loopback, so poll ``127.0.0.1``. A concrete bind is the only address
-        voxd listens on -- poll it directly (loopback would false-fail). A
-        non-IP value (e.g. a hostname) is polled as given.
-        """
-        bind = cls._effective_bind(platform)
+        bind = bind.strip()
         if not bind:
             return "127.0.0.1"
         try:
@@ -117,13 +75,11 @@ class HealthTarget:
     def client(self) -> VoxClientSync:
         """Return a client pinned to the daemon's host, port, and run-file token.
 
-        The token is read fresh from ``serve.token`` and passed explicitly, so
-        ``VoxClientSync`` cannot fall back to a stray shell ``VOXD_TOKEN``.
-        voxd writes ``serve.token`` on startup, so an early probe may read
-        ``None``; the poll's retry loop tolerates that brief race.
+        Raises ``DaemonNotUpError`` when ``serve.token`` is absent: voxd writes
+        it on startup, so the caller treats that as "not up yet" and polls.
         """
-        return VoxClientSync(
-            host=self._host,
-            port=self._port,
-            token=read_token_file(),
-        )
+        token = read_token_file()
+        if token is None:
+            msg = "voxd has not written serve.token yet"
+            raise DaemonNotUpError(msg)
+        return VoxClientSync(host=self._host, port=self._port, token=token)

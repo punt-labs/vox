@@ -1,10 +1,12 @@
-"""The ``vox daemon`` CLI verbs -- install, uninstall, restart, status.
+"""The ``vox daemon`` CLI verbs -- install, uninstall, start, stop, restart, status.
 
 The daemon subcommand group manages the ``voxd`` system service on the local
 host (macOS LaunchAgent / Linux systemd). :class:`DaemonCli` is a humble
 object: each verb parses ``--json`` / ``--verbose`` / ``--quiet`` through the
-shared :class:`OutputFlags`, dispatches to :mod:`punt_vox.service` or the
-:class:`DaemonRestarter`, and formats via the shared :class:`OutputFormatter`.
+shared :class:`OutputFlags`, dispatches to :mod:`punt_vox.service`, and
+formats via the shared :class:`OutputFormatter`. ``start``, ``stop`` and
+``restart`` each emit the :class:`LifecycleReport` the service layer returns
+and exit with its code.
 Every subcommand answers ``--json`` (parity with ``vox status``, ``vox voices``,
 ``vox music``, ``vox rec``); ``vox daemon status --json`` emits the fields the
 daemon reports over ``health()`` so a caller reads the same shape whether it
@@ -19,12 +21,19 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.daemon_restarter import DaemonRestarter
-from punt_vox.service import install as svc_install, uninstall as svc_uninstall
+from punt_vox.service import (
+    DaemonLifecycle,
+    install as svc_install,
+    uninstall as svc_uninstall,
+)
+from punt_vox.service.lifecycle_report import LifecycleRefusedError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.cli_io import OutputFlags
     from punt_vox.output_formatter import OutputFormatter
+    from punt_vox.service.lifecycle_report import LifecycleReport
 
 __all__ = ["DaemonCli", "build_daemon_app"]
 
@@ -76,16 +85,7 @@ class DaemonCli:
         platforms.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        try:
-            result = svc_install()
-        except SystemExit as exc:
-            code = exc.code if isinstance(exc.code, int) else 1
-            self._formatter.emit(
-                {"installed": False, "reason": str(exc)},
-                f"Install failed: {exc}",
-            )
-            raise typer.Exit(code=code) from exc
-        self._formatter.emit({"installed": True, "message": result}, result)
+        self._service(svc_install, "installed", "Install")
 
     def uninstall(
         self,
@@ -102,16 +102,39 @@ class DaemonCli:
         prompts once for your sudo password to touch the systemd unit.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        try:
-            result = svc_uninstall()
-        except SystemExit as exc:
-            code = exc.code if isinstance(exc.code, int) else 1
-            self._formatter.emit(
-                {"uninstalled": False, "reason": str(exc)},
-                f"Uninstall failed: {exc}",
-            )
-            raise typer.Exit(code=code) from exc
-        self._formatter.emit({"uninstalled": True, "message": result}, result)
+        self._service(svc_uninstall, "uninstalled", "Uninstall")
+
+    def start(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Start the installed voxd service and verify it serves this wheel.
+
+        Leaves a running voxd alone (``already running``). Runs as your normal
+        user, NOT under ``sudo``; on Linux, vox runs ``sudo -n systemctl start
+        voxd`` and prompts for your password only when a terminal is present.
+        """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        self._run(lambda lifecycle: lifecycle.start())
+
+    def stop(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Stop voxd and leave it stopped until ``start`` or the next boot.
+
+        The service stays installed and enabled; ``vox daemon uninstall``
+        keeps it down across reboots. Runs as your normal user, NOT under
+        ``sudo``.
+        """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        self._run(lambda lifecycle: lifecycle.stop())
 
     def restart(
         self,
@@ -120,20 +143,37 @@ class DaemonCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Restart the voxd system service and verify it is back up.
+        """Stop voxd, then start it, and verify the new wheel is serving.
 
         Use this after ``uv tool upgrade punt-vox`` so the running daemon
-        picks up the new wheel. A plain ``uv tool upgrade`` replaces the
-        on-disk binary but does not cycle the long-running voxd process --
-        changes to the WebSocket protocol or playback behavior do not
-        take effect until the service is restarted.
-
-        Runs as your normal user, NOT under ``sudo``. On macOS, no sudo
-        is needed (LaunchAgent). On Linux, vox will prompt once for your
-        sudo password when it drives ``systemctl``.
+        picks up the new wheel: an upgrade replaces the on-disk binary but
+        does not cycle the long-running voxd process. Runs as your normal
+        user, NOT under ``sudo``.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        DaemonRestarter(self._formatter).run()
+        self._run(lambda lifecycle: lifecycle.restart())
+
+    def _service(self, action: Callable[[], str], key: str, label: str) -> None:
+        """Run install or uninstall; report ``{key: bool}`` and its message."""
+        try:
+            result = action()
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+            self._formatter.emit(
+                {key: False, "reason": str(exc)}, f"{label} failed: {exc}"
+            )
+            raise typer.Exit(code=code) from exc
+        self._formatter.emit({key: True, "message": result}, result)
+
+    def _run(self, verb: Callable[[DaemonLifecycle], LifecycleReport]) -> None:
+        """Run one lifecycle verb, emit its report, and exit with its code."""
+        try:
+            report = verb(DaemonLifecycle.for_this_host())
+        except LifecycleRefusedError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        self._formatter.emit(report.to_json(), report.text())
+        if report.exit_code:
+            raise typer.Exit(code=report.exit_code)
 
     def status(
         self,
@@ -192,6 +232,8 @@ def build_daemon_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Ty
     )
     app.command("install")(cli.install)
     app.command("uninstall")(cli.uninstall)
+    app.command("start")(cli.start)
+    app.command("stop")(cli.stop)
     app.command("restart")(cli.restart)
     app.command("status")(cli.status)
     return app

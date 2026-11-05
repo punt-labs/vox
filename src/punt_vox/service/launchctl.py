@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import time
 from typing import ClassVar, Self, final
@@ -59,6 +60,8 @@ class LaunchctlAgent:
     # launchctl "Bootstrap failed: 5: Input/output error" -- the domain still
     # holds a registration for the label being bootstrapped.
     _IO_ERROR: ClassVar[int] = 5
+    # The running pid in `launchctl print` output: a "pid = N" line.
+    _PID_LINE: ClassVar[re.Pattern[str]] = re.compile(r"^\s*pid = (\S+)\s*$", re.M)
 
     def __new__(cls, label: str, plist: str) -> Self:
         self = super().__new__(cls)
@@ -85,13 +88,32 @@ class LaunchctlAgent:
         ``launchctl print <target>`` exits 0 while the job is registered and
         non-zero once it has been fully unregistered.
         """
-        result = subprocess.run(  # noqa: S603
+        return self._print().returncode == 0
+
+    def pid(self) -> int | None:
+        """Return the job's running pid, read from ``launchctl print``.
+
+        ``None`` is the documented answer when the job is not registered or is
+        registered with no running process. A ``pid = ...`` line that is not
+        a number raises ``LaunchctlError`` rather than reading as "no process".
+        """
+        result = self._print()
+        found = self._PID_LINE.search(result.stdout) if result.returncode == 0 else None
+        if found is None:
+            return None
+        if not found.group(1).isdecimal():
+            msg = f"launchctl print {self._label}: malformed pid {found.group(1)!r}"
+            raise LaunchctlError(msg)
+        return int(found.group(1))
+
+    def _print(self) -> subprocess.CompletedProcess[str]:
+        """Run ``launchctl print`` on this job's service target."""
+        return subprocess.run(  # noqa: S603
             ["launchctl", "print", self._service_target()],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,
         )
-        return result.returncode == 0
 
     def is_loaded(self) -> bool:
         """Return True if launchd currently has this job loaded.
@@ -130,22 +152,26 @@ class LaunchctlAgent:
     def bootout(self) -> None:
         """Boot the job out of the GUI domain and wait for it to unregister.
 
-        Idempotent: a bootout of an unloaded job exits non-zero and is logged
-        at debug. The wait afterward is what makes a subsequent ``bootstrap``
-        race-free -- without it the bootstrap collides with the teardown.
+        Idempotent for a job that is not loaded: bootout exits non-zero and is
+        logged at debug. For a job that *was* loaded, a non-zero exit raises
+        ``LaunchctlError`` -- the job may still be running, and the caller must
+        not read that as stopped. The wait afterward is what makes a following
+        ``bootstrap`` race-free.
         """
+        was_loaded = self.is_registered()
         result = subprocess.run(  # noqa: S603
             ["launchctl", "bootout", self._service_target()],  # noqa: S607
+            capture_output=True,
+            text=True,
             check=False,
         )
-        if result.returncode != 0:
-            logger.debug(
-                "bootout %s exited %d (job may not be loaded)",
-                self._label,
-                result.returncode,
+        if result.returncode != 0 and was_loaded:
+            msg = (
+                f"launchctl bootout of {self._label} failed "
+                f"(exit {result.returncode}): {result.stderr.strip()}"
             )
-        else:
-            logger.info("Booted out %s", self._label)
+            raise LaunchctlError(msg)
+        logger.info("Booted out %s (exit %d)", self._label, result.returncode)
         if not self.wait_until_unregistered():
             logger.warning(
                 "%s still registered after bootout; a bootstrap may race the teardown",

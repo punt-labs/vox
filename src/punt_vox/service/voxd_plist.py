@@ -5,8 +5,9 @@ from __future__ import annotations
 import html
 import logging
 import os
+import plistlib
 import textwrap
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -157,6 +158,28 @@ class VoxdPlist:
         self._path.write_text(self.content(), encoding="utf-8")
         self._path.chmod(0o644)
         logger.info("Wrote plist to %s", self._path)
+
+    def installed_bind(self) -> str:
+        """Return ``EnvironmentVariables.VOXD_BIND`` from the installed plist.
+
+        ``""`` when the plist is absent or sets none. Leading whitespace is
+        stripped first: :meth:`content` can emit the XML declaration indented,
+        which launchd accepts and ``plistlib`` does not.
+        """
+        if not self._path.exists():
+            return ""
+        return self._bind_in(plistlib.loads(self._path.read_bytes().lstrip()))
+
+    @staticmethod
+    def _bind_in(data: object) -> str:
+        """Return ``EnvironmentVariables.VOXD_BIND`` from parsed plist *data*."""
+        try:
+            bind = cast("dict[str, dict[str, object]]", data)["EnvironmentVariables"][
+                "VOXD_BIND"
+            ]
+        except (KeyError, TypeError):
+            return ""
+        return bind if isinstance(bind, str) else ""
 
     def remove(self) -> None:
         """Delete the plist, tolerating its absence."""

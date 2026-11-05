@@ -3,15 +3,14 @@
 
 from __future__ import annotations
 
-import logging
-import signal
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from punt_vox.service import DEFAULT_PORT
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.installer import ServiceInstaller
 from punt_vox.service.process import ProcessManager
 
@@ -130,19 +129,22 @@ def test_voxd_exec_args_rejects_directory(
 
 
 # ---------------------------------------------------------------------------
-# _find_pid_on_port
+# find_pid_on_port -- fails closed
 # ---------------------------------------------------------------------------
+
+
+def _ran(returncode: int, stdout: str = "", stderr: str = "") -> MagicMock:
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Darwin")
 @patch("punt_vox.service.process.subprocess.run")
 def test_find_pid_on_port_macos(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
     mgr = ProcessManager()
-    mock_run.return_value = MagicMock(returncode=0, stdout="12345\n")
+    mock_run.return_value = _ran(0, "12345\n")
     assert mgr.find_pid_on_port(8421) == [12345]
-    mock_run.assert_called_once_with(
-        ["lsof", "-ti", ":8421"], capture_output=True, text=True, timeout=5
-    )
+    assert mock_run.call_args.args[0] == ["lsof", "-ti", ":8421"]
+    assert mock_run.call_args.kwargs["timeout"] == 5
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Darwin")
@@ -151,7 +153,7 @@ def test_find_pid_on_port_macos_multiple(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
     mgr = ProcessManager()
-    mock_run.return_value = MagicMock(returncode=0, stdout="12345\n67890\n")
+    mock_run.return_value = _ran(0, "12345\n67890\n")
     assert mgr.find_pid_on_port(8421) == [12345, 67890]
 
 
@@ -161,8 +163,7 @@ def test_find_pid_on_port_ignores_non_decimal_digits(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
     """Superscript digits pass str.isdigit but break int(); isdecimal drops them."""
-    # "²" (superscript two): isdigit() is True, isdecimal() is False.
-    mock_run.return_value = MagicMock(returncode=0, stdout="123\n²\n456\n")
+    mock_run.return_value = _ran(0, "123\n²\n456\n")
     assert ProcessManager().find_pid_on_port(8421) == [123, 456]
 
 
@@ -170,21 +171,30 @@ def test_find_pid_on_port_ignores_non_decimal_digits(
 @patch("punt_vox.service.process.subprocess.run")
 def test_find_pid_on_port_linux(mock_run: MagicMock, _mock_sys: MagicMock) -> None:
     mgr = ProcessManager()
-    mock_run.return_value = MagicMock(returncode=0, stdout="8421/tcp:  6789\n")
+    mock_run.return_value = _ran(0, "8421/tcp:  6789\n")
     assert mgr.find_pid_on_port(8421) == [6789]
-    mock_run.assert_called_once_with(
-        ["fuser", "8421/tcp"], capture_output=True, text=True, timeout=5
-    )
+    assert mock_run.call_args.args[0] == ["fuser", "8421/tcp"]
 
 
-@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
 @patch("punt_vox.service.process.subprocess.run")
-def test_find_pid_on_port_empty_when_not_bound(
+def test_find_pid_on_port_exit_1_empty_is_empty(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    mgr = ProcessManager()
-    mock_run.return_value = MagicMock(returncode=1, stdout="")
-    assert mgr.find_pid_on_port(8421) == []
+    """The tool ran cleanly and found nothing: the port is genuinely empty."""
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().find_pid_on_port(8421) == []
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+@patch("punt_vox.service.process.subprocess.run")
+def test_find_pid_on_port_error_exit_raises(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    """An error exit is a broken probe, never an empty port."""
+    mock_run.return_value = _ran(2, stderr="fuser: bad option")
+    with pytest.raises(PortProbeError, match="fuser exited 2"):
+        ProcessManager().find_pid_on_port(8421)
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Darwin")
@@ -192,108 +202,127 @@ def test_find_pid_on_port_empty_when_not_bound(
     "punt_vox.service.process.subprocess.run",
     side_effect=subprocess.TimeoutExpired(cmd="lsof", timeout=5),
 )
-def test_find_pid_on_port_timeout(_mock_run: MagicMock, _mock_sys: MagicMock) -> None:
-    mgr = ProcessManager()
-    assert mgr.find_pid_on_port(8421) == []
-
-
-def test_find_pid_on_port_timeout_logs_warning(
-    caplog: pytest.LogCaptureFixture,
+def test_find_pid_on_port_timeout_raises(
+    _mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    """A probe timeout must warn -- a stalled tool can't read as an empty port."""
-    with (
-        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
-        patch(
-            "punt_vox.service.process.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="lsof", timeout=5),
-        ),
-        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
-    ):
-        assert ProcessManager().find_pid_on_port(8421) == []
-
-    messages = [rec.getMessage() for rec in caplog.records]
-    assert any("lsof" in m for m in messages)
+    """A stalled tool raises -- it cannot read as an empty port."""
+    with pytest.raises(PortProbeError, match="lsof"):
+        ProcessManager().find_pid_on_port(8421)
 
 
-def test_find_pid_on_port_tool_failure_logs_warning(
-    caplog: pytest.LogCaptureFixture,
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+@patch(
+    "punt_vox.service.process.subprocess.run",
+    side_effect=FileNotFoundError(2, "No such file or directory"),
+)
+def test_find_pid_on_port_fuser_missing_raises_naming_psmisc(
+    _mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    """A missing probe binary logs a WARNING naming the tool and the error."""
-    boom = FileNotFoundError(2, "No such file or directory")
-    with (
-        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
-        patch("punt_vox.service.process.subprocess.run", side_effect=boom),
-        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
-    ):
-        assert ProcessManager().find_pid_on_port(8421) == []
-
-    messages = [rec.getMessage() for rec in caplog.records]
-    assert any("lsof" in m for m in messages)
-    assert any("No such file or directory" in m for m in messages)
-
-
-def test_find_pid_on_port_empty_does_not_warn(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A genuinely empty port (tool ran, exit 1) must stay quiet -- no warning."""
-    with (
-        patch("punt_vox.service.process.platform.system", return_value="Darwin"),
-        patch(
-            "punt_vox.service.process.subprocess.run",
-            return_value=MagicMock(returncode=1, stdout=""),
-        ),
-        caplog.at_level(logging.WARNING, logger="punt_vox.service.process"),
-    ):
-        assert ProcessManager().find_pid_on_port(8421) == []
-
-    assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+    """A missing fuser raises naming the tool and the package that ships it."""
+    with pytest.raises(PortProbeError, match=r"fuser: not found \(install psmisc\)"):
+        ProcessManager().find_pid_on_port(8421)
 
 
 # ---------------------------------------------------------------------------
-# _kill_pid
+# identity / is_vox_daemon_process -- fails closed
+# ---------------------------------------------------------------------------
+
+_LSTART = "Tue Nov  4 15:53:01 2026"
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_identity_parses_start_time_and_command(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, f"{_LSTART} /opt/bin/voxd --port 8421\n")
+    seen = ProcessManager().identity(123)
+    assert seen is not None
+    assert seen.started == _LSTART
+    assert seen.command == "/opt/bin/voxd --port 8421"
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_identity_gone_pid_is_none(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().identity(123) is None
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_identity_ps_failure_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(2, stderr="ps: illegal option")
+    with pytest.raises(PortProbeError, match="ps exited 2"):
+        ProcessManager().identity(123)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_is_vox_daemon_process_true(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, f"{_LSTART} /usr/local/bin/voxd --port 8421")
+    assert ProcessManager().is_vox_daemon_process(123) is True
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_is_vox_daemon_process_python_launched_voxd(mock_run: MagicMock) -> None:
+    """A voxd run through its interpreter still names voxd on the command line."""
+    cmd = "/home/u/.local/share/uv/tools/punt-vox/bin/python /home/u/.local/bin/voxd"
+    mock_run.return_value = _ran(0, f"{_LSTART} {cmd}")
+    assert ProcessManager().is_vox_daemon_process(123) is True
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_is_vox_daemon_process_retired_serve_form_is_not_voxd(
+    mock_run: MagicMock,
+) -> None:
+    """The retired ``vox serve`` command line no longer counts as the daemon."""
+    mock_run.return_value = _ran(0, f"{_LSTART} /Users/someone/.local/bin/vox serve")
+    assert ProcessManager().is_vox_daemon_process(123) is False
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_is_vox_daemon_process_false(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, f"{_LSTART} nginx: master process")
+    assert ProcessManager().is_vox_daemon_process(123) is False
+
+
+@patch(
+    "punt_vox.service.process.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="ps", timeout=5),
+)
+def test_is_vox_daemon_process_timeout_raises(_mock_run: MagicMock) -> None:
+    """A ps timeout raises rather than reading as "not voxd"."""
+    with pytest.raises(PortProbeError, match="ps"):
+        ProcessManager().is_vox_daemon_process(123)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_is_vox_daemon_process_ps_failure_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(2)
+    with pytest.raises(PortProbeError):
+        ProcessManager().is_vox_daemon_process(123)
+
+
+# ---------------------------------------------------------------------------
+# kill_pid -- through a pinned handle
 # ---------------------------------------------------------------------------
 
 
-@patch("punt_vox.service.process.os.kill")
-def test_kill_pid_exits_after_sigterm(mock_kill: MagicMock) -> None:
-    mgr = ProcessManager()
-    mock_kill.side_effect = [None, ProcessLookupError]
-    assert mgr.kill_pid(100) is True
-    assert mock_kill.call_args_list[0] == call(100, signal.SIGTERM)
-    assert mock_kill.call_args_list[1] == call(100, 0)
+def test_kill_pid_terminates_through_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    handle = MagicMock()
+    handle.terminate.return_value = True
+    monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: handle)
+    assert ProcessManager().kill_pid(100) is True
+    handle.terminate.assert_called_once_with()
 
 
-@patch("punt_vox.service.process.os.kill")
-def test_kill_pid_already_gone(mock_kill: MagicMock) -> None:
-    mgr = ProcessManager()
-    mock_kill.side_effect = ProcessLookupError
-    assert mgr.kill_pid(100) is True
-    mock_kill.assert_called_once_with(100, signal.SIGTERM)
-
-
-@patch("punt_vox.service.process.os.kill", side_effect=PermissionError)
-def test_kill_pid_permission_error(mock_kill: MagicMock) -> None:
-    mgr = ProcessManager()
-    assert mgr.kill_pid(100) is False
-    mock_kill.assert_called_once_with(100, signal.SIGTERM)
-
-
-@patch("punt_vox.service.process.time.sleep")
-@patch("punt_vox.service.process.time.monotonic")
-@patch("punt_vox.service.process.os.kill")
-def test_kill_pid_sigkill_after_timeout(
-    mock_kill: MagicMock, mock_monotonic: MagicMock, _mock_sleep: MagicMock
+def test_kill_pid_gone_or_not_voxd_signals_nothing(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mgr = ProcessManager()
-    mock_kill.side_effect = [None, None, None, ProcessLookupError]
-    mock_monotonic.side_effect = [0.0, 0.0, 6.0, 6.0, 6.0]
-    assert mgr.kill_pid(100) is True
-    assert mock_kill.call_args_list == [
-        call(100, signal.SIGTERM),
-        call(100, 0),
-        call(100, signal.SIGKILL),
-        call(100, 0),
-    ]
+    monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: None)
+    assert ProcessManager().kill_pid(100) is True
+
+
+def test_kill_pid_survivor_reports_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    handle = MagicMock()
+    handle.terminate.return_value = False
+    monkeypatch.setattr(ProcessManager, "open_voxd", lambda self, pid: handle)
+    assert ProcessManager().kill_pid(100) is False
 
 
 # ---------------------------------------------------------------------------
@@ -398,55 +427,6 @@ def test_kill_stale_daemon_no_cleanup_on_kill_failure(
     assert mgr.kill_stale_daemon() is False
     mock_kill.assert_called_once_with(999)
     mock_remove.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# _is_vox_daemon_process
-# ---------------------------------------------------------------------------
-
-
-@patch("punt_vox.service.process.subprocess.run")
-def test_is_vox_daemon_process_true(mock_run: MagicMock) -> None:
-    mgr = ProcessManager()
-    mock_run.return_value = MagicMock(
-        stdout="/usr/bin/python3 -m punt_vox serve --port 8421"
-    )
-    assert mgr.is_vox_daemon_process(123) is True
-
-
-@patch("punt_vox.service.process.subprocess.run")
-def test_is_vox_daemon_process_hyphen_path(mock_run: MagicMock) -> None:
-    """Matches when cmd contains punt-vox (hyphen) but not punt_vox."""
-    mgr = ProcessManager()
-    cmd = "/home/<user>/.local/share/uv/tools/punt-vox/bin/vox serve --port 8421"
-    mock_run.return_value = MagicMock(stdout=cmd)
-    assert mgr.is_vox_daemon_process(123) is True
-
-
-@patch("punt_vox.service.process.subprocess.run")
-def test_is_vox_daemon_process_bare_vox_binary(mock_run: MagicMock) -> None:
-    """Matches when started as bare ``vox serve`` without punt_vox in path."""
-    mgr = ProcessManager()
-    mock_run.return_value = MagicMock(
-        stdout="/Users/someone/.local/bin/vox serve --port 8421"
-    )
-    assert mgr.is_vox_daemon_process(123) is True
-
-
-@patch("punt_vox.service.process.subprocess.run")
-def test_is_vox_daemon_process_false(mock_run: MagicMock) -> None:
-    mgr = ProcessManager()
-    mock_run.return_value = MagicMock(stdout="nginx: master process")
-    assert mgr.is_vox_daemon_process(123) is False
-
-
-@patch(
-    "punt_vox.service.process.subprocess.run",
-    side_effect=subprocess.TimeoutExpired(cmd="ps", timeout=5),
-)
-def test_is_vox_daemon_process_timeout(_mock_run: MagicMock) -> None:
-    mgr = ProcessManager()
-    assert mgr.is_vox_daemon_process(123) is False
 
 
 # ---------------------------------------------------------------------------
