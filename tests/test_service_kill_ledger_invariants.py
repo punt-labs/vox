@@ -213,13 +213,19 @@ def _k3(run: Run) -> bool:
 
 
 def _k4(run: Run) -> bool:
+    alone = len(run.sequence.procs) == 1
     for snap in run.snapshots:
         for proc in run.sequence.procs:
             if not proc.spared or proc.pid not in snap.judged:
                 continue
             if proc.pid in snap.watched or proc.pid in _killed(snap.account):
                 return False
-            if KillOutcome.SPARED.line(proc.pid) not in snap.account:
+            spared = KillOutcome.SPARED.line(proc.pid)
+            # Alone, the spared pid's report is exactly its one spared line;
+            # beside another process, its line must be among the rest.
+            if alone and _lines(snap.account, proc.pid) != (False, (spared,)):
+                return False
+            if spared not in snap.account:
                 return False
     return True
 

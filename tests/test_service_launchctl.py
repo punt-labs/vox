@@ -263,7 +263,7 @@ def test_bootstrap_raises_when_job_never_unregisters(
 ) -> None:
     """Case (c): the job never leaves the domain -- bootstrap reports failure."""
     mock_run.return_value = _completed(0)  # print always says registered
-    with pytest.raises(LaunchctlError, match="did not leave"):
+    with pytest.raises(LaunchctlError, match="not confirmed gone"):
         agent.bootstrap()
 
 
@@ -554,6 +554,8 @@ def test_bootstrap_wait_names_a_launchctl_that_answered_then_hung(
     assert "stopped answering before the 0.25s wait before bootstrap ended" in str(
         info.value
     )
+    assert "was not confirmed gone from gui/" in str(info.value)
+    assert "did not leave" not in str(info.value)
 
 
 @patch("punt_vox.service.launchctl_query.subprocess.run")
@@ -567,3 +569,35 @@ def test_exit5_retry_wait_names_a_launchctl_that_answered_then_hung(
     assert "stopped answering before the 0.25s wait after exit 5 ended" in str(
         info.value
     )
+    assert "the job was not confirmed clear" in str(info.value)
+    assert "did not clear" not in str(info.value)
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_bootout_warning_names_a_launchctl_that_answered_then_hung(
+    mock_run: MagicMock,
+    agent: LaunchctlAgent,
+    fake_time: FakeClock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """stop's bootout only warns; the warning still names what was last seen."""
+    prints = [0]
+
+    def run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[1] != "print":
+            return _completed(0)
+        prints[0] += 1
+        if prints[0] <= 2:  # the was-loaded print, then one wait print answer
+            return _completed(0)
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.15)
+
+    mock_run.side_effect = run
+    with caplog.at_level("WARNING", logger="punt_vox.service.launchctl"):
+        agent.bootout()
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        "was last seen still registered" in m
+        and "then launchctl print" in m
+        and "stopped answering before the 0.25s wait after bootout ended" in m
+        for m in warnings
+    ), warnings

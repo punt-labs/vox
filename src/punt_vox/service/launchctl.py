@@ -200,8 +200,8 @@ class LaunchctlAgent:
         if not cleared.holds:
             lingering = self._lingering(cleared, "before bootstrap")
             raise LaunchctlError(
-                f"{self._label} did not leave {self._domain()}: {lingering}; "
-                "refusing to bootstrap onto a stale registration"
+                f"{self._label} was not confirmed gone from {self._domain()}: "
+                f"{lingering}; refusing to bootstrap onto a stale registration"
             )
         result = self._bootstrap_once()
         if result.returncode == 0:
@@ -216,8 +216,8 @@ class LaunchctlAgent:
             if not cleared.holds:
                 lingering = self._lingering(cleared, "after exit 5")
                 raise LaunchctlError(
-                    f"{self._label} bootstrap hit exit 5 and the job did not "
-                    f"clear: {lingering}"
+                    f"{self._label} bootstrap hit exit 5 and the job was not "
+                    f"confirmed clear: {lingering}"
                 )
             result = self._bootstrap_once()
             if result.returncode == 0:
