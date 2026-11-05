@@ -33,23 +33,11 @@ logger = logging.getLogger(__name__)
 __all__ = ["VoxdTransport"]
 
 
-# ---------------------------------------------------------------------------
-# Path resolution — delegated to punt_vox.paths so every module agrees.
-# ``~/.punt-labs/vox/run`` holds ``serve.port`` / ``serve.token``.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Transport — owns the WebSocket connection and the wire I/O primitives.
-# ---------------------------------------------------------------------------
-
-
 class VoxdTransport:
-    """Own the voxd WebSocket: URI resolution, connect/close, send/recv.
+    """Own the voxd WebSocket: connect/close and framed send/recv.
 
-    Split out of :class:`VoxClient` so the transport (connection lifecycle
-    and framing) and the RPC surface (synthesize, program, ...) are two
-    single-purpose objects rather than one class doing both jobs.
+    The URI comes from :class:`~punt_vox.client_endpoint.VoxdEndpoint`; the
+    RPC surface that frames requests lives in :class:`VoxClient`.
     """
 
     __slots__ = ("_endpoint", "_ws")
