@@ -10,7 +10,8 @@ and exit with its code.
 Every subcommand answers ``--json`` (parity with ``vox status``, ``vox voices``,
 ``vox music``, ``vox rec``); ``vox daemon status --json`` emits the fields the
 daemon reports over ``health()`` so a caller reads the same shape whether it
-asks the CLI or drives the daemon directly.
+asks the CLI or drives the daemon directly. ``status`` reaches the daemon
+through the same lifecycle probe as ``start`` and ``stop``.
 """
 
 from __future__ import annotations
@@ -19,13 +20,13 @@ from typing import TYPE_CHECKING, Annotated, Self, final
 
 import typer
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.client_sync import VoxClientSync
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.service import (
     DaemonLifecycle,
     install as svc_install,
     uninstall as svc_uninstall,
 )
+from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.lifecycle_report import LifecycleRefusedError
 
 if TYPE_CHECKING:
@@ -167,10 +168,7 @@ class DaemonCli:
 
     def _run(self, verb: Callable[[DaemonLifecycle], LifecycleReport]) -> None:
         """Run one lifecycle verb, emit its report, and exit with its code."""
-        try:
-            report = verb(DaemonLifecycle.for_this_host())
-        except LifecycleRefusedError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+        report = verb(self._lifecycle())
         self._formatter.emit(report.to_json(), report.text())
         if report.exit_code:
             raise typer.Exit(code=report.exit_code)
@@ -182,25 +180,31 @@ class DaemonCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Show the voxd daemon's health -- reachable, port, uptime, version.
+        """Show the voxd service's health -- reachable, port, uptime, version.
 
-        Routes through the client so it queries the configured daemon --
-        honoring ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN`` -- rather than
-        a hardcoded ``127.0.0.1``, matching ``vox status`` and ``vox doctor``.
+        Finds voxd the way ``start`` and ``stop`` do: the installed unit's
+        bind and port 8421, with the token only from ``serve.token`` and sent
+        only to a visible voxd on the port. A missing ``serve.port`` does not
+        hide a running daemon, and ``VOXD_*`` in the shell cannot redirect it.
         ``--json`` returns the daemon health snapshot (``status``, ``port``,
-        ``pid``, ``provider``, ``daemon_version``, ``uptime_seconds``,
-        ``queued``, ``active_sessions``) -- the same shape ``mic:status``
-        reports for the daemon block.
+        ``pid``, ``daemon_version``, ``uptime_seconds``, ``queued``,
+        ``active_sessions``) -- the same shape ``mic:status`` reports for the
+        daemon block. No answer is ``not_running``; a port or unit vox cannot
+        inspect is ``unknown``. Both exit 1.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        lifecycle = self._lifecycle()
         try:
-            health = VoxClientSync().health()
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            not_running: dict[str, object] = {
-                "status": "not_running",
-                "reason": str(exc),
-            }
-            self._formatter.emit(not_running, f"Daemon: not running ({exc})")
+            health = lifecycle.health()
+        except (VoxdConnectionError, PortProbeError, BackendCommandError) as exc:
+            # No answer is "not running"; a probe vox could not run says
+            # nothing about voxd, so it is "unknown", never "not running".
+            down = isinstance(exc, VoxdConnectionError)
+            state = "not_running" if down else "unknown"
+            self._formatter.emit(
+                {"status": state, "reason": str(exc)},
+                f"Daemon: {state.replace('_', ' ')} ({exc})",
+            )
             raise typer.Exit(code=1) from exc
 
         payload: dict[str, object] = {
@@ -221,6 +225,14 @@ class DaemonCli:
             f"  Sessions: {health.active_sessions}"
         )
         self._formatter.emit(payload, text)
+
+    @staticmethod
+    def _lifecycle() -> DaemonLifecycle:
+        """Return this host's lifecycle; root or an unsupported OS is exit 2."""
+        try:
+            return DaemonLifecycle.for_this_host()
+        except LifecycleRefusedError as exc:
+            raise typer.BadParameter(str(exc)) from exc
 
 
 def build_daemon_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:

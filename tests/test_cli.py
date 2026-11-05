@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import typer
 from _cli_introspect import command_opts
+from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
@@ -2346,125 +2347,116 @@ class TestGlobalFlags:
 
 
 class TestDaemonStatusCommand:
-    """``vox daemon status`` must query the configured daemon.
+    """``vox daemon status`` finds voxd the way stop and start do.
 
-    Regression guard for vox-4p5p: the command probed a hardcoded
-    ``http://127.0.0.1:{port}`` read from the local port file, so with
-    ``VOXD_HOST`` set it queried localhost instead of the configured
-    remote daemon -- contradicting ``vox status`` and ``vox doctor``.
-    The fix routes through ``VoxClientSync().health()``, which honors
-    ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN``.
+    The installed bind and port 8421, a token only from ``serve.token``, and a
+    health request only to a visible voxd holding the port -- never
+    ``serve.port`` and never ``VOXD_*`` from the shell. A running voxd whose
+    ``serve.port`` is missing once read as ``not_running``.
     """
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_routes_through_client_health(self, mock_client_cls: MagicMock) -> None:
-        mock_instance = mock_client_cls.return_value
-        mock_instance.health.return_value = HealthStatus.from_wire(
-            {"status": "ok", "port": 8421, "uptime_seconds": 12, "active_sessions": 3}
-        )
+    @staticmethod
+    def _status(world: FakeWorld, *args: str) -> tuple[Result, dict[str, object]]:
+        with (
+            patch("punt_vox.client.read_port_file", return_value=None),
+            patch(
+                f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
+                return_value=lifecycle(world),
+            ),
+        ):
+            result = CliRunner().invoke(app, ["daemon", "status", "--json", *args])
+        return result, json.loads(result.output)
 
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status"])
-
+    def test_running_voxd_without_serve_port_is_ok_with_its_pid(self) -> None:
+        world = FakeWorld()
+        world.run_unit(1471111)
+        result, payload = self._status(world)
         assert result.exit_code == 0
-        mock_instance.health.assert_called_once_with()
-        # The status line mirrors the daemon's own health.status (voxd/health.py
-        # reports "ok"), matching the mic:status daemon block shape.
-        assert "ok" in result.output
-        assert "8421" in result.output
+        assert payload["status"] == "ok"
+        assert payload["pid"] == 1471111
+        assert payload["port"] == 8421
 
-    @patch("punt_vox.client.read_port_file")
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_does_not_read_local_port_file(
-        self, mock_client_cls: MagicMock, mock_read_port: MagicMock
-    ) -> None:
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
-            {"port": 8421}
-        )
+    def test_json_shape_is_the_health_snapshot(self) -> None:
+        world = FakeWorld()
+        world.run_unit(100)
+        _, payload = self._status(world)
+        assert set(payload) == {
+            "status",
+            "port",
+            "pid",
+            "daemon_version",
+            "uptime_seconds",
+            "queued",
+            "active_sessions",
+        }
 
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status"])
+    def test_no_voxd_on_the_port_is_not_running(self) -> None:
+        result, payload = self._status(FakeWorld())
+        assert result.exit_code == 1
+        assert payload == {
+            "status": "not_running",
+            "reason": "no voxd answered health on port 8421: "
+            "no visible voxd process holds port 8421",
+        }
 
-        assert result.exit_code == 0
-        mock_read_port.assert_not_called()
+    def test_a_broken_probe_is_unknown_not_not_running(self) -> None:
+        world = FakeWorld(probe_error="cannot run fuser: not found (install psmisc)")
+        result, payload = self._status(world)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
+        assert "fuser" in str(payload["reason"])
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_honors_voxd_host(
-        self, mock_client_cls: MagicMock, monkeypatch: MagicMock
+    def test_voxd_env_does_not_redirect_it(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("VOXD_HOST", "remote.example.com")
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
-            {"port": 8421}
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status"])
-
+        monkeypatch.setenv("VOXD_TOKEN", "shell-token")
+        world = FakeWorld()
+        world.run_unit(100)
+        result, payload = self._status(world)
         assert result.exit_code == 0
-        # The command constructs the client with no explicit host, so
-        # VoxClientSync resolves VOXD_HOST itself -- it never targets a
-        # hardcoded 127.0.0.1.
-        mock_client_cls.assert_called_once_with()
-        assert "127.0.0.1" not in result.output
+        assert payload["pid"] == 100
+        assert world.tokens_to == [frozenset({100})]
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_not_running_exits_nonzero(self, mock_client_cls: MagicMock) -> None:
-        from punt_vox.client_errors import VoxdConnectionError
+    def test_refused_as_root_exits_2(self) -> None:
+        refusal = LifecycleRefusedError("vox daemon must run as your normal user")
+        with patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host", side_effect=refusal):
+            result = CliRunner().invoke(app, ["daemon", "status"])
+        assert result.exit_code == 2
 
-        mock_client_cls.return_value.health.side_effect = VoxdConnectionError("refused")
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status"])
-
+    def test_not_running_text_exits_nonzero(self) -> None:
+        with patch(
+            f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
+            return_value=lifecycle(FakeWorld()),
+        ):
+            result = CliRunner().invoke(app, ["daemon", "status"])
         assert result.exit_code == 1
         assert "not running" in result.output
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_json_returns_health_shape(self, mock_client_cls: MagicMock) -> None:
+    def test_json_returns_health_values(self) -> None:
         """--json emits the daemon health snapshot (mic:status daemon block).
 
-        ``provider`` is deliberately absent from the payload (design §3.6
-        / D4): the daemon has no provider of its own; per-provider
-        readiness lives on the ``provider_status`` op PR 3 delivers.
+        ``provider`` is deliberately absent: the daemon has no provider of its
+        own; per-provider readiness lives on the ``provider_status`` op.
         """
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
-            {
-                "status": "ok",
-                "port": 8421,
-                "pid": 4242,
-                "daemon_version": "4.17.0",
-                "uptime_seconds": 123.4,
-                "queued": 0,
-                "active_sessions": 2,
-            }
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status", "--json"])
-
+        world = FakeWorld()
+        world.run_unit(4242, version="4.17.0")
+        result, payload = self._status(world)
         assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
         assert payload["status"] == "ok"
         assert payload["port"] == 8421
         assert payload["pid"] == 4242
         assert "provider" not in payload
         assert payload["daemon_version"] == "4.17.0"
-        assert payload["active_sessions"] == 2
 
-    @patch(f"{_CLI_DAEMON}.VoxClientSync")
-    def test_json_not_running(self, mock_client_cls: MagicMock) -> None:
-        """--json on a down daemon returns {"status": "not_running", ...}, exit 1."""
-        from punt_vox.client_errors import VoxdConnectionError
-
-        mock_client_cls.return_value.health.side_effect = VoxdConnectionError("refused")
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["daemon", "status", "--json"])
-
+    def test_json_not_running_carries_the_refusal(self) -> None:
+        """A voxd that refuses the request is not_running, with the cause."""
+        world = FakeWorld(token_written=False, health_error="connection refused")
+        world.run_unit(100)
+        result, payload = self._status(world)
         assert result.exit_code == 1, result.output
-        payload = json.loads(result.output)
         assert payload["status"] == "not_running"
-        assert "refused" in payload["reason"]
+        assert "connection refused" in str(payload["reason"])
 
 
 # ---------------------------------------------------------------------------
