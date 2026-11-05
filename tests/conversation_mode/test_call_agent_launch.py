@@ -65,21 +65,51 @@ class TestSystemPrompt:
 
 
 class TestEnvironment:
-    def test_provider_keys_are_stripped(self) -> None:
-        parent = {
-            "ELEVENLABS_API_KEY": "el-secret",
-            "OPENAI_API_KEY": "sk-secret",
-            "AWS_ACCESS_KEY_ID": "AKIAEXAMPLE",
-            "AWS_SECRET_ACCESS_KEY": "aws-secret",
-            "AWS_SESSION_TOKEN": "aws-token",
-            "AWS_PROFILE": "dev",
-        }
-        assert CallAgentLaunch.env(parent) == {}
+    """The child environment is an allowlist: nothing secret rides along by default."""
 
-    def test_every_key_voxd_loads_is_stripped(self) -> None:
+    def test_voxd_provider_keys_never_reach_the_child(self) -> None:
         parent = dict.fromkeys(PROVIDER_KEY_NAMES, "value")
         assert CallAgentLaunch.env(parent) == {}
 
-    def test_ordinary_variables_pass_through(self) -> None:
-        parent = {"PATH": "/usr/bin", "HOME": "/home/x", "OPENAI_API_KEY": "sk"}
-        assert CallAgentLaunch.env(parent) == {"PATH": "/usr/bin", "HOME": "/home/x"}
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "BEADS_DOLT_PASSWORD",
+            "RESEND_API_KEY",
+            "CONTEXT7_API_KEY",
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "FOO_API_KEY",
+            "GH_TOKEN",
+            "SSH_AUTH_SOCK",
+        ],
+    )
+    def test_an_unlisted_variable_never_reaches_the_child(self, name: str) -> None:
+        assert name not in CallAgentLaunch.env({name: "secret", "PATH": "/usr/bin"})
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "LANG",
+            "TERM",
+            "TMPDIR",
+            "LC_ALL",
+            "LC_CTYPE",
+            "XDG_CONFIG_HOME",
+            "XDG_RUNTIME_DIR",
+            "PI_CODING_AGENT_DIR",
+            "PI_OFFLINE",
+        ],
+    )
+    def test_the_allowlisted_variables_pass_through(self, name: str) -> None:
+        assert CallAgentLaunch.env({name: "v"}) == {name: "v"}
+
+    def test_a_prefix_is_not_matched_mid_name(self) -> None:
+        """``LC_`` and ``PI_`` are prefixes, not substrings anywhere in a name."""
+        assert CallAgentLaunch.env({"XAPI_KEY": "s", "BLC_X": "s"}) == {}

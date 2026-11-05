@@ -9,17 +9,15 @@ the RPC stream outright), pi's built-in MCP support (``--tools`` keeps MCP
 tools unless told otherwise), skills, prompt templates, and any
 project-local pi configuration the repo might carry (``--no-approve``).
 
-The environment is the parent's minus every provider credential voxd itself
-holds: the call agent has no use for the ElevenLabs, OpenAI, or AWS keys
-that speak and transcribe the call, and a spoken-output agent is the last
-process that should be handed them by default.
+The environment is an allowlist (:class:`~.call_agent_env.CallAgentEnv`):
+nothing secret from the developer's shell rides along by default.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.providers.credentials import PROVIDER_KEY_NAMES
+from punt_vox.voxd.conversation_mode.call_agent_env import CallAgentEnv
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -91,9 +89,5 @@ class CallAgentLaunch:
 
     @staticmethod
     def env(parent: Mapping[str, str]) -> dict[str, str]:
-        """Return *parent* minus every provider credential voxd holds."""
-        return {
-            name: value
-            for name, value in parent.items()
-            if name not in PROVIDER_KEY_NAMES
-        }
+        """Return the child's environment: the allowlisted part of *parent*."""
+        return CallAgentEnv.allowlisted(parent)
