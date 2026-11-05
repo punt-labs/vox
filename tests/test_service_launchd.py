@@ -500,5 +500,8 @@ def test_launchd_uninstall_names_a_launchctl_that_answered_then_hung(
     be = LaunchdBackend(lambda: ["/usr/local/bin/voxd", "--port", "8421"])
     with pytest.raises(BackendCommandError, match="still registered") as info:
         be.uninstall()
+    assert "was last seen still registered in gui/" in str(info.value)
     assert "then launchctl print" in str(info.value)
-    assert "stopped answering" in str(info.value)
+    assert "stopped answering before the 0.25s wait after bootout ended" in str(
+        info.value
+    )

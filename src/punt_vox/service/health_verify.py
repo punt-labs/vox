@@ -103,9 +103,15 @@ class HealthVerifier:
                 "install: the service manager is not responding, so whether voxd "
                 f"runs is unknown. Service: {service}."
             )
+        if answer.stalled:
+            seen = (
+                f"voxd was last seen not active; then {answer.stalled} stopped "
+                f"answering before the {wait} wait ended"
+            )
+        else:
+            seen = f"voxd is not active {wait} after install"
         return (
-            f"voxd is not active {wait} after install{answer.stall_note}. "
-            f"Service: {service}. Check the daemon logs in {_paths_log_dir()}."
+            f"{seen}. Service: {service}. Check the daemon logs in {_paths_log_dir()}."
         )
 
     def _unreachable(self, miss: Exception | None) -> str:

@@ -231,4 +231,30 @@ def test_verify_names_a_manager_that_answered_then_hung(
     probe = _probe(HealthStatus(status="ok"))
     with pytest.raises(ServiceHealthError, match="not active") as info:
         HealthVerifier(backend, probe).verify()
-    assert "then systemctl is-active voxd stopped answering" in str(info.value)
+    assert (
+        "voxd was last seen not active; then systemctl is-active voxd stopped "
+        "answering before the 5s wait ended"
+    ) in str(info.value)
+
+
+def test_verify_names_a_launchd_that_answered_then_hung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real "not loaded, no pid", then launchctl list hangs with a full budget."""
+    calls = [0]
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls[0] += 1
+        if calls[0] <= 2:  # the first running_within: list, then print
+            return subprocess.CompletedProcess(argv, 113, "", "")
+        raise subprocess.TimeoutExpired(cmd=argv[0], timeout=1.0)
+
+    monkeypatch.setattr("punt_vox.service.launchctl_query.subprocess.run", run)
+    backend = LaunchdBackend(lambda: ["/usr/local/bin/voxd"])
+    probe = _probe(HealthStatus(status="ok"))
+    with pytest.raises(ServiceHealthError, match="last seen not active") as info:
+        HealthVerifier(backend, probe).verify()
+    assert (
+        "then launchctl list com.punt-labs.voxd stopped answering before the 5s "
+        "wait ended"
+    ) in str(info.value)

@@ -60,11 +60,6 @@ class QueryAnswer:
         return replace(self, stalled=command)
 
     @property
-    def stall_note(self) -> str:
-        """Return "; then <command> stopped answering", or "" with no stall."""
-        return f"; then {self.stalled} stopped answering" if self.stalled else ""
-
-    @property
     def timed_out(self) -> bool:
         """Return True when the query did not answer within its budget."""
         return bool(self.unanswered)

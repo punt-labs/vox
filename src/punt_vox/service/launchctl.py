@@ -131,10 +131,13 @@ class LaunchctlAgent:
                 f"{answer.unanswered} did not answer within the {bound} wait "
                 f"{when}; cannot confirm {self._label} left {self._domain()}"
             )
-        return (
-            f"{self._label} was still registered in {self._domain()} {bound} "
-            f"{when}{answer.stall_note}"
-        )
+        if answer.stalled:
+            return (
+                f"{self._label} was last seen still registered in "
+                f"{self._domain()}; then {answer.stalled} stopped answering "
+                f"before the {bound} wait {when} ended"
+            )
+        return f"{self._label} was still registered in {self._domain()} {bound} {when}"
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run one ``launchctl`` command, bounded; raise if it cannot run."""

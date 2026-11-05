@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
 from punt_vox.service.clock import SystemClock
 from punt_vox.service.launchctl import LaunchctlAgent
@@ -491,3 +492,78 @@ def test_bootout_for_stop_only_warns_when_the_job_lingers(
     """stop's request keeps its settle loop: bootout() itself does not raise."""
     mock_run.side_effect = _dispatch(print_rc=0, bootstrap_rcs=[])
     agent.bootout()
+
+
+@pytest.fixture()
+def fake_time(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """Run the unregister wait on a fake clock: 0.25 s bound, 0.1 s polls."""
+    clock = FakeClock()
+
+    def monotonic(self: SystemClock) -> float:
+        return clock.monotonic()
+
+    def sleep(self: SystemClock, seconds: float) -> None:
+        clock.sleep(seconds)
+
+    monkeypatch.setattr(SystemClock, "monotonic", monotonic)
+    monkeypatch.setattr(SystemClock, "sleep", sleep)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(LaunchctlAgent, "_UNREGISTER_POLL_S", 0.1)
+    return clock
+
+
+def _registered_then_hung(
+    bootstrap_rcs: list[int], *, clear_first: bool
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """print answers "registered" once per wait, then hangs with a full budget.
+
+    With *clear_first*, the first wait sees the job gone; only the wait after
+    an exit-5 bootstrap sees it registered and then hangs.
+    """
+    remaining = list(bootstrap_rcs)
+    waits = [0]
+    prints_in_wait = [0]
+
+    def side_effect(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if argv[1] == "bootstrap":
+            waits[0] += 1
+            prints_in_wait[0] = 0
+            return _completed(remaining.pop(0) if remaining else 0, "boot error")
+        if argv[1] != "print":
+            return _completed(0)
+        if clear_first and waits[0] == 0:
+            return _completed(113)
+        prints_in_wait[0] += 1
+        if prints_in_wait[0] == 1:
+            return _completed(0)
+        raise subprocess.TimeoutExpired(cmd="launchctl", timeout=0.15)
+
+    return side_effect
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_bootstrap_wait_names_a_launchctl_that_answered_then_hung(
+    mock_run: MagicMock, agent: LaunchctlAgent, fake_time: FakeClock
+) -> None:
+    """The wait before bootstrap: "registered", then print hangs."""
+    mock_run.side_effect = _registered_then_hung([], clear_first=False)
+    with pytest.raises(LaunchctlError, match="last seen still registered") as info:
+        agent.bootstrap()
+    assert "stopped answering before the 0.25s wait before bootstrap ended" in str(
+        info.value
+    )
+
+
+@patch("punt_vox.service.launchctl_query.subprocess.run")
+def test_exit5_retry_wait_names_a_launchctl_that_answered_then_hung(
+    mock_run: MagicMock, agent: LaunchctlAgent, fake_time: FakeClock
+) -> None:
+    """The wait after an exit-5 bootstrap: "registered", then print hangs."""
+    mock_run.side_effect = _registered_then_hung([5], clear_first=True)
+    with pytest.raises(LaunchctlError, match="last seen still registered") as info:
+        agent.bootstrap()
+    assert "stopped answering before the 0.25s wait after exit 5 ended" in str(
+        info.value
+    )
