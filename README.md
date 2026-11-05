@@ -155,7 +155,7 @@ uv tool upgrade punt-vox
 vox daemon restart
 ```
 
-Run `vox daemon restart` as your normal user, **not** under `sudo`. The command refuses to run as root and prompts for sudo internally only for the two service-manager calls (`systemctl`/`launchctl`) that actually need it. It stops voxd via the service manager, waits for the port to free, starts it again, and polls the authenticated health endpoint until the new process is confirmed running. It prints the new PID and port on success, or points you at `~/.punt-labs/vox/logs/vox.log` on failure.
+Run `vox daemon restart` as your normal user, **not** under `sudo`. It refuses to run as root. On Linux it runs `sudo -n systemctl …` first and asks for your password once, only when a terminal is attached. `restart` is `vox daemon stop` followed by `vox daemon start`, and each is also a command of its own. `stop` succeeds only when the service is inactive, nothing holds port 8421, and every voxd it saw has exited. `start` succeeds only when the service manager's own process answers the authenticated health check with the installed wheel's version. Every run prints one outcome (`stopped`, `started`, `restarted`, `already running`, `timeout`, …) and names any process it had to signal, with `--json` for scripts. On failure it points you at `~/.punt-labs/vox/logs/vox.log`.
 
 To confirm the daemon and the installed wheel agree:
 
@@ -550,6 +550,9 @@ vox mcp                                        # Start MCP server (stdio)
 voxd                                           # Start audio daemon
 vox daemon install                             # Register voxd as system service + write API keys (prompts once for sudo)
 vox daemon uninstall                           # Remove the voxd system service
+vox daemon stop                                # Stop voxd and confirm it exited (--json)
+vox daemon start                               # Start voxd and confirm it serves this wheel (--json)
+vox daemon restart                             # stop, then start (--json)
 vox daemon status --json                       # Daemon health as JSON (mic:status daemon block shape)
 vox daemon status                              # Check if daemon is running
 ```

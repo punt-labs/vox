@@ -473,6 +473,25 @@ grace, then a 2 s SIGKILL wait.
   present, at most once per verb.
 - A tool failure (`fuser`, `lsof`, `ps`) fails the verb. It is never read
   as "nothing there".
+- On Linux a process whose cgroup is `/system.slice/voxd.service` is never
+  signalled by stop's escalation, and the service manager is re-asked
+  whether it is active before each individual signal, so a concurrent
+  `start` cannot have its new main process killed.
+
+Known residuals, accepted:
+
+- **Token-gate window.** The check that a visible voxd of this user holds
+  8421 and the WebSocket connect are separate steps. A crash-looping voxd
+  can exit between them, and another local user who binds 8421 first would
+  receive the token in the upgrade URL. The window is a few milliseconds
+  and needs a hostile local user racing a crash loop. An exact fix on
+  Linux checks, after `connect()` and before the handshake, that the
+  server end of the connection belongs to this uid (`/proc/net/tcp`).
+- **launchctl's "absent" exit code.** macOS treats only exit 113 from
+  `launchctl print`/`list` as "not loaded". Every other non-zero exit
+  fails the verb. If a macOS release reports absence differently, stop,
+  install and uninstall fail closed rather than misreport. This is to be
+  verified on a Mac before release.
 
 ## 7. How this leaves `service/` better
 

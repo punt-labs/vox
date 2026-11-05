@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vox daemon stop` and `vox daemon start`**, with `vox daemon restart`
+  now composed from the two (vox-9354). Each verb checks the result against
+  the real process instead of trusting the service manager.
+  - **`stop`** reports success only when the unit is inactive, no voxd
+    holds port 8421, every process it captured has exited, and the port
+    refuses connections.
+  - **`start`** reports success only when the service manager's own main
+    process answers the authenticated health check, running this wheel's
+    version.
+  - **Unmanaged voxd:** one holding the port is stopped with SIGTERM, then
+    SIGKILL after a grace period. The check is pid-reuse safe, uses a
+    pidfd on Linux, and never signals a process the service still owns.
+  - **Report:** every verb prints one outcome (`stopped`, `already
+    stopped`, `started`, `already running`, `restarted`, `not installed`,
+    `port conflict`, `version mismatch`, `permission denied`, `backend
+    failed`, `timeout`), with `--json`. It names every process it
+    signalled and what happened to it, and a service manager that stops
+    answering is named rather than read as an answer.
+  - **Refusals:** root and unsupported platforms exit 2.
+  - **sudo on Linux:** vox tries `sudo -n` first and prompts once only
+    when a terminal is attached.
+
 ### Changed
+
+- **`vox daemon restart --json` has a new shape**: the stop-then-start
+  report described above. The old `{"restarted": …}` object is gone, not
+  aliased.
+- **`vox daemon install` fails if voxd never becomes active**, instead of
+  reporting "installed (not yet running)". It names the cause, including a
+  service manager that stopped answering. `install` and `uninstall` turn
+  every backend failure into a clean message (and a JSON payload under
+  `--json`), never a traceback.
+- **On macOS, `vox daemon uninstall` fails and keeps the LaunchAgent plist**
+  when launchctl cannot confirm the job left the GUI domain, instead of
+  reporting success while launchd could respawn voxd.
 
 - `punt-lux` is now `>=0.33.0,<0.34`: the floor for
   `client.callback.register(..., frame_id=...)`, the ceiling because lux is
