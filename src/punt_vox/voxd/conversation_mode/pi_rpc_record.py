@@ -17,17 +17,9 @@ confirmed against a live ``pi --mode rpc`` run: a tool call surfaces first as
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Self, cast, final
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
+from typing import Self, cast, final
 
 __all__ = ["MalformedRecordError", "PiRpcRecord"]
-
-# The argument keys through which pi's read-only tools name a path or a glob.
-_PATH_ARGS = ("path", "glob", "pattern")
 
 _TOOL_EVENT_TYPES = frozenset(
     {"tool_execution_start", "tool_execution_update", "tool_execution_end"}
@@ -110,37 +102,26 @@ class PiRpcRecord:
                 return error if isinstance(error, str) and error else "reply failed"
         return ""
 
-    def touches(self, policy: SecretPathPolicy) -> bool:
-        """Return whether this record shows the agent reaching a denied path."""
-        return any(policy.denies(candidate) for candidate in self._path_candidates())
+    @property
+    def tool_call_id(self) -> str:
+        """The id correlating a tool call's start and end records, or ``""``."""
+        return self._text(self._fields.get("toolCallId"))
 
-    def _path_candidates(self) -> Iterator[str]:
-        """Yield every path or glob this record shows a tool being aimed at.
+    @property
+    def tool_name(self) -> str:
+        return self._text(self._fields.get("toolName"))
 
-        Tool arguments are checked at ``toolcall_end`` and
-        ``tool_execution_start``; a grep result is also checked line by line,
-        because a broad search (no path at all) can still land a match inside
-        a secret file, and its output names that file before the match text.
-        """
-        yield from self._tool_arguments()
-        if self.kind == "tool_execution_end" and self._fields.get("toolName") == "grep":
-            for line in self._result_text().splitlines():
-                yield line.split(":", 1)[0]
+    @property
+    def is_error(self) -> bool:
+        """Whether a ``tool_execution_end`` reports the call failed or was blocked."""
+        return self._fields.get("isError") is True
 
-    def _tool_arguments(self) -> Iterator[str]:
-        if self.kind == "tool_execution_start":
-            args = self._mapping(self._fields.get("args"))
-        elif self._assistant_event_kind() == "toolcall_end":
-            call = self._mapping(self._assistant_event().get("toolCall"))
-            args = self._mapping(call.get("arguments"))
-        else:
-            return
-        for key in _PATH_ARGS:
-            value = args.get(key)
-            if isinstance(value, str):
-                yield value
+    def tool_args(self) -> dict[str, object]:
+        """Return a ``tool_execution_start`` record's arguments, or ``{}``."""
+        return self._mapping(self._fields.get("args"))
 
-    def _result_text(self) -> str:
+    def result_text(self) -> str:
+        """Return a ``tool_execution_end`` record's text result, or ``""``."""
         result = self._mapping(self._fields.get("result"))
         content = result.get("content")
         if not isinstance(content, list):
@@ -151,6 +132,10 @@ class PiRpcRecord:
             for block in blocks
             if isinstance(text := self._mapping(block).get("text"), str)
         )
+
+    @staticmethod
+    def _text(value: object) -> str:
+        return value if isinstance(value, str) else ""
 
     def _assistant_event(self) -> dict[str, object]:
         if self.kind != "message_update":

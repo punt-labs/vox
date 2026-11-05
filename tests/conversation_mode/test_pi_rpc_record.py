@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -11,7 +10,6 @@ from punt_vox.voxd.conversation_mode.pi_rpc_record import (
     MalformedRecordError,
     PiRpcRecord,
 )
-from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 
 
 def _record(fields: dict[str, object]) -> PiRpcRecord:
@@ -20,11 +18,6 @@ def _record(fields: dict[str, object]) -> PiRpcRecord:
 
 def _update(event: dict[str, object]) -> PiRpcRecord:
     return _record({"type": "message_update", "assistantMessageEvent": event})
-
-
-@pytest.fixture
-def policy(tmp_path: Path) -> SecretPathPolicy:
-    return SecretPathPolicy(tmp_path)
 
 
 class TestParse:
@@ -112,77 +105,44 @@ class TestFailure:
         assert record.failure() == ""
 
 
-class TestTouches:
-    def test_a_toolcall_end_reading_env_touches_the_deny_list(
-        self, policy: SecretPathPolicy
-    ) -> None:
-        record = _update(
-            {
-                "type": "toolcall_end",
-                "toolCall": {"name": "read", "arguments": {"path": ".env"}},
-            }
-        )
-        assert record.touches(policy)
-
-    def test_a_tool_execution_start_reading_env_touches_the_deny_list(
-        self, policy: SecretPathPolicy
-    ) -> None:
+class TestToolExecution:
+    def test_a_start_record_carries_its_id_name_and_args(self) -> None:
         record = _record(
             {
                 "type": "tool_execution_start",
-                "toolName": "read",
-                "args": {"path": ".tmp/fake_secret.env"},
-            }
-        )
-        assert record.touches(policy)
-
-    def test_a_grep_glob_aimed_at_env_files_touches_the_deny_list(
-        self, policy: SecretPathPolicy
-    ) -> None:
-        record = _record(
-            {
-                "type": "tool_execution_start",
-                "toolName": "grep",
-                "args": {"pattern": "API_KEY", "glob": "**/.env*"},
-            }
-        )
-        assert record.touches(policy)
-
-    def test_a_broad_grep_whose_result_lands_in_env_touches_the_deny_list(
-        self, policy: SecretPathPolicy
-    ) -> None:
-        record = _record(
-            {
-                "type": "tool_execution_end",
-                "toolName": "grep",
-                "result": {
-                    "content": [{"type": "text", "text": "config/.env:3: KEY=x"}]
-                },
-            }
-        )
-        assert record.touches(policy)
-
-    def test_reading_source_does_not_touch_the_deny_list(
-        self, policy: SecretPathPolicy
-    ) -> None:
-        record = _record(
-            {
-                "type": "tool_execution_start",
+                "toolCallId": "call_1",
                 "toolName": "read",
                 "args": {"path": "pyproject.toml"},
             }
         )
-        assert not record.touches(policy)
+        assert (record.tool_call_id, record.tool_name, record.tool_args()) == (
+            "call_1",
+            "read",
+            {"path": "pyproject.toml"},
+        )
 
-    def test_a_find_result_listing_names_is_not_screened(
-        self, policy: SecretPathPolicy
-    ) -> None:
-        """A name in a listing is not a disclosure; only grep's output has content."""
+    def test_an_end_record_carries_its_text_result(self) -> None:
         record = _record(
             {
                 "type": "tool_execution_end",
-                "toolName": "find",
-                "result": {"content": [{"type": "text", "text": ".env"}]},
+                "toolCallId": "call_1",
+                "toolName": "grep",
+                "isError": False,
+                "result": {"content": [{"type": "text", "text": "a.py:3: x"}]},
             }
         )
-        assert not record.touches(policy)
+        assert (record.is_error, record.result_text()) == (False, "a.py:3: x")
+
+    def test_a_blocked_call_ends_as_an_error(self) -> None:
+        record = _record(
+            {"type": "tool_execution_end", "toolCallId": "c", "isError": True}
+        )
+        assert record.is_error
+
+    def test_a_record_without_tool_fields_answers_empty(self) -> None:
+        record = _record({"type": "agent_start"})
+        assert (record.tool_call_id, record.tool_args(), record.result_text()) == (
+            "",
+            {},
+            "",
+        )

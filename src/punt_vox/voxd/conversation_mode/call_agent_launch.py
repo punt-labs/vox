@@ -16,6 +16,7 @@ nothing secret from the developer's shell rides along by default.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.call_agent_env import CallAgentEnv
@@ -40,6 +41,11 @@ _SURFACE_OFF: tuple[str, ...] = (
     "--no-context-files",
 )
 
+# The vox-owned pi extension that blocks a denied tool call before it runs.
+# The one extension a call agent loads: an explicit -e path still loads under
+# --no-extensions, which keeps every discovered and built-in one off.
+SECRET_GUARD = Path(__file__).with_name("pi_extension") / "secret_guard.js"
+
 _ROLE = (
     "You are on a live voice call with a developer. Everything you write is "
     "converted to speech, so answer in short, plain spoken sentences: no "
@@ -59,6 +65,9 @@ class CallAgentLaunch:
     _policy: SecretPathPolicy
 
     def __new__(cls, policy: SecretPathPolicy, *, pi_bin: str = "pi") -> Self:
+        if not SECRET_GUARD.is_file():
+            msg = f"the call agent's secret guard is missing: {SECRET_GUARD}"
+            raise ValueError(msg)
         self = super().__new__(cls)
         self._policy = policy
         self._pi_bin = pi_bin
@@ -79,6 +88,8 @@ class CallAgentLaunch:
             "--mode",
             "rpc",
             *_SURFACE_OFF,
+            "--extension",
+            str(SECRET_GUARD),
             "--tools",
             ",".join(READ_ONLY_TOOLS),
             "--append-system-prompt",
@@ -89,7 +100,6 @@ class CallAgentLaunch:
         """Return the text appended to pi's own system prompt for a call."""
         return f"{_ROLE}\n\n{self._policy.prompt_clause()}"
 
-    @staticmethod
-    def env(parent: Mapping[str, str]) -> dict[str, str]:
-        """Return the child's environment: the allowlisted part of *parent*."""
-        return CallAgentEnv.allowlisted(parent)
+    def env(self, parent: Mapping[str, str]) -> dict[str, str]:
+        """Return the child's environment: allowlisted, plus the guard's config."""
+        return CallAgentEnv.allowlisted(parent) | self._policy.guard_env()

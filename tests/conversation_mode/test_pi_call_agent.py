@@ -31,7 +31,10 @@ from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
 from punt_vox.voxd.conversation_mode.call_agent_state import (
     IllegalAgentTransitionError,
 )
-from punt_vox.voxd.conversation_mode.pi_call_agent import PiCallAgent
+from punt_vox.voxd.conversation_mode.pi_call_agent import (
+    GUARD_REFUSAL,
+    PiCallAgent,
+)
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 from punt_vox.voxd.conversation_mode.session_attach import (
@@ -217,9 +220,35 @@ class TestAbortTurn:
 
 
 class TestSecretPathDenyList:
-    async def test_reading_env_aborts_the_turn_and_ends_the_agent(
+    async def test_a_read_the_guard_blocked_leaves_the_call_running(
         self, tmp_path: Path
     ) -> None:
+        """The pi guard refused the read, so nothing was disclosed: carry on."""
+        refused = PiReply(
+            text="I can't open that file.",
+            tools=(ToolUse("read", {"path": ".env"}, blocked=True),),
+        )
+        process = FakePiProcess([PiReply("Ready."), refused])
+        agent, _ = await _spawn(tmp_path, process)
+        assert await _reply(agent, "read me the env file") == "I can't open that file."
+        assert (process.killed, agent.can_accept_turn) == (False, True)
+
+    async def test_a_turn_ended_by_the_guard_explains_itself(
+        self, tmp_path: Path
+    ) -> None:
+        """The guard terminates the turn on a block, so the model says nothing;
+        the caller hears why instead of silence."""
+        refused = PiReply(
+            text="", tools=(ToolUse("read", {"path": "notes.local.md"}, blocked=True),)
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))
+        assert await _reply(agent) == GUARD_REFUSAL
+        assert agent.can_accept_turn
+
+    async def test_a_denied_read_that_executed_ends_the_agent(
+        self, tmp_path: Path
+    ) -> None:
+        """Defence in depth: if a denied read ever ran, the call ends."""
         leak = PiReply(
             text="The key is sk-spike-not-a-real-secret",
             tools=(ToolUse("read", {"path": ".env"}, "FAKE_API_KEY=sk-spike"),),
@@ -230,7 +259,7 @@ class TestSecretPathDenyList:
             await _reply(agent, "read me the env file")
         assert (process.killed, agent.can_accept_turn) == (True, False)
 
-    async def test_no_reply_text_from_a_denied_turn_is_ever_yielded(
+    async def test_no_reply_text_from_a_breached_turn_is_ever_yielded(
         self, tmp_path: Path
     ) -> None:
         leak = PiReply(

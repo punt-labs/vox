@@ -44,6 +44,7 @@ from punt_vox.voxd.conversation_mode.call_agent_state import AgentProc, CallAgen
 from punt_vox.voxd.conversation_mode.pi_rpc_channel import PiRpcChannel
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
+from punt_vox.voxd.conversation_mode.tool_screen import ToolScreen
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -51,33 +52,38 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
     from punt_vox.voxd.conversation_mode.pi_rpc_record import PiRpcRecord
-    from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
 
-__all__ = ["REPLY_INACTIVITY_S", "PiCallAgent"]
+__all__ = ["GUARD_REFUSAL", "REPLY_INACTIVITY_S", "PiCallAgent"]
 
 # Seconds with no RPC record of any kind before a turn is declared hung.
 REPLY_INACTIVITY_S = 60.0
+
+# Spoken when the secret guard blocked a read and the turn ended on it.
+GUARD_REFUSAL = (
+    "I can't open that -- it's outside the repository or may hold secrets, "
+    "and anything I read on a call is spoken aloud."
+)
 
 
 @final
 class PiCallAgent:
     """One call's agent process, held from call start to call end."""
 
-    __slots__ = ("_channel", "_policy", "_state", "_turn_timer")
+    __slots__ = ("_channel", "_screen", "_state", "_turn_timer")
     _channel: PiRpcChannel
-    _policy: SecretPathPolicy
+    _screen: ToolScreen
     _state: CallAgentState
     _turn_timer: TurnTimer
 
     def __new__(
-        cls, channel: PiRpcChannel, policy: SecretPathPolicy, turn_timer: TurnTimer
+        cls, channel: PiRpcChannel, screen: ToolScreen, turn_timer: TurnTimer
     ) -> Self:
         """Wrap an already-open *channel*; the agent is dormant until spawned."""
         self = super().__new__(cls)
         self._channel = channel
-        self._policy = policy
+        self._screen = screen
         self._state = CallAgentState()
         self._turn_timer = turn_timer
         return self
@@ -99,7 +105,8 @@ class PiCallAgent:
         Any failure on the way kills the process and raises
         :class:`~.call_agent_errors.CallAgentSpawnError`.
         """
-        agent = cls(await PiRpcChannel.open(launch, cwd), launch.policy, turn_timer)
+        channel = await PiRpcChannel.open(launch, cwd)
+        agent = cls(channel, ToolScreen(launch.policy, cwd), turn_timer)
         await agent._deliver_context(opening_message)
         return agent
 
@@ -159,10 +166,13 @@ class PiCallAgent:
         """
         self._state.send_turn()
         failure = ""
+        refused = spoke = False
         try:
             async for record in self._records(message, timed=timed):
                 failure = failure or record.failure()
+                refused = refused or self._screen.guard_refused(record)
                 if delta := record.text_delta():
+                    spoke = True
                     yield delta
         except BaseException:
             await self._abort()
@@ -171,6 +181,10 @@ class PiCallAgent:
         if failure:
             msg = f"call agent reply failed: {failure}"
             raise SessionAttachError(msg)
+        if refused and not spoke:
+            # The guard ends the turn the moment it blocks (terminate), so the
+            # model never gets to explain; say why rather than say nothing.
+            yield GUARD_REFUSAL
 
     async def _records(
         self, message: str, *, timed: bool
@@ -180,8 +194,8 @@ class PiCallAgent:
         saw_tool = False
         while True:
             record = await self._channel.receive(REPLY_INACTIVITY_S)
-            if record.touches(self._policy):
-                msg = "call agent reached for a path on the secret deny-list"
+            if self._screen.breached(record):
+                msg = "a call agent tool call read a path on the secret deny-list"
                 raise SecretPathDeniedError(msg)
             if record.kind == "response" and (refusal := record.failure()):
                 msg = f"call agent refused the prompt: {refusal}"

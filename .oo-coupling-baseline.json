@@ -1701,11 +1701,18 @@
     "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/conversation_mode/pi_call_agent.py": {
-    "efferent_coupling": 5.0,
-    "public_names": 2.0,
+    "efferent_coupling": 6.0,
+    "public_names": 3.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.444,
-    "avg_lcom": 0.444
+    "max_lcom": 0.422,
+    "avg_lcom": 0.422
+  },
+  "src/punt_vox/voxd/conversation_mode/pi_path.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/conversation_mode/pi_rpc_channel.py": {
     "efferent_coupling": 2.0,
@@ -1718,8 +1725,8 @@
     "efferent_coupling": 0.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.545,
-    "avg_lcom": 0.545
+    "max_lcom": 0.474,
+    "avg_lcom": 0.474
   },
   "src/punt_vox/voxd/conversation_mode/reply_begins.py": {
     "efferent_coupling": 0.0,
@@ -1757,11 +1764,11 @@
     "avg_lcom": 1.0
   },
   "src/punt_vox/voxd/conversation_mode/secret_path_policy.py": {
-    "efferent_coupling": 0.0,
+    "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.4,
-    "avg_lcom": 0.4
+    "max_lcom": 0.429,
+    "avg_lcom": 0.429
   },
   "src/punt_vox/voxd/conversation_mode/session_attach.py": {
     "efferent_coupling": 0.0,
@@ -1797,6 +1804,13 @@
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/conversation_mode/tool_screen.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.333,
+    "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/conversation_mode/turn_detected.py": {
     "efferent_coupling": 0.0,

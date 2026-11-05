@@ -30,6 +30,8 @@ class ToolUse:
     name: str
     args: dict[str, str]
     result: str = "ok"
+    # The pi-side guard refused the call: it ends as an error, nothing read.
+    blocked: bool = False
 
 
 @final
@@ -169,7 +171,9 @@ class FakePiProcess:
         if reply.hang or reply.die:
             return records
         records.append(_record({"type": "agent_start"}))
-        for tool in reply.tools:
+        for index, tool in enumerate(reply.tools):
+            call_id = f"call_{index}"
+            result = f"vox secret guard: {tool.args}" if tool.blocked else tool.result
             records += [
                 _update(
                     {
@@ -180,6 +184,7 @@ class FakePiProcess:
                 _record(
                     {
                         "type": "tool_execution_start",
+                        "toolCallId": call_id,
                         "toolName": tool.name,
                         "args": tool.args,
                     }
@@ -187,8 +192,10 @@ class FakePiProcess:
                 _record(
                     {
                         "type": "tool_execution_end",
+                        "toolCallId": call_id,
                         "toolName": tool.name,
-                        "result": {"content": [{"type": "text", "text": tool.result}]},
+                        "isError": tool.blocked,
+                        "result": {"content": [{"type": "text", "text": result}]},
                     }
                 ),
             ]
