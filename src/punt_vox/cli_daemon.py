@@ -16,11 +16,13 @@ through the same lifecycle probe as ``start`` and ``stop``.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Annotated, Self, final
 
 import typer
 
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.service import (
     DaemonLifecycle,
     install as svc_install,
@@ -35,8 +37,13 @@ if TYPE_CHECKING:
     from punt_vox.cli_io import OutputFlags
     from punt_vox.output_formatter import OutputFormatter
     from punt_vox.service.lifecycle_report import LifecycleReport
+    from punt_vox.types_health import HealthStatus
 
 __all__ = ["DaemonCli", "build_daemon_app"]
+
+# Either one names a daemon other than the local service, so ``status`` asks
+# it through the client, as ``vox status`` and ``vox doctor`` do.
+_ENDPOINT_ENV = ("VOXD_HOST", "VOXD_PORT")
 
 # Redeclared per-verb so ``--json`` parses after the subcommand as well as
 # before it (matching the music/rec/enablement groups).
@@ -180,12 +187,15 @@ class DaemonCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Show the voxd service's health -- reachable, port, uptime, version.
+        """Show the voxd daemon's health -- reachable, port, uptime, version.
 
-        Finds voxd the way ``start`` and ``stop`` do: the installed unit's
-        bind and port 8421, with the token only from ``serve.token`` and sent
-        only to a visible voxd on the port. A missing ``serve.port`` does not
-        hide a running daemon, and ``VOXD_*`` in the shell cannot redirect it.
+        With ``VOXD_HOST`` or ``VOXD_PORT`` set, it queries that configured
+        daemon through the client -- honoring ``VOXD_HOST`` / ``VOXD_PORT`` /
+        ``VOXD_TOKEN`` -- matching ``vox status`` and ``vox doctor``. With
+        neither set it reads the local service the way ``start`` and ``stop``
+        do: the installed unit's bind and port 8421, the token only from
+        ``serve.token``, sent only to a visible voxd on the port, so a missing
+        ``serve.port`` does not hide a running daemon.
         ``--json`` returns the daemon health snapshot (``status``, ``port``,
         ``pid``, ``daemon_version``, ``uptime_seconds``, ``queued``,
         ``active_sessions``) -- the same shape ``mic:status`` reports for the
@@ -193,13 +203,17 @@ class DaemonCli:
         inspect is ``unknown``. Both exit 1.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        lifecycle = self._lifecycle()
         try:
-            health = lifecycle.health()
-        except (VoxdConnectionError, PortProbeError, BackendCommandError) as exc:
+            health = self._read_health()
+        except (
+            VoxdConnectionError,
+            VoxdProtocolError,
+            PortProbeError,
+            BackendCommandError,
+        ) as exc:
             # No answer is "not running"; a probe vox could not run says
             # nothing about voxd, so it is "unknown", never "not running".
-            down = isinstance(exc, VoxdConnectionError)
+            down = isinstance(exc, VoxdConnectionError | VoxdProtocolError)
             state = "not_running" if down else "unknown"
             self._formatter.emit(
                 {"status": state, "reason": str(exc)},
@@ -225,6 +239,18 @@ class DaemonCli:
             f"  Sessions: {health.active_sessions}"
         )
         self._formatter.emit(payload, text)
+
+    @classmethod
+    def _read_health(cls) -> HealthStatus:
+        """Return health from the configured daemon, else the local service.
+
+        ``VOXD_HOST`` or ``VOXD_PORT`` names a daemon the operator chose
+        (possibly remote), so the client reaches it as ``vox status`` does;
+        otherwise the lifecycle probe reads the installed service.
+        """
+        if any(os.environ.get(name, "").strip() for name in _ENDPOINT_ENV):
+            return VoxClientSync().health()
+        return cls._lifecycle().health()
 
     @staticmethod
     def _lifecycle() -> DaemonLifecycle:

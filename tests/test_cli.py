@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -2406,10 +2407,10 @@ class TestDaemonStatusCommand:
         assert payload["status"] == "unknown"
         assert "fuser" in str(payload["reason"])
 
-    def test_voxd_env_does_not_redirect_it(
+    def test_voxd_token_alone_keeps_the_local_service_path(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("VOXD_HOST", "remote.example.com")
+        """Only VOXD_HOST/VOXD_PORT name another daemon; a token alone does not."""
         monkeypatch.setenv("VOXD_TOKEN", "shell-token")
         world = FakeWorld()
         world.run_unit(100)
@@ -2417,6 +2418,62 @@ class TestDaemonStatusCommand:
         assert result.exit_code == 0
         assert payload["pid"] == 100
         assert world.tokens_to == [frozenset({100})]
+
+    # -- vox-4p5p: a configured (possibly remote) daemon goes through the client
+
+    @patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
+    def test_honors_voxd_host(
+        self,
+        mock_client_cls: MagicMock,
+        mock_lifecycle: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("VOXD_HOST", "remote.example.com")
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"status": "ok", "port": 8421, "uptime_seconds": 12, "active_sessions": 3}
+        )
+        result = CliRunner().invoke(app, ["daemon", "status"])
+        assert result.exit_code == 0
+        # No explicit host: VoxClientSync resolves VOXD_HOST itself, so it
+        # never targets a hardcoded 127.0.0.1.
+        mock_client_cls.assert_called_once_with()
+        mock_client_cls.return_value.health.assert_called_once_with()
+        mock_lifecycle.assert_not_called()
+        assert "127.0.0.1" not in result.output
+        assert "8421" in result.output
+
+    @patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
+    def test_honors_voxd_port(
+        self,
+        mock_client_cls: MagicMock,
+        mock_lifecycle: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("VOXD_HOST", raising=False)
+        monkeypatch.setenv("VOXD_PORT", "9000")
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"port": 9000}
+        )
+        result = CliRunner().invoke(app, ["daemon", "status"])
+        assert result.exit_code == 0
+        mock_client_cls.assert_called_once_with()
+        mock_lifecycle.assert_not_called()
+
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
+    def test_remote_not_running_is_not_running(
+        self, mock_client_cls: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VOXD_HOST", "remote.example.com")
+        mock_client_cls.return_value.health.side_effect = VoxdProtocolError(
+            "Timeout waiting for response to 'health'"
+        )
+        result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["status"] == "not_running"
+        assert "Timeout" in payload["reason"]
 
     def test_refused_as_root_exits_2(self) -> None:
         refusal = LifecycleRefusedError("vox daemon must run as your normal user")
