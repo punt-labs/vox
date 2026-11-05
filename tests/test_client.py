@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -2296,3 +2297,54 @@ async def test_connect_to_a_non_websocket_listener_is_a_connection_error() -> No
         with pytest.raises(VoxdConnectionError, match="Cannot connect") as caught:
             await client.connect()
     assert not isinstance(caught.value, VoxdRefusedError)
+
+
+# ---------------------------------------------------------------------------
+# A host with several addresses is refused only when every address refused
+# ---------------------------------------------------------------------------
+
+
+def _refused() -> ConnectionRefusedError:
+    return ConnectionRefusedError(111, "Connection refused")
+
+
+def test_every_address_refused_is_a_refusal() -> None:
+    """localhost resolves to ::1 and 127.0.0.1; both refusing is not running."""
+    group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
+    error = VoxdConnectionError.of_connect("ws://localhost:8421/ws", group)
+    assert isinstance(error, VoxdRefusedError)
+    assert "Connection refused" in str(error)
+
+
+def test_one_address_failing_otherwise_is_not_a_refusal() -> None:
+    unreachable = OSError(113, "No route to host")
+    group = ExceptionGroup("create_connection failed", [_refused(), unreachable])
+    error = VoxdConnectionError.of_connect("ws://box:8421/ws", group)
+    assert not isinstance(error, VoxdRefusedError)
+    assert "No route to host" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_connect_refused_on_every_address_is_a_refusal() -> None:
+    """The per-address errors reach the classifier, never a bare aggregate."""
+    group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
+    with patch(
+        "punt_vox.client.websockets.asyncio.client.connect",
+        new_callable=AsyncMock,
+        side_effect=group,
+    ) as connect:
+        client = VoxClient(host="localhost", port=8421, token="tok")
+        with pytest.raises(VoxdRefusedError):
+            await client.connect()
+    assert connect.call_args.kwargs["all_errors"] is True
+
+
+@pytest.mark.asyncio
+async def test_connect_to_a_closed_local_port_is_a_refusal() -> None:
+    """A real refused connect, through websockets and asyncio, unmocked."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = VoxClient(host="127.0.0.1", port=port, token="tok")
+    with pytest.raises(VoxdRefusedError):
+        await client.connect()

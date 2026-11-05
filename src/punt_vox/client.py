@@ -309,8 +309,15 @@ class _VoxdTransport:
         """Connect to voxd WebSocket. Call once before sending messages."""
         uri = self._build_uri()
         try:
-            self._ws = await websockets.asyncio.client.connect(uri)
-        except (OSError, websockets.exceptions.WebSocketException) as exc:
+            # all_errors: a host with several addresses fails as one
+            # ExceptionGroup of per-address errors, so a refusal on every
+            # address can be told from one that timed out or was unreachable.
+            self._ws = await websockets.asyncio.client.connect(uri, all_errors=True)
+        except (
+            OSError,
+            ExceptionGroup,
+            websockets.exceptions.WebSocketException,
+        ) as exc:
             # A WebSocketException is voxd (or whatever holds the port)
             # answering the handshake with a refusal of its own -- HTTP 403 for
             # a bad token or Origin, or not speaking HTTP at all.
