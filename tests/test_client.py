@@ -2259,3 +2259,40 @@ async def test_connect_timeout_is_not_a_refusal() -> None:
         with pytest.raises(VoxdConnectionError, match="opening handshake") as caught:
             await client.connect()
     assert not isinstance(caught.value, VoxdRefusedError)
+
+
+async def _answer_once(reply: bytes) -> asyncio.Server:
+    """Serve one HTTP exchange on 127.0.0.1: read the request, send *reply*."""
+
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(reply)
+        await writer.drain()
+        writer.close()
+
+    return await asyncio.start_server(handle, "127.0.0.1", 0)
+
+
+@pytest.mark.asyncio
+async def test_connect_handshake_rejection_is_not_a_refusal() -> None:
+    """voxd closing a bad-token handshake with HTTP 403 is no traceback."""
+    server = await _answer_once(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token="wrong")
+        with pytest.raises(VoxdConnectionError, match="403") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)
+
+
+@pytest.mark.asyncio
+async def test_connect_to_a_non_websocket_listener_is_a_connection_error() -> None:
+    server = await _answer_once(b"SSH-2.0-OpenSSH_9.6\r\n\r\n")
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token="tok")
+        with pytest.raises(VoxdConnectionError, match="Cannot connect") as caught:
+            await client.connect()
+    assert not isinstance(caught.value, VoxdRefusedError)

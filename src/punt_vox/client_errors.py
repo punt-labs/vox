@@ -16,12 +16,14 @@ class VoxdConnectionError(VoxError):
     """Raised when the client cannot connect to voxd."""
 
     @classmethod
-    def of_connect(cls, endpoint: str, exc: OSError) -> VoxdConnectionError:
+    def of_connect(cls, endpoint: str, exc: Exception) -> VoxdConnectionError:
         """Return the error for a connect to *endpoint* that raised *exc*.
 
-        A refusal -- nothing listens there -- is :class:`VoxdRefusedError`;
-        every other socket failure (a timeout, a reset, an unreachable host)
-        is a plain :class:`VoxdConnectionError`, since something may be there.
+        A refusal -- nothing listens there -- is :class:`VoxdRefusedError`.
+        Every other failure is a plain :class:`VoxdConnectionError`, since
+        something may be there: a socket timeout, reset or unreachable host,
+        or a listener that rejected the WebSocket handshake (an HTTP 403 for
+        a bad token, or a peer that does not speak HTTP).
         """
         msg = f"Cannot connect to voxd at {endpoint}: {exc}"
         if isinstance(exc, ConnectionRefusedError):

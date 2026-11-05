@@ -73,6 +73,36 @@ class RecordResult:
     byte_count: int
     cached: bool = False
 
+    @classmethod
+    def from_audio(cls, terminal: dict[str, Any]) -> Self:  # a decoded frame
+        """Build the locator from ``record``'s terminal ``audio`` frame.
+
+        Raises ``VoxdProtocolError`` for any other frame, a missing field, or
+        a non-integer byte count -- never a raw ``ValueError`` a CLI or tool
+        catch would miss.
+        """
+        if terminal.get("type") != "audio":
+            raise VoxdProtocolError(
+                f"Expected 'audio' response, got '{terminal.get('type')}'"
+            )
+        for field in ("name", "path", "bytes"):
+            if field not in terminal:
+                raise VoxdProtocolError(f"'audio' response missing {field!r}")
+        try:
+            byte_count = int(terminal["bytes"])
+        except (TypeError, ValueError) as exc:
+            raise VoxdProtocolError(
+                f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
+            ) from exc
+        store_name = str(terminal["name"])
+        return cls(
+            id=store_name,
+            name=store_name,
+            store_path=Path(str(terminal["path"])),
+            byte_count=byte_count,
+            cached=bool(terminal.get("cached", False)),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RecordingSummary:
@@ -127,6 +157,23 @@ class SynthesizeResult:
     original_played_at: float | None = None
     ttl_seconds_remaining: float | None = None
     cached: bool = False
+
+    @classmethod
+    def from_terminal(cls, request_id: str, terminal: dict[str, Any]) -> Self:
+        """Build the result from ``synthesize``'s last frame (empty: none came)."""
+        if not terminal.get("deduped"):
+            return cls(request_id, cached=bool(terminal.get("cached", False)))
+        return cls(
+            request_id,
+            deduped=True,
+            original_played_at=cls._seconds(terminal, "original_played_at"),
+            ttl_seconds_remaining=cls._seconds(terminal, "ttl_seconds_remaining"),
+        )
+
+    @staticmethod
+    def _seconds(terminal: dict[str, Any], key: str) -> float | None:
+        """Return *key* as seconds; ``None`` when the dedup frame omits it."""
+        return float(terminal[key]) if key in terminal else None
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +310,10 @@ class _VoxdTransport:
         uri = self._build_uri()
         try:
             self._ws = await websockets.asyncio.client.connect(uri)
-        except OSError as exc:
+        except (OSError, websockets.exceptions.WebSocketException) as exc:
+            # A WebSocketException is voxd (or whatever holds the port)
+            # answering the handshake with a refusal of its own -- HTTP 403 for
+            # a bad token or Origin, or not speaking HTTP at all.
             endpoint = uri.split("?")[0]
             raise VoxdConnectionError.of_connect(endpoint, exc) from exc
 
@@ -642,25 +692,8 @@ class VoxClient:
             terminal_type="done",
             early_terminal="playing",
         )
-        terminal = responses[-1] if responses else {}
-        if terminal.get("deduped"):
-            return SynthesizeResult(
-                request_id=request_id,
-                deduped=True,
-                original_played_at=(
-                    float(terminal["original_played_at"])
-                    if "original_played_at" in terminal
-                    else None
-                ),
-                ttl_seconds_remaining=(
-                    float(terminal["ttl_seconds_remaining"])
-                    if "ttl_seconds_remaining" in terminal
-                    else None
-                ),
-            )
-        return SynthesizeResult(
-            request_id=request_id,
-            cached=bool(terminal.get("cached", False)),
+        return SynthesizeResult.from_terminal(
+            request_id, responses[-1] if responses else {}
         )
 
     async def chime(self, signal: str) -> None:
@@ -705,30 +738,7 @@ class VoxClient:
         responses = await self._transport.send_and_drain(
             msg, timeout=timeout, terminal_type="audio"
         )
-        terminal = responses[-1] if responses else {}
-        if terminal.get("type") != "audio":
-            raise VoxdProtocolError(
-                f"Expected 'audio' response, got '{terminal.get('type')}'"
-            )
-        for field in ("name", "path", "bytes"):
-            if field not in terminal:
-                raise VoxdProtocolError(f"'audio' response missing {field!r}")
-        try:
-            byte_count = int(terminal["bytes"])
-        except (TypeError, ValueError) as exc:
-            # A non-int bytes must surface as a VoxError, not a raw ValueError a
-            # CLI/tool catch would miss (leaking a traceback).
-            raise VoxdProtocolError(
-                f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
-            ) from exc
-        store_name = str(terminal["name"])
-        return RecordResult(
-            id=store_name,
-            name=store_name,
-            store_path=Path(str(terminal["path"])),
-            byte_count=byte_count,
-            cached=bool(terminal.get("cached", False)),
-        )
+        return RecordResult.from_audio(responses[-1] if responses else {})
 
     async def play(self, ref: str) -> None:
         """Play a stored recording on the daemon host by its store reference.

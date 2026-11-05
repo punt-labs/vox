@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -2547,6 +2549,36 @@ class TestDaemonStatusCommand:
         assert result.exit_code == 1
         assert payload["status"] == "unknown"
         assert "opening handshake" in str(payload["reason"])
+
+    def test_remote_handshake_rejection_is_unknown_not_a_traceback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A real listener refusing the WebSocket handshake with HTTP 403."""
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            port = server.getsockname()[1]
+
+            def answer_403() -> None:
+                conn, _ = server.accept()
+                with conn:
+                    request = b""
+                    while b"\r\n\r\n" not in request:
+                        request += conn.recv(4096)
+                    conn.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+
+            answerer = threading.Thread(target=answer_403)
+            answerer.start()
+            monkeypatch.setenv("VOXD_HOST", "127.0.0.1")
+            monkeypatch.setenv("VOXD_PORT", str(port))
+            monkeypatch.setenv("VOXD_TOKEN", "wrong")
+            result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+            answerer.join(timeout=5.0)
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert result.exit_code == 1
+        payload = json.loads(result.output)
+        assert payload["status"] == "unknown"
+        assert "403" in str(payload["reason"])
 
     def test_remote_protocol_error_is_unknown(
         self, monkeypatch: pytest.MonkeyPatch
