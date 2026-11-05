@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -97,3 +98,15 @@ def test_cleanup_with_no_port_file_takes_no_lock(tmp_path: Path) -> None:
     port_file = tmp_path / "serve.port"
     assert StalePortFile.read(port_file).discard(8421) is PortFileCleanup.ABSENT
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_file_with_the_read_inode_but_new_times_is_left(tmp_path: Path) -> None:
+    """Inode reuse: same device and inode, a later ctime -- a different file."""
+    port_file = tmp_path / "serve.port"
+    port_file.write_text("8421")
+    stale = StalePortFile.read(port_file)
+    before = port_file.stat()
+    os.utime(port_file, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
+    assert port_file.stat().st_ino == before.st_ino
+    assert stale.discard(8421) is PortFileCleanup.REPLACED
+    assert port_file.read_text() == "8421"

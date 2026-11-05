@@ -19,6 +19,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.file_identity import FileIdentity
 from punt_vox.sibling_lock import SiblingLock
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ class PortFile:
 
     _path: Path
     _lock: SiblingLock
-    _mine: tuple[int, int] | None  # (st_dev, st_ino) written; None: never written
+    _mine: FileIdentity | None  # the file written; None: never written
 
     def __new__(cls, run_dir: Path) -> Self:
         self = super().__new__(cls)
@@ -51,23 +52,30 @@ class PortFile:
     def write(self, port: int) -> None:
         """Publish *port* as a new file and remember it as this daemon's.
 
-        The rename is atomic, so a reader never sees a half-written file. The
-        identity is read from the temporary file before the rename: read from
-        ``serve.port`` after it, a second voxd renaming its own file in between
-        would be recorded as this daemon's. A write that fails removes its
-        temporary file and raises.
+        The rename is atomic, so a reader never sees a half-written file. A
+        write that fails removes its temporary file and raises.
         """
         tmp = self._path.with_name(f".serve.port.{os.getpid()}")
         with self._lock.held():
             try:
-                tmp.write_text(str(port))
-                st = tmp.stat()
-                tmp.replace(self._path)
+                self._mine = self._publish(tmp, port)
             except OSError:
                 tmp.unlink(missing_ok=True)
                 raise
-        self._mine = (st.st_dev, st.st_ino)
         logger.info("Wrote port file: %s (port %d)", self._path, port)
+
+    def _publish(self, tmp: Path, port: int) -> FileIdentity:
+        """Write *port* to *tmp*, rename it over ``serve.port``; return its identity.
+
+        The identity comes from the open descriptor after the rename: never
+        from ``serve.port``, where a second voxd may already have renamed its
+        own file, and never from before the rename, which changes the ctime.
+        """
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(str(port))
+            handle.flush()
+            tmp.replace(self._path)
+            return FileIdentity.of(os.fstat(handle.fileno()))
 
     def remove(self) -> None:
         """Remove ``serve.port`` if it is still the file this daemon wrote.
@@ -91,11 +99,10 @@ class PortFile:
         Returns whether it did. Call with the lock held. A failure other than
         "already gone" raises ``OSError``.
         """
-        try:
-            st = self._path.stat()
-        except FileNotFoundError:
+        found = FileIdentity.at(self._path)
+        if found is None:
             return False
-        if (st.st_dev, st.st_ino) != self._mine:
+        if found != self._mine:
             logger.info("%s now belongs to another voxd; left in place", self._path)
             return False
         self._path.unlink(missing_ok=True)

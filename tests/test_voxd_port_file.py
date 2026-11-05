@@ -182,3 +182,16 @@ def test_a_lock_that_cannot_be_taken_is_logged_not_raised(
     assert "serve.port" in warning.getMessage()
     assert "No locks available" in warning.getMessage()
     assert (tmp_path / "serve.port").read_text() == "8421"
+
+
+def test_a_file_with_this_inode_but_new_times_is_not_this_daemons(
+    tmp_path: Path,
+) -> None:
+    """Inode reuse: a freed inode handed to a newer voxd's file is not ours."""
+    a = PortFile(tmp_path)
+    a.write(8421)
+    port_file = tmp_path / "serve.port"
+    before = port_file.stat()
+    os.utime(port_file, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
+    a.remove()
+    assert port_file.read_text() == "8421"

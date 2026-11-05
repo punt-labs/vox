@@ -2,7 +2,8 @@
 
 The cleanup is pinned to one read of the file: it opens ``serve.port`` once,
 under the same sibling ``flock`` voxd holds while it publishes the file, and
-takes both the file's identity (device and inode) and the port it names from
+takes both the file's identity (device, inode, mtime and ctime -- see
+:class:`~punt_vox.file_identity.FileIdentity`) and the port it names from
 that one open file. Whatever the caller then does with the port -- probe it,
 kill its holder -- the file it later removes is exactly the file whose port
 it acted on, and only if it is still that file: a voxd that publishes at any
@@ -15,6 +16,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.file_identity import FileIdentity
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.sibling_lock import SiblingLock
@@ -35,12 +37,10 @@ class StalePortFile:
 
     _path: Path
     _lock: SiblingLock
-    _seen: tuple[int, int] | None  # (st_dev, st_ino) read; None: no file then
+    _seen: FileIdentity | None  # the file read; None: no file then
     _port: int | None  # the port it named; None: no file, or it did not parse
 
-    def __new__(
-        cls, path: Path, seen: tuple[int, int] | None, port: int | None
-    ) -> Self:
+    def __new__(cls, path: Path, seen: FileIdentity | None, port: int | None) -> Self:
         self = super().__new__(cls)
         self._path = path
         self._seen = seen
@@ -77,7 +77,7 @@ class StalePortFile:
         except FileNotFoundError:
             return cls(path, None, None)
         port = int(text) if text.isdecimal() else None
-        return cls(path, (st.st_dev, st.st_ino), port)
+        return cls(path, FileIdentity.of(st), port)
 
     @property
     def port(self) -> int | None:
@@ -124,16 +124,13 @@ class StalePortFile:
         return PortFileCleanup.REMOVED
 
     @staticmethod
-    def _identity_of(path: Path) -> tuple[int, int] | None:
-        """Return *path*'s (device, inode); ``None`` when there is no file.
+    def _identity_of(path: Path) -> FileIdentity | None:
+        """Return the identity of the file at *path*; ``None`` when there is none.
 
         Any other stat failure raises ``PortProbeError``.
         """
         try:
-            st = path.stat()
-        except FileNotFoundError:
-            return None
+            return FileIdentity.at(path)
         except OSError as exc:
             msg = f"cannot read {path}: {exc}"
             raise PortProbeError(msg) from exc
-        return (st.st_dev, st.st_ino)
