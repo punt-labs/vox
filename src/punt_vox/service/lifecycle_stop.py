@@ -31,7 +31,6 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.kill_ledger import KillLedger
 from punt_vox.service.lifecycle_report import LifecycleOutcome
-from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.still_up import StillUp
 
 if TYPE_CHECKING:
@@ -181,7 +180,7 @@ class StopVerb:
             return False
         if self._system.probe.port_listening():
             self._still_up = (
-                f"port {DEFAULT_PORT} still accepts connections but no visible "
+                f"port {self._system.port} still accepts connections but no visible "
                 "voxd process holds it"
             )
             return False
@@ -282,7 +281,7 @@ class StopVerb:
         self._clear_port_file(frozenset())
         if not self._port_file_done:
             self._notes.append(
-                f"a voxd took port {DEFAULT_PORT} after stop confirmed it free; "
+                f"a voxd took port {self._system.port} after stop confirmed it free; "
                 "serve.port left in place"
             )
 
@@ -291,7 +290,7 @@ class StopVerb:
         return handle.pid
 
     def _stopped_detail(self) -> str:
-        detail = f"voxd.service stopped; port {DEFAULT_PORT} free"
+        detail = f"voxd.service stopped; port {self._system.port} free"
         return detail + self._done() + self._off_port
 
     def _done(self) -> str:
@@ -313,12 +312,11 @@ class StopVerb:
         pids = ", ".join(str(p) for p in sorted(others))
         return f"; voxd pid {pids} on another port was not touched"
 
-    @staticmethod
-    def _untouched(obs: Observation) -> str:
+    def _untouched(self, obs: Observation) -> str:
         """Return the not-installed detail, naming any voxd left alone."""
         detail = "voxd.service is not installed; run `vox daemon install`"
         if obs.procs:
-            held = f"voxd pid {obs.holder_pids()} on port {DEFAULT_PORT}"
+            held = f"voxd pid {obs.holder_pids()} on port {self._system.port}"
             detail += f"; {held} was not touched"
         return detail
 

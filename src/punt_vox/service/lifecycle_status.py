@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.process import DEFAULT_PORT
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import LifecycleProbe, ProcessHandle
@@ -38,7 +37,7 @@ __all__ = ["StatusCheck"]
 class StatusCheck:
     """Read voxd's state on the service port once, within one deadline."""
 
-    __slots__ = ("_deadline", "_probe")
+    __slots__ = ("_deadline", "_port", "_probe")
 
     # The least a health request is given. With less left, a timeout would
     # measure vox's own probing, not voxd, so voxd is not asked at all.
@@ -46,12 +45,14 @@ class StatusCheck:
 
     _deadline: Deadline
     _probe: LifecycleProbe
+    _port: int
 
     def __new__(cls, system: LifecycleSystem, within_s: float) -> Self:
         """Start the reading's deadline: *within_s* seconds from now."""
         self = super().__new__(cls)
         self._deadline = Deadline(system.poll.now, within_s)
         self._probe = system.probe.within(self._deadline)
+        self._port = system.port
         return self
 
     def run(self) -> DaemonStatus:
@@ -69,11 +70,11 @@ class StatusCheck:
             return self._ask(holders)
         if probe.port_listening():
             return DaemonStatus.unknown(
-                f"something listens on port {DEFAULT_PORT} but no visible voxd "
+                f"something listens on port {self._port} but no visible voxd "
                 "process holds it; vox sent it no token"
             )
         return DaemonStatus.not_running(
-            f"no voxd process holds port {DEFAULT_PORT} and nothing listens on it",
+            f"no voxd process holds port {self._port} and nothing listens on it",
             probe.off_port_voxd(),
         )
 
@@ -82,7 +83,7 @@ class StatusCheck:
         left = self._deadline.remaining()
         if left < self.MIN_HEALTH_S:
             return DaemonStatus.unknown(
-                f"the status deadline was spent probing port {DEFAULT_PORT} "
+                f"the status deadline was spent probing port {self._port} "
                 f"before voxd could be asked ({left:.2f}s left)"
             )
         probe = self._probe

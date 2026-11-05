@@ -61,13 +61,14 @@ class Observation:
 class LifecycleSystem:
     """The backend, probe and poll one lifecycle run drives."""
 
-    __slots__ = ("_backend", "_log_path", "_poll", "_probe", "_version")
+    __slots__ = ("_backend", "_log_path", "_poll", "_port", "_probe", "_version")
 
     _backend: ServiceBackend
     _probe: LifecycleProbe
     _poll: Poll
     _version: str
     _log_path: str
+    _port: int
 
     def __new__(
         cls,
@@ -82,6 +83,7 @@ class LifecycleSystem:
         self._poll = poll
         self._version = version
         self._log_path = str(log_dir() / "vox.log")
+        self._port = DEFAULT_PORT
         return self
 
     @classmethod
@@ -130,6 +132,11 @@ class LifecycleSystem:
         return self._poll
 
     @property
+    def port(self) -> int:
+        """Return the service port every verb observes and reports on."""
+        return self._port
+
+    @property
     def version(self) -> str:
         """Return the installed wheel's version."""
         return self._version
@@ -176,7 +183,7 @@ class LifecycleSystem:
         return LifecycleReport(
             verb=verb,
             outcome=outcome,
-            port=DEFAULT_PORT,
+            port=self._port,
             log_path=self._log_path,
             detail=detail,
         )

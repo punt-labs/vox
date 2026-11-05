@@ -46,3 +46,11 @@ def test_holder_pids_sorted() -> None:
     world.spawn(300)
     world.spawn(200)
     assert _system(world).observe().holder_pids() == "200, 300"
+
+
+def test_every_verb_reads_the_service_port_from_the_system() -> None:
+    world = FakeWorld()
+    system = LifecycleSystem(
+        FakeBackend(world), FakeProbe(world), Poll(FakeClock()), WHEEL
+    )
+    assert system.port == 8421
