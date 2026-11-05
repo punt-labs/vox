@@ -17,11 +17,15 @@ killed; the model makes ``ended`` terminal):
   an inactivity bound, never a total-turn bound: a reply that is busy with
   tool calls streams tool events the whole time, so it is never mistaken for
   a hang however long it runs.
-- **A denied path.** A tool call aimed at the secret deny-list
-  (:class:`~.secret_path_policy.SecretPathPolicy`). pi starts executing a
-  tool in the same instant it announces it, so this cannot stop the read
-  itself; it guarantees the turn's reply is never spoken, never reaches the
-  summary, and the context that saw it is destroyed.
+- **A denied read that ran.** The pi-side secret guard
+  (``pi_extension/secret_guard.js``) is the primary control: it blocks a
+  tool call aimed outside the repo or at the deny-list
+  (:class:`~.secret_path_policy.SecretPathPolicy`) before the tool executes,
+  and a blocked call is no breach -- the turn ends on the refusal, which is
+  spoken (:data:`GUARD_REFUSAL`), and the call goes on. As defence in depth,
+  :class:`~.tool_screen.ToolScreen` re-checks every call that did execute;
+  if a denied read ever ran anyway, the turn's reply is never spoken, never
+  reaches the summary, and the context that saw it is destroyed.
 - **The process dying**, or the wire contract breaking.
 
 A reply the provider fails mid-way is different: pi reports the error and
