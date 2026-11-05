@@ -86,7 +86,7 @@ def test_health_target_client_reads_run_file_token(
     """client() passes the run-file token, never a stray shell VOXD_TOKEN."""
     monkeypatch.setenv("VOXD_TOKEN", "shell-token")
     monkeypatch.setattr(
-        "punt_vox.service.health.read_token_file", lambda: "authoritative-run-token"
+        "punt_vox.service.health.RunFiles.token", lambda: "authoritative-run-token"
     )
     captured = _capture_clients(monkeypatch)
 
@@ -102,7 +102,7 @@ def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
 ) -> None:
     """With no serve.token, no client exists, so VOXD_TOKEN cannot leak."""
     monkeypatch.setenv("VOXD_TOKEN", "shell-token")
-    monkeypatch.setattr("punt_vox.service.health.read_token_file", lambda: None)
+    monkeypatch.setattr("punt_vox.service.health.RunFiles.token", lambda: None)
     captured = _capture_clients(monkeypatch)
 
     with pytest.raises(DaemonNotUpError, match=r"serve\.token"):

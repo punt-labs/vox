@@ -16,6 +16,7 @@ from punt_vox.client import (
     CacheStatus,
     VoxClient,
 )
+from punt_vox.client_connect_failure import ConnectFailure
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
@@ -114,7 +115,7 @@ class TestVoxClientConnect:
 
         mock_ws = _make_mock_ws()
         with (
-            patch("punt_vox.client_transport._user_run_dir", return_value=tmp_path),
+            patch("punt_vox.client_endpoint._user_run_dir", return_value=tmp_path),
             patch(
                 "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
@@ -131,7 +132,7 @@ class TestVoxClientConnect:
 
     @pytest.mark.asyncio
     async def test_connect_no_port_file_raises(self, tmp_path: Path) -> None:
-        with patch("punt_vox.client_transport._user_run_dir", return_value=tmp_path):
+        with patch("punt_vox.client_endpoint._user_run_dir", return_value=tmp_path):
             client = VoxClient()
             with pytest.raises(VoxdConnectionError, match="port file not found"):
                 await client.connect()
@@ -175,18 +176,18 @@ class TestVoxClientBuildUri:
 
     def test_uri_with_token(self) -> None:
         client = VoxClient(port=8421, token="abc")
-        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://127.0.0.1:8421/ws?token=abc"
 
     def test_uri_without_token(self) -> None:
-        with patch("punt_vox.client_transport.read_token_file", return_value=None):
+        with patch("punt_vox.client_endpoint.RunFiles.token", return_value=None):
             client = VoxClient(port=8421)
-            uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+            uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
             assert uri == "ws://127.0.0.1:8421/ws"
 
     def test_uri_custom_host(self) -> None:
         client = VoxClient(host="10.0.0.1", port=9000, token="t")
-        uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
+        uri = client._transport._endpoint.uri()  # pyright: ignore[reportPrivateUsage]
         assert uri == "ws://10.0.0.1:9000/ws?token=t"
 
 
@@ -1569,8 +1570,8 @@ class TestVoxClientReconnect:
         )
 
         with (
-            patch("punt_vox.client_transport.read_port_file", return_value=8421),
-            patch("punt_vox.client_transport.read_token_file", return_value="tok"),
+            patch("punt_vox.client_endpoint.RunFiles.port", return_value=8421),
+            patch("punt_vox.client_endpoint.RunFiles.token", return_value="tok"),
             patch(
                 "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
@@ -2158,46 +2159,46 @@ class TestEnvVarResolution:
     def test_voxd_host_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(port=8421, token="tok")
-        assert client._transport._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "10.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VOXD_HOST", raising=False)
         client = VoxClient(port=8421, token="tok")
-        assert client._transport._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "127.0.0.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_host_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
         client = VoxClient(host="192.168.1.1", port=8421, token="tok")
-        assert client._transport._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._host == "192.168.1.1"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(token="tok")
-        assert client._transport._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_port() == 9999  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_invalid_falls_through(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("VOXD_PORT", "not_a_number")
-        monkeypatch.setattr("punt_vox.client_transport._user_run_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
         client = VoxClient(token="tok")
         with pytest.raises(VoxdConnectionError, match="port file not found"):
-            client._transport._resolve_port()  # pyright: ignore[reportPrivateUsage]
+            client._transport._endpoint._resolve_port()  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_port_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_PORT", "9999")
         client = VoxClient(port=1234, token="tok")
-        assert client._transport._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_port() == 1234  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421)
-        assert client._transport._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_token() == "remote-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_voxd_token_explicit_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_TOKEN", "remote-secret")
         client = VoxClient(port=8421, token="local-secret")
-        assert client._transport._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
+        assert client._transport._endpoint._resolve_token() == "local-secret"  # pyright: ignore[reportPrivateUsage]
 
     def test_sync_client_inherits_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VOXD_HOST", "10.0.0.1")
@@ -2286,7 +2287,7 @@ def _refused() -> ConnectionRefusedError:
 def test_every_address_refused_is_a_refusal() -> None:
     """localhost resolves to ::1 and 127.0.0.1; both refusing is not running."""
     group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
-    error = VoxdConnectionError.of_connect("ws://localhost:8421/ws", group)
+    error = ConnectFailure("ws://localhost:8421/ws", group).error()
     assert isinstance(error, VoxdRefusedError)
     assert "Connection refused" in str(error)
 
@@ -2294,7 +2295,7 @@ def test_every_address_refused_is_a_refusal() -> None:
 def test_one_address_failing_otherwise_is_not_a_refusal() -> None:
     unreachable = OSError(113, "No route to host")
     group = ExceptionGroup("create_connection failed", [_refused(), unreachable])
-    error = VoxdConnectionError.of_connect("ws://box:8421/ws", group)
+    error = ConnectFailure("ws://box:8421/ws", group).error()
     assert not isinstance(error, VoxdRefusedError)
     assert "No route to host" in str(error)
 
@@ -2323,3 +2324,46 @@ async def test_connect_to_a_closed_local_port_is_a_refusal() -> None:
     client = VoxClient(host="127.0.0.1", port=port, token="tok")
     with pytest.raises(VoxdRefusedError):
         await client.connect()
+
+
+# ---------------------------------------------------------------------------
+# The voxd token never reaches an error message
+# ---------------------------------------------------------------------------
+
+_SECRET = "SEKRIT-token-0451"
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_uri_never_carries_the_token() -> None:
+    """websockets' InvalidURI embeds the whole URI, query string included."""
+    client = VoxClient(host="box#frag", port=8421, token=_SECRET)
+    with pytest.raises(VoxdConnectionError) as caught:
+        await client.connect()
+    assert _SECRET not in str(caught.value)
+    assert "invalid" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_bare_ipv6_host_connects_without_leaking_the_token() -> None:
+    """VOXD_HOST=::1 once built ws://::1:port/ws?token=..., an InvalidURI."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = VoxClient(host="::1", port=port, token=_SECRET)
+    with pytest.raises(VoxdConnectionError) as caught:
+        await client.connect()
+    assert _SECRET not in str(caught.value)
+    assert "isn't a valid URI" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_a_fragment_never_carries_the_token() -> None:
+    server = await _answer_once(
+        b"HTTP/1.1 302 Found\r\nLocation: #x\r\nContent-Length: 0\r\n\r\n"
+    )
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        client = VoxClient(host="127.0.0.1", port=port, token=_SECRET)
+        with pytest.raises(VoxdConnectionError) as caught:
+            await client.connect()
+    assert _SECRET not in str(caught.value)

@@ -1,9 +1,9 @@
-"""The voxd WebSocket transport, and the run files that locate the daemon.
+"""The voxd WebSocket transport: one connection and its framing.
 
-:class:`VoxdTransport` owns one connection to voxd -- resolving the URI from
-explicit values, the ``VOXD_*`` environment, and the run directory's
-``serve.port`` / ``serve.token``; connecting and closing; and the framed
-send/receive primitives the RPC surface in :mod:`punt_vox.client` is built on.
+:class:`VoxdTransport` owns one connection to voxd -- connecting to the URI
+its :class:`~punt_vox.client_endpoint.VoxdEndpoint` resolves, and closing;
+and the framed send/receive primitives the RPC surface in
+:mod:`punt_vox.client` is built on.
 Split out of :mod:`punt_vox.client` so connection lifecycle and wire framing
 live apart from the request vocabulary.
 """
@@ -11,9 +11,7 @@ live apart from the request vocabulary.
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
-import hashlib
 import json
 import logging
 from typing import Any, Self
@@ -21,41 +19,24 @@ from typing import Any, Self
 import websockets
 import websockets.asyncio.client
 
-from punt_vox.client_env import DaemonEnv
+from punt_vox.client_connect_failure import ConnectFailure
+from punt_vox.client_endpoint import VoxdEndpoint
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
 )
-from punt_vox.paths import run_dir as _user_run_dir
+from punt_vox.client_fetch import FetchAssembly
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["VoxdTransport", "read_port_file", "read_token_file"]
+__all__ = ["VoxdTransport"]
 
 
 # ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
 # ``~/.punt-labs/vox/run`` holds ``serve.port`` / ``serve.token``.
 # ---------------------------------------------------------------------------
-
-
-def read_port_file() -> int | None:
-    """Read the daemon port from the port file. Returns None if missing."""
-    port_file = _user_run_dir() / "serve.port"
-    try:
-        return int(port_file.read_text().strip())
-    except (FileNotFoundError, ValueError, OSError):
-        return None
-
-
-def read_token_file() -> str | None:
-    """Read the daemon auth token. Returns None if missing."""
-    token_file = _user_run_dir() / "serve.token"
-    try:
-        return token_file.read_text().strip()
-    except (FileNotFoundError, OSError):
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -71,20 +52,9 @@ class VoxdTransport:
     single-purpose objects rather than one class doing both jobs.
     """
 
-    __slots__ = (
-        "_explicit_port",
-        "_explicit_token",
-        "_host",
-        "_port",
-        "_token",
-        "_ws",
-    )
+    __slots__ = ("_endpoint", "_ws")
 
-    _host: str
-    _explicit_port: int | None
-    _explicit_token: str | None
-    _port: int | None
-    _token: str | None
+    _endpoint: VoxdEndpoint
     _ws: websockets.asyncio.client.ClientConnection | None
 
     def __new__(
@@ -94,48 +64,13 @@ class VoxdTransport:
         token: str | None,
     ) -> Self:
         self = super().__new__(cls)
-        self._host = host if host is not None else DaemonEnv.host()
-        self._explicit_port = port
-        self._explicit_token = token
-        self._port = port
-        self._token = token
+        self._endpoint = VoxdEndpoint(host, port, token)
         self._ws = None
         return self
 
-    def _resolve_port(self) -> int:
-        """Return the port, reading from file if needed."""
-        if self._port is not None:
-            return self._port
-        env = DaemonEnv.port()
-        if env is not None:
-            return env
-        port = read_port_file()
-        if port is None:
-            msg = "voxd port file not found. Is the daemon running? Start it with: voxd"
-            raise VoxdConnectionError(msg)
-        return port
-
-    def _resolve_token(self) -> str | None:
-        """Return the token, reading from file if needed."""
-        if self._token is not None:
-            return self._token
-        env = DaemonEnv.token()
-        if env is not None:
-            return env
-        return read_token_file()
-
-    def _build_uri(self) -> str:
-        """Build the WebSocket URI with auth token."""
-        port = self._resolve_port()
-        token = self._resolve_token()
-        uri = f"ws://{self._host}:{port}/ws"
-        if token:
-            uri += f"?token={token}"
-        return uri
-
     async def connect(self) -> None:
         """Connect to voxd WebSocket. Call once before sending messages."""
-        uri = self._build_uri()
+        uri = self._endpoint.uri()
         try:
             # all_errors: a host with several addresses fails as one
             # ExceptionGroup of per-address errors, so a refusal on every
@@ -150,7 +85,7 @@ class VoxdTransport:
             # answering the handshake with a refusal of its own -- HTTP 403 for
             # a bad token or Origin, or not speaking HTTP at all.
             endpoint = uri.split("?")[0]
-            raise VoxdConnectionError.of_connect(endpoint, exc) from exc
+            raise ConnectFailure(endpoint, exc).error() from exc
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
@@ -173,9 +108,7 @@ class VoxdTransport:
                 # Connection is dead; fall through to reconnect.
                 self._ws = None
 
-        # Restore explicit values; re-read from disk only if None.
-        self._port = self._explicit_port
-        self._token = self._explicit_token
+        # The endpoint re-reads port and token from disk unless given.
         await self.connect()
         # connect() sets self._ws or raises VoxdConnectionError.
         ws = self._ws
@@ -299,19 +232,12 @@ class VoxdTransport:
         owns the connection-tainting on any raise from here.
         """
         begin = self._decode(await self._recv(ws, deadline, "fetch_begin", msg))
-        if begin.get("type") != "fetch_begin":
-            got = begin.get("type")
-            raise VoxdProtocolError(f"expected 'fetch_begin', got {got!r}")
-        declared, expected_chunks, digest = self._begin_fields(begin)
-        buffer, hasher = bytearray(), hashlib.sha256()
-        for seq in range(expected_chunks):
+        assembly = FetchAssembly.begin(begin)
+        for seq in range(assembly.chunks):
             frame = self._decode(await self._recv(ws, deadline, "chunk", msg))
-            self._append_chunk(frame, seq, buffer, hasher)
+            assembly.append(frame, seq)
         end = self._decode(await self._recv(ws, deadline, "fetch_end", msg))
-        if end.get("type") != "fetch_end":
-            raise VoxdProtocolError(f"expected 'fetch_end', got {end.get('type')!r}")
-        self._verify(buffer, declared, hasher, digest)
-        return bytes(buffer)
+        return assembly.finish(end)
 
     async def _recv(
         self,
@@ -327,41 +253,6 @@ class VoxdTransport:
         return await self._recv_frame(
             ws, remaining, f"timeout waiting for '{expected}' in a fetch", msg
         )
-
-    @staticmethod
-    def _begin_fields(begin: dict[str, Any]) -> tuple[int, int, str]:
-        """Return ``(declared_bytes, chunk_count, sha256)`` from a fetch_begin frame."""
-        try:
-            return int(begin["bytes"]), int(begin["chunks"]), str(begin["sha256"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise VoxdProtocolError(f"malformed 'fetch_begin': {exc}") from exc
-
-    @staticmethod
-    def _append_chunk(
-        frame: dict[str, Any], seq: int, buffer: bytearray, hasher: Any
-    ) -> None:
-        """Validate one chunk's order and append its decoded bytes to *buffer*."""
-        if frame.get("type") != "chunk" or frame.get("seq") != seq:
-            raise VoxdProtocolError(
-                f"expected chunk seq {seq}, got "
-                f"{frame.get('type')!r} seq {frame.get('seq')!r}"
-            )
-        try:
-            data = base64.b64decode(str(frame["data"]), validate=True)
-        except (KeyError, ValueError, TypeError) as exc:
-            raise VoxdProtocolError(f"chunk {seq} has invalid base64: {exc}") from exc
-        buffer.extend(data)
-        hasher.update(data)
-
-    @staticmethod
-    def _verify(buffer: bytearray, declared: int, hasher: Any, digest: str) -> None:
-        """Raise unless the reassembly matches the declared byte count and sha256."""
-        if len(buffer) != declared:
-            raise VoxdProtocolError(
-                f"fetch byte-count mismatch: got {len(buffer)}, declared {declared}"
-            )
-        if hasher.hexdigest() != digest:
-            raise VoxdProtocolError("fetch sha256 mismatch: stream corrupted")
 
     async def send_and_drain(
         self,

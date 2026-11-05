@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 
 class VoxError(Exception):
     """Base class for every failure a voxd client raises.
@@ -15,37 +13,11 @@ class VoxError(Exception):
 
 
 class VoxdConnectionError(VoxError):
-    """Raised when the client cannot connect to voxd."""
+    """Raised when the client cannot connect to voxd.
 
-    @classmethod
-    def of_connect(cls, endpoint: str, exc: Exception) -> VoxdConnectionError:
-        """Return the error for a connect to *endpoint* that raised *exc*.
-
-        A refusal -- nothing listens there -- is :class:`VoxdRefusedError`.
-        Every other failure is a plain :class:`VoxdConnectionError`, since
-        something may be there: a socket timeout, reset or unreachable host,
-        or a listener that rejected the WebSocket handshake (an HTTP 403 for
-        a bad token, or a peer that does not speak HTTP).
-
-        A host with several addresses (``localhost``: ``::1`` and
-        ``127.0.0.1``) fails as an ``ExceptionGroup`` of one error per
-        address; it is a refusal only when every address refused.
-        """
-        causes = cls._causes(exc)
-        detail = "; ".join(str(cause) for cause in causes)
-        msg = f"Cannot connect to voxd at {endpoint}: {detail}"
-        if all(isinstance(cause, ConnectionRefusedError) for cause in causes):
-            return VoxdRefusedError(msg)
-        return cls(msg)
-
-    @staticmethod
-    def _causes(exc: Exception) -> tuple[Exception, ...]:
-        """Return an aggregate's per-address errors, else *exc* alone."""
-        if isinstance(exc, ExceptionGroup):
-            # isinstance narrows to ExceptionGroup[Unknown]; an
-            # ExceptionGroup's members are Exceptions by construction.
-            return cast("ExceptionGroup[Exception]", exc).exceptions
-        return (exc,)
+    :class:`~punt_vox.client_connect_failure.ConnectFailure` builds it from
+    what a connect raised, never carrying the URI's token.
+    """
 
 
 class VoxdRefusedError(VoxdConnectionError):

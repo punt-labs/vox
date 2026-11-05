@@ -16,8 +16,8 @@ from __future__ import annotations
 import ipaddress
 from typing import Self, final
 
+from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.client_transport import read_token_file
 from punt_vox.service.process import DEFAULT_PORT
 
 __all__ = ["DaemonNotUpError", "HealthTarget"]
@@ -78,7 +78,7 @@ class HealthTarget:
         Raises ``DaemonNotUpError`` when ``serve.token`` is absent: voxd writes
         it on startup, so the caller treats that as "not up yet" and polls.
         """
-        token = read_token_file()
+        token = RunFiles.token()
         if token is None:
             msg = "voxd has not written serve.token yet"
             raise DaemonNotUpError(msg)

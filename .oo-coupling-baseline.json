@@ -188,6 +188,13 @@
     "max_lcom": 0.995,
     "avg_lcom": 0.995
   },
+  "src/punt_vox/client_transport.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.727,
+    "avg_lcom": 0.727
+  },
   "src/punt_vox/commands/__init__.py": {
     "efferent_coupling": 4.0,
     "public_names": 5.0,
