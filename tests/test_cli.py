@@ -1777,7 +1777,7 @@ class TestInstallCommand:
         the plugin install must still succeed rather than propagate a
         traceback.
         """
-        from punt_vox.service.launchctl import LaunchctlError
+        from punt_vox.service.launchctl_query import LaunchctlError
 
         runner = CliRunner()
         with (

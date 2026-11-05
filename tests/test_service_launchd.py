@@ -12,7 +12,8 @@ from _lifecycle_fakes import FakeClock
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import BackendCommandError
 from punt_vox.service.clock import SystemClock
-from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
+from punt_vox.service.launchctl import LaunchctlAgent
+from punt_vox.service.launchctl_query import LaunchctlError
 from punt_vox.service.launchd import LaunchdBackend
 from punt_vox.service.query_answer import QueryAnswer
 

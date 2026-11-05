@@ -36,9 +36,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# LaunchctlError is what every method here raises, so it is part of this
-# module's interface; it is defined beside the queries that raise it first.
-__all__ = ["LaunchctlAgent", "LaunchctlError"]
+__all__ = ["LaunchctlAgent"]
 
 
 @final

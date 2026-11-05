@@ -809,7 +809,7 @@ def install() -> None:
     typer.echo("[2/3] Registering vox daemon...")
     from punt_vox.service import install as svc_install
     from punt_vox.service.health_verify import ServiceHealthError
-    from punt_vox.service.launchctl import LaunchctlError
+    from punt_vox.service.launchctl_query import LaunchctlError
 
     try:
         msg = svc_install()

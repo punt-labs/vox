@@ -22,7 +22,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from punt_vox.service.clock import SystemClock
-from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
+from punt_vox.service.launchctl import LaunchctlAgent
+from punt_vox.service.launchctl_query import LaunchctlError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

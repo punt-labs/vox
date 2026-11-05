@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import BackendCommandError
-from punt_vox.service.launchctl import LaunchctlAgent, LaunchctlError
+from punt_vox.service.launchctl import LaunchctlAgent
+from punt_vox.service.launchctl_query import LaunchctlError
 from punt_vox.service.voxd_plist import VoxdPlist
 
 if TYPE_CHECKING:

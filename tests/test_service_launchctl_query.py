@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from punt_vox.service import launchctl
 from punt_vox.service.launchctl_query import LaunchctlError, LaunchctlQuery
 
 _LABEL = "com.punt-labs.voxd"
@@ -62,3 +63,8 @@ def test_left_within_failed_print_raises(mock_run: MagicMock) -> None:
 def test_a_launchctl_that_cannot_start_raises(_mock_run: MagicMock) -> None:
     with pytest.raises(LaunchctlError, match="could not run"):
         _query().left_within(0.5)
+
+
+def test_launchctl_error_has_one_home() -> None:
+    """L6: callers import LaunchctlError from launchctl_query; no second name."""
+    assert "LaunchctlError" not in launchctl.__all__
