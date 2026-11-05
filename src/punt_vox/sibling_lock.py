@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import os
 import time
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
-    from typing import IO
 
 __all__ = ["SiblingLock"]
 
@@ -53,18 +53,29 @@ class SiblingLock:
         """Return the sibling lock file path."""
         return self._path
 
+    # Never followed, never truncated, private: a root process taking the
+    # lock in a user's directory must not write through a planted symlink.
+    _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+
     @contextlib.contextmanager
     def held(self) -> Generator[None]:
-        """Hold the exclusive lock for the duration of the ``with`` block."""
+        """Hold the exclusive lock for the duration of the ``with`` block.
+
+        A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
+        untouched, as is whatever it points at.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as lock:
+        lock = os.open(self._path, self._OPEN_FLAGS, 0o600)
+        try:
             self._acquire(lock)
             try:
                 yield
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
+        finally:
+            os.close(lock)
 
-    def _acquire(self, lock: IO[str]) -> None:
+    def _acquire(self, lock: int) -> None:
         """Take the exclusive lock, retrying on contention, then failing loud.
 
         Only ``BlockingIOError`` (EAGAIN/EWOULDBLOCK) is contention worth a

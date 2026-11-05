@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.file_identity import FileIdentity
 from punt_vox.sibling_lock import SiblingLock
@@ -35,6 +35,10 @@ class PortFile:
     """One daemon's claim on ``serve.port`` in its run directory."""
 
     __slots__ = ("_lock", "_mine", "_path")
+
+    _CREATE_FLAGS: ClassVar[int] = (
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    )
 
     _path: Path
     _lock: SiblingLock
@@ -70,8 +74,15 @@ class PortFile:
         The identity comes from the open descriptor after the rename: never
         from ``serve.port``, where a second voxd may already have renamed its
         own file, and never from before the rename, which changes the ctime.
+
+        The temporary file is created afresh, private, and never through a
+        symlink: whatever sits at its path -- a crashed run's leftover, or a
+        planted link -- is unlinked (a link itself, not its target), and the
+        create fails rather than follow one that reappears.
         """
-        with tmp.open("w", encoding="utf-8") as handle:
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, self._CREATE_FLAGS, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(str(port))
             handle.flush()
             tmp.replace(self._path)

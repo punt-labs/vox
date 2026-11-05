@@ -132,19 +132,24 @@ class ServiceInstaller:
 
         Must be run as a normal user, not as root or under ``sudo``.
         """
-        if os.geteuid() == 0:
-            msg = (
-                "vox daemon install must run as your normal user, not root. "
-                "The service installs to your home directory and cannot "
-                "function under root. Re-run without sudo:\n\n"
-                "    vox daemon install\n"
-            )
-            raise SystemExit(msg)
-
+        self._refuse_root("install")
         try:
             return self._install(self.backend_for(self.detect_platform()))
         except _SERVICE_ERRORS as exc:
             raise SystemExit(f"vox daemon install failed: {exc}") from exc
+
+    @staticmethod
+    def _refuse_root(verb: str) -> None:
+        """Raise ``SystemExit`` before *verb* touches anything, when run as root."""
+        if os.geteuid() != 0:
+            return
+        msg = (
+            f"vox daemon {verb} must run as your normal user, not root. "
+            "The service lives in your home directory and cannot "
+            "function under root. Re-run without sudo:\n\n"
+            f"    vox daemon {verb}\n"
+        )
+        raise SystemExit(msg)
 
     def _install(self, backend: InstallableBackend) -> str:
         """Stop any previous voxd, install the unit, and verify it serves."""
@@ -184,8 +189,11 @@ class ServiceInstaller:
 
         Raise ``SystemExit`` if the service files are removed but a voxd
         daemon survives the kill -- a voxd owned by another user cannot be
-        signalled, so reporting success would strand a live daemon.
+        signalled, so reporting success would strand a live daemon. Must be
+        run as a normal user: as root its run-directory writes would follow
+        whatever the user left there.
         """
+        self._refuse_root("uninstall")
         try:
             return self._uninstall(self.backend_for(self.detect_platform()))
         except _SERVICE_ERRORS as exc:

@@ -707,3 +707,16 @@ def test_uninstall_reports_a_serve_port_it_could_not_clear(
         msg = ServiceInstaller().uninstall()
     assert "uninstalled" in msg
     assert note in msg
+
+
+def test_uninstall_refuses_to_run_as_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """uninstall() raises SystemExit as root, before any backend is touched."""
+    monkeypatch.setattr("punt_vox.service.installer.os.geteuid", lambda: 0)
+
+    def no_backend(plat: str) -> object:
+        msg = "uninstall reached the backend as root"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(ServiceInstaller, "backend_for", staticmethod(no_backend))
+    with pytest.raises(SystemExit, match="uninstall must run as your normal user"):
+        ServiceInstaller().uninstall()

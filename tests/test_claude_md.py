@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import fcntl
+import os
 import stat
 from pathlib import Path
-from typing import IO
 
 import pytest
 
@@ -311,15 +311,15 @@ def test_register_locks_the_sibling_not_the_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     host = tmp_path / "CLAUDE.md"
-    locked: list[Path] = []
+    locked: list[int] = []
     real_flock = fcntl.flock
 
-    def spy_flock(fileobj: IO[str], operation: int) -> None:
-        # Record the path flock is applied to (only on the exclusive acquire).
+    def spy_flock(fd: int, operation: int) -> None:
+        # Record the inode flock is applied to (only on the exclusive acquire).
         # The acquire is non-blocking (LOCK_EX | LOCK_NB), so match the EX bit.
         if operation & fcntl.LOCK_EX:
-            locked.append(Path(fileobj.name))
-        real_flock(fileobj, operation)
+            locked.append(os.fstat(fd).st_ino)
+        real_flock(fd, operation)
 
     monkeypatch.setattr("punt_vox.sibling_lock.fcntl.flock", spy_flock)
     assert _writer(tmp_path).register() is True
@@ -327,9 +327,8 @@ def test_register_locks_the_sibling_not_the_target(
     lock = host.parent / ".CLAUDE.md.punt-import.lock"
     # The sibling lock was taken; the target's own inode was never locked (the
     # atomic rename would strand a lock held on it).
-    assert lock in locked
-    assert host not in locked
-    assert lock.exists()
+    assert lock.stat().st_ino in locked
+    assert host.stat().st_ino not in locked
 
 
 def test_prune_takes_the_sibling_lock(
@@ -337,19 +336,19 @@ def test_prune_takes_the_sibling_lock(
 ) -> None:
     host = tmp_path / "CLAUDE.md"
     host.write_text(f"{_REPO}\n", encoding="utf-8")
-    locked: list[Path] = []
+    locked: list[int] = []
     real_flock = fcntl.flock
 
-    def spy_flock(fileobj: IO[str], operation: int) -> None:
+    def spy_flock(fd: int, operation: int) -> None:
         # The acquire is non-blocking (LOCK_EX | LOCK_NB), so match the EX bit.
         if operation & fcntl.LOCK_EX:
-            locked.append(Path(fileobj.name))
-        real_flock(fileobj, operation)
+            locked.append(os.fstat(fd).st_ino)
+        real_flock(fd, operation)
 
     monkeypatch.setattr("punt_vox.sibling_lock.fcntl.flock", spy_flock)
     assert _writer(tmp_path).prune() is True
-    assert host.parent / ".CLAUDE.md.punt-import.lock" in locked
-    assert host not in locked
+    assert (host.parent / ".CLAUDE.md.punt-import.lock").stat().st_ino in locked
+    assert host.stat().st_ino not in locked
 
 
 # ---------------------------------------------------------------------------

@@ -195,3 +195,17 @@ def test_a_file_with_this_inode_but_new_times_is_not_this_daemons(
     os.utime(port_file, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
     a.remove()
     assert port_file.read_text() == "8421"
+
+
+def test_a_symlink_at_the_temp_path_is_never_written_through(tmp_path: Path) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("precious")
+    (tmp_path / f".serve.port.{os.getpid()}").symlink_to(victim)
+    PortFile(tmp_path).write(8421)
+    assert victim.read_text() == "precious"
+    assert (tmp_path / "serve.port").read_text() == "8421"
+
+
+def test_the_published_port_file_is_private(tmp_path: Path) -> None:
+    PortFile(tmp_path).write(8421)
+    assert (tmp_path / "serve.port").stat().st_mode & 0o777 == 0o600
