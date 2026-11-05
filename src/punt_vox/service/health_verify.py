@@ -15,8 +15,11 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.voxd_bind import VoxdBind
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from punt_vox.service.backend import InstallableBackend
     from punt_vox.service.query_answer import QueryAnswer
     from punt_vox.types_health import HealthStatus
@@ -71,6 +74,16 @@ class HealthVerifier:
     def for_backend(cls, backend: InstallableBackend) -> Self:
         """Return the verifier for the daemon *backend* just installed."""
         return cls(backend, DaemonProbe.for_backend(backend))
+
+    @staticmethod
+    def preflight(environ: Mapping[str, str]) -> None:
+        """Refuse, before install writes anything, a unit health cannot poll.
+
+        The unit carries ``VOXD_BIND`` from *environ* verbatim, and health
+        polls only an IP address; a name raises ``PortProbeError`` here rather
+        than after keys, directories, and the unit are written.
+        """
+        VoxdBind.from_environ(environ)
 
     def verify(self) -> HealthStatus:
         """Wait for the unit to be active and voxd to answer; return its health.

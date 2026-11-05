@@ -153,6 +153,7 @@ class ServiceInstaller:
 
     def _install(self, backend: InstallableBackend) -> str:
         """Stop any previous voxd, install the unit, and verify it serves."""
+        HealthVerifier.preflight(os.environ)
         user = getpass.getuser()
         args = self._voxd_exec_args()
         state_root = self._ensure_user_dirs()

@@ -14,13 +14,12 @@ value is pinned to a trusted source and none comes from the calling shell:
 
 from __future__ import annotations
 
-import ipaddress
 from typing import Self, final
 
 from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.service.backend import PortProbeError
 from punt_vox.service.process import DEFAULT_PORT
+from punt_vox.service.voxd_bind import VoxdBind
 
 __all__ = ["DaemonNotUpError", "HealthTarget", "HolderGoneError"]
 
@@ -54,32 +53,11 @@ class HealthTarget:
 
     def __new__(cls, bind: str) -> Self:
         self = super().__new__(cls)
-        self._host = self._resolve_host(bind)
+        # A name is refused here too (PortProbeError): a unit written before
+        # install validated the bind can still carry one.
+        self._host = VoxdBind(bind).poll_host()
         self._port = DEFAULT_PORT
         return self
-
-    @staticmethod
-    def _resolve_host(bind: str) -> str:
-        """Map the unit's ``VOXD_BIND`` to the IP address health polls.
-
-        No bind, or a wildcard (an unspecified address), accepts loopback, so
-        poll ``127.0.0.1``. A concrete IP is the only address voxd listens on:
-        poll it exactly. A name is refused with ``PortProbeError``: it could
-        resolve to an address voxd never bound (``localhost`` to ``::1`` while
-        voxd holds ``127.0.0.1``), where another local user would receive the
-        token, and resolving it is bounded by no deadline.
-        """
-        bind = bind.strip() or "127.0.0.1"
-        try:
-            address = ipaddress.ip_address(bind)
-        except ValueError:
-            msg = (
-                f"the installed VOXD_BIND {bind!r} is not an IP address; vox "
-                "polls only the exact address voxd binds. Set VOXD_BIND to an "
-                "IP (e.g. 127.0.0.1) and run `vox daemon install`"
-            )
-            raise PortProbeError(msg) from None
-        return "127.0.0.1" if address.is_unspecified else bind
 
     @property
     def host(self) -> str:

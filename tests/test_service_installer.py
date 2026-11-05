@@ -403,6 +403,48 @@ def test_install_broken_port_probe_fails_loudly(
         ServiceInstaller().install()
 
 
+@pytest.mark.parametrize("plat", ["macos", "linux"])
+def test_install_refuses_a_hostname_bind_before_writing_anything(
+    plat: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A name in VOXD_BIND would be baked into the unit, which status and
+    health then refuse to poll; refuse it before keys, dirs, or the unit."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, plat)
+    calls = _fake_backend(
+        monkeypatch,
+        LaunchdBackend if plat == "macos" else SystemdBackend,
+        installed=True,
+    )
+    monkeypatch.setenv("VOXD_BIND", "localhost")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+
+    with pytest.raises(
+        SystemExit,
+        match=r"VOXD_BIND 'localhost' is not an IP address.*e\.g\. 127\.0\.0\.1",
+    ):
+        ServiceInstaller().install()
+
+    assert calls == []
+    assert not (fake_home / ".punt-labs").exists()
+
+
+def test_install_accepts_an_ip_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    calls = _fake_backend(monkeypatch, SystemdBackend)
+    monkeypatch.setenv("VOXD_BIND", "10.0.0.5")
+
+    ServiceInstaller().install()
+
+    assert calls == ["port_free", "install"]
+
+
 # ---------------------------------------------------------------------------
 # install() — refuses to run as root
 # ---------------------------------------------------------------------------
