@@ -5,8 +5,8 @@ non-default daemon (a test harness, a remote host). :class:`DaemonEnv` is the on
 place that env-var policy lives, so :class:`~punt_vox.client.VoxClient` and its
 sync facade read an override the same way and an invalid port is logged and
 ignored rather than crashing a connect. Run-file resolution (``serve.port`` /
-``serve.token``) stays in :mod:`punt_vox.client`, next to the connection logic
-that falls back to it.
+``serve.token``) lives in :mod:`punt_vox.client_transport`, next to the
+connection logic that falls back to it.
 """
 
 from __future__ import annotations

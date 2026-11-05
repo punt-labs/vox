@@ -15,8 +15,6 @@ import pytest
 from punt_vox.client import (
     CacheStatus,
     VoxClient,
-    read_port_file,
-    read_token_file,
 )
 from punt_vox.client_errors import (
     VoxdConnectionError,
@@ -39,35 +37,6 @@ from punt_vox.types_synthesis import SynthesisSpec
 def test_run_dir_is_user_state() -> None:
     """The run dir is ``~/.punt-labs/vox/run`` — same on macOS and Linux."""
     assert run_dir() == Path.home() / ".punt-labs" / "vox" / "run"
-
-
-# ---------------------------------------------------------------------------
-# Port / token file readers
-# ---------------------------------------------------------------------------
-
-
-def test_read_port_file(tmp_path: Path) -> None:
-    port_file = tmp_path / "serve.port"
-    port_file.write_text("9999")
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_port_file() == 9999
-
-
-def test_read_port_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_port_file() is None
-
-
-def test_read_token_file(tmp_path: Path) -> None:
-    token_file = tmp_path / "serve.token"
-    token_file.write_text("secret123")
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_token_file() == "secret123"
-
-
-def test_read_token_file_missing(tmp_path: Path) -> None:
-    with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
-        assert read_token_file() is None
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +84,7 @@ class TestVoxClientConnect:
     async def test_connect_success(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -128,7 +97,7 @@ class TestVoxClientConnect:
     @pytest.mark.asyncio
     async def test_connect_refused_raises(self) -> None:
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             side_effect=OSError("Connection refused"),
         ):
@@ -145,9 +114,9 @@ class TestVoxClientConnect:
 
         mock_ws = _make_mock_ws()
         with (
-            patch("punt_vox.client._user_run_dir", return_value=tmp_path),
+            patch("punt_vox.client_transport._user_run_dir", return_value=tmp_path),
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ) as mock_connect,
@@ -162,7 +131,7 @@ class TestVoxClientConnect:
 
     @pytest.mark.asyncio
     async def test_connect_no_port_file_raises(self, tmp_path: Path) -> None:
-        with patch("punt_vox.client._user_run_dir", return_value=tmp_path):
+        with patch("punt_vox.client_transport._user_run_dir", return_value=tmp_path):
             client = VoxClient()
             with pytest.raises(VoxdConnectionError, match="port file not found"):
                 await client.connect()
@@ -175,7 +144,7 @@ class TestVoxClientContextManager:
     async def test_enter_connects_and_returns_self(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -190,7 +159,7 @@ class TestVoxClientContextManager:
     async def test_exit_closes_even_when_body_raises(self) -> None:
         mock_ws = _make_mock_ws()
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -210,7 +179,7 @@ class TestVoxClientBuildUri:
         assert uri == "ws://127.0.0.1:8421/ws?token=abc"
 
     def test_uri_without_token(self) -> None:
-        with patch("punt_vox.client.read_token_file", return_value=None):
+        with patch("punt_vox.client_transport.read_token_file", return_value=None):
             client = VoxClient(port=8421)
             uri = client._transport._build_uri()  # pyright: ignore[reportPrivateUsage]
             assert uri == "ws://127.0.0.1:8421/ws"
@@ -749,7 +718,9 @@ class TestVoxClientRecord:
                 },
             ]
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.send_and_drain", fake_drain
+        )
         client = VoxClient(port=8421, token="tok")
 
         result = await client.record("a" * 6000)
@@ -784,7 +755,9 @@ class TestVoxClientRecord:
                 }
             ]
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.send_and_drain", fake_drain
+        )
         client = VoxClient(port=8421, token="tok")
 
         # Uncapped this text would scale to ~50000s; the cap holds it at 600s.
@@ -879,7 +852,9 @@ class TestVoxClientPlayFetch:
             captured["timeout"] = timeout
             return b""
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.fetch_stream", fake_stream)
+        monkeypatch.setattr(
+            "punt_vox.client_transport.VoxdTransport.fetch_stream", fake_stream
+        )
         client = VoxClient(port=8421, token="tok")
 
         await client.fetch("x.mp3")
@@ -1007,7 +982,7 @@ class TestVoxClientPlayFetch:
             await client.fetch("x.mp3")
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=second_ws,
         ):
@@ -1594,10 +1569,10 @@ class TestVoxClientReconnect:
         )
 
         with (
-            patch("punt_vox.client.read_port_file", return_value=8421),
-            patch("punt_vox.client.read_token_file", return_value="tok"),
+            patch("punt_vox.client_transport.read_port_file", return_value=8421),
+            patch("punt_vox.client_transport.read_token_file", return_value="tok"),
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws_new,
             ),
@@ -1630,7 +1605,7 @@ class TestVoxClientSync:
         mock_ws.recv = AsyncMock(return_value=json.dumps(health_resp))
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1648,7 +1623,7 @@ class TestVoxClientSync:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(side_effect=never)
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1668,7 +1643,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1693,7 +1668,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1722,7 +1697,7 @@ class TestVoxClientSync:
 
         with (
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ),
@@ -1745,7 +1720,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1767,7 +1742,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1786,7 +1761,7 @@ class TestVoxClientSync:
         )
 
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -1869,7 +1844,7 @@ class TestVoxClientSyncFrameDispatch:
         sync = cls._sync()
         mock_ws = cls._mock_ws_yielding(*response_frames)
         with patch(
-            "punt_vox.client.websockets.asyncio.client.connect",
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
             new_callable=AsyncMock,
             return_value=mock_ws,
         ):
@@ -2021,7 +1996,7 @@ class TestVoxClientSyncFrameDispatch:
         )
         with (
             patch(
-                "punt_vox.client.websockets.asyncio.client.connect",
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
                 new_callable=AsyncMock,
                 return_value=mock_ws,
             ),
@@ -2204,7 +2179,7 @@ class TestEnvVarResolution:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("VOXD_PORT", "not_a_number")
-        monkeypatch.setattr("punt_vox.client._user_run_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.client_transport._user_run_dir", lambda: tmp_path)
         client = VoxClient(token="tok")
         with pytest.raises(VoxdConnectionError, match="port file not found"):
             client._transport._resolve_port()  # pyright: ignore[reportPrivateUsage]
@@ -2239,7 +2214,7 @@ class TestEnvVarResolution:
 async def test_connect_refused_is_a_refusal() -> None:
     """Nothing listens at the endpoint: the one failure that means "not running"."""
     with patch(
-        "punt_vox.client.websockets.asyncio.client.connect",
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
         new_callable=AsyncMock,
         side_effect=ConnectionRefusedError(111, "Connection refused"),
     ):
@@ -2252,7 +2227,7 @@ async def test_connect_refused_is_a_refusal() -> None:
 async def test_connect_timeout_is_not_a_refusal() -> None:
     """A handshake that never completes means something may be there."""
     with patch(
-        "punt_vox.client.websockets.asyncio.client.connect",
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
         new_callable=AsyncMock,
         side_effect=TimeoutError("timed out during opening handshake"),
     ):
@@ -2329,7 +2304,7 @@ async def test_connect_refused_on_every_address_is_a_refusal() -> None:
     """The per-address errors reach the classifier, never a bare aggregate."""
     group = ExceptionGroup("create_connection failed", [_refused(), _refused()])
     with patch(
-        "punt_vox.client.websockets.asyncio.client.connect",
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
         new_callable=AsyncMock,
         side_effect=group,
     ) as connect:

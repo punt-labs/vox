@@ -16,8 +16,8 @@ from __future__ import annotations
 import ipaddress
 from typing import Self, final
 
-from punt_vox.client import read_token_file
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.client_transport import read_token_file
 from punt_vox.service.process import DEFAULT_PORT
 
 __all__ = ["DaemonNotUpError", "HealthTarget"]

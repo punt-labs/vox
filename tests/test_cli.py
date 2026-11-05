@@ -2366,7 +2366,7 @@ class TestDaemonStatusCommand:
     @staticmethod
     def _status(world: FakeWorld, *args: str) -> tuple[Result, dict[str, object]]:
         with (
-            patch("punt_vox.client.read_port_file", return_value=None),
+            patch("punt_vox.client_transport.read_port_file", return_value=None),
             patch(
                 f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
                 return_value=lifecycle(world),
