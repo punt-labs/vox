@@ -12,7 +12,7 @@ import ipaddress
 from typing import Self, final
 
 from punt_vox.client_env import DaemonEnv
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.client_errors import VoxdNotPublishedError
 from punt_vox.paths import run_dir as _user_run_dir
 
 __all__ = ["RunFiles", "VoxdEndpoint"]
@@ -67,7 +67,8 @@ class VoxdEndpoint:
     def uri(self) -> str:
         """Return the WebSocket URI, carrying the token in its query string.
 
-        Raises ``VoxdConnectionError`` when no port is given, set, or on disk.
+        Raises ``VoxdNotPublishedError`` -- a refusal: nothing listens -- when no
+        port is given, set, or published in ``serve.port``.
         """
         uri = f"ws://{self._authority_host()}:{self._resolve_port()}/ws"
         token = self._resolve_token()
@@ -81,8 +82,11 @@ class VoxdEndpoint:
             return self._port
         port = DaemonEnv.port() or RunFiles.port()
         if port is None:
-            msg = "voxd port file not found. Is the daemon running? Start it with: voxd"
-            raise VoxdConnectionError(msg)
+            msg = (
+                "voxd is not running: no serve.port is published. "
+                "Start it with: vox daemon install"
+            )
+            raise VoxdNotPublishedError(msg)
         return port
 
     def _resolve_token(self) -> str | None:

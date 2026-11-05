@@ -107,13 +107,9 @@ class StopVerb:
 
     def _run(self, verb: LifecycleVerb) -> LifecycleReport:
         obs = self._system.observe()
-        if not obs.installed:
-            detail = self._untouched(obs)
-            return self._report(verb, LifecycleOutcome.NOT_INSTALLED, detail)
-        if obs.quiet:
-            return self._report(
-                verb, LifecycleOutcome.ALREADY_STOPPED, "voxd.service is not running"
-            )
+        unneeded = self._unneeded(verb, obs)
+        if unneeded is not None:
+            return unneeded
         previous = obs.mainpid or min((p.pid for p in obs.procs), default=None)
         self._capture(obs)
         # An inactive manager has nothing to stop: only an unmanaged voxd or a
@@ -121,15 +117,33 @@ class StopVerb:
         refused = self._request(verb) if obs.active else None
         if refused is not None:
             return refused.naming(previous_pid=previous)
+        return self._settle(verb).naming(previous_pid=previous)
+
+    def _unneeded(
+        self, verb: LifecycleVerb, obs: Observation
+    ) -> LifecycleReport | None:
+        """Return the report when there is nothing to stop; ``None`` otherwise.
+
+        ``None`` is the documented answer for "a stop is needed".
+        """
+        if not obs.installed:
+            detail = self._untouched(obs)
+            return self._report(verb, LifecycleOutcome.NOT_INSTALLED, detail)
+        if obs.quiet:
+            return self._report(
+                verb, LifecycleOutcome.ALREADY_STOPPED, "voxd.service is not running"
+            )
+        return None
+
+    def _settle(self, verb: LifecycleVerb) -> LifecycleReport:
+        """Wait for every captured process to exit; stopped, or timed out."""
         # The kill budget runs from here: a slow request (a sudo prompt) must
         # not leave a lingering voxd SIGKILLed with no SIGTERM grace.
         self._deadline_at = self._system.poll.now() + self._deadline_s
         if self._system.poll.until(self._settled, self._deadline_s):
-            done = self._report(verb, LifecycleOutcome.STOPPED, self._stopped_detail())
-            return done.naming(previous_pid=previous)
+            return self._report(verb, LifecycleOutcome.STOPPED, self._stopped_detail())
         detail = f"{self._still_up} after {self._deadline_s:.0f}s{self._done()}"
-        timeout = self._report(verb, LifecycleOutcome.TIMEOUT, detail)
-        return timeout.naming(previous_pid=previous)
+        return self._report(verb, LifecycleOutcome.TIMEOUT, detail)
 
     def _capture(self, obs: Observation) -> None:
         """Pin the port holders and the manager's main process before acting."""

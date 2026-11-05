@@ -9,6 +9,7 @@ import pytest
 from websockets.uri import parse_uri
 
 from punt_vox.client_endpoint import RunFiles, VoxdEndpoint
+from punt_vox.client_errors import VoxdNotPublishedError, VoxdRefusedError
 from punt_vox.service.health import HealthTarget
 
 # ---------------------------------------------------------------------------
@@ -64,3 +65,14 @@ def test_an_ipv6_bind_gives_a_health_uri_that_parses() -> None:
     uri = VoxdEndpoint(target.host, target.port, "tok").uri()
     assert uri.startswith("ws://[::1]:8421/")
     assert parse_uri(uri).host == "::1"
+
+
+def test_no_published_port_is_a_refusal_naming_the_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No serve.port, no VOXD_PORT: nothing published a port, so nothing listens."""
+    monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
+    monkeypatch.delenv("VOXD_PORT", raising=False)
+    with pytest.raises(VoxdNotPublishedError, match="vox daemon install") as caught:
+        VoxdEndpoint(None, None, "tok").uri()
+    assert isinstance(caught.value, VoxdRefusedError)

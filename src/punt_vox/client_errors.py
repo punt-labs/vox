@@ -27,6 +27,14 @@ class VoxdRefusedError(VoxdConnectionError):
     """
 
 
+class VoxdNotPublishedError(VoxdRefusedError):
+    """Raised when no voxd has published its port: ``serve.port`` is absent.
+
+    A cleanly stopped voxd removes the file, so nothing listens -- a refusal
+    in all but name, and reported as "not running".
+    """
+
+
 class VoxdHandshakeRejectedError(VoxdConnectionError):
     """Raised when something on the endpoint answered the WebSocket handshake
     with a refusal of its own: an HTTP 403 for a bad token or Origin, or a

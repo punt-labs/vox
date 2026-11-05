@@ -879,3 +879,16 @@ def test_a_refused_connection_is_not_running() -> None:
     check = DoctorCheck(client=mock_client)
     assert "not running" in check.check_daemon_health()[0].message
     assert "not running" in check.check_provider_readiness()[0].message
+
+
+def test_a_stopped_daemon_with_no_published_port_is_not_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cleanly stopped voxd removes serve.port: nothing listens."""
+    monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
+    monkeypatch.delenv("VOXD_PORT", raising=False)
+    monkeypatch.delenv("VOXD_HOST", raising=False)
+    check = DoctorCheck(client=VoxClientSync())
+    health = check.check_daemon_health()[0].message
+    assert health == "Daemon: not running — start with 'vox daemon install'"
+    assert "not running" in check.check_provider_readiness()[0].message
