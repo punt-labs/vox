@@ -137,7 +137,7 @@ def test_wait_returns_immediately_when_already_unregistered(
 ) -> None:
     """A clear domain returns True on the first poll without sleeping."""
     mock_run.return_value = _completed(113)  # not registered
-    with patch("punt_vox.service.launchctl.time.sleep") as mock_sleep:
+    with patch("punt_vox.service.clock.time.sleep") as mock_sleep:
         assert agent.wait_until_unregistered() is True
     mock_sleep.assert_not_called()
 
@@ -359,3 +359,70 @@ def test_bootout_of_unloaded_job_does_not_claim_a_bootout(
     with caplog.at_level("DEBUG", logger="punt_vox.service.launchctl"):
         agent.bootout()
     assert not any("Booted out" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# a query inside a bounded wait never outlives the wait
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_wait_bounds_each_print_by_what_remains_of_the_wait(
+    mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
+) -> None:
+    """Each print gets at most the time left in the 20 ms wait, not 10 s."""
+    mock_run.return_value = _completed(0)  # always registered
+    assert agent.wait_until_unregistered() is False
+    timeouts = [c.kwargs["timeout"] for c in mock_run.call_args_list]
+    assert timeouts
+    assert all(0 < t <= LaunchctlAgent._UNREGISTER_TIMEOUT_S for t in timeouts)
+
+
+@patch(
+    "punt_vox.service.launchctl.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=0.02),
+)
+def test_wait_reads_a_print_cut_short_by_the_wait_as_still_registered(
+    _mock_run: MagicMock, agent: LaunchctlAgent, fast_bound: None
+) -> None:
+    """A print that does not answer inside the wait confirms nothing."""
+    assert agent.wait_until_unregistered() is False
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_running_within_bounds_both_queries_by_the_budget(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    """list and print together stay inside the caller's 0.3 s."""
+    mock_run.side_effect = [_completed(113), _completed(0, stdout=_PRINT)]
+    assert agent.running_within(0.3) is True
+    timeouts = [c.kwargs["timeout"] for c in mock_run.call_args_list]
+    assert [_verb(c) for c in mock_run.call_args_list] == ["list", "print"]
+    assert all(0 < t <= 0.3 for t in timeouts)
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_running_within_false_when_loaded_nowhere(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    mock_run.return_value = _completed(113)
+    assert agent.running_within(1.0) is False
+
+
+@patch(
+    "punt_vox.service.launchctl.subprocess.run",
+    side_effect=subprocess.TimeoutExpired(cmd="launchctl", timeout=0.3),
+)
+def test_running_within_a_query_cut_short_confirms_nothing(
+    _mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    assert agent.running_within(0.3) is False
+
+
+@patch("punt_vox.service.launchctl.subprocess.run")
+def test_running_within_a_failed_query_still_raises(
+    mock_run: MagicMock, agent: LaunchctlAgent
+) -> None:
+    mock_run.return_value = _completed(1, "launchctl: bootstrap port error")
+    with pytest.raises(LaunchctlError, match="exit 1"):
+        agent.running_within(1.0)

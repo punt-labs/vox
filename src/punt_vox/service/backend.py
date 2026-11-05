@@ -72,6 +72,14 @@ class InstallableBackend(ServiceBackend, Protocol):
         """Return the unit file or plist path this backend installs."""
         ...
 
+    def is_active_within(self, within_s: float) -> bool:
+        """Return True when the manager confirms the job active in *within_s*.
+
+        The query takes at most *within_s*, for a bounded wait; one that runs
+        out of time confirms nothing and returns False. A failed query raises.
+        """
+        ...
+
     def install(self, user: str) -> None:
         """Write the unit for *user* and bring the job up."""
         ...

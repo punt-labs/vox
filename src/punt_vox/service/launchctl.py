@@ -24,8 +24,9 @@ import logging
 import os
 import re
 import subprocess
-import time
 from typing import ClassVar, Self, final
+
+from punt_vox.service.clock import Poll, SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,14 @@ class LaunchctlAgent:
         line that is not a number, raises ``LaunchctlError`` rather than
         reading as "no process".
         """
-        result = self._print()
+        return self._pid_in(self._print())
+
+    def _pid_in(self, result: subprocess.CompletedProcess[str]) -> int | None:
+        """Return the pid a ``launchctl print`` *result* names.
+
+        ``None`` is the documented answer when the job is absent or has no
+        running process; a malformed ``pid = ...`` line raises.
+        """
         if not self._present(result):
             return None
         found = self._PID_LINE.search(result.stdout)
@@ -119,6 +127,28 @@ class LaunchctlAgent:
     def _print(self) -> subprocess.CompletedProcess[str]:
         """Run ``launchctl print`` on this job's service target."""
         return self._run("print", self._service_target())
+
+    def running_within(self, within_s: float) -> bool:
+        """Return True when launchctl confirms, inside *within_s*, the job runs.
+
+        Running means loaded, or registered with a process -- what
+        ``LaunchdBackend.is_active`` reads -- and the two queries together take
+        at most *within_s*, so a bounded wait that asks this cannot overrun.
+        A query the budget cuts short confirms nothing (False); a query that
+        fails outright still raises ``LaunchctlError``.
+        """
+        poll = Poll(SystemClock())
+        deadline = poll.now() + within_s
+        try:
+            if self._present(self._spawn(("list", self._label), within_s)):
+                return True
+            remaining = deadline - poll.now()
+            if remaining <= 0:
+                return False
+            target = ("print", self._service_target())
+            return self._pid_in(self._spawn(target, remaining)) is not None
+        except subprocess.TimeoutExpired:
+            return False
 
     def is_loaded(self) -> bool:
         """Return True if launchd currently has this job loaded.
@@ -145,6 +175,22 @@ class LaunchctlAgent:
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run one ``launchctl`` command, bounded; raise if it cannot run."""
+        try:
+            return self._spawn(args, self._COMMAND_TIMEOUT_S)
+        except subprocess.TimeoutExpired as exc:
+            msg = f"launchctl {' '.join(args)} could not run: {exc}"
+            raise LaunchctlError(msg) from exc
+
+    @staticmethod
+    def _spawn(
+        args: tuple[str, ...], within_s: float
+    ) -> subprocess.CompletedProcess[str]:
+        """Run ``launchctl *args*`` for at most *within_s* seconds.
+
+        A launchctl that cannot start raises ``LaunchctlError``; one that has
+        not finished in time raises ``subprocess.TimeoutExpired`` so the caller
+        decides whether running out of time is a failure or "not yet".
+        """
         argv = ["launchctl", *args]
         try:
             return subprocess.run(  # noqa: S603
@@ -152,26 +198,36 @@ class LaunchctlAgent:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=self._COMMAND_TIMEOUT_S,
+                timeout=within_s,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except OSError as exc:
             msg = f"{' '.join(argv)} could not run: {exc}"
             raise LaunchctlError(msg) from exc
 
     def wait_until_unregistered(self) -> bool:
         """Block until the job leaves the GUI domain, bounded. Return success.
 
-        Returns True once ``is_registered()`` reports absent, or False if the
-        job is still registered when the bound elapses. The bound is real work,
-        not a blind sleep: it polls the actual registration state and returns
-        the instant the job clears.
+        Returns True once ``launchctl print`` reports the job absent, or False
+        if it is still registered when the bound elapses. The bound is real
+        work, not a blind sleep: it polls the actual registration state and
+        returns the instant the job clears, and each ``print`` is given only
+        what is left of the bound, so a slow launchctl cannot carry the wait
+        past it.
         """
-        deadline = time.monotonic() + self._UNREGISTER_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if not self.is_registered():
-                return True
-            time.sleep(self._UNREGISTER_POLL_S)
-        return not self.is_registered()
+        poll = Poll(SystemClock(), self._UNREGISTER_POLL_S)
+        return poll.until_within(self._left_within, self._UNREGISTER_TIMEOUT_S)
+
+    def _left_within(self, within_s: float) -> bool:
+        """Return True when ``launchctl print`` reports the job absent in time.
+
+        A print the budget cuts short confirms nothing, so the wait reads it as
+        still registered; a print that fails outright still raises.
+        """
+        try:
+            result = self._spawn(("print", self._service_target()), within_s)
+        except subprocess.TimeoutExpired:
+            return False
+        return not self._present(result)
 
     # -- lifecycle -----------------------------------------------------------
 

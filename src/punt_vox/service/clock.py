@@ -39,7 +39,8 @@ class Poll:
 
     The check runs once more at the deadline, so a condition that becomes true
     during the last sleep is not reported as a timeout. The poll returns the
-    moment the condition holds; it never sleeps out the rest of the window.
+    moment the condition holds; it never sleeps out the rest of the window, and
+    its last sleep is cut to what remains, so the wait never runs past its bound.
     """
 
     __slots__ = ("_clock", "_interval")
@@ -74,5 +75,26 @@ class Poll:
             value = fetch()
             if value is not None:
                 return value
-            self._clock.sleep(self._interval)
+            self._nap(deadline)
         return fetch()
+
+    def until_within(
+        self, condition: Callable[[float], bool], deadline_s: float
+    ) -> bool:
+        """Return True once *condition* holds, handing it the seconds that remain.
+
+        For a check that itself blocks (a ``systemctl`` or ``launchctl`` query):
+        each call gets the time left before the deadline as its own bound, so
+        no check can carry the wait past it. A check is never run with no time
+        left, so there is no extra check at the deadline.
+        """
+        deadline = self._clock.monotonic() + deadline_s
+        while (remaining := deadline - self._clock.monotonic()) > 0:
+            if condition(remaining):
+                return True
+            self._nap(deadline)
+        return False
+
+    def _nap(self, deadline: float) -> None:
+        """Sleep one interval, cut short so the sleep never passes *deadline*."""
+        self._clock.sleep(max(0.0, min(self._interval, deadline - self.now())))

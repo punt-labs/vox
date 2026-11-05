@@ -46,3 +46,31 @@ def test_system_clock_is_monotonic() -> None:
     before = clock.monotonic()
     clock.sleep(0)
     assert clock.monotonic() >= before
+
+
+def test_until_never_sleeps_past_the_deadline() -> None:
+    """The last sleep is cut to what remains, so a 2.5 s wait ends at 2.5 s."""
+    clock = FakeClock()
+    assert Poll(clock, 1.0).until(lambda: False, 2.5) is False
+    assert clock.monotonic() == 2.5
+
+
+def test_until_within_hands_each_check_the_time_that_remains() -> None:
+    """A check is given at most the budget left, so it cannot overrun the wait."""
+    clock = FakeClock()
+    seen: list[tuple[float, float]] = []
+
+    def check(within_s: float) -> bool:
+        seen.append((clock.monotonic(), within_s))
+        return False
+
+    assert Poll(clock, 1.0).until_within(check, 2.5) is False
+    assert seen
+    assert all(budget > 0 and at + budget <= 2.5 for at, budget in seen)
+    assert clock.monotonic() <= 2.5
+
+
+def test_until_within_returns_the_moment_the_check_holds() -> None:
+    clock = FakeClock()
+    assert Poll(clock, 0.5).until_within(lambda _: clock.monotonic() >= 1.0, 5.0)
+    assert clock.monotonic() == 1.0

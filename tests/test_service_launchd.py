@@ -377,3 +377,24 @@ def test_launchd_install_unwritable_plist_is_backend_command_error(
     with pytest.raises(BackendCommandError, match=r"p\.plist"):
         be.install("someone")
     agent.start.assert_not_called()
+
+
+def test_launchd_is_active_within_hands_the_budget_to_launchctl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bounded wait's remaining time reaches the launchctl queries."""
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.running_within.return_value = True
+    assert be.is_active_within(0.7) is True
+    agent.running_within.assert_called_once_with(0.7)
+
+
+def test_launchd_is_active_within_failure_is_backend_command_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    be, agent = _backend_with_mock_agent(monkeypatch, tmp_path / "p.plist")
+    agent.running_within.side_effect = LaunchctlError("query failed (exit 1)")
+    with pytest.raises(BackendCommandError, match="query failed"):
+        be.is_active_within(0.7)

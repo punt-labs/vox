@@ -64,6 +64,14 @@ class LaunchdBackend:
             self.main_pid() is not None
         )
 
+    def is_active_within(self, within_s: float) -> bool:
+        """Return True when launchd confirms the job is active inside *within_s*.
+
+        For a bounded wait: the launchctl queries get no more than *within_s*
+        between them, and a query that runs out of time confirms nothing.
+        """
+        return self._query("list", lambda: self._agent.running_within(within_s))
+
     def main_pid(self) -> int | None:
         """Return the job's pid; ``None`` when launchd reports no process."""
         return self._query("print", self._agent.pid)

@@ -27,7 +27,7 @@ _SERVICE_PATH = "/Library/LaunchAgents/com.punt-labs.voxd.plist"
 
 def _backend(*, active: bool = True, bind: str = "") -> MagicMock:
     backend = MagicMock()
-    backend.is_active.return_value = active
+    backend.is_active_within.return_value = active
     backend.installed_bind.return_value = bind
     backend.service_path = _SERVICE_PATH
     return backend
@@ -99,3 +99,23 @@ def test_for_backend_targets_the_installed_bind(
 def test_service_health_error_is_runtime_error() -> None:
     """``ServiceHealthError`` stays a ``RuntimeError`` subtype for the tuple catch."""
     assert issubclass(ServiceHealthError, RuntimeError)
+
+
+def test_verify_never_lets_an_active_query_outlive_the_wait() -> None:
+    """Each is-active query is bounded by what is left of the 5 s wait."""
+    clock = FakeClock()
+    probe = _probe(HealthStatus(status="ok"))
+    probe.poll = Poll(clock)
+    seen: list[tuple[float, float]] = []
+
+    def not_yet(within_s: float) -> bool:
+        seen.append((clock.monotonic(), within_s))
+        return False
+
+    backend = _backend()
+    backend.is_active_within.side_effect = not_yet
+    with pytest.raises(ServiceHealthError, match="not active"):
+        HealthVerifier(backend, probe).verify()
+    assert seen
+    assert all(budget > 0 and at + budget <= 5.0 for at, budget in seen)
+    assert clock.monotonic() <= 5.0

@@ -80,7 +80,10 @@ class HealthVerifier:
         the caller can surface a non-zero exit (or degrade gracefully).
         """
         service = self._backend.service_path
-        if not self._probe.poll.until(self._backend.is_active, _HEALTH_DEADLINE_S):
+        # Each is-active query gets only what is left of the wait, so a slow
+        # systemctl/launchctl cannot carry install past its bound.
+        poll = self._probe.poll
+        if not poll.until_within(self._backend.is_active_within, _HEALTH_DEADLINE_S):
             msg = (
                 f"voxd is not active {_HEALTH_DEADLINE_S:.0f}s after install. "
                 f"Service: {service}. Check the daemon logs in {_paths_log_dir()}."

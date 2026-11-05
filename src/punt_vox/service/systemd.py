@@ -26,6 +26,8 @@ _SYSTEMD_UNIT = _SYSTEMD_DIR / "voxd.service"
 # command: a query; ``sudo -n`` (which ``systemctl stop`` blocks until the
 # unit's processes exit); and an interactive sudo waiting on a password.
 _QUERY_TIMEOUT_S = 10.0
+# The exit code a query that ran out of time reports, as timeout(1) does.
+_TIMED_OUT = 124
 _SUDO_N_TIMEOUT_S = 60.0
 _SUDO_PROMPT_TIMEOUT_S = 120.0
 
@@ -190,7 +192,25 @@ class SystemdBackend:
         printed state decides; a state systemd does not define (a bus error,
         no output) raises rather than reading as "inactive".
         """
-        state = self._systemctl("is-active", "voxd", check=False)
+        return self._active_state(_QUERY_TIMEOUT_S)
+
+    def is_active_within(self, within_s: float) -> bool:
+        """Return True when systemd confirms voxd is live inside *within_s*.
+
+        For a bounded wait: the query gets at most *within_s*, and one that
+        runs out of time confirms nothing (False) instead of failing the wait.
+        Any other query failure still raises.
+        """
+        try:
+            return self._active_state(within_s)
+        except BackendCommandError as exc:
+            if exc.code == _TIMED_OUT:
+                return False
+            raise
+
+    def _active_state(self, within_s: float) -> bool:
+        """Read ``is-active`` within *within_s*; an unknown state raises."""
+        state = self._systemctl("is-active", "voxd", check=False, within_s=within_s)
         if state not in self._KNOWN_STATES:
             argv = ["systemctl", "is-active", "voxd"]
             raise BackendCommandError.of(argv, 1, f"unexpected state {state!r}")
@@ -277,8 +297,13 @@ class SystemdBackend:
             raise BackendCommandError.of(argv, 127, detail) from exc
 
     @staticmethod
-    def _systemctl(*args: str, check: bool) -> str:
-        """Run an unprivileged ``systemctl`` query, bounded; return its stdout."""
+    def _systemctl(*args: str, check: bool, within_s: float = _QUERY_TIMEOUT_S) -> str:
+        """Run an unprivileged ``systemctl`` query, bounded; return its stdout.
+
+        A query still running after *within_s* raises ``BackendCommandError``
+        with code ``_TIMED_OUT``, so a bounded wait can tell "out of time" from
+        a failed query.
+        """
         argv = ["systemctl", *args]
         try:
             result = subprocess.run(
@@ -286,9 +311,12 @@ class SystemdBackend:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=_QUERY_TIMEOUT_S,
+                timeout=within_s,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except subprocess.TimeoutExpired as exc:
+            detail = f"could not run: {exc}"
+            raise BackendCommandError.of(argv, _TIMED_OUT, detail) from exc
+        except OSError as exc:
             detail = f"could not run: {exc}"
             raise BackendCommandError.of(argv, 127, detail) from exc
         if check and result.returncode != 0:
