@@ -52,7 +52,13 @@ _BUILTIN_PATTERNS: tuple[str, ...] = (
     ".npmrc",
     ".pypirc",
     "credentials",
-    "credentials.*",
+    # Secret-shaped extensions only: ``credentials.*`` would deny source code
+    # such as vox's own providers/credentials.py.
+    "credentials.json",
+    "credentials.yml",
+    "credentials.yaml",
+    "credentials.toml",
+    "credentials.ini",
     "*.pem",
     "*.key",
     "*.p12",

@@ -105,6 +105,7 @@ def _reasons(repo: Path, cases: list[tuple[str, dict[str, str], str]]) -> list[s
         "src/../../outside.txt",
         "file:///etc/passwd",
         ".punt-labs/ethos/claude.local.yaml",
+        "src/credentials.json",
     ],
 )
 def test_the_guard_blocks_a_denied_read(repo: Path, path: str) -> None:
@@ -139,6 +140,7 @@ def test_the_guard_blocks_denied_searches_and_unknown_tools(
     ("tool", "args"),
     [
         ("read", {"path": ".gitignore"}),
+        ("read", {"path": "src/credentials.py"}),
         ("grep", {"pattern": "def", "path": "src"}),
         ("grep", {"pattern": "def"}),
         ("find", {"pattern": "*.py"}),

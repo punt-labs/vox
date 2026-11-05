@@ -64,6 +64,30 @@ class TestBuiltinDenyList:
         assert not policy.denies(candidate, cwd=repo)
 
 
+class TestCredentialsFiles:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "credentials",
+            "credentials.json",
+            "credentials.yml",
+            "credentials.yaml",
+            "credentials.toml",
+            "credentials.ini",
+        ],
+    )
+    def test_secret_shaped_credentials_files_are_denied(
+        self, policy: SecretPathPolicy, repo: Path, name: str
+    ) -> None:
+        assert policy.denies(f"config/{name}", cwd=repo)
+
+    def test_credentials_source_code_is_allowed(
+        self, policy: SecretPathPolicy, repo: Path
+    ) -> None:
+        """vox's own src/punt_vox/providers/credentials.py is code, not a secret."""
+        assert not policy.denies("src/punt_vox/providers/credentials.py", cwd=repo)
+
+
 class TestPiNormalization:
     """The path judged is the path pi opens: ``@``, ``~``, case all handled."""
 
