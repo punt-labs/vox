@@ -1,7 +1,7 @@
 ---
 description: "Start or stop a Conversation Mode call with a read-only call agent"
 argument-hint: "start <topic> [--script <path>] | stop"
-allowed-tools: ["Bash(vox call:*)", "Read", "mcp__quarry__find"]
+allowed-tools: ["Bash(vox call:*)", "Read", "mcp__quarry__find", "mcp__plugin_quarry_quarry__find"]
 ---
 
 # /call command
