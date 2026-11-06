@@ -24,7 +24,8 @@ pytestmark = pytest.mark.subprocess
 
 # Imports the guard, then answers each [tool, input, cwd] case with the
 # reason the guard gives ("" when allowed), and drives the default export's
-# tool_call handler once with the first case.
+# tool_call handler once with the first case -- or reports the error the
+# default export threw while loading.
 _HARNESS = """
 const [guardUrl, casesJson] = process.argv.slice(1);
 const mod = await import(guardUrl);
@@ -40,7 +41,12 @@ try {
   // A misconfigured guard: only the handler's fail-closed answer is checked.
 }
 let handler;
-mod.default({ on: (event, fn) => { if (event === "tool_call") handler = fn; } });
+try {
+  mod.default({ on: (event, fn) => { if (event === "tool_call") handler = fn; } });
+} catch (error) {
+  console.log(JSON.stringify({ reasons, loadError: error.message }));
+  process.exit(0);
+}
 const [tool, input, cwd] = cases[0];
 const decision = handler({ toolName: tool, input }, { cwd }) ?? null;
 console.log(JSON.stringify({ reasons, decision }));
@@ -248,10 +254,14 @@ def test_the_handler_lets_an_ordinary_read_through(repo: Path) -> None:
     assert result["decision"] is None
 
 
-def test_a_missing_configuration_blocks_every_call(repo: Path) -> None:
-    """Fail closed: no root and no patterns means nothing is readable."""
-    env = {"VOX_CALL_GUARD_ROOT": "", "VOX_CALL_GUARD_PATTERNS": "[]"}
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"VOX_CALL_GUARD_ROOT": "", "VOX_CALL_GUARD_PATTERNS": "[]"},
+        {"VOX_CALL_GUARD_ROOT": "/", "VOX_CALL_GUARD_PATTERNS": "not json"},
+    ],
+)
+def test_a_misconfigured_guard_fails_to_load(repo: Path, env: dict[str, str]) -> None:
+    """Fail closed at startup: pi will not start with an extension that throws."""
     result = _guard(repo, [("read", {"path": ".gitignore"}, str(repo))], env)
-    decision = result["decision"]
-    assert isinstance(decision, dict)
-    assert decision["block"] is True
+    assert str(result["loadError"]).startswith("vox secret guard: misconfigured")

@@ -23,8 +23,9 @@
 // Configuration comes from vox through two environment variables:
 //   VOX_CALL_GUARD_ROOT      the repository root
 //   VOX_CALL_GUARD_PATTERNS  a JSON array of .gitignore-shaped patterns
-// Missing or malformed configuration blocks every call: the guard fails closed.
-// So does an exception in the handler, by pi's own contract.
+// Missing or malformed configuration fails the extension's load, and pi exits
+// at startup: the guard fails closed by never letting the agent start. An
+// exception in the handler blocks that call, by pi's own contract.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
@@ -215,6 +216,9 @@ export function createGuard({ root, patterns, listFiles = listSearchedFiles }) {
   };
 }
 
+// Throws on missing or malformed configuration, and pi refuses to start when an
+// extension fails to load -- so a misconfigured guard fails the call at start,
+// loudly, rather than leaving an agent that refuses every turn.
 function guardFromEnvironment() {
   try {
     return createGuard({
@@ -222,7 +226,7 @@ function guardFromEnvironment() {
       patterns: JSON.parse(process.env.VOX_CALL_GUARD_PATTERNS ?? "null"),
     });
   } catch (error) {
-    return () => `${REASON_PREFIX} misconfigured (${error.message}); every call is blocked`;
+    throw new Error(`${REASON_PREFIX} misconfigured: ${error.message}`);
   }
 }
 

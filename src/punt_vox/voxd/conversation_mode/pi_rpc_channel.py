@@ -21,8 +21,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
-from collections import deque
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.call_agent_errors import (
@@ -33,6 +33,7 @@ from punt_vox.voxd.conversation_mode.pi_rpc_record import (
     MalformedRecordError,
     PiRpcRecord,
 )
+from punt_vox.voxd.conversation_mode.pi_stderr import PiStderr
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
 
 __all__ = ["PiRpcChannel"]
+
+logger = logging.getLogger(__name__)
 
 # One RPC record per line, and some records are large: ``agent_end`` repeats
 # every message of the run, tool results included. asyncio's default 64KB
@@ -51,26 +54,22 @@ _LINE_LIMIT = 32 * 1024 * 1024
 # killed outright.
 _SHUTDOWN_GRACE_S = 5.0
 
-_STDERR_TAIL_LINES = 20
-
-# How long to wait for stderr's last lines once stdout has closed.
-_STDERR_SETTLE_S = 1.0
+# How long to wait for pi to be reaped once its pipes have closed.
+_REAP_S = 1.0
 
 
 @final
 class PiRpcChannel:
     """One live ``pi --mode rpc`` process, spoken to over its stdin and stdout."""
 
-    __slots__ = ("_drain", "_process", "_stderr_tail")
+    __slots__ = ("_process", "_stderr")
     _process: asyncio.subprocess.Process
-    _stderr_tail: deque[str]
-    _drain: asyncio.Task[None]
+    _stderr: PiStderr
 
     def __new__(cls, process: asyncio.subprocess.Process) -> Self:
         self = super().__new__(cls)
         self._process = process
-        self._stderr_tail = deque(maxlen=_STDERR_TAIL_LINES)
-        self._drain = asyncio.ensure_future(self._drain_stderr())
+        self._stderr = PiStderr(process.stderr)
         return self
 
     @classmethod
@@ -89,20 +88,21 @@ class PiRpcChannel:
         except FileNotFoundError as exc:
             msg = f"{launch.program} not found on PATH -- install pi to place a call"
             raise CallAgentSpawnError(msg) from exc
+        except OSError as exc:
+            msg = f"cannot start {launch.program}: {exc}"
+            raise CallAgentSpawnError(msg) from exc
         return cls(process)
 
     async def send(self, command: Mapping[str, object]) -> None:
         """Write one JSONL command."""
         stdin = self._process.stdin
         if stdin is None or stdin.is_closing():
-            msg = "call agent stdin is closed"
-            raise CallAgentEndedError(msg)
+            raise await self._ended("stdin is closed")
         try:
             stdin.write(json.dumps(command).encode() + b"\n")
             await stdin.drain()
-        except (BrokenPipeError, ConnectionResetError) as exc:
-            msg = f"call agent stdin broke: {self.stderr_tail()}"
-            raise CallAgentEndedError(msg) from exc
+        except OSError as exc:
+            raise await self._ended(f"stdin broke ({exc!r})") from exc
 
     async def receive(self, inactivity_s: float) -> PiRpcRecord:
         """Return the next record, or raise if none arrives within *inactivity_s*.
@@ -124,9 +124,7 @@ class PiRpcChannel:
             msg = "call agent wrote an over-long record"
             raise CallAgentEndedError(msg) from exc
         if not line:
-            await self._settle_stderr()
-            msg = f"call agent exited: {self.stderr_tail()}"
-            raise CallAgentEndedError(msg)
+            raise await self._ended("exited")
         try:
             return PiRpcRecord.parse(line)
         except MalformedRecordError as exc:
@@ -142,7 +140,15 @@ class PiRpcChannel:
         except TimeoutError:
             await self.kill()
             return
-        await self._stop_drain()
+        except BaseException:
+            # Cancelled mid-grace: never leave pi running behind the call.
+            await self.kill()
+            raise
+        await self._stderr.stop()
+        if self._process.returncode:
+            logger.warning(
+                "call agent exited with %s: %s", self._status(), self._stderr.tail()
+            )
 
     async def kill(self) -> None:
         """Kill the process now and reap it."""
@@ -150,30 +156,22 @@ class PiRpcChannel:
             with contextlib.suppress(ProcessLookupError):
                 self._process.kill()
         await self._process.wait()
-        await self._stop_drain()
+        await self._stderr.stop()
 
-    def stderr_tail(self) -> str:
-        """Return the last few lines pi wrote to stderr, for diagnostics only."""
-        return " | ".join(self._stderr_tail) or "(no stderr)"
+    async def _ended(self, what: str) -> CallAgentEndedError:
+        """Return the error for a process that stopped being usable, with why.
 
-    async def _drain_stderr(self) -> None:
-        stderr = self._process.stderr
-        if stderr is None:
-            return
-        async for raw in stderr:
-            self._stderr_tail.append(raw.decode(errors="replace").rstrip())
-
-    async def _settle_stderr(self) -> None:
-        """Let the drain catch up after stdout closed, so the error names why.
-
-        stdout reaching EOF does not mean stderr's last lines -- usually the
-        reason pi exited -- have been read yet. Bounded: a process that
-        closed stdout but keeps stderr open must not hang the call.
+        stdout reaching EOF or stdin breaking does not mean stderr's last
+        lines -- usually the reason pi exited -- have been read yet, nor
+        that pi has been reaped; both waits are bounded, so a process that
+        closed its pipes but lingers cannot hang the call.
         """
-        await asyncio.wait({self._drain}, timeout=_STDERR_SETTLE_S)
+        await self._stderr.settle()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._process.wait(), timeout=_REAP_S)
+        msg = f"call agent {what} ({self._status()}): {self._stderr.tail()}"
+        return CallAgentEndedError(msg)
 
-    async def _stop_drain(self) -> None:
-        if not self._drain.done():
-            self._drain.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._drain
+    def _status(self) -> str:
+        code = self._process.returncode
+        return "still running" if code is None else f"exit {code}"

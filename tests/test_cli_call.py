@@ -41,6 +41,8 @@ from punt_vox.voxd.conversation_mode.call_summary import CallSummaryStore
 runner = CliRunner(env={"COLUMNS": "200"})
 
 _EXEC = "punt_vox.voxd.conversation_mode.pi_rpc_channel.asyncio.create_subprocess_exec"
+# A fault here strikes inside the scripted drive loop, after the agent spawned.
+_PROCESS_CHUNK = "punt_vox.commands.call_scripted.CallSession.process_chunk"
 
 
 def _resolved_session_spec(
@@ -510,14 +512,20 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
 
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     client = _ClientFailingOnErrorSummary()
+    process = FakePiProcess.answering("Ready.")
     with (
         _client(client),
-        _call_env(tmp_path, FakePiProcess.answering("Ready.")),
-        patch(_EXEC, side_effect=OSError("mic device busy")),
+        _call_env(tmp_path, process),
+        patch(_PROCESS_CHUNK, side_effect=OSError("mic device busy")),
         caplog.at_level("ERROR", logger="punt_vox.commands.call"),
         pytest.raises(OSError, match="mic device busy"),
     ):
         await call_module.CallCli()._run(_context_file(tmp_path), script)
+
+    # The fault struck inside the drive loop, after the agent was spawned;
+    # the agent was abandoned with the call, never left running.
+    assert len(process.prompts) == 1
+    assert process.returncode is not None
 
     assert any("call ended unexpectedly" in record.message for record in caplog.records)
     # The spoken summary is a fixed sentence -- never the raw exception text,
@@ -541,14 +549,17 @@ async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original
     from punt_vox.commands import call as call_module
 
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
+    process = FakePiProcess.answering("Ready.")
     with (
         _client(_ClientFailingOnErrorSummary()),
-        _call_env(tmp_path, FakePiProcess.answering("Ready.")),
-        patch(_EXEC, side_effect=OSError("mic device busy")),
+        _call_env(tmp_path, process),
+        patch(_PROCESS_CHUNK, side_effect=OSError("mic device busy")),
         caplog.at_level("ERROR", logger="punt_vox.commands.call"),
         pytest.raises(OSError, match="mic device busy"),
     ):
         await call_module.CallCli()._run(_context_file(tmp_path), script)
+
+    assert process.returncode is not None  # spawned, then abandoned by the crash
 
     assert any(
         "also failed to speak the call-ended summary" in record.message

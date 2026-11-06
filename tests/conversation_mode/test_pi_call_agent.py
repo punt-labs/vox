@@ -122,6 +122,16 @@ class TestSpawn:
                 turn_timer=_SpyTimer(),
             )
 
+    async def test_a_pi_that_exits_at_startup_is_a_spawn_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A guard that cannot load makes pi exit before it reads a prompt."""
+        process = FakePiProcess([])
+        process.stderr.feed_data(b"Error: Failed to load extension secret_guard.js\n")
+        process.exit(1)
+        with pytest.raises(CallAgentSpawnError, match="Failed to load extension"):
+            await _spawn(tmp_path, process)
+
 
 class TestSendTurnAndReplyComplete:
     async def test_a_turn_streams_the_reply_and_returns_to_ready(
