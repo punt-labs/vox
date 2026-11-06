@@ -237,7 +237,10 @@ export function createGuard({
       (name) => `${REASON_PREFIX} ${name} is ignored by git and may hold secrets`,
     );
 
+  // A negated glob names what is not searched; what it widens the search to
+  // is judged file by file (checkDirectoryGrep).
   const checkGlob = (raw) => {
+    if (String(raw).startsWith("!")) return "";
     const parts = String(raw).split("/").filter(Boolean);
     const stripped = parts.map((part) => part.replace(GLOB_CHARS, ""));
     return denied(parts) || denied(stripped)
@@ -279,8 +282,10 @@ export function createGuard({
     }
     const searchPath = resolve(pathArg, cwd);
     if (toolName === "grep" && isDirectory(searchPath)) {
-      const glob = typeof args.glob === "string" && args.glob ? args.glob : "";
-      return checkDirectoryGrep(searchPath, glob);
+      // pi's grep runs rg --hidden, which reads .git/ too. A grep with no glob
+      // of its own is narrowed in place to skip it (pi runs the mutated input).
+      if (typeof args.glob !== "string" || !args.glob) args.glob = "!.git";
+      return checkDirectoryGrep(searchPath, args.glob);
     }
     return "";
   };

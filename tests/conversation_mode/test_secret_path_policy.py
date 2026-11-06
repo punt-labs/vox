@@ -220,6 +220,24 @@ class TestEveryIgnoreSourceGitHonours:
         assert json.loads(env["VOX_CALL_GUARD_GIT_IGNORES"]) is True
 
 
+class TestGitInternals:
+    """.git/ holds remote URLs and hooks; .git-credentials holds passwords."""
+
+    @pytest.mark.parametrize(
+        "path", [".git/config", ".git", ".git-credentials", "sub/.git-credentials"]
+    )
+    def test_git_internals_are_denied(
+        self, policy: SecretPathPolicy, repo: Path, path: str
+    ) -> None:
+        assert policy.denies(path, cwd=repo)
+
+    def test_a_glob_that_excludes_git_is_not_aimed_at_it(
+        self, policy: SecretPathPolicy
+    ) -> None:
+        """``!.git`` keeps a grep out of .git; it names what is not read."""
+        assert not policy.denies_glob("!.git")
+
+
 class TestGlobs:
     @pytest.mark.parametrize("glob", ["**/.env*", "*.env*", ".ENV", "**/*.pem"])
     def test_a_glob_aimed_at_secrets_is_denied(

@@ -52,8 +52,9 @@ try {
   process.exit(0);
 }
 const [tool, input, cwd] = cases[0];
-const decision = handler({ toolName: tool, input }, { cwd }) ?? null;
-console.log(JSON.stringify({ reasons, decision }));
+const event = { toolName: tool, input };
+const decision = handler(event, { cwd }) ?? null;
+console.log(JSON.stringify({ reasons, decision, input: event.input }));
 """
 
 
@@ -293,6 +294,46 @@ class TestEveryIgnoreSourceGitHonours:
         reasons = _guard(nested, cases, env, path_var="")["reasons"]
         assert isinstance(reasons, list)
         assert "cannot check what git ignores" in str(reasons[0])
+
+
+class TestGitInternals:
+    """.git/ holds remote URLs and hooks; .git-credentials holds passwords."""
+
+    @pytest.fixture
+    def credentials(self, repo: Path) -> Path:
+        (repo / ".git-credentials").write_text("https://alice:s3cret@example.com\n")
+        return repo
+
+    @pytest.mark.parametrize(
+        ("tool", "args"),
+        [
+            ("read", {"path": ".git/config"}),
+            ("grep", {"pattern": "url", "path": ".git"}),
+            ("grep", {"pattern": "url", "path": ".git/config"}),
+            ("read", {"path": ".git-credentials"}),
+            ("grep", {"pattern": "alice", "path": ".git-credentials"}),
+        ],
+    )
+    def test_git_internals_are_refused(
+        self, credentials: Path, tool: str, args: dict[str, str]
+    ) -> None:
+        (reason,) = _reasons(credentials, [(tool, args, str(credentials))])
+        assert reason
+
+    def test_a_repo_wide_grep_is_kept_out_of_git(self, repo: Path) -> None:
+        """pi's grep runs rg --hidden, which would read .git/ without ``!.git``."""
+        env = SecretPathPolicy.for_repo(repo).guard_env()
+        result = _guard(repo, [("grep", {"pattern": "def"}, str(repo))], env)
+        assert (result["decision"], result["input"]) == (
+            None,
+            {"pattern": "def", "glob": "!.git"},
+        )
+
+    def test_a_grep_with_its_own_glob_keeps_it(self, repo: Path) -> None:
+        env = SecretPathPolicy.for_repo(repo).guard_env()
+        args = {"pattern": "def", "path": "src", "glob": "*.py"}
+        result = _guard(repo, [("grep", args, str(repo))], env)
+        assert result["input"] == args
 
 
 def test_the_handler_blocks_and_terminates(repo: Path) -> None:

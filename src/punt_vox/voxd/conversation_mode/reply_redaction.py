@@ -34,11 +34,17 @@ _KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 # A KEY=value / TOKEN=value shaped assignment -- an env-file line spoken
-# back verbatim, whatever the variable's actual name.
+# back verbatim, whatever the variable's actual name. A bare PASSWORD or
+# SECRET counts too; a bare key or token does not, as "the key: it returns"
+# is ordinary speech.
 _ASSIGNMENT_PATTERN = re.compile(
-    r"\b[A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\s*[:=]\s*\S+",
+    r"\b(?:[A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)|PASSWORD|SECRET)"
+    r"\s*[:=]\s*\S+",
     re.IGNORECASE,
 )
+
+# The userinfo of a URL -- ``user:password@`` or a token used as the user.
+_URL_USERINFO_PATTERN = re.compile(r"(?<=://)[^/\s@]+(?=@)")
 
 # A long, unbroken run of high-entropy characters -- base64 or hex, unusual
 # in ordinary spoken/written text at this length.
@@ -52,6 +58,7 @@ class ReplyRedactor:
     __slots__ = ()
 
     _PATTERNS: tuple[re.Pattern[str], ...] = (
+        _URL_USERINFO_PATTERN,
         *_KEY_PATTERNS,
         _ASSIGNMENT_PATTERN,
         _HIGH_ENTROPY_PATTERN,

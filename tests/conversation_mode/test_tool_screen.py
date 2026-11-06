@@ -95,6 +95,15 @@ def test_a_grep_landing_in_a_nested_ignored_file_is_a_breach(
     assert _run(screen, "grep", args, output="sub/creds.json:1: TOKEN=x")
 
 
+def test_an_executed_read_of_git_config_is_a_breach(screen: ToolScreen) -> None:
+    assert _run(screen, "read", {"path": ".git/config"})
+
+
+def test_a_grep_the_guard_kept_out_of_git_is_fine(screen: ToolScreen) -> None:
+    args: dict[str, object] = {"pattern": "def", "glob": "!.git"}
+    assert not _run(screen, "grep", args, output="a.py:1: def f")
+
+
 def test_a_grep_glob_aimed_at_env_files_is_a_breach(screen: ToolScreen) -> None:
     assert _run(screen, "grep", {"pattern": "KEY", "glob": "*.env*"})
 

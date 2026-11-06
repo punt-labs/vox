@@ -87,14 +87,16 @@ extensions but one: vox's own secret guard. Its environment is an allowlist
 token or key from your shell reaches it; pi authenticates from its own
 `~/.pi/agent` configuration. Before any tool runs, the guard checks the path
 every read, grep, find, and ls names: it must lie inside the repository and
-must not match a secret pattern (`.env*`, key files, and the secret-looking
-patterns in the repo's `.gitignore`), and in a git repository it must not be a
+must not match a secret pattern (`.env*`, key files, `.git/`,
+`.git-credentials`, and the secret-looking patterns in the repo's
+`.gitignore`), and in a git repository it must not be a
 path git ignores -- asked of git itself, so a `.gitignore` at any depth,
 `.git/info/exclude`, and your global excludes file all count; if git cannot
 answer, the read is refused. Grep globs and find patterns are checked too. A
 grep over a directory is allowed only after the guard lists the files ripgrep
 would search there (same binary, same ignore rules, same glob) and finds none
-that is denied; if it cannot list them, the grep is refused. On a
+that is denied; if it cannot list them, the grep is refused. A grep with no
+glob of its own is narrowed to skip `.git/`. On a
 refusal the agent tells the caller it can't open that. find and ls can still
 reveal file *names* inside the repository, never contents. If a denied read
 ever ran anyway, the call ends before a word of the reply is spoken.

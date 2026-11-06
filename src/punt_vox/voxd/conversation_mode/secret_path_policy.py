@@ -73,6 +73,9 @@ _BUILTIN_PATTERNS: tuple[str, ...] = (
     "id_ed25519*",
     ".ssh/",
     ".aws/",
+    # Remote URLs (often with credentials), hooks, and the object store.
+    ".git/",
+    ".git-credentials",
     ".gnupg/",
 )
 
@@ -152,8 +155,13 @@ class SecretPathPolicy:
         """Return whether a grep ``glob`` or find ``pattern`` aims at secrets.
 
         Checked as written and with its wildcard characters removed, so
-        ``*.env*`` is caught by ``.env*`` as surely as ``.env`` itself is.
+        ``*.env*`` is caught by ``.env*`` as surely as ``.env`` itself is. A
+        negated glob (``!.git``) names what is *not* searched, so it never
+        aims at a secret by name; what it widens a search to is judged by the
+        files the search reads.
         """
+        if glob.startswith("!"):
+            return False
         parts = tuple(part for part in glob.split("/") if part)
         stripped = tuple(_GLOB_CHARS.sub("", part) for part in parts)
         return self._matches(parts) or self._matches(stripped)
