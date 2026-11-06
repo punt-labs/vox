@@ -144,7 +144,24 @@ class TestFinish:
 
 
 class TestAbandon:
-    async def test_abandon_mid_reply_aborts_the_turn(self, tmp_path: Path) -> None:
+    async def test_abandon_while_busy_kills_the_agent_via_abort_turn(
+        self, tmp_path: Path
+    ) -> None:
+        """The reply stream is suspended mid-reply -- the agent is genuinely
+        busy, nothing cancelled it -- so only close()'s busy branch
+        (``AbortTurn``) can end the process."""
+        process = FakePiProcess.answering("Ready.", "a long reply here")
+        host = await _host(tmp_path, process)
+        stream = host.agent.send_turn(TranscribedTurn(text="q"))
+        await anext(stream)
+        assert (host.agent.can_accept_turn, process.killed) == (False, False)
+        await host.abandon()
+        assert process.killed
+        await stream.aclose()
+
+    async def test_abandon_after_a_cancelled_read_kills_the_agent(
+        self, tmp_path: Path
+    ) -> None:
         process = FakePiProcess([PiReply("Ready."), PiReply(hang=True)])
         host = await _host(tmp_path, process)
         stream = host.agent.send_turn(TranscribedTurn(text="q"))
