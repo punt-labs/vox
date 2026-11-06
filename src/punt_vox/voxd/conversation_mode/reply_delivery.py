@@ -31,9 +31,13 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
-__all__ = ["ReplyDelivery"]
+__all__ = ["NO_REPLY_PHRASE", "ReplyDelivery"]
 
 logger = logging.getLogger(__name__)
+
+# Spoken in place of a turn that settled with no reply text, so the caller
+# hears an answer rather than silence before "Ready.".
+NO_REPLY_PHRASE = "I don't have anything to add."
 
 
 @final
@@ -91,7 +95,7 @@ class ReplyDelivery:
         self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())
         self._turn_timer.mark("tts_request_sent")
-        await self._speak_reply(reply_text)
+        await self._speak_reply(reply_text, turn)
         # "playback_started" is the best available proxy, not a real signal:
         # SpeakFn's own contract (see that Protocol's docstring) is "returns
         # once playback has started OR completed" -- this class cannot tell
@@ -108,14 +112,22 @@ class ReplyDelivery:
         await self._speak("Ready.")
         self._actor.apply(ReplyEnds())
 
-    async def _speak_reply(self, text: str) -> None:
-        """Speak the redacted *text*; a blank reply is logged, never spoken.
+    async def _speak_reply(self, text: str, turn: TranscribedTurn) -> None:
+        """Speak the redacted *text*, or :data:`NO_REPLY_PHRASE` when it is blank.
 
-        voxd rejects blank text, and a failed speak would skip "Ready." and
-        end the call over a turn that merely had nothing to say.
+        voxd rejects empty text -- a failed speak would skip "Ready." and end
+        the call over a turn that merely had nothing to say -- and
+        whitespace-only text would reach the provider; the guard covers both.
         """
         if not text.strip():
-            logger.warning("call agent turn produced no reply text")
+            # vox.log (0600) already holds the unredacted reply; the turn and
+            # the reply's exact shape say why it came back blank.
+            logger.warning(
+                "call agent turn produced no reply text (reply=%r, turn=%r)",
+                text,
+                turn.text,
+            )
+            await self._speak(NO_REPLY_PHRASE)
             return
         # Full text to vox.log (0600); only the redacted text is ever spoken
         # -- see reply_redactor's own docstring for the threat this guards.

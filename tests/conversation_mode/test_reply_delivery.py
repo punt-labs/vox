@@ -18,7 +18,10 @@ from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedC
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
+from punt_vox.voxd.conversation_mode.reply_delivery import (
+    NO_REPLY_PHRASE,
+    ReplyDelivery,
+)
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
@@ -194,10 +197,10 @@ _BLANK_REPLIES = {
 
 
 @pytest.mark.parametrize("chunks", _BLANK_REPLIES.values(), ids=_BLANK_REPLIES.keys())
-async def test_a_blank_reply_is_never_spoken_and_the_turn_still_ends(
+async def test_a_blank_reply_speaks_the_no_reply_phrase_and_the_turn_ends(
     chunks: tuple[ScriptedChunk, ...],
 ) -> None:
-    """voxd rejects blank text: speaking it would fail the turn and the call."""
+    """The caller hears a reply, never silence, and never blank text."""
     speak = _Recorder()
     actor = _actor_waiting()
     delivery = ReplyDelivery(
@@ -209,10 +212,13 @@ async def test_a_blank_reply_is_never_spoken_and_the_turn_still_ends(
 
     await delivery.deliver(TranscribedTurn(text="what does this do"))
 
-    assert (speak.said[1:], actor.mode) == (["Ready."], Mode.LISTENING)
+    assert (speak.said[1:], actor.mode) == (
+        [NO_REPLY_PHRASE, "Ready."],
+        Mode.LISTENING,
+    )
 
 
-async def test_a_blank_reply_is_logged_as_a_warning(
+async def test_a_blank_reply_warning_names_the_reply_and_the_turn(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(
@@ -227,4 +233,8 @@ async def test_a_blank_reply_is_logged_as_a_warning(
 
     await delivery.deliver(TranscribedTurn(text="what does this do"))
 
-    assert "call agent turn produced no reply text" in caplog.text
+    (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    blank, turn = repr(" \n\t "), repr("what does this do")
+    assert warning.message == (
+        f"call agent turn produced no reply text (reply={blank}, turn={turn})"
+    )
