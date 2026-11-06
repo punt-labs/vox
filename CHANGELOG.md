@@ -26,9 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Read-only and secret-safe:** the agent has only `read`, `grep`, `find`
     and `ls`; no extensions, skills, MCP or repo context files; and an
     environment allowlist with no API keys or tokens. A vox-owned `pi` guard
-    checks every tool call before it runs and refuses paths outside the repo
-    or matching secret patterns, including any directory search that would
-    read a denied file.
+    checks every tool call before it runs and refuses paths outside the repo,
+    inside `.git/`, matching secret patterns, or ignored by git (nested
+    `.gitignore` files and excludes included, as git answers), including any
+    directory search that would read a denied file. Secret-shaped text is
+    redacted from the spoken reply and the saved summary.
+  - **Requirements:** `git` and ripgrep (`rg`); `vox call start` fails up
+    front with an install hint when `rg` is missing.
 - **`vox daemon stop` and `vox daemon start`**, with `vox daemon restart`
   now composed from the two (vox-9354). Each verb checks the result against
   the real process instead of trusting the service manager.
