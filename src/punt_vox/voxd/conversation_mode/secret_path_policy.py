@@ -99,13 +99,15 @@ class SecretPathPolicy:
     def for_repo(cls, root: Path) -> Self:
         """Build *root*'s policy: the built-ins plus its ``.gitignore`` secrets.
 
-        Raises :class:`~.call_agent_errors.CallAgentSpawnError` when the
-        ``.gitignore`` exists but cannot be read: a deny-list missing the
+        Raises :class:`~.call_agent_errors.CallAgentSpawnError` unless the
+        ``.gitignore`` reads cleanly or is absent: a deny-list missing the
         repo's own secret patterns is not one to start an agent under.
         """
         gitignore = root / ".gitignore"
         try:
-            text = gitignore.read_text() if gitignore.is_file() else ""
+            text = gitignore.read_text()
+        except FileNotFoundError:
+            text = ""
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"cannot read {gitignore} to build the secret deny-list: {exc}"
             raise CallAgentSpawnError(msg) from exc

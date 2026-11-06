@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -217,8 +218,31 @@ class TestPromptClause:
         assert all(pattern in clause for pattern in policy.patterns)
 
 
-def test_an_unreadable_gitignore_fails_the_call_start(repo: Path) -> None:
+def test_an_undecodable_gitignore_fails_the_call_start(repo: Path) -> None:
     """The deny-list cannot be built without it, so the agent must not start."""
     (repo / ".gitignore").write_bytes(b"\xff\xfe not utf-8 \xff")
+    with pytest.raises(CallAgentSpawnError, match=r"\.gitignore"):
+        SecretPathPolicy.for_repo(repo)
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads a mode-000 file regardless of its mode"
+)
+def test_a_gitignore_without_read_permission_fails_the_call_start(
+    repo: Path,
+) -> None:
+    gitignore = repo / ".gitignore"
+    gitignore.chmod(0)
+    try:
+        with pytest.raises(CallAgentSpawnError, match="Permission denied"):
+            SecretPathPolicy.for_repo(repo)
+    finally:
+        gitignore.chmod(0o644)
+
+
+def test_a_gitignore_that_is_not_a_file_fails_the_call_start(repo: Path) -> None:
+    """Only a missing .gitignore means no repo patterns; anything else is an error."""
+    (repo / ".gitignore").unlink()
+    (repo / ".gitignore").mkdir()
     with pytest.raises(CallAgentSpawnError, match=r"\.gitignore"):
         SecretPathPolicy.for_repo(repo)
