@@ -1,0 +1,38 @@
+results:
+    - mission: m-2026-10-22-003
+      round: 1
+      created_at: "2026-10-22T07:23:21Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: pyproject.toml
+          added: 3
+          removed: 1
+        - path: uv.lock
+          added: 1
+          removed: 1
+        - path: CHANGELOG.md
+          added: 7
+          removed: 5
+      evidence:
+        - name: 'pyproject.toml floor mcp>=1.28.1 -> mcp>=1.30.0 with alert #57 floor comment (commit 2e4b896)'
+          status: pass
+        - name: 'uv.lock requires-dist before: { name = "mcp", specifier = ">=1.28.1" }'
+          status: pass
+        - name: 'uv.lock requires-dist after: { name = "mcp", specifier = ">=1.30.0" }'
+          status: pass
+        - name: 'uv lock (no upgrade flags): Resolved 119 packages; uv.lock diff is only the mcp specifier line, no package version moved'
+          status: pass
+        - name: 'CHANGELOG Security entry corrected: anyio/PyJWT/urllib3 transitive, mcp direct with minimum 1.30.0 (commit a8db0ff)'
+          status: pass
+        - name: 'make check: ruff clean, mypy 643 files no issues, pyright 0 errors, markdownlint 0 issues, 4689 passed 308 deselected, oo/coupling trivial pass, suppressions 202 unchanged'
+          status: pass
+        - name: pushed fix/vox-rmyx-security-lock-bump e67864e..a8db0ff (e67864e not amended)
+          status: pass
+      prose: |
+        Diff stat on top of e67864e: CHANGELOG.md 12 +7/-5, pyproject.toml 4 +3/-1,
+        uv.lock 2 +1/-1 (3 files, 11 insertions, 7 deletions).
+        Two commits: 2e4b896 (floor + lock), a8db0ff (CHANGELOG).
+        Note: uv.lock was re-synced automatically right after the pyproject edit (likely
+        an environment hook); an explicit uv lock afterward reported no further change.

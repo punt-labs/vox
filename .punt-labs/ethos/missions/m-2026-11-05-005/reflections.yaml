@@ -1,0 +1,22 @@
+reflections:
+    - mission: m-2026-11-05-005
+      round: 1
+      created_at: "2026-11-05T23:03:22Z"
+      author: claude
+      converging: true
+      signals:
+        - 'djb evaluator verdict REFLECT: 2 High (env passes all non-voxd secrets; deny-list runs after the read and misses @, case, /proc, $HOME dotfiles), 1 Medium, 3 Low'
+        - 'leader ruled the worker''s four open decisions: pre-read pi guard extension (vox-owned, -e) accepted; call loop in CLI, extra flags, clean-end summary accepted'
+        - make check green on round 1; design otherwise held
+      recommendation: continue
+      reason: round 2 fixes the ruled list in .tmp/missions/vox-hobl2-round2.md (H1, H2, M1, L1-L3)
+    - mission: m-2026-11-05-005
+      round: 2
+      created_at: "2026-11-05T23:49:58Z"
+      author: claude
+      converging: true
+      signals:
+        - 'djb round-2 verdict REFLECT: H1, M1, L1-L3 closed; H2 closed except grep over a directory (Medium, live-proven) plus one Low availability pattern'
+        - findings shrank from 2 High + 1 Medium + 3 Low to 1 Medium + 1 Low; make check green on every round-2 commit
+      recommendation: continue
+      reason: round 3 (final) fixes M2 and L4 per .tmp/missions/vox-hobl2-round3.md

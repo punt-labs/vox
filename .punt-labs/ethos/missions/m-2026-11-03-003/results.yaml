@@ -1,0 +1,173 @@
+results:
+    - mission: m-2026-11-03-003
+      round: 1
+      created_at: "2026-11-03T15:25:15Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: CHANGELOG.md
+          added: 12
+          removed: 0
+        - path: pyproject.toml
+          added: 7
+          removed: 5
+        - path: .oo-baseline.json
+          added: 32
+          removed: 45
+        - path: .oo-audit.jsonl
+          added: 1
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 11
+          removed: 18
+        - path: .oo-coupling-audit.jsonl
+          added: 1
+          removed: 0
+        - path: tests/test_lux_common/test_menu_frame_contract.py
+          added: 150
+          removed: 0
+        - path: tests/test_voxd_system_handlers.py
+          added: 39
+          removed: 0
+      evidence:
+        - name: rebased onto origin/main 8520016; branch is e305e07 (fix) + 06b8491 (cap)
+          status: pass
+        - name: 'make check with local punt-lux 0.33.0 wheel (bd60fed9): 5418 passed, 308 deselected; pyright 0 errors; check-oo PASS; check-coupling PASS; suppressions 172 = 172'
+          status: pass
+        - name: uv.lock identical to origin/main in both commits (git diff origin/main HEAD -- uv.lock is empty)
+          status: pass
+        - name: 'pyright staticmethod-over-contextmanager error gone: elevenlabs.py is main''s version, no _auth_boundary'
+          status: pass
+      open_questions:
+        - DESIGN.md (7 lines, the DES superseded note) rides in from the original commit 0e3e146 and is outside this contract's write_set; kept as-is, not edited by me.
+      prose: |
+        Conflicts. Commit 1 (0e3e146): elevenlabs.py took main's version (main's
+        ElevenLabsClient.call already translates a 401/403 on voices.get_all, so the
+        _auth_boundary contextmanager and its pyright failure are gone); the four OO
+        ratchet files took main's and were regenerated with make update-oo and
+        make update-coupling (audit lines verdict pass). CHANGELOG: the duplicate
+        "### Fixed" was folded into main's existing Fixed section; the ElevenLabs
+        bullet dropped (main's "a rejected key is a credential error everywhere
+        (including the voice lookup)" covers it). pyproject auto-merged; mcp>=1.30.0
+        and its comment kept; long comment line rewrapped.
+        Commit 2 (3596465): elevenlabs.py, test_elevenlabs_provider.py,
+        test_voxd_system_handlers.py and CHANGELOG resolved to the commit-1 state;
+        only the punt-lux cap survives, with the pyproject comment and CHANGELOG
+        updated to say why (pre-1.0 lux removed an API in a minor).
+
+        Covered by main and dropped: the _auth_boundary 401 translation, the
+        provider-level list_voices 401 / non-401 tests (main has
+        test_rejected_key_on_voice_lookup and the voice-fetch status tests), the
+        panel rejection test (main's test_service covers VoxdRejectionError to
+        notice), and 3596465's rationale/secret edits. Kept: the voices-handler
+        end-to-end 401 test, adapted to main's ProviderRefusalError text
+        ("refused the request (HTTP 401: invalid_api_key)") with realistic headers.
+
+        Local lux: git archive of lux bd60fed9 into .tmp/ob5u/lux-src (lux checkout
+        untouched), version set 0.32.1 -> 0.33.0 in that scratch copy only (lux has
+        not bumped yet), uv build --wheel into .tmp/ob5u/wheels; uv lock
+        --find-links that dir --upgrade-package punt-lux; make check run with
+        UV_FIND_LINKS pointing at it; git restore uv.lock before each commit.
+
+        frame_id tests: tests/test_lux_common/test_menu_frame_contract.py --
+        test_the_music_entry_reaches_lux_with_the_music_frame,
+        test_the_panel_entry_reaches_lux_with_the_panel_frame (from 0e3e146, pass),
+        plus new test_the_music_entry_reopens_its_scenes_scoped_frame and
+        test_the_panel_entry_reopens_its_scenes_scoped_frame, which compare
+        lux's MenuFrames.of(registered callback) with
+        RenderRequest.presentation().scoped(connection).frame_id.
+    - mission: m-2026-11-03-003
+      round: 2
+      created_at: "2026-11-03T16:12:05Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: pyproject.toml
+          added: 3
+          removed: 2
+        - path: src/punt_vox/panel/service.py
+          added: 51
+          removed: 57
+        - path: src/punt_vox/panel/voice_preview.py
+          added: 68
+          removed: 0
+        - path: src/punt_vox/panel/menu_entry.py
+          added: 1
+          removed: 3
+        - path: src/punt_vox/panel/panel_scene.py
+          added: 3
+          removed: 2
+        - path: src/punt_vox/voxd/music_player/player.py
+          added: 18
+          removed: 14
+        - path: src/punt_vox/voxd/music_player/presenter_ports.py
+          added: 15
+          removed: 12
+        - path: src/punt_vox/voxd/music_player/scene.py
+          added: 4
+          removed: 3
+        - path: src/punt_vox/voxd/music_player/lux_subscription.py
+          added: 6
+          removed: 4
+        - path: src/punt_vox/voxd/music_player/composition.py
+          added: 1
+          removed: 1
+        - path: src/punt_vox/voxd/music_player/hub_ports.py
+          added: 5
+          removed: 1
+        - path: tests/panel/doubles.py
+          added: 3
+          removed: 3
+        - path: tests/panel/test_voice_preview.py
+          added: 101
+          removed: 0
+        - path: .oo-audit.jsonl
+          added: 9
+          removed: 0
+        - path: .oo-baseline.json
+          added: 22
+          removed: 9
+        - path: .oo-coupling-audit.jsonl
+          added: 3
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 9
+          removed: 2
+      evidence:
+        - name: commits 3d0c3d5 (pyproject rewrap) and 8eed231 (panel registration path, VoicePreview extraction, prose restore) on fix/menu-callback-frame-id
+          status: pass
+        - name: 'make check with local punt-lux 0.33.0 wheel: 5423 passed, 308 deselected; mypy 686 files clean; pyright 0 errors; check-oo PASS (six RELAXED module_size rows); check-coupling PASS; suppressions 172 = 172'
+          status: pass
+        - name: test_menu_frame_contract.py green through the new MenuEntry.register_on panel path
+          status: pass
+        - name: uv.lock identical to origin/main (git restore uv.lock before each commit)
+          status: pass
+      open_questions:
+        - 'Two audit lines read verdict fail: one .oo-audit.jsonl and one .oo-coupling-audit.jsonl line, written when update-oo / update-coupling refused service.py (avg_params, LCOM back at origin/main''s values, worse than the branch''s round-1 baseline). Each is followed by a relaxed line for that file+metric and then a pass line. The audit is append-only, so they stay.'
+        - The hub_ports.py relax line records module_size 55 -> 59 because the round-1 baseline held 55 (the compressed __all__). Its reason text says 58 to 59, which is the change against origin/main.
+      prose: |
+        Finding 1: restored origin/main's prose, changing only what the removed
+        frame raise made untrue. Files: player.py (module docstring with the
+        _schedule_track_count_refresh cross-ref, class docstring, the
+        _refresher/_latest_notice comments, install and _submit docstrings),
+        presenter_ports.py, scene.py, panel_scene.py, lux_subscription.py,
+        service.py, plus composition.py ("menu registrar's") and the multi-line
+        hub_ports __all__. For the panel growth I made a real improvement:
+        VoicePreview was extracted from service.py (457 -> 452 lines). The lines
+        the fix genuinely adds are covered by scoped module_size relaxes, one per
+        file, each with a one-line reason: panel_scene 74->75, scene 53->54,
+        hub_ports 58->59, lux_subscription 234->236, player 223->227,
+        presenter_ports 64->67. service.py avg_params (1.00->1.04) and LCOM
+        (0.714->0.719) are relaxed against the branch baseline only; both equal
+        origin/main.
+        Finding 2: pyproject comment rewrapped to 88 columns or fewer.
+        Finding 3: the service docstring now says it follows AppletService's
+        phases but does not satisfy the protocol (async acknowledge/service over a
+        LuxClient), and that VoxPanelLeg drives it.
+        Finding 4: the frame_id property is removed. The frame now comes from
+        PanelScene.FRAME_ID in a module-level MenuEntry.
+        Finding 5: VoxPanelService.entry returns the MenuEntry, and
+        PanelMenuEntry._register_now calls entry.register_on(client). label and
+        frame_id are dropped. callback_id stays because the leg routes clicks on it.

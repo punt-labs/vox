@@ -1,0 +1,43 @@
+results:
+    - mission: m-2026-11-06-001
+      round: 1
+      created_at: "2026-11-06T00:21:11Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/voxd/conversation_mode/pi_extension/secret_guard.js
+          added: 5
+          removed: 3
+        - path: tests/conversation_mode/test_pi_secret_guard.py
+          added: 23
+          removed: 0
+        - path: plugin/hooks/call-lock.sh
+          added: 4
+          removed: 10
+        - path: tests/test_hook_gate.py
+          added: 14
+          removed: 32
+      evidence:
+        - name: 'ace3be0 secret guard NUL listing: new newline-filename tests failed before the fix (reasons == '''') and pass after'
+          status: pass
+        - name: '8a1b562 call-lock: /vox:call stop and /call transfer tests failed before the fix and pass after'
+          status: pass
+        - name: 'pytest -m ''subprocess or not subprocess'' on test_pi_secret_guard.py + test_hook_gate.py: 84 passed'
+          status: pass
+        - name: 'make check green on each commit: 7904 passed, ruff, mypy, pyright 0 errors, shellcheck, check-oo, suppressions unchanged'
+          status: pass
+      open_questions:
+        - 'Beyond the contract: also compiled guard patterns with the dotAll flag. With NUL splitting alone, a `**` pattern (globToRegex emits `.*`) still could not span a newline inside a directory name, so vault/a\nb/x.key evaded vault/**/*.key; the real policy has .punt-labs/**/*.local.* with the same shape. Covered by a second parametrized case.'
+      prose: |
+        Commit 1 (ace3be0): listSearchedFiles runs rg --files --null and splits on
+        NUL; globToRegex compiles with flags "is". Node-level test drives the real
+        guard with a custom anchored pattern and a newline-named file for both a
+        single-star and a double-star pattern.
+
+        Commit 2 (8a1b562): call-lock.sh drops the VOX_CALL_RELAY early exit and
+        the transfer alternative; the bypass regex is ^/(vox:)?call\s+stop(\s|$).
+        Tests: stop bypass parametrized over /call stop and /vox:call stop; a
+        blocking test parametrized over /call status, /vox:call status, and
+        /call transfer --session abc; relay env test removed. No VOX_CALL_RELAY
+        or "call transfer" reference remains in src/, plugin/, docs/.

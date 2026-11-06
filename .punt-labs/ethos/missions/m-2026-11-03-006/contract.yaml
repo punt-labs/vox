@@ -1,0 +1,38 @@
+mission_id: m-2026-11-03-006
+status: closed
+type: implement
+created_at: "2026-11-03T16:17:49Z"
+updated_at: "2026-11-03T16:36:17Z"
+closed_at: "2026-11-03T16:36:17Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-11-03T16:17:49Z"
+    hash: e5cf9652298c444252da17b53c247f6c05928f5e8f5afa54887cd31c1b43ba76
+inputs:
+    ticket: vox-ob5u
+    files:
+        - src/punt_vox/voxd/music_player/lux_menu.py
+write_set:
+    - src/punt_vox/voxd/music_player/lux_menu.py
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+success_criteria:
+    - 'Successor to m-2026-11-03-003 (closed failed at its round cap on one remaining finding). In src/punt_vox/voxd/music_player/lux_menu.py, restore the prose round 1 compressed that the frame_id fix does not touch: (a) the `__new__` parameter comment at lines ~42-43 back to origin/main wording ("None means the registrar throttles its own registrations; the composition injects the receive-leg''s outage log so a single luxd outage escalates once across both sites, not twice."), adjusted only if a phrase became untrue; (b) in the module docstring (lines ~3-7) keep the legitimate register_on rewording but restore the "(Z model *register-fresh*)" reference. Diff the whole file against origin/main afterward and confirm no other unrelated compression remains.'
+    - Run `make update-oo` and `make update-coupling` only if the gates need it; lux_menu.py module_size should still IMPROVE versus origin/main (expected 64 vs 66). No rebaseline/relax for this file.
+    - '`make check` green against the local lux wheel, exactly as before: local lock .tmp/ob5u/uv.lock.local-lux with UV_FIND_LINKS=<repo>/.tmp/ob5u/wheels, then `git restore uv.lock` before committing. Read the full output.'
+    - One commit, only the files you changed (`git add <file>`). Commit on your branch; do not push, do not touch PRs or merge — the leader does that. Submit via `ethos mission result`.
+budget:
+    rounds: 1
+    reflection_after_each: true
+current_round: 1
+context: |
+    vox-ob5u menu frame_id fix. Worktree:
+    <repo>/.claude/worktrees/menu-frame-id,
+    branch fix/menu-callback-frame-id, HEAD 8eed231. Prefix env-needing
+    commands with `direnv exec <repo>`. Work
+    only in that worktree. Run `biff plan` before committing. Never print a
+    process environment.

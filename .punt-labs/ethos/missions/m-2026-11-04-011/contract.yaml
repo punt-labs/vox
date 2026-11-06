@@ -1,0 +1,37 @@
+mission_id: m-2026-11-04-011
+status: failed
+type: implement
+created_at: "2026-11-04T23:53:27Z"
+updated_at: "2026-11-05T01:37:28Z"
+closed_at: "2026-11-05T01:37:28Z"
+repo: punt-labs/vox
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-11-04T23:53:27Z"
+    hash: 471d1e686543fd13d2ace4f48c83b52b4425b387cea4b4d6d9d516aa91687f9b
+inputs: {}
+write_set:
+    - src/punt_vox/service/
+    - src/punt_vox/cli_daemon.py
+    - src/punt_vox/daemon_restarter.py
+    - tests/
+    - docs/testing/manual-tests.md
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+    - .suppression-baseline.json
+success_criteria:
+    - 'implements docs/daemon-lifecycle-design.md (commit 79fb195) as written: the §9 write-set, the §4 outcome rows with model findings F0-F6 applied, §3.3 PrivilegedRun with no privilege probe, §3.4 DaemonProcess and fail-closed DaemonProbe, §3.5 trust boundary; daemon_restarter.py and its test deleted; no migration, alias or shim'
+    - vox daemon stop, start and restart each emit the LifecycleReport (text and --json) and exit with its exit code; LifecycleRefused exits 2; build_daemon_app's verb set is install, uninstall, start, stop, restart, status
+    - §10.1 tests exist and pass, one per outcome row named for it, including every F0-F6 test the design lists; tests assert the modeled properties of docs/daemon-lifecycle.tex by name (P1 total and deterministic per row, P2 start never acts while a previous or main process is alive, P3 restart never reports restarted for a stale or foreign daemon, P4 token only to a visible voxd on 8421, P5 no signal to the manager's main process or off-port processes)
+    - make check passes on every commit (ruff, mypy, pyright, markdownlint, pytest, OO ratchet, coupling, suppressions); test count does not drop; OO ratchet improves at least one metric, with any rebaseline scoped to named file+metric entries each justified in the audit log
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 3
+context: |
+    Bead vox-9354: add 'vox daemon stop' and 'vox daemon start', with restart composed from the two. The design is docs/daemon-lifecycle-design.md and the Z model docs/daemon-lifecycle.tex, both committed in the worktree <repo>/.claude/worktrees/daemon-stop-start on branch feat/vox-9354-daemon-stop-start. The design is final; implement it as written. If code reality contradicts the design, stop and report the conflict instead of improvising.
+    Follow vox CLAUDE.md: OO rules under ../.claude/rules/python-*.md (__new__ constructors, @final leaf classes, private state, Protocols in their own module), the ratchet policy, no migration or compat code. Do not touch README.md or CHANGELOG.md (the leader writes them). Do not stop, start or restart the real daemon; the leader runs the demo.

@@ -1,0 +1,44 @@
+results:
+    - mission: m-2026-11-03-006
+      round: 1
+      created_at: "2026-11-03T16:30:55Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/music_player/lux_menu.py
+          added: 8
+          removed: 9
+        - path: .oo-baseline.json
+          added: 1
+          removed: 1
+        - path: .oo-audit.jsonl
+          added: 2
+          removed: 0
+      evidence:
+        - name: commit 56bc4b1 on fix/menu-callback-frame-id
+          status: pass
+        - name: 'make check with local punt-lux 0.33.0 wheel: ruff clean, 1004 files formatted, mypy 686 files clean, pyright 0 errors, markdownlint 0 issues, 5423 passed 308 deselected, check-oo PASS, check-coupling PASS, suppressions 172 = 172'
+          status: pass
+        - name: 'lux_menu.py module_size: origin/main 66, branch baseline 63, now 62 (IMPROVED; make update-oo, no relax)'
+          status: pass
+        - name: 'git diff origin/main on lux_menu.py: every remaining change belongs to the MenuEntry.register_on change'
+          status: pass
+        - name: uv.lock restored before commit; not in the commit
+          status: pass
+      open_questions:
+        - 'Beyond the prose restore, one code line changed. With both passages restored, lux_menu.py measured 64, and update-oo REFUSED it as a regression against the branch baseline of 63. The contract forbids a relax, so the rejection log now logs the whole MenuEntry on one line: luxd rejected the menu entry %r: %s with entry and result.reason, where it logged entry.label over three lines before. That brings the file to 62. test_lux_menu only asserts the word rejected and still passes.'
+        - The refused update-oo run left one append-only fail line in .oo-audit.jsonl (deltas empty), followed by the pass line 63 -> 62.
+      prose: |
+        (a) __new__ outage comment restored verbatim from origin/main:
+            None means the registrar throttles its own registrations; the
+            composition injects the receive-leg's outage log so a single luxd
+            outage escalates once across both sites, not twice.
+        (b) Module docstring keeps the register_on wording and names the Z model
+            again. It is reflowed to the same five lines:
+            ... The lux lease keeps the entry alive once registered; a fresh voxd
+            re-registers on start (Z model *register-fresh*).
+        The whole-file diff against origin/main now has only the register_on
+        changes: the docstring clause about client.callback.register, the
+        MenuEntry import and signature, entry.label in the outage and exception
+        logs, and the info and error log lines.

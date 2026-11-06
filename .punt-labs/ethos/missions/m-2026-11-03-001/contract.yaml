@@ -1,0 +1,50 @@
+mission_id: m-2026-11-03-001
+status: closed
+type: implement
+created_at: "2026-11-03T14:35:16Z"
+updated_at: "2026-11-03T15:01:34Z"
+closed_at: "2026-11-03T15:01:34Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-11-03T14:35:16Z"
+    hash: e5cf9652298c444252da17b53c247f6c05928f5e8f5afa54887cd31c1b43ba76
+inputs:
+    ticket: vox-o2gd
+    files:
+        - pyproject.toml
+        - uv.lock
+        - CHANGELOG.md
+write_set:
+    - pyproject.toml
+    - uv.lock
+    - CHANGELOG.md
+success_criteria:
+    - 'Fix bead vox-o2gd (read it: `direnv exec <repo> bd show vox-o2gd`). Clear the ten open Dependabot alerts on punt-labs/vox main: authlib #61 critical, #63 and #68 high, #62 #65 #66 #67 medium, #64 low (first patched 1.9.1 covers all); dnspython #69 high (patched 2.9.0); fastmcp #60 medium (patched 3.4.10). Re-read the live list first with `gh api repos/punt-labs/vox/dependabot/alerts?state=open` and cover every open alert, including any that appeared after this contract was written.'
+    - 'Upgrade only the affected packages: `uv lock --upgrade-package authlib --upgrade-package dnspython --upgrade-package fastmcp`. No blanket `uv lock --upgrade`. List every package that moves or disappears beyond these three, by name and old -> new version, with the reason.'
+    - 'For each of the three: determine whether it is a direct dependency in pyproject.toml or transitive, and which vox dependency pulls it in. Where a direct dependency floor (or the floor of the package that pulls it in) would let a PyPI install resolve a vulnerable version, raise that floor in pyproject.toml, with a one-line comment naming the alert, following the precedent of the existing `mcp>=1.30.0` floor comment. If a floor cannot be raised without a code change, stop and report.'
+    - 'Read the upstream release notes for each upgrade and report anything that touches vox: authlib and dnspython call paths (grep src/ for their use), and fastmcp behavior the MCP server in src/punt_vox/server.py relies on. If a change needs a code change, stop and report; code is outside the write set.'
+    - '`make check` passes in full. Read the full output — never pipe it through tail, head or grep — and paste the final summary lines in your result.'
+    - Add a CHANGELOG entry under `## [Unreleased]` -> `### Security` naming each package, old -> new version, direct or transitive, any floor raised, and the alert numbers cleared.
+    - Commit incrementally — one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes. Commit only the files you changed (`git add <file>`, never -A or -a).
+    - Commit on your branch; do not push, do not touch PRs or merge — the leader does that. Submit via `ethos mission result` with the version table, any further moves, the floor decisions, the release-note findings, and the make check summary.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    Security P1. Ten Dependabot alerts are open on punt-labs/vox main
+    (seen 2026-11-03 at 8520016), led by a critical in authlib. All are
+    reported against uv.lock.
+
+    Working directory: the worktree at
+    <repo>/.claude/worktrees/vox-o2gd on
+    branch fix/vox-o2gd-authlib-dnspython (from main 8520016). Prefix
+    env-needing commands with
+    `direnv exec <repo>`. Do not touch the
+    main checkout or any other worktree. Run `biff plan` before your first
+    commit or the write gate blocks it. Never print a process environment
+    (env, printenv, /proc/<pid>/environ): it holds live credentials.
+
+    Bead: vox-o2gd (P1, claimed, in_progress).

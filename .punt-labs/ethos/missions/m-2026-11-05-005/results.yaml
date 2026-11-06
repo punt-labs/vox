@@ -1,0 +1,467 @@
+results:
+    - mission: m-2026-11-05-005
+      round: 1
+      created_at: "2026-11-05T22:59:48Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 6
+          removed: 0
+        - path: .oo-baseline.json
+          added: 174
+          removed: 57
+        - path: .oo-coupling-audit.jsonl
+          added: 4
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 117
+          removed: 33
+        - path: plugin/commands/call.md
+          added: 75
+          removed: 35
+        - path: src/punt_vox/__main__.py
+          added: 2
+          removed: 2
+        - path: src/punt_vox/commands/call.py
+          added: 77
+          removed: 177
+        - path: src/punt_vox/commands/call_live_driver.py
+          added: 13
+          removed: 31
+        - path: src/punt_vox/commands/call_options.py
+          added: 24
+          removed: 24
+        - path: src/punt_vox/commands/call_runner.py
+          added: 95
+          removed: 0
+        - path: src/punt_vox/commands/call_scripted.py
+          added: 13
+          removed: 29
+        - path: src/punt_vox/commands/call_wiring.py
+          added: 39
+          removed: 0
+        - path: src/punt_vox/paths.py
+          added: 17
+          removed: 3
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_errors.py
+          added: 48
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_host.py
+          added: 145
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_launch.py
+          added: 99
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_state.py
+          added: 129
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_control.py
+          added: 23
+          removed: 38
+        - path: src/punt_vox/voxd/conversation_mode/call_lock.py
+          added: 9
+          removed: 13
+        - path: src/punt_vox/voxd/conversation_mode/call_session.py
+          added: 2
+          removed: 12
+        - path: src/punt_vox/voxd/conversation_mode/call_snapshot.py
+          added: 76
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_summary.py
+          added: 98
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/claude_session_attach.py
+          added: 0
+          removed: 327
+        - path: src/punt_vox/voxd/conversation_mode/claude_subprocess_env.py
+          added: 0
+          removed: 98
+        - path: src/punt_vox/voxd/conversation_mode/permanent_stt_failure.py
+          added: 1
+          removed: 1
+        - path: src/punt_vox/voxd/conversation_mode/pi_call_agent.py
+          added: 200
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/pi_rpc_channel.py
+          added: 179
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/pi_rpc_record.py
+          added: 167
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/reply_delivery.py
+          added: 7
+          removed: 19
+        - path: src/punt_vox/voxd/conversation_mode/reply_recovery.py
+          added: 16
+          removed: 23
+        - path: src/punt_vox/voxd/conversation_mode/reply_redaction.py
+          added: 9
+          removed: 9
+        - path: src/punt_vox/voxd/conversation_mode/secret_path_policy.py
+          added: 148
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/session_attach.py
+          added: 19
+          removed: 64
+        - path: src/punt_vox/voxd/conversation_mode/session_discovery.py
+          added: 0
+          removed: 179
+        - path: src/punt_vox/voxd/conversation_mode/turn_timer.py
+          added: 12
+          removed: 12
+        - path: src/punt_vox/voxd/conversation_mode/wait_cue.py
+          added: 4
+          removed: 4
+        - path: tests/conversation_mode/_pi_rpc_fakes.py
+          added: 223
+          removed: 0
+        - path: tests/conversation_mode/_session_attach_fakes.py
+          added: 12
+          removed: 5
+        - path: tests/conversation_mode/coverage-matrix.md
+          added: 3
+          removed: 3
+        - path: tests/conversation_mode/test_call_agent_host.py
+          added: 144
+          removed: 0
+        - path: tests/conversation_mode/test_call_agent_launch.py
+          added: 85
+          removed: 0
+        - path: tests/conversation_mode/test_call_agent_state.py
+          added: 171
+          removed: 0
+        - path: tests/conversation_mode/test_call_control.py
+          added: 6
+          removed: 46
+        - path: tests/conversation_mode/test_call_session.py
+          added: 11
+          removed: 40
+        - path: tests/conversation_mode/test_call_snapshot.py
+          added: 46
+          removed: 0
+        - path: tests/conversation_mode/test_call_summary.py
+          added: 76
+          removed: 0
+        - path: tests/conversation_mode/test_claude_session_attach.py
+          added: 0
+          removed: 408
+        - path: tests/conversation_mode/test_claude_subprocess_env.py
+          added: 0
+          removed: 99
+        - path: tests/conversation_mode/test_pi_call_agent.py
+          added: 317
+          removed: 0
+        - path: tests/conversation_mode/test_pi_rpc_channel.py
+          added: 56
+          removed: 0
+        - path: tests/conversation_mode/test_pi_rpc_record.py
+          added: 188
+          removed: 0
+        - path: tests/conversation_mode/test_reply_delivery.py
+          added: 0
+          removed: 18
+        - path: tests/conversation_mode/test_reply_recovery.py
+          added: 42
+          removed: 18
+        - path: tests/conversation_mode/test_secret_path_policy.py
+          added: 118
+          removed: 0
+        - path: tests/conversation_mode/test_session_discovery.py
+          added: 0
+          removed: 213
+        - path: tests/test_call_live_driver.py
+          added: 24
+          removed: 28
+        - path: tests/test_call_scripted.py
+          added: 13
+          removed: 15
+        - path: tests/test_cli_call.py
+          added: 248
+          removed: 397
+        - path: tests/test_paths.py
+          added: 8
+          removed: 2
+      evidence:
+        - name: make check (lint, mypy, pyright, docs, 7818 tests, check-oo, check-coupling, check-suppressions) on HEAD 7018686
+          status: pass
+        - name: test count 7760 -> 7818 (claude/discovery tests deleted with their modules)
+          status: pass
+        - name: 'Z-model tests: test_call_agent_state.py (TestSpawn, TestSendTurn, TestReplyComplete, TestTeardown, TestAbortTurn, TestCanAcceptTurn, TestReadOnlyOverTheWholeLiveExtent exhaustive length-4 sequences) and test_pi_call_agent.py (same class names against a fake pi process)'
+          status: pass
+        - name: 'security tests: test_call_agent_launch.py (read-only tools, surface flags, provider keys stripped), test_secret_path_policy.py, test_pi_rpc_record.py TestTouches, test_pi_call_agent.py TestSecretPathDenyList'
+          status: pass
+        - name: 'inactivity bound: test_a_long_but_busy_reply_is_never_mistaken_for_a_hang, test_silence_past_the_inactivity_bound_aborts_the_turn; first_tool_event mark tested'
+          status: pass
+        - name: pi RPC event shapes confirmed against one live pi --mode rpc run (scratch probe, not a call)
+          status: pass
+        - name: 'vox call start --context /nonexistent: clean usage error, no agent spawned'
+          status: pass
+      open_questions:
+        - Deny-list cannot block the read itself without a pi extension (-e); current enforcement aborts the turn post-hoc so nothing is spoken. Accept, or allow one small tool_call extension?
+        - call-lock.sh (outside write-set) still references VOX_CALL_RELAY and /call transfer, and its bypass misses /vox:call stop.
+      prose: |
+        Commits: 36aef9d (CallAgentState + SecretPathPolicy), f35a4ce (pi call agent replaces
+        ClaudeSessionAttach), 7018686 (/call slash command + coverage matrix).
+
+        Open details decided:
+        - Snapshot transport: `vox call start --context PATH`, where PATH may be `-` for stdin.
+          /call start <topic> passes it on stdin through a quoted heredoc
+          (`vox call start --context - <<'VOX_CONTEXT'`), so no temp file to create or clean
+          up and nothing in the snapshot is shell-expanded. Required; 64KB cap; empty refused.
+        - calls_dir retention: newest 50 summaries kept, older pruned on every write. Call ids
+          are UTC-timestamped (YYYYMMDDTHHMMSSZ-<6 hex>) so name order is chronological.
+          Files 0600 under a 0700 dir; ensure_user_dirs creates calls/.
+
+        Design calls made inside the ratified design (flag any you disagree with):
+        - The process is held by asyncio.create_subprocess_exec in the process that runs the
+          call. CallSession runs in `vox call start` (the CLI process), not in voxd, so "Popen
+          in voxd" in the contract is realized where CallSession actually lives; moving the call
+          loop into the daemon would be a separate architectural change.
+        - Deny-list enforcement: pi has no path-level read gate without an extension, and the
+          bead forbids adding extensions. Verified live: pi starts executing a tool in the same
+          millisecond it announces it (message_end -> tool_execution_start), so nothing outside
+          pi can block the read itself. Enforcement is therefore (1) the deny-list as a HARD RULE
+          in --append-system-prompt (DES-066's named mechanism), plus (2) voxd-side screening of
+          every toolcall_end / tool_execution_start argument and every grep result line: any hit
+          aborts the turn (AbortTurn, process killed), so no reply text from that turn is spoken,
+          summarized, or kept in a live context, and the call ends with a fixed explanation.
+          A true pre-read block needs a ~20-line pi tool_call extension via -e; that is an
+          operator call against the no-extensions rule.
+        - Extra launch hardening beyond the contract: --no-mcp (pi --tools keeps MCP tools
+          unless told otherwise), --no-skills, --no-prompt-templates, --no-approve (ignore
+          project-local .pi config that could re-enable tools/extensions).
+        - The summary is authored by the agent as its final turn and persisted by voxd: the
+          agent is read-only and cannot write the file itself. Summary only on a clean end
+          (hangup, stop, timeout, script end) with >=1 turn handled; an abnormal end (crash,
+          Ctrl-C) abandons the agent (Teardown or AbortTurn) with no summary turn.
+        - transfer, --session, SessionDiscovery, ClaudeSubprocessEnv, BareAuthMissingError
+          deleted: a call agent is attached to no session, so transfer had no referent.
+        - Provider error mid-reply is transient (agent ready again, "try again");
+          CallAgentEndedError (silence, death, denied path, refused prompt) ends the call.
+
+        Outside the write-set, needs the leader:
+        - plugin/hooks/call-lock.sh still bypasses on VOX_CALL_RELAY (now never set) and lets
+          `/call transfer` through; its bypass regex `^/call[[:space:]]+(stop|transfer)` also
+          does not match `/vox:call stop`. tests/test_hook_gate.py exercises the transfer bypass.
+        - DESIGN.md / CHANGELOG / README: --context flag, transfer removal, retention policy.
+
+        Ratchet: OO relaxed with justification for paths.py module_size, call_session.py
+        avg_complexity, reply_delivery.py avg_params/avg_complexity, session_attach.py
+        avg_params (each only from deleting trivial methods or adding calls_dir). Coupling
+        relaxed for paths.py public_names (calls_dir) and call_control.py / call_lock.py
+        (stale baseline: HEAD already had those imports). call.py efferent 14 -> 9, size
+        290 -> 196, method_ratio -> 1.0.
+    - mission: m-2026-11-05-005
+      round: 2
+      created_at: "2026-11-05T23:45:37Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 12
+          removed: 0
+        - path: .oo-baseline.json
+          added: 49
+          removed: 10
+        - path: .oo-coupling-audit.jsonl
+          added: 6
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 30
+          removed: 9
+        - path: plugin/commands/call.md
+          added: 26
+          removed: 15
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_env.py
+          added: 45
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_agent_launch.py
+          added: 21
+          removed: 15
+        - path: src/punt_vox/voxd/conversation_mode/pi_call_agent.py
+          added: 32
+          removed: 14
+        - path: src/punt_vox/voxd/conversation_mode/pi_extension/secret_guard.js
+          added: 165
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/pi_path.py
+          added: 51
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/pi_rpc_record.py
+          added: 23
+          removed: 38
+        - path: src/punt_vox/voxd/conversation_mode/secret_path_policy.py
+          added: 65
+          removed: 43
+        - path: src/punt_vox/voxd/conversation_mode/tool_screen.py
+          added: 100
+          removed: 0
+        - path: tests/conversation_mode/_pi_rpc_fakes.py
+          added: 9
+          removed: 2
+        - path: tests/conversation_mode/test_call_agent_env.py
+          added: 24
+          removed: 0
+        - path: tests/conversation_mode/test_call_agent_launch.py
+          added: 96
+          removed: 18
+        - path: tests/conversation_mode/test_pi_call_agent.py
+          added: 32
+          removed: 3
+        - path: tests/conversation_mode/test_pi_path.py
+          added: 33
+          removed: 0
+        - path: tests/conversation_mode/test_pi_rpc_record.py
+          added: 22
+          removed: 62
+        - path: tests/conversation_mode/test_pi_secret_guard.py
+          added: 175
+          removed: 0
+        - path: tests/conversation_mode/test_secret_path_policy.py
+          added: 103
+          removed: 29
+        - path: tests/conversation_mode/test_tool_screen.py
+          added: 133
+          removed: 0
+      evidence:
+        - name: 'make check green on HEAD 334288e and on every round-2 commit; 7894 tests pass (round 1: 7818)'
+          status: pass
+        - name: 'pytest -m subprocess tests/conversation_mode/test_pi_secret_guard.py: [redacted-secret] passed (the guard JS under real node)'
+          status: pass
+        - name: 'H1 tests: test_call_agent_env.py, TestEnvironment in test_call_agent_launch.py (GITHUB_PERSONAL_ACCESS_TOKEN, BEADS_DOLT_PASSWORD, FOO_API_KEY never reach the child)'
+          status: pass
+        - name: 'H2 tests: test_secret_path_policy.py (TestPiNormalization, TestConfinement, TestGlobs), test_tool_screen.py (subdirectory grep vs anchored pattern), test_pi_path.py, TestSecretPathDenyList in test_pi_call_agent.py'
+          status: pass
+        - name: 'live pi probe: guard blocked read of notes.local.md, isError true, secret absent from all 29 RPC records'
+          status: pass
+        - name: 'live pi probe: pi answers with only the allowlisted environment (no credential passed)'
+          status: pass
+        - name: uv build wheel contains punt_vox/voxd/conversation_mode/pi_extension/secret_guard.js
+          status: pass
+      open_questions:
+        - The live probe could not make the model attempt .env.local itself (it refuses on training alone); the guard's .env.local block is proven under node and on a deny-listed notes.local.md live. Acceptable, or do you want a model-free probe that drives pi's tool path directly?
+      prose: |
+        Commits (one per ruled item, make check green on each): 531095b H1, f13296a L3,
+        7bb21b7 H2, 1fa2de8 M1, d6b4f88 L1, 334288e L2.
+
+        H1: CallAgentEnv (new module) admits only PATH, HOME, USER, LOGNAME, SHELL, LANG,
+        TERM, TMPDIR and the LC_/XDG_/PI_ prefixes. Credential decision: none is passed.
+        pi authenticates from ~/.pi/agent (reached via HOME); verified live -- pi answered
+        PONG with only the allowlisted env. A pi configured to read a provider key from the
+        environment fails to start cleanly, before the call opens.
+
+        H2: pi_extension/secret_guard.js, loaded with --extension <abs path> after
+        --no-extensions; ships in the wheel (verified with uv build). tool_call handler:
+        pi-identical normalization (unicode spaces, @, ~, file://, resolve vs session cwd),
+        realpath of nearest existing ancestor, must be inside the repo root, then patterns
+        case-insensitively; grep glob / find pattern checked as written and with glob chars
+        stripped; any non read/grep/find/ls tool refused; missing/malformed config blocks
+        everything; returns {block: true, reason, terminate: true}. Config via
+        VOX_CALL_GUARD_ROOT / VOX_CALL_GUARD_PATTERNS, set by vox after the allowlist so a
+        parent cannot override them. Python side: PiPath mirrors pi normalization;
+        SecretPathPolicy.denies(candidate, cwd=) adds confinement, case-insensitivity;
+        denies_glob; guard_env. The stream layer is now ToolScreen and fires only on a call
+        that actually executed (tool_execution_end, isError false), with grep output resolved
+        against grep's own search path -- so a guard-blocked read leaves the call running.
+
+        Decision beyond the list: with terminate: true the model never speaks after a block
+        (the live probe returned an empty reply), so a turn ended by the guard yields
+        GUARD_REFUSAL, a fixed spoken sentence, instead of silence.
+
+        Live probe (.tmp/pi-probe/guard_probe.py, temp repo, exact vox argv/env):
+        - with the real system prompt the model refused on its own (guard not reached); same
+          with only .env.local and the HARD RULE stripped -- the model's own training refused.
+        - with a deny-listed but innocuous-looking notes.local.md (matched via a *.local.*
+          gitignore pattern) and the HARD RULE stripped, the model called read:
+            tool_execution_start: read {"path": "notes.local.md"}
+            tool_execution_end: isError= True result= vox secret guard: notes.local.md may hold secrets
+            records: 29 | secret value present anywhere in RPC stream: False
+          The .env.local / @ / .ENV / /proc / ~/.claude / ~/.config/gh / symlink-out / ../
+          cases are proven against the same JS under node in test_pi_secret_guard.py.
+
+        L1: quarry via the MCP find tool; Bash(quarry:*) removed. L2: per-call random
+        VOX_CONTEXT_<8 hex> delimiter (chosen over a temp file: one command, no cleanup);
+        the doc never shows a concrete value to copy. L3: --no-context-files.
+
+        Ratchet: scoped relaxes, each justified in the audit logs -- OO: call_agent_launch
+        (L3 flag; H2 guard check), pi_call_agent (H2 refusal; M1 docstring),
+        secret_path_policy (H2). Coupling: pi_call_agent (ToolScreen import, GUARD_REFUSAL),
+        secret_path_policy (PiPath import; new operations raise LCOM).
+
+        Not touched per instruction: call-lock.sh, test_hook_gate.py.
+    - mission: m-2026-11-05-005
+      round: 3
+      created_at: "2026-11-06T00:01:28Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 4
+          removed: 0
+        - path: .oo-baseline.json
+          added: 2
+          removed: 2
+        - path: plugin/commands/call.md
+          added: 9
+          removed: 4
+        - path: src/punt_vox/voxd/conversation_mode/pi_call_agent.py
+          added: 5
+          removed: 4
+        - path: src/punt_vox/voxd/conversation_mode/pi_extension/secret_guard.js
+          added: 72
+          removed: 4
+        - path: src/punt_vox/voxd/conversation_mode/secret_path_policy.py
+          added: 7
+          removed: 1
+        - path: tests/conversation_mode/test_pi_secret_guard.py
+          added: 62
+          removed: 3
+        - path: tests/conversation_mode/test_secret_path_policy.py
+          added: 24
+          removed: 0
+        - path: tests/conversation_mode/test_tool_screen.py
+          added: 26
+          removed: 0
+      evidence:
+        - name: make check green on b962918 and c0df344; 7904 tests pass
+          status: pass
+        - name: 'pytest -m subprocess tests/conversation_mode/test_pi_secret_guard.py: [redacted-secret] passed under real node'
+          status: pass
+        - name: 'live pi probe: directory grep blocked on non-ignored .envrc; secret absent from all 72 RPC records'
+          status: pass
+        - name: 'L4: credentials.py allowed, credentials.json denied (Python and node)'
+          status: pass
+      prose: |
+        Commits: b962918 L4, c0df344 M2. make check green on each; 7904 tests on HEAD.
+
+        L4: built-ins name credentials, credentials.json/.yml/.yaml/.toml/.ini instead of
+        credentials.*; the pi guard gets the same list via VOX_CALL_GUARD_PATTERNS. Tests:
+        TestCredentialsFiles (credentials.py allowed, every secret-shaped name denied) and
+        node cases (src/credentials.py allowed, src/credentials.json blocked).
+
+        M2: before allowing a grep whose resolved path is a directory, secret_guard.js runs
+        pi's own rg (PI_CODING_AGENT_DIR or ~/.pi/agent bin/rg, else rg on PATH, as pi's
+        getToolPath does) with `--files --hidden --no-config [--glob <call glob>] -- <path>`,
+        the same ignore rules pi's grep gets (pi does not pass --no-require-git to grep, and
+        neither does the listing). Any listed file failing checkPath blocks; an rg error,
+        exit status other than 0 or 1-with-no-output, or no rg blocks. A negated glob is
+        passed to the listing, so it widens it exactly as it widens the search.
+        Node tests (TestDirectoryGrep): non-ignored src/.envrc blocks; `!*.py` with a root
+        .envrc blocks; `*.py` glob allowed; gitignored secrets in a git repo do not block;
+        rg missing blocks with "cannot list". Python ToolScreen tests: directory grep output
+        landing in .envrc, negated-glob grep landing in .env.production are breaches.
+
+        Live probe (.tmp/pi-probe/grep_probe.py; git-init temp repo, non-ignored .envrc with a
+        fake secret, exact vox argv/env, prompt rule stripped so the model acts):
+          tool_execution_start: grep {"pattern": "code word", "path": "<temp repo>", "literal": true}
+          tool_execution_end: isError= True result= vox secret guard: grep would read .envrc, which may hold secrets
+          records: 72 | secret value present anywhere in RPC stream: False
+
+        call.md and the PiCallAgent docstring now state exactly what the guard checks,
+        including the residual: find and ls can reveal file names in the repo, never contents.
+
+        Ratchet: pi_call_agent module_size relaxed (+1 docstring line, M2).

@@ -1,0 +1,7 @@
+You are the worker on ethos mission m-2026-11-04-006. Read the contract first: `ethos mission show m-2026-11-04-006`, then the design it models: <repo>/.claude/worktrees/daemon-stop-start/docs/daemon-lifecycle-design.md (§4 outcome tables, §4.3 restart, §8 model scope). Precedent specs in the same repo: docs/vox-notify.tex and docs/audio-programs.tex.
+
+Work only in that worktree (branch feat/vox-9354-daemon-stop-start). Write only docs/daemon-lifecycle.tex. Type-check with fuzz (`fuzz -t docs/daemon-lifecycle.tex` must exit 0) and model-check with ProB (probcli) over a bounded pid set, proving each property in the contract's success criteria. Use the z-spec tooling available to you (the z-spec CLI or MCP check/model_check tools). If the model exposes a defect in the design (an unclassified state, a nondeterministic row, a reachable invariant violation), report it with the triggering state; do not edit the design.
+
+Set your biff plan if you have the tool. Commit the .tex alone (`git add docs/daemon-lifecycle.tex`), message `docs(spec): Z model of the daemon stop/start/restart lifecycle (vox-9354)` plus a blank line and `Co-Authored-By: Claude Opus 5.5 <[redacted-email]>`. Then submit the result: `ethos mission result m-2026-11-04-006` (see --help for the YAML), naming the file, commit sha, the fuzz and ProB outputs, and any design findings.
+
+Commit on your branch; do not push, do not touch PRs or merge — the leader does that.

@@ -1,0 +1,78 @@
+results:
+    - mission: m-2026-10-22-035
+      round: 1
+      created_at: "2026-10-22T19:40:51Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: uv.lock
+          added: 6
+          removed: 28
+        - path: CHANGELOG.md
+          added: 10
+          removed: 0
+      evidence:
+        - name: 'uv lock --upgrade-package certifi --upgrade-package opentelemetry-api (uv 0.12.21): exactly 4 entries changed'
+          status: pass
+        - name: 'make check (UV_FROZEN=1): ruff, shellcheck, mypy 0 issues/643 files, pyright 0 errors, markdownlint 0 issues/57 files, 4689 passed 308 deselected, oo/coupling trivial pass, suppressions 202=202'
+          status: pass
+        - name: 'importlib-metadata / zipp: zero references in src/, tests/, or remaining uv.lock'
+          status: pass
+        - name: 'Live TLS with certifi 2026.10.19 only: api.elevenlabs.io, api.openai.com, polly us-east-1/us-west-2/eu-west-1, sts, sso oidc, sso portal all verify'
+          status: pass
+        - name: commit b7731c6 pushed to origin/fix/vox-tvbi-certifi-otel
+          status: pass
+      open_questions:
+        - Local uv is 0.11.11 (older than CI); a plain `uv run` under it re-resolves uv.lock and adds marker-only churn to anyio and secretstorage. Recommend the operator upgrade the local uv; until then run make check with UV_FROZEN=1 or the lock gets rewritten.
+      prose: |
+        Versions (old -> new):
+          certifi             2026.2.25 -> 2026.10.19   (alert #58, critical)
+          opentelemetry-api   1.40.0    -> 1.45.1       (alert #59, medium)
+          importlib-metadata  8.7.1     -> removed      (opentelemetry-api 1.45.1 no longer depends on it)
+          zipp                3.23.0    -> removed      (only importlib-metadata required it)
+        No other package moved. pyproject.toml is untouched.
+
+        Lock tooling. The first run used the local uv 0.11.11. It made the right
+        four changes but also rewrote dependency markers on anyio (idna) and
+        secretstorage (cryptography, jeepney). No versions changed; that is a uv
+        version artifact. The latest uv dropped the churn but bumped the lock's
+        `revision` from 3 to 5. uv 0.12.21, the version the build backend pins,
+        gave the minimal diff with revision 3 kept. That is what I committed. I ran
+        make check with UV_FROZEN=1 so the old local uv could not rewrite the lock
+        during the gate. This adds no suppression: it syncs the venv exactly from
+        the committed lock.
+
+        certifi findings. The release notes were not fetched. Instead I read the
+        GitHub advisory text (GHSA-6q48-6c7w-9gw2) and diffed the two installed
+        cacert.pem files.
+        The advisory: 2026.10.18 removed all emSign roots; 2026.10.19 restored the
+        unaffected ones. The new bundle keeps emSign Root CA G1, C1, and ECC C3, and
+        drops emSign ECC Root CA - G3, which matches the advisory.
+        Bundle: 137 -> 120 roots. 21 removed: Atos TrustedRoot 2011, COMODO CA,
+        Certigna, DigiCert Assured ID Root CA, DigiCert Global Root CA, DigiCert High
+        Assurance EV Root CA, FIRMAPROFESIONAL CA ROOT-A WEB, GTS Root R2, QuoVadis
+        Root CA 2 and 3, Secure Global CA, SecureSign Root CA12, SecureTrust CA,
+        SwissSign Gold CA G2, TeliaSonera Root CA v1, Trustwave Global (RSA, ECC
+        P256, ECC P384), certSIGN ROOT CA, ePKI Root CA, emSign ECC Root CA G3.
+        4 added: SECOM TLS ECC/RSA Root CA 2024, Telia EC/RSA TLS Root CA v3.
+        Most of the removals are presumably Mozilla trust-store retirements between
+        February and October. The legacy DigiCert roots and GTS R2 were the ones
+        worth checking for vox. A live handshake verified against the new bundle
+        alone succeeds for every provider endpoint: ElevenLabs and OpenAI (Google
+        Trust Services WR3/WE1), and Polly in three regions plus STS and SSO (Amazon
+        RSA 2048 M01/M04/S19). vox reads CAs from certifi by default through httpx,
+        requests, and botocore. SSL_CERT_FILE and REQUESTS_CA_BUNDLE (captured in
+        voxd_plist.py) override it. No code change is needed.
+
+        opentelemetry-api findings. I read advisory GHSA-xcq7-p3pf-p88h.
+        TraceState.from_header split the header with a regex that ran in quadratic
+        time. 1.45.1 parses linearly and drops tracestate headers over 8192
+        characters. It reaches vox only through punt-vox -> punt-lux -> fastmcp
+        3.2.0 -> opentelemetry-api. fastmcp/telemetry.py calls
+        propagate.extract on MCP request meta, which only runs inside a fastmcp
+        server (punt-lux's tools server). vox src/ and tests/ import neither
+        fastmcp nor opentelemetry. vox's mic server is built on the `mcp` package,
+        which does not depend on opentelemetry-api. No vox code path parses
+        tracestate, and no code change is needed. The dependency drop for
+        importlib-metadata is the only API-level change seen.

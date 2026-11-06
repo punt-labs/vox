@@ -1,0 +1,35 @@
+results:
+    - mission: m-2026-11-03-008
+      round: 1
+      created_at: "2026-11-03T23:24:11Z"
+      author: rmh
+      verdict: escalate
+      confidence: 0.97
+      files_changed: []
+      evidence:
+        - name: lux 0.32.1 button.py:181-183 _set_publish replaces _publish but never touches the PublishOnClick handler bound at decode (button_codec.py:120)
+          status: fail
+        - name: 'repro .tmp/repro_lux_publish_patch.py: decode button with publish music.resume, apply_patch publish music.pause, fire ButtonClicked -> declared publish is music.pause, sink receives [''music.resume'']'
+          status: fail
+        - name: 'vox side correct: tests/music_player/test_scene.py test_idle_to_playing_patches_rather_than_installing and test_play_to_pause_patches_the_buttons_label_tooltip_and_topic show the patch carries publish'
+          status: pass
+        - name: lux main (2cb1fa8c) src/punt_lux/protocol/elements/button.py:181 has the same _set_publish; no lux test patches publish then fires a click
+          status: fail
+      open_questions:
+        - 'Fix belongs in lux: _set_publish must rebind the click handler (or PublishOnClick must read the element''s current declaration at fire time). File a lux bead and decide whether vox waits for a lux release with a dependency bump.'
+      prose: |
+        Root cause is in lux, not vox. Stopped per contract; no commits made.
+        The operator's sequence (idle scene installed, album starts, press
+        play/pause) goes idle -> playing as a PatchScene that sets label,
+        tooltip, disabled, and publish {"topic": "music.pause"} on
+        music.transport.playpause. vox plans this correctly. lux's
+        ButtonElement._set_publish (button.py:181-183) swaps the _publish
+        declaration, but the click handler that actually publishes is a
+        PublishOnClick installed once at decode time by
+        JsonButtonDecoder._install_publish (button_codec.py:120). That
+        handler captured the idle-time ButtonPublish("music.resume"), so
+        every click publishes music.resume forever. That matches vox.log:
+        presses arrive as music.resume, the player ignores it while playing,
+        and the scene is unchanged, so nothing is pushed. A failing vox test
+        through lux's real decoder would be red under make check, so I
+        committed nothing. The test belongs in lux next to the fix.
