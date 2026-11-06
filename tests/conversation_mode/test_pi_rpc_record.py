@@ -104,6 +104,71 @@ class TestFailure:
         )
         assert record.failure() == ""
 
+    def test_exhausted_retries_are_a_failure(self) -> None:
+        record = _record(
+            {"type": "auto_retry_end", "success": False, "finalError": "529 again"}
+        )
+        assert record.failure() == "529 again"
+
+    def test_a_successful_retry_is_not_a_failure(self) -> None:
+        record = _record({"type": "auto_retry_end", "success": True, "attempt": 2})
+        assert record.failure() == ""
+
+
+class TestRetryAndAbort:
+    def test_auto_retry_start_starts_a_retry(self) -> None:
+        record = _record(
+            {"type": "auto_retry_start", "attempt": 1, "errorMessage": "529"}
+        )
+        assert record.is_retry_start
+
+    def test_other_records_do_not_start_a_retry(self) -> None:
+        assert not _record({"type": "agent_start"}).is_retry_start
+
+    def test_an_aborted_settle_is_aborted(self) -> None:
+        assert _record({"type": "agent_settled", "aborted": True}).is_aborted
+
+    def test_an_ordinary_settle_is_not_aborted(self) -> None:
+        assert not _record({"type": "agent_settled", "aborted": False}).is_aborted
+
+
+class TestExtensionError:
+    def test_an_extension_error_names_the_extension_event_and_error(self) -> None:
+        record = _record(
+            {
+                "type": "extension_error",
+                "extensionPath": "/x/secret_guard.js",
+                "event": "tool_call",
+                "error": "boom",
+            }
+        )
+        assert record.extension_error() == "/x/secret_guard.js (tool_call): boom"
+
+    def test_other_records_carry_no_extension_error(self) -> None:
+        assert _record({"type": "agent_start"}).extension_error() == ""
+
+
+class TestErrorText:
+    def test_a_failed_tool_end_carries_its_error_text(self) -> None:
+        record = _record(
+            {
+                "type": "tool_execution_end",
+                "isError": True,
+                "result": {"content": [{"type": "text", "text": "blocked"}]},
+            }
+        )
+        assert record.error_text() == "blocked"
+
+    def test_a_successful_tool_end_has_no_error_text(self) -> None:
+        record = _record(
+            {
+                "type": "tool_execution_end",
+                "isError": False,
+                "result": {"content": [{"type": "text", "text": "ok"}]},
+            }
+        )
+        assert record.error_text() == ""
+
 
 class TestToolExecution:
     def test_a_start_record_carries_its_id_name_and_args(self) -> None:

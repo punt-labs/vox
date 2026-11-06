@@ -32,6 +32,8 @@ class ToolUse:
     result: str = "ok"
     # The pi-side guard refused the call: it ends as an error, nothing read.
     blocked: bool = False
+    # The guard's refusal text, when the test cares which refusal it was.
+    reason: str = ""
 
 
 @final
@@ -52,6 +54,14 @@ class PiReply:
     die: bool = False
     # Seconds between consecutive records, to pace a long but busy reply.
     pace_s: float = 0.0
+    # Attempts the provider failed (one error each) that pi auto-retried
+    # before the attempt this reply describes; with ``error`` set too, the
+    # retries were exhausted.
+    retried: tuple[str, ...] = ()
+    # The run was aborted: it settles with ``aborted: true`` and no reply.
+    aborted: bool = False
+    # An extension handler threw: pi reports it in an ``extension_error``.
+    extension_error: str = ""
 
 
 def _record(fields: dict[str, object]) -> bytes:
@@ -171,9 +181,49 @@ class FakePiProcess:
         if reply.hang or reply.die:
             return records
         records.append(_record({"type": "agent_start"}))
+        if reply.aborted:
+            return [
+                *records,
+                _record({"type": "agent_end", "messages": []}),
+                _record({"type": "agent_settled", "aborted": True}),
+            ]
+        if reply.extension_error:
+            records.append(
+                _record(
+                    {
+                        "type": "extension_error",
+                        "extensionPath": "/x/secret_guard.js",
+                        "event": "tool_call",
+                        "error": reply.extension_error,
+                    }
+                )
+            )
+        for attempt, error in enumerate(reply.retried, start=1):
+            records += [
+                _record(
+                    {
+                        "type": "message_end",
+                        "message": {
+                            "role": "assistant",
+                            "stopReason": "error",
+                            "errorMessage": error,
+                        },
+                    }
+                ),
+                _record({"type": "agent_end", "messages": []}),
+                _record(
+                    {
+                        "type": "auto_retry_start",
+                        "attempt": attempt,
+                        "errorMessage": error,
+                    }
+                ),
+                _record({"type": "agent_start"}),
+            ]
         for index, tool in enumerate(reply.tools):
             call_id = f"call_{index}"
-            result = f"vox secret guard: {tool.args}" if tool.blocked else tool.result
+            refusal = tool.reason or f"vox secret guard: {tool.args}"
+            result = refusal if tool.blocked else tool.result
             records += [
                 _update(
                     {
@@ -209,8 +259,16 @@ class FakePiProcess:
         records += [
             _record({"type": "message_end", "message": stop}),
             _record({"type": "agent_end", "messages": []}),
-            _record({"type": "agent_settled", "aborted": False}),
         ]
+        if reply.retried:
+            ended: dict[str, object] = {"type": "auto_retry_end"}
+            ended |= (
+                {"success": False, "finalError": reply.error}
+                if reply.error
+                else {"success": True}
+            )
+            records.append(_record(ended))
+        records.append(_record({"type": "agent_settled", "aborted": False}))
         return records
 
 

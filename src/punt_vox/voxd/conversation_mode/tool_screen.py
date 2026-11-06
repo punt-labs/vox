@@ -61,13 +61,10 @@ class ToolScreen:
         )
 
     @staticmethod
-    def guard_refused(record: PiRpcRecord) -> bool:
-        """Return whether *record* is a tool call the pi-side guard blocked."""
-        return (
-            record.kind == "tool_execution_end"
-            and record.is_error
-            and record.result_text().startswith(GUARD_REASON_PREFIX)
-        )
+    def guard_refusal(record: PiRpcRecord) -> str:
+        """Return the pi-side guard's reason when *record* is a call it blocked."""
+        error = record.error_text()
+        return error if error.startswith(GUARD_REASON_PREFIX) else ""
 
     def _arguments_denied(self, name: str, args: dict[str, object]) -> bool:
         if self._policy.denies(self._path_arg(args), cwd=self._cwd):

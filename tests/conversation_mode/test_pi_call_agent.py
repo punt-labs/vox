@@ -8,6 +8,7 @@ boundary; the channel, record parsing, and state machine run for real.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,6 +36,7 @@ from punt_vox.voxd.conversation_mode.pi_call_agent import (
     GUARD_REFUSAL,
     PiCallAgent,
 )
+from punt_vox.voxd.conversation_mode.pi_turn_verdict import GuardRefusalError
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 from punt_vox.voxd.conversation_mode.session_attach import (
@@ -170,6 +172,45 @@ class TestSendTurnAndReplyComplete:
         assert not isinstance(caught.value, CallAgentEndedError)
         assert agent.can_accept_turn
 
+    async def test_a_provider_error_pi_retried_successfully_yields_the_reply(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the final attempt decides: a retried 529 is not a failed turn."""
+        retried = PiReply(text="It returns the sum.", retried=("529 overloaded",))
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), retried]))
+        assert await _reply(agent) == "It returns the sum."
+
+    async def test_retries_that_all_fail_fail_the_turn(self, tmp_path: Path) -> None:
+        exhausted = PiReply(text="", retried=("529",), error="529 still overloaded")
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), exhausted]))
+        with pytest.raises(SessionAttachError, match="529 still overloaded"):
+            await _reply(agent)
+        assert agent.can_accept_turn
+
+    async def test_a_retried_opening_message_still_spawns(self, tmp_path: Path) -> None:
+        opening = PiReply(text="Ready.", retried=("529 overloaded",))
+        agent, _ = await _spawn(tmp_path, FakePiProcess([opening]))
+        assert agent.can_accept_turn
+
+    async def test_an_aborted_run_with_no_reply_is_a_failed_turn(
+        self, tmp_path: Path
+    ) -> None:
+        agent, _ = await _spawn(
+            tmp_path, FakePiProcess([PiReply("Ready."), PiReply(aborted=True)])
+        )
+        with pytest.raises(SessionAttachError, match="aborted"):
+            await _reply(agent)
+        assert agent.can_accept_turn
+
+    async def test_a_failed_turn_is_not_counted_as_handled(
+        self, tmp_path: Path
+    ) -> None:
+        process = FakePiProcess([PiReply("Ready."), PiReply(text="", error="5xx")])
+        agent, _ = await _spawn(tmp_path, process)
+        with pytest.raises(SessionAttachError):
+            await _reply(agent)
+        assert agent.turns_handled == 0
+
 
 class TestAbortTurn:
     async def test_silence_past_the_inactivity_bound_aborts_the_turn(
@@ -230,8 +271,61 @@ class TestSecretPathDenyList:
         )
         process = FakePiProcess([PiReply("Ready."), refused])
         agent, _ = await _spawn(tmp_path, process)
-        assert await _reply(agent, "read me the env file") == "I can't open that file."
+        await _reply(agent, "read me the env file")
         assert (process.killed, agent.can_accept_turn) == (False, True)
+
+    async def test_text_spoken_before_a_refusal_is_followed_by_the_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        """The guard ends the turn, so the model never explains: vox does."""
+        refused = PiReply(
+            text="Let me look.",
+            tools=(ToolUse("read", {"path": ".env"}, blocked=True),),
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))
+        assert await _reply(agent) == f"Let me look. {GUARD_REFUSAL}"
+
+    async def test_a_refused_final_turn_yields_no_summary(self, tmp_path: Path) -> None:
+        refused = PiReply(
+            text="## Decisions Made",
+            tools=(ToolUse("read", {"path": ".env"}, blocked=True),),
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))
+        with pytest.raises(GuardRefusalError):
+            await agent.final_turn("summarize")
+        assert agent.can_accept_turn
+
+    async def test_every_guard_refusal_is_logged_with_its_reason(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        refused = PiReply(
+            text="", tools=(ToolUse("read", {"path": ".env"}, blocked=True),)
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))
+        with caplog.at_level(logging.INFO, logger=agent_module.__name__):
+            await _reply(agent)
+        assert "vox secret guard: {'path': '.env'}" in caplog.text
+
+    async def test_a_guard_that_cannot_list_files_is_logged_as_a_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        reason = "vox secret guard: cannot list the files grep would read (no rg)"
+        tool = ToolUse("grep", {"pattern": "x"}, blocked=True, reason=reason)
+        refused = PiReply(text="", tools=(tool,))
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))
+        with caplog.at_level(logging.INFO, logger=agent_module.__name__):
+            await _reply(agent)
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(reason in message for message in warnings)
+
+    async def test_an_extension_error_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        broken = PiReply(text="hi", extension_error="guard threw")
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), broken]))
+        with caplog.at_level(logging.ERROR, logger=agent_module.__name__):
+            await _reply(agent)
+        assert "secret_guard.js (tool_call): guard threw" in caplog.text
 
     async def test_a_turn_ended_by_the_guard_explains_itself(
         self, tmp_path: Path

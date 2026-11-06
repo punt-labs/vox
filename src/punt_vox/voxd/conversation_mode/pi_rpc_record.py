@@ -67,6 +67,16 @@ class PiRpcRecord:
         return self.kind == "agent_settled"
 
     @property
+    def is_aborted(self) -> bool:
+        """Whether this ``agent_settled`` reports the run ended by being aborted."""
+        return self.is_settled and self._fields.get("aborted") is True
+
+    @property
+    def is_retry_start(self) -> bool:
+        """Whether pi is about to retry an attempt the provider failed."""
+        return self.kind == "auto_retry_start"
+
+    @property
     def is_tool_event(self) -> bool:
         """Whether this record reports a tool starting, progressing, or ending."""
         return self.kind in _TOOL_EVENT_TYPES or self._assistant_event_kind() in {
@@ -85,13 +95,16 @@ class PiRpcRecord:
     def failure(self) -> str:
         """Return why this record reports a failed command or reply, or ``""``.
 
-        Two shapes fail: a ``response`` with ``success: false`` (the command
-        was refused), and an assistant ``message_end`` whose ``stopReason``
-        is ``error`` (the provider call failed after the prompt was taken).
+        Three shapes fail: a ``response`` with ``success: false`` (the command
+        was refused), an assistant ``message_end`` whose ``stopReason`` is
+        ``error`` or ``aborted`` (the provider call failed after the prompt
+        was taken), and an ``auto_retry_end`` with ``success: false`` (pi
+        retried that failure and every attempt failed). An errored
+        ``message_end`` that pi goes on to retry is superseded by the retry;
+        deciding that is the caller's job (:attr:`is_retry_start`).
         """
-        if self.kind == "response" and self._fields.get("success") is False:
-            error = self._fields.get("error")
-            return error if isinstance(error, str) and error else "command refused"
+        if self.kind in {"response", "auto_retry_end"}:
+            return self._unsuccessful()
         if self.kind == "message_end":
             message = self._mapping(self._fields.get("message"))
             if message.get("role") == "assistant" and message.get("stopReason") in {
@@ -101,6 +114,14 @@ class PiRpcRecord:
                 error = message.get("errorMessage")
                 return error if isinstance(error, str) and error else "reply failed"
         return ""
+
+    def extension_error(self) -> str:
+        """Return an ``extension_error`` record's extension, event, and error."""
+        if self.kind != "extension_error":
+            return ""
+        path = self._text(self._fields.get("extensionPath"))
+        event = self._text(self._fields.get("event"))
+        return f"{path} ({event}): {self._text(self._fields.get('error'))}"
 
     @property
     def tool_call_id(self) -> str:
@@ -132,6 +153,18 @@ class PiRpcRecord:
             for block in blocks
             if isinstance(text := self._mapping(block).get("text"), str)
         )
+
+    def _unsuccessful(self) -> str:
+        """Return why a ``success: false`` record failed, or ``""`` if it succeeded."""
+        if self._fields.get("success") is not False:
+            return ""
+        error = self._fields.get("error", self._fields.get("finalError"))
+        return error if isinstance(error, str) and error else f"{self.kind} failed"
+
+    def error_text(self) -> str:
+        """Return a failed or blocked tool call's error text, or ``""``."""
+        failed = self.kind == "tool_execution_end" and self.is_error
+        return self.result_text() if failed else ""
 
     @staticmethod
     def _text(value: object) -> str:

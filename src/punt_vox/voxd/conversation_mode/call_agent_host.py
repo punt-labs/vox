@@ -33,6 +33,7 @@ from punt_vox.voxd.conversation_mode.call_summary import (
     CallSummaryStore,
 )
 from punt_vox.voxd.conversation_mode.pi_call_agent import PiCallAgent
+from punt_vox.voxd.conversation_mode.pi_turn_verdict import GuardRefusalError
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
@@ -123,23 +124,32 @@ class CallAgentHost:
 
     async def finish(self) -> CallOutcome:
         """Collect the summary as the agent's final turn, then tear it down."""
-        if not self._agent.can_accept_turn:
-            await self._agent.close()
-            return CallOutcome(None, "the call agent had already ended")
-        if self._agent.turns_handled == 0:
-            await self._agent.close()
-            return CallOutcome(None, "no turns were exchanged")
         try:
-            text = await self._agent.final_turn(SUMMARY_PROMPT)
-        except SessionAttachError:
-            logger.exception("the call agent could not write the call summary")
+            return await self._summarize()
+        finally:
             await self._agent.close()
-            return CallOutcome(None, "the call agent could not write it (see vox.log)")
-        await self._agent.close()
-        if not text.strip():
-            return CallOutcome(None, "the call agent returned an empty summary")
-        return CallOutcome(self._store.write(self._call_id, text))
 
     async def abandon(self) -> None:
         """End the agent now, with no summary: the call did not end cleanly."""
         await self._agent.close()
+
+    def _nothing_to_summarize(self) -> str:
+        """Return why the agent cannot or need not write a summary, or ``""``."""
+        if not self._agent.can_accept_turn:
+            return "the call agent had already ended"
+        return "" if self._agent.turns_handled else "no turns were exchanged"
+
+    async def _summarize(self) -> CallOutcome:
+        if reason := self._nothing_to_summarize():
+            return CallOutcome(None, reason)
+        try:
+            text = await self._agent.final_turn(SUMMARY_PROMPT)
+        except GuardRefusalError as exc:
+            logger.warning("no call summary: %s", exc)
+            return CallOutcome(None, str(exc))
+        except SessionAttachError:
+            logger.exception("the call agent could not write the call summary")
+            return CallOutcome(None, "the call agent could not write it (see vox.log)")
+        if not text.strip():
+            return CallOutcome(None, "the call agent returned an empty summary")
+        return CallOutcome(self._store.write(self._call_id, text))

@@ -25,6 +25,7 @@ _OPERATIONS: dict[str, Operation] = {
     "Spawn": CallAgentState.spawn,
     "SendTurn": CallAgentState.send_turn,
     "ReplyComplete": CallAgentState.reply_complete,
+    "ReplyFailed": CallAgentState.reply_failed,
     "Teardown": CallAgentState.teardown,
     "AbortTurn": CallAgentState.abort_turn,
 }
@@ -100,6 +101,17 @@ class TestReplyComplete:
     def test_reply_complete_from_ready_is_illegal(self) -> None:
         with pytest.raises(IllegalAgentTransitionError, match="ReplyComplete"):
             _ready().reply_complete()
+
+
+class TestReplyFailed:
+    def test_reply_failed_returns_to_ready_without_counting_the_turn(self) -> None:
+        state = _busy()
+        state.reply_failed()
+        assert (state.proc, state.turns_handled) == (AgentProc.READY, 0)
+
+    def test_reply_failed_from_ready_is_illegal(self) -> None:
+        with pytest.raises(IllegalAgentTransitionError, match="ReplyFailed"):
+            _ready().reply_failed()
 
 
 class TestTeardown:

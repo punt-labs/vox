@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from conversation_mode._pi_rpc_fakes import FakePiProcess, PiReply, SpawnRecorder
+from conversation_mode._pi_rpc_fakes import (
+    FakePiProcess,
+    PiReply,
+    SpawnRecorder,
+    ToolUse,
+)
 from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentEndedError
 from punt_vox.voxd.conversation_mode.call_agent_host import CallAgentHost, CallOutcome
 from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
@@ -80,6 +85,22 @@ class TestFinish:
         outcome = await host.finish()
         assert outcome.summary_path is None
         assert process.returncode is not None
+
+    async def test_a_summary_turn_the_guard_refused_writes_no_summary(
+        self, tmp_path: Path
+    ) -> None:
+        refused = PiReply(
+            text="## Decisions Made",
+            tools=(ToolUse("read", {"path": ".env"}, blocked=True),),
+        )
+        process = FakePiProcess([PiReply("Ready."), PiReply("a"), refused])
+        host = await _host(tmp_path, process)
+        await _one_turn(host)
+        outcome = await host.finish()
+        assert outcome.line() == (
+            "no call summary: the secret guard blocked a read this turn needed"
+        )
+        assert not (tmp_path / "calls").exists()
 
     async def test_an_ended_agent_reports_why_there_is_no_summary(
         self, tmp_path: Path

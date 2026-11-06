@@ -3,8 +3,9 @@
 The model is ``docs/conversation-mode-call-agent.tex``.
 
 :class:`CallAgentState` is the Z schema ``CallAgentState`` made executable:
-four process states (:class:`AgentProc`), five operations (``Spawn``,
-``SendTurn``, ``ReplyComplete``, ``Teardown``, ``AbortTurn``), one
+four process states (:class:`AgentProc`), six operations (``Spawn``,
+``SendTurn``, ``ReplyComplete``, ``ReplyFailed``, ``Teardown``,
+``AbortTurn``), one
 observation (``CanAcceptTurn``), and the schema's three invariants held by
 construction rather than checked after the fact. Every operation checks its
 precondition and raises :class:`IllegalAgentTransitionError` when it fails --
@@ -109,6 +110,11 @@ class CallAgentState:
         self._require("ReplyComplete", AgentProc.BUSY)
         self._proc = AgentProc.READY
         self._turns_handled += 1
+
+    def reply_failed(self) -> None:
+        """``ReplyFailed``: busy -> ready. The process lives; no turn was handled."""
+        self._require("ReplyFailed", AgentProc.BUSY)
+        self._proc = AgentProc.READY
 
     def teardown(self) -> None:
         """``Teardown``: ready -> ended. Never from busy -- that is ``AbortTurn``."""

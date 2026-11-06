@@ -118,7 +118,7 @@ def test_a_guard_block_is_recognised_as_a_refusal() -> None:
             },
         }
     )
-    assert ToolScreen.guard_refused(record)
+    assert ToolScreen.guard_refusal(record) == "vox secret guard: .env denied"
 
 
 def test_an_ordinary_tool_failure_is_not_a_guard_refusal() -> None:
@@ -130,7 +130,7 @@ def test_an_ordinary_tool_failure_is_not_a_guard_refusal() -> None:
             "result": {"content": [{"type": "text", "text": "Path not found: x"}]},
         }
     )
-    assert not ToolScreen.guard_refused(record)
+    assert ToolScreen.guard_refusal(record) == ""
 
 
 def test_a_directory_grep_that_read_a_non_ignored_envrc_is_a_breach(

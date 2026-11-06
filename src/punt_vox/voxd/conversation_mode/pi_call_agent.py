@@ -29,15 +29,19 @@ killed; the model makes ``ended`` terminal):
   reaches the summary, and the context that saw it is destroyed.
 - **The process dying**, or the wire contract breaking.
 
-A reply the provider fails mid-way is different: pi reports the error and
-settles normally, the process is ready again, and the turn raises a plain,
-transient :class:`~.session_attach.SessionAttachError` -- the human can
-simply ask again.
+A reply the provider fails is different: pi retries it on its own, and only
+the final attempt decides the turn (:class:`~.pi_turn_verdict.PiTurnVerdict`).
+When every attempt fails -- or the run ends aborted with nothing said -- pi
+settles normally, the process is ready again (``ReplyFailed``), and the turn
+raises a plain, transient :class:`~.session_attach.SessionAttachError`; the
+human can simply ask again.
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
+import re
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.call_agent_errors import (
@@ -47,6 +51,10 @@ from punt_vox.voxd.conversation_mode.call_agent_errors import (
 )
 from punt_vox.voxd.conversation_mode.call_agent_state import AgentProc, CallAgentState
 from punt_vox.voxd.conversation_mode.pi_rpc_channel import PiRpcChannel
+from punt_vox.voxd.conversation_mode.pi_turn_verdict import (
+    GuardRefusalError,
+    PiTurnVerdict,
+)
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
 from punt_vox.voxd.conversation_mode.tool_screen import ToolScreen
@@ -61,6 +69,12 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
 
 __all__ = ["GUARD_REFUSAL", "REPLY_INACTIVITY_S", "PiCallAgent"]
+
+logger = logging.getLogger(__name__)
+
+# Guard refusals that mean the guard itself is degraded, not that a read
+# was on the deny-list.
+_DEGRADED_GUARD = re.compile(r"misconfigured|cannot list")
 
 # Seconds with no RPC record of any kind before a turn is declared hung.
 REPLY_INACTIVITY_S = 60.0
@@ -126,14 +140,19 @@ class PiCallAgent:
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncGenerator[ReplyChunk]:
         """Forward *turn* and stream the reply text back as it is written."""
-        async with contextlib.aclosing(self._turn(turn.text, timed=True)) as pieces:
+        async with contextlib.aclosing(self._turn(turn.text, spoken=True)) as pieces:
             async for piece in pieces:
                 yield ReplyChunk(text=piece, is_final=False)
         yield ReplyChunk(text="", is_final=True)
 
     async def final_turn(self, prompt: str) -> str:
-        """Run one last, unspoken turn (the post-call summary); return its text."""
-        async with contextlib.aclosing(self._turn(prompt, timed=False)) as pieces:
+        """Run one last, unspoken turn (the post-call summary); return its text.
+
+        Raises :class:`~.call_agent_errors.GuardRefusalError` when the guard
+        blocked a read along the way: text written around a refused read is
+        incomplete, and the guard's refusal sentence is no summary either.
+        """
+        async with contextlib.aclosing(self._turn(prompt, spoken=False)) as pieces:
             return "".join([piece async for piece in pieces])
 
     async def close(self) -> None:
@@ -145,10 +164,10 @@ class PiCallAgent:
             await self._abort()
 
     async def _deliver_context(self, message: str) -> None:
-        failure = ""
+        verdict = PiTurnVerdict()
         try:
             async for record in self._records(message, timed=False):
-                failure = failure or record.failure()
+                verdict.observe(record)
         except SessionAttachError as exc:
             await self._channel.kill()
             msg = f"call agent failed to start: {exc}"
@@ -156,40 +175,43 @@ class PiCallAgent:
         except BaseException:
             await self._channel.kill()
             raise
-        if failure:
+        if verdict.failure:
             await self._channel.kill()
-            msg = f"call agent failed to start: {failure}"
+            msg = f"call agent failed to start: {verdict.failure}"
             raise CallAgentSpawnError(msg)
         self._state.spawn()
 
-    async def _turn(self, message: str, *, timed: bool) -> AsyncGenerator[str]:
+    async def _turn(self, message: str, *, spoken: bool) -> AsyncGenerator[str]:
         """Run one turn from ``SendTurn`` to ``ReplyComplete``, or abort it.
 
         Any exit other than a settled reply -- an error, a cancellation, the
         consumer abandoning the stream -- is ``AbortTurn``: the reply in
-        flight is discarded and the process killed, never left half-busy.
+        flight is discarded and the process killed, never left half-busy. A
+        reply that settled but failed is ``ReplyFailed``: the process lives.
         """
         self._state.send_turn()
-        failure = ""
-        refused = spoke = False
+        verdict = PiTurnVerdict()
         try:
-            async for record in self._records(message, timed=timed):
-                failure = failure or record.failure()
-                refused = refused or self._screen.guard_refused(record)
+            async for record in self._records(message, timed=spoken):
+                verdict.observe(record)
                 if delta := record.text_delta():
-                    spoke = True
                     yield delta
         except BaseException:
             await self._abort()
             raise
-        self._state.reply_complete()
-        if failure:
-            msg = f"call agent reply failed: {failure}"
+        if verdict.failure:
+            self._state.reply_failed()
+            msg = f"call agent reply failed: {verdict.failure}"
             raise SessionAttachError(msg)
-        if refused and not spoke:
-            # The guard ends the turn the moment it blocks (terminate), so the
-            # model never gets to explain; say why rather than say nothing.
-            yield GUARD_REFUSAL
+        self._state.reply_complete()
+        if not verdict.refused:
+            return
+        if not spoken:
+            msg = "the secret guard blocked a read this turn needed"
+            raise GuardRefusalError(msg)
+        # The guard ends the turn the moment it blocks (terminate), so the
+        # model never gets to explain; say why after whatever it did say.
+        yield f" {GUARD_REFUSAL}" if verdict.spoke else GUARD_REFUSAL
 
     async def _records(
         self, message: str, *, timed: bool
@@ -205,12 +227,24 @@ class PiCallAgent:
             if record.kind == "response" and (refusal := record.failure()):
                 msg = f"call agent refused the prompt: {refusal}"
                 raise CallAgentEndedError(msg)
+            self._log_diagnostics(record)
             if timed and not saw_tool and record.is_tool_event:
                 saw_tool = True
                 self._turn_timer.mark("first_tool_event")
             yield record
             if record.is_settled:
                 return
+
+    @staticmethod
+    def _log_diagnostics(record: PiRpcRecord) -> None:
+        """Log a guard refusal's full reason and any extension error, as seen."""
+        if reason := ToolScreen.guard_refusal(record):
+            # A guard that cannot list a grep's files refuses every directory
+            # grep: that is degraded service, not an ordinary refusal.
+            level = logging.WARNING if _DEGRADED_GUARD.search(reason) else logging.INFO
+            logger.log(level, "call agent read refused: %s", reason)
+        if error := record.extension_error():
+            logger.error("call agent extension error: %s", error)
 
     async def _abort(self) -> None:
         """``AbortTurn``: discard the reply in flight and kill the process."""
