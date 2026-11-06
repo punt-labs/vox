@@ -816,31 +816,39 @@ class TestCallLockHook:
         assert result.returncode == 0
         assert not self._lock_path(repo).exists(), "stale lock was not self-cleared"
 
-    def test_call_stop_prompt_bypasses_a_live_lock(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "prompt", ["/call stop", "/vox:call stop", "/vox-dev:call stop"]
+    )
+    def test_call_stop_prompt_bypasses_a_live_lock(
+        self, tmp_path: Path, prompt: str
+    ) -> None:
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
         self._write_lock(repo, pid=os.getpid())
 
-        result = self._run(repo, prompt="/call stop")
+        result = self._run(repo, prompt=prompt)
 
         assert result.returncode == 0
 
-    def test_call_transfer_prompt_bypasses_a_live_lock(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "/call status",
+            "/vox:call status",
+            "/vox-dev:call status",
+            "/vox-devx:call stop",
+            "/call transfer --session abc",
+        ],
+    )
+    def test_any_other_call_prompt_still_blocks_a_live_lock(
+        self, tmp_path: Path, prompt: str
+    ) -> None:
+        """The escape hatch is stop alone, never a general bypass."""
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
         self._write_lock(repo, pid=os.getpid())
 
-        result = self._run(repo, prompt="/call transfer --session abc")
-
-        assert result.returncode == 0
-
-    def test_unrelated_prompt_still_blocks_a_live_lock(self, tmp_path: Path) -> None:
-        """The escape hatch must not become a general bypass."""
-        repo = _make_repo(tmp_path)
-        _mark_enabled(repo)
-        self._write_lock(repo, pid=os.getpid())
-
-        result = self._run(repo, prompt="/call status")
+        result = self._run(repo, prompt=prompt)
 
         assert result.returncode == 2
 
@@ -851,24 +859,6 @@ class TestCallLockHook:
         self._write_lock(repo, pid=os.getpid())
 
         result = self._run(repo)
-
-        assert result.returncode == 0
-
-    def test_relay_env_var_bypasses_a_live_lock(self, tmp_path: Path) -> None:
-        repo = _make_repo(tmp_path)
-        _mark_enabled(repo)
-        self._write_lock(repo, pid=os.getpid())
-        env = dict(os.environ)
-        env["VOX_CALL_RELAY"] = "1"
-
-        result = subprocess.run(
-            ["bash", str(_HOOKS_DIR / "call-lock.sh")],
-            input=json.dumps({"cwd": str(repo), "hook_event_name": "UserPromptSubmit"}),
-            text=True,
-            capture_output=True,
-            env=env,
-            check=False,
-        )
 
         assert result.returncode == 0
 

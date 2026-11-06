@@ -197,6 +197,22 @@ persistence property the spike's \texttt{cacheRead} evidence
 (turn two reused turn one's warm context) confirms actually happens, not just
 that the process theoretically could.
 
+\begin{schema}{ReplyFailed}
+  \Delta CallAgentState
+  \where
+  procState = busy \\
+  procState' = ready \\
+  turnsHandled' = turnsHandled
+\end{schema}
+
+A reply the provider failed -- after \texttt{pi}'s own retries, if any, were
+exhausted -- or a run that ended aborted with nothing written also settles
+the process back to \texttt{ready}: \texttt{pi} is alive and will take the
+next prompt, so the human can simply ask again. It is not
+\texttt{ReplyComplete}, because no turn was handled: \texttt{turnsHandled}
+counts the replies that completed, which is what decides whether a call has
+anything to summarize.
+
 \begin{schema}{Teardown}
   \Delta CallAgentState
   \where

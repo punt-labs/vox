@@ -51,7 +51,7 @@ class PermanentSttFailure:
         A revoked or missing key, CA certificates that cannot verify the
         provider, a proxy or base URL httpx refuses, a refusal of the request
         itself (a permanent ``ProviderStatusError``): the asymmetry
-        ``BareAuthMissingError`` already draws against a transient
+        ``CallAgentEndedError`` already draws against a transient
         session-attach fault. Folding these into "ask the human to repeat"
         would repeat identically forever and never say what is broken. A rate
         limit or a 5xx may clear by the next turn.

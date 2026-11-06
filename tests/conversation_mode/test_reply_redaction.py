@@ -40,6 +40,59 @@ def test_redacts_high_entropy_run() -> None:
     assert "dGhpc2lzYXZlcnlsb25nYmFzZTY0ZW5jb2RlZHNlY3JldHZhbHVl" not in redacted
 
 
+def test_masks_the_userinfo_of_a_url() -> None:
+    text = "the remote is https://alice:s3cret@github.com/acme/app.git today"
+    assert reply_redactor(text) == (
+        "the remote is https://[redacted]@github.com/acme/app.git today"
+    )
+
+
+def test_masks_a_token_used_as_a_url_user() -> None:
+    text = "it pushes to https://x-token@gitlab.example.com/acme/app"
+    assert (
+        reply_redactor(text)
+        == "it pushes to https://[redacted]@gitlab.example.com/acme/app"
+    )
+
+
+def test_leaves_a_url_without_userinfo_alone() -> None:
+    text = "see https://github.com/acme/app for details"
+    assert reply_redactor(text) == text
+
+
+def test_masks_a_bare_password_assignment_at_the_start() -> None:
+    assert reply_redactor("PASSWORD=hunter2") == "[redacted]"
+
+
+def test_masks_a_bare_password_colon_assignment() -> None:
+    assert reply_redactor("password: hunter2 and done") == "[redacted] and done"
+
+
+def test_a_bare_key_in_speech_is_not_an_assignment() -> None:
+    text = "The key: it returns the sum."
+    assert reply_redactor(text) == text
+
+
+_PATH = "src/punt_vox/voxd/conversation_mode/pi_call_agent.py"
+
+
+def test_a_long_snake_case_path_is_spoken_intact() -> None:
+    text = f"Edit {_PATH} next."
+    assert reply_redactor(text) == text
+
+
+def test_a_long_camel_case_path_is_spoken_intact() -> None:
+    text = "See src/VoiceEngine/ConversationMode/module_name.py for it."
+    assert reply_redactor(text) == text
+
+
+def test_a_base64_secret_with_slashes_and_pluses_is_still_redacted() -> None:
+    secret = "q8Zr+Tk3/Lm9wXa2Pb7Vc4Nd1Ye6Hf0Jg5Ks8Rt3Qw="
+    assert reply_redactor(f"the value is {secret} here") == (
+        "the value is [redacted] here"
+    )
+
+
 def test_passes_through_ordinary_text_unchanged() -> None:
     text = "The weather today is sunny with a high of seventy two degrees."
     assert reply_redactor(text) == text

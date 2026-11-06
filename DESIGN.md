@@ -3850,3 +3850,74 @@ their own delivery witness (pane capture, or their server/event surface).
 - The store appends: any consumer re-running capture over an existing
   ledger would interleave sessions (guarded in the spike harness;
   the real capability needs the same refusal).
+
+## DES-074: Call-Agent Implementation Decisions — Pre-Read Guard, Env Allowlist, Snapshot Transport
+
+**Status:** decided by the leader during the `vox-hobl.2` implementation
+(2026-11-05), after three security review rounds (djb). Amends DES-066 on
+extensions; fills the two wire-format details DES-067 left open.
+
+### Context
+
+DES-066/067 ratified one `pi --mode rpc` process per call, read-only tools,
+a secret-path deny-list and stripped provider keys. Implementing it surfaced
+gaps those ADRs did not settle.
+
+### Decision 1: a vox-owned `pi` guard extension blocks reads before they run
+
+pi starts executing a tool the moment it announces it, so a deny-list
+screened from vox's side of the RPC stream runs after the read: the file
+contents can already be in the provider request. DES-066's "no extensions"
+is amended for exactly one extension that vox ships and owns:
+`pi_extension/secret_guard.js`, loaded with `--extension <abs path>` after
+`--no-extensions` (explicit paths still load). Its `tool_call` handler
+runs before the tool executes and:
+
+- refuses any tool other than `read`, `grep`, `find`, `ls`;
+- normalizes each path the way pi does (strip `@`, expand `~`, resolve
+  against cwd), realpaths it, requires it inside the repo root, then applies
+  the secret patterns case-insensitively;
+- for a directory `grep`, lists the files rg would search
+  (`rg --files --hidden --no-config [--glob] --null`, pi's own rg first) and
+  refuses if any is denied;
+- fails closed: missing or malformed config, a listing failure, or a
+  throwing handler blocks the call, and pi exits if the extension cannot load.
+
+Root and patterns come from vox through two env vars set after the
+allowlist, so the parent shell cannot override them. The Python-side screen
+(`ToolScreen`) stays as a second layer and ends the call if a denied read
+ever executes. A blocked read speaks a fixed refusal and the call continues.
+
+**Rejected:** the stream screen alone (leaks to the provider); a prompt-only
+rule (the model complies, but nothing enforces it).
+
+### Decision 2: the child environment is an allowlist
+
+Stripping only voxd's provider keys passed every other credential in the
+operator's direnv shell (GitHub, beads, Anthropic, OpenRouter, Resend), and
+`/proc/self/environ` was readable. The child now gets only `PATH`, `HOME`,
+`USER`, `LOGNAME`, `SHELL`, `LANG`, `TERM`, `TMPDIR` and the `LC_*`, `XDG_*`,
+`PI_*` prefixes. pi signs in from its own `~/.pi/agent` config; no
+credential is passed through the environment. `--no-context-files` keeps
+the repo's CLAUDE.md/AGENTS.md out of the agent; the snapshot carries the
+context.
+
+### Decision 3: snapshot transport and summary retention
+
+- `vox call start --context <path|->`, required, capped at 64 KB, empty
+  refused. `/call start` passes it on stdin through a quoted heredoc with a
+  per-call random delimiter (`VOX_CONTEXT_<8 hex>`), so no expansion runs
+  and untrusted snapshot text cannot close the heredoc early.
+- Summaries are `calls_dir()/<call-id>-summary.md` (`~/.punt-labs/vox/calls`),
+  0600 in a 0700 directory; the newest 50 are kept. A summary is written only
+  when a call ends cleanly after at least one turn; a crash writes none.
+
+### Decision 4: smaller calls
+
+- The call loop stays in the `vox call start` process, where calls already
+  ran; voxd still owns audio.
+- `--session` and `vox call transfer` are deleted: the agent is attached to
+  no session, so there is nothing to transfer. The call-lock hook passes only
+  `/call stop` and `/vox:call stop`.
+- The reply bound is inactivity (no RPC event for N seconds), never a total
+  turn time, so tool-heavy replies are not killed as hangs.

@@ -1,12 +1,12 @@
-"""Mask secret-shaped substrings in a Claude reply before it is spoken.
+"""Mask secret-shaped substrings in a call agent's reply before it is spoken.
 
-Threat model: :class:`~.claude_session_attach.ClaudeSessionAttach` resumes a
-full interactive Claude Code session for each turn, not a read-only agent --
-a human's spoken turn can ask it to read back a local secret (``.env``, a
-credentials file, an API key committed somewhere), and without a pass over
-the reply that secret is synthesized to speech verbatim, in whatever room
-the human is in. This is a reasonable, documented pattern set that
-meaningfully reduces that risk -- not a universal secret detector. The
+Threat model: the call agent reads the repository, and a spoken turn can ask
+it to read back a local secret (``.env``, a credentials file, an API key
+committed somewhere); unmasked, that secret is synthesized to speech in
+whatever room the human is in. The secret deny-list
+(:class:`~.secret_path_policy.SecretPathPolicy`) ends such a turn before its
+reply is spoken; this is the last line, over whatever text does reach speech
+-- a reasonable, documented pattern set, not a universal secret detector. The
 caller (:meth:`~.reply_delivery.ReplyDelivery.deliver`) logs the original,
 unredacted text to the 0600 ``vox.log`` separately; only the redacted text
 ever reaches :class:`~.speak_fn.SpeakFn`.
@@ -34,15 +34,28 @@ _KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 # A KEY=value / TOKEN=value shaped assignment -- an env-file line spoken
-# back verbatim, whatever the variable's actual name.
+# back verbatim, whatever the variable's actual name. A bare PASSWORD or
+# SECRET counts too; a bare key or token does not, as "the key: it returns"
+# is ordinary speech.
 _ASSIGNMENT_PATTERN = re.compile(
-    r"\b[A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\s*[:=]\s*\S+",
+    r"\b(?:[A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)|PASSWORD|SECRET)"
+    r"\s*[:=]\s*\S+",
     re.IGNORECASE,
 )
 
-# A long, unbroken run of high-entropy characters -- base64 or hex, unusual
-# in ordinary spoken/written text at this length.
-_HIGH_ENTROPY_PATTERN = re.compile(r"\b[A-Za-z0-9+/_-]{32,}={0,2}\b")
+# The userinfo of a URL -- ``user:password@`` or a token used as the user.
+_URL_USERINFO_PATTERN = re.compile(r"(?<=://)[^/\s@]+(?=@)")
+
+# A long, unbroken run of base64-ish characters that mixes character classes
+# the way a key does: an upper-case letter, a lower-case letter, and a digit.
+# The mix is what tells a secret from a snake_case path or identifier, which
+# is just as long but lacks one class; padding ``=`` belongs to the run.
+_KEY_CHARS = "[A-Za-z0-9+/_-]"
+_HIGH_ENTROPY_PATTERN = re.compile(
+    rf"(?<!{_KEY_CHARS})"
+    rf"(?={_KEY_CHARS}*[A-Z])(?={_KEY_CHARS}*[a-z])(?={_KEY_CHARS}*[0-9])"
+    rf"{_KEY_CHARS}{{32,}}={{0,2}}(?![A-Za-z0-9+/_=-])"
+)
 
 
 @final
@@ -52,6 +65,7 @@ class ReplyRedactor:
     __slots__ = ()
 
     _PATTERNS: tuple[re.Pattern[str], ...] = (
+        _URL_USERINFO_PATTERN,
         *_KEY_PATTERNS,
         _ASSIGNMENT_PATTERN,
         _HIGH_ENTROPY_PATTERN,

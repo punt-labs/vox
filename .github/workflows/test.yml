@@ -10,9 +10,11 @@ permissions:
   contents: read
 
 env:
-  # ffmpeg (pydub's codec backend) and espeak-ng (the Linux provider). The
-  # apt cache key hashes this string, so editing it starts a fresh cache.
-  VOX_APT_PACKAGES: ffmpeg espeak-ng
+  # ffmpeg (pydub's codec backend), espeak-ng (the Linux provider), and
+  # ripgrep (the call agent's secret guard lists a directory grep's files
+  # with rg; its tests run the real guard against a real rg). The apt cache
+  # key hashes this string, so editing it starts a fresh cache.
+  VOX_APT_PACKAGES: ffmpeg espeak-ng ripgrep
   # Runner-owned apt state (archives + package lists) that actions/cache can
   # tar and untar without root. The default /var/cache/apt/archives and
   # /var/lib/apt/lists hold root-only lock files and a 0700 _apt partial/
@@ -54,7 +56,7 @@ jobs:
       #    resolve against that image's installed package set; the sources
       #    file is hashed because the lists are fetched from exactly it.
       #    The image also ships third-party sources (packages.microsoft.com
-      #    and others) that ffmpeg and espeak-ng never come from. Confining
+      #    and others) that none of these packages come from. Confining
       #    every apt-get call in the job to Ubuntu's sources means a broken
       #    third-party repo cannot fail `update --error-on=any` below, and
       #    the lists, the download, the install, and autoclean all read the
@@ -95,7 +97,7 @@ jobs:
       #    use the local .debs and fails at once on any gap. If the restore
       #    step failed, timed out, or restored nothing (cache-hit unset),
       #    whatever is in the cache directories is discarded first. The step
-      #    then checks that ffmpeg and espeak-ng run.
+      #    then checks that ffmpeg, espeak-ng, and rg run.
       # 4. apt-save: on any non-exact hit, save the refreshed lists + .debs
       #    under the exact key right away, so a later failing test step does
       #    not cost the next run its cache. When test and packaging-e2e both
@@ -173,7 +175,7 @@ jobs:
           key: ${{ steps.apt-prepare.outputs.key }}
           restore-keys: ${{ steps.apt-prepare.outputs.restore-prefix }}
       - &apt-install
-        name: Install ffmpeg and espeak-ng (cached, bounded, retried)
+        name: Install ffmpeg, espeak-ng, and ripgrep (cached, bounded, retried)
         # 12m = the 9 min (540 s) download worst case above + 3 min for the
         # local dpkg install, autoclean, and the binary checks (16-62 s on
         # healthy runs, download included).
@@ -334,7 +336,7 @@ jobs:
           sudo apt-get autoclean
           # The binaries the test suites call. The step name and these
           # checks follow VOX_APT_PACKAGES; edit all three together.
-          for check in "ffmpeg -version" "espeak-ng --version"; do
+          for check in "ffmpeg -version" "espeak-ng --version" "rg --version"; do
             read -ra cmd <<<"$check"
             if ! out=$("${cmd[@]}" 2>&1); then
               echo "::error::'${check}' failed after install: ${out}"

@@ -7,6 +7,10 @@ import logging
 
 import pytest
 
+from conversation_mode._cancellation import (
+    cancelled_while_reaping,
+    swallow_a_cancellation,
+)
 from punt_vox.voxd.conversation_mode.wait_cue import WaitCue
 
 
@@ -132,3 +136,27 @@ class TestWaitCueActiveCleanup:
                 raise RuntimeError(msg)
         assert task is not None
         assert task.cancelled()
+
+
+async def test_a_turn_cancelled_during_cleanup_stays_cancelled() -> None:
+    cue = WaitCue(_CountingChime())
+
+    async def turn() -> None:
+        async with cue.active():
+            pass
+
+    runner = await cancelled_while_reaping(turn())
+    with pytest.raises(asyncio.CancelledError):
+        await runner
+
+
+async def test_cleanup_after_a_swallowed_cancellation_raises_none() -> None:
+    cue = WaitCue(_CountingChime())
+
+    async def turn() -> str:
+        await swallow_a_cancellation()
+        async with cue.active():
+            pass
+        return "done"
+
+    assert await asyncio.ensure_future(turn()) == "done"

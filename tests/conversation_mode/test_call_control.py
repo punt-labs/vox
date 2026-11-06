@@ -20,27 +20,6 @@ def test_request_stop_then_consume_returns_a_stop_request(tmp_path: Path) -> Non
     request = control.consume()
     assert request is not None
     assert request.kind == "stop"
-    assert request.target_session_id is None
-
-
-def test_request_transfer_then_consume_returns_the_target_session(
-    tmp_path: Path,
-) -> None:
-    control = CallControl(tmp_path / "call.control")
-    control.request_transfer("session-b")
-    request = control.consume()
-    assert request is not None
-    assert request.kind == "transfer"
-    assert request.target_session_id == "session-b"
-
-
-def test_request_transfer_with_no_target_re_discovers(tmp_path: Path) -> None:
-    control = CallControl(tmp_path / "call.control")
-    control.request_transfer(None)
-    request = control.consume()
-    assert request is not None
-    assert request.kind == "transfer"
-    assert request.target_session_id is None
 
 
 def test_consume_clears_the_request(tmp_path: Path) -> None:
@@ -71,7 +50,7 @@ def test_consume_treats_a_corrupt_file_as_no_request(tmp_path: Path) -> None:
 def test_consume_treats_a_missing_kind_field_as_no_request(tmp_path: Path) -> None:
     path = tmp_path / "call.control"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"target_session_id": "session-b"}')
+    path.write_text('{"reason": "no kind here"}')
 
     control = CallControl(path)
     assert control.consume() is None
@@ -127,29 +106,12 @@ def test_consume_treats_an_unrecognized_kind_as_no_request(tmp_path: Path) -> No
     """
     path = tmp_path / "call.control"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"kind": "stpo", "target_session_id": null}')
+    path.write_text('{"kind": "stpo"}')
 
     control = CallControl(path)
     assert control.consume() is None
     # Cleared, not re-read and re-failed forever -- same discipline as
     # every other discard-and-log path in this method.
-    assert not path.exists()
-
-
-def test_consume_treats_a_wrong_typed_target_session_id_as_no_request(
-    tmp_path: Path,
-) -> None:
-    """A malformed ``target_session_id`` (an int, from a hand-edited or
-    partially-overwritten file) must be discarded-and-logged, same as an
-    unrecognized ``kind`` -- never constructed into a ``ControlRequest`` that
-    would crash ``ClaudeSessionAttach``'s constructor downstream.
-    """
-    path = tmp_path / "call.control"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"kind": "transfer", "target_session_id": 1234}')
-
-    control = CallControl(path)
-    assert control.consume() is None
     assert not path.exists()
 
 
@@ -181,19 +143,17 @@ def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
     assert first is not None
     assert first.kind == "stop"
 
-    control.request_transfer("session-c")
+    control.request_stop()
     second = control.consume()
     assert second is not None
-    assert second.kind == "transfer"
-    assert second.target_session_id == "session-c"
+    assert second.kind == "stop"
 
 
 def test_request_stop_writes_control_file_and_dir_with_restrictive_perms(
     tmp_path: Path,
 ) -> None:
-    """A transfer request's session id is capability-like for --resume --
-    the mailbox lands at 0600 under a 0700 directory, not the world-readable
-    default."""
+    """The mailbox steers a live call, so it lands at 0600 under a 0700
+    directory, not the world-readable default."""
     control_dir = tmp_path / "call"
     control = CallControl(control_dir / "call.control")
     control.request_stop()

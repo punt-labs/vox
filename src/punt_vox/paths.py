@@ -64,6 +64,18 @@ def recordings_dir() -> Path:
     return user_state_dir() / "recordings"
 
 
+def calls_dir() -> Path:
+    """Post-call summaries under ``<state>/calls``.
+
+    One ``<call-id>-summary.md`` per call, written when the call ends and read
+    by the session that started it. A durable record a human or that session
+    may revisit, so it lives beside ``recordings`` rather than under the
+    ephemeral ``run`` dir; 0700, because a summary carries whatever the call
+    discussed.
+    """
+    return user_state_dir() / "calls"
+
+
 def keys_env_file() -> Path:
     """Full path to ``keys.env`` inside the config dir."""
     return config_dir() / "keys.env"
@@ -73,13 +85,15 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
     """Create the per-user state dir and its required subdirectories.
 
     Creates ``<state_root>``, ``<state_root>/logs``, ``<state_root>/run``,
-    ``<state_root>/cache``, and ``<state_root>/recordings``. When *state_root*
+    ``<state_root>/cache``, ``<state_root>/recordings``, and
+    ``<state_root>/calls``. When *state_root*
     is ``None``, resolves to the current user's state dir via
     ``user_state_dir()``.
 
     All dirs are chmod 0700 because every one of them holds private
     per-user state: provider API keys, spoken-text logs, auth token,
-    cached synthesis output, saved recordings. The chmod is applied on every call,
+    cached synthesis output, saved recordings, call summaries. The chmod is
+    applied on every call,
     not just at creation time, so pre-existing directories with looser
     permissions (for example 0755 from an older version that respected
     process umask) are tightened on the next startup.
@@ -91,7 +105,7 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
         state_root = user_state_dir()
     state_root.mkdir(parents=True, exist_ok=True)
     state_root.chmod(0o700)
-    for subdir in ("logs", "run", "cache", "recordings"):
+    for subdir in ("logs", "run", "cache", "recordings", "calls"):
         d = state_root / subdir
         d.mkdir(parents=True, exist_ok=True)
         # Enforce 0700 even on pre-existing dirs with looser permissions.

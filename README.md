@@ -310,19 +310,19 @@ A `Vox` entry in the Lux menu, launched for the life of your Claude Code session
 
 ## Conversation Mode
 
-`vox call start` places a live voice call with your active Claude Code session: it listens through the microphone, transcribes each turn with ElevenLabs, forwards it to Claude, and speaks the reply.
+`vox call start` places a live voice call with a read-only call agent: it listens through the microphone, transcribes each turn with ElevenLabs, sends it to the agent, and speaks the reply. The agent is one `pi --mode rpc` process held for the whole call. It does not see your Claude Code session; it opens with a context snapshot your session writes, and it can only read and search files in the repo.
 
 ```bash
-vox call start                                 # Real call: microphone + ElevenLabs speech-to-text
-vox call start --session <id>                  # Attach to a specific session (required if more than one is active)
-vox call start --script turns.jsonl             # Dev/test path: scripted turns, no microphone, no ElevenLabs credentials
-vox call start --trace-turns                    # Also print a live turn-by-turn latency trace (always logged to vox.log regardless)
-vox call transfer                               # Re-attach the running call to a different active session
-vox call transfer --session <id>                # ...to a specific one
-vox call stop                                   # Hang up
+vox call start --context snapshot.md           # Real call: microphone + ElevenLabs speech-to-text
+vox call start --context - < snapshot.md       # Snapshot on stdin
+vox call start --context snapshot.md --script turns.jsonl   # Dev/test path: scripted turns, no microphone, no ElevenLabs credentials
+vox call start --context snapshot.md --trace-turns          # Also print a live turn-by-turn latency trace (always logged to vox.log regardless)
+vox call stop                                  # Hang up
 ```
 
-Or from within Claude Code: `/call start`, `/call transfer [--session <id>]`, `/call stop`.
+From within Claude Code, use `/call start <topic>`: your session writes the snapshot from the topic and what it is working on, then starts the call. `/call stop` hangs up. When a call ends cleanly, the agent writes a summary (decisions, action items, context gathered, open questions) under `~/.punt-labs/vox/calls/`, and `/call start` reads it back into your session; the newest 50 summaries are kept.
+
+The call agent needs `pi` on `PATH`, signed in through its own config (`~/.pi/agent`), plus `git` and ripgrep (`rg`); `vox call start` refuses up front, with an install hint, if `rg` is missing. It runs with only `read`, `grep`, `find` and `ls`, no extensions, skills, MCP servers or repo context files, and an environment stripped to `PATH`, `HOME`, locale and terminal variables -- no API keys or tokens from your shell. A vox-owned guard checks every tool call before it runs and refuses any path outside the repo, inside `.git/`, matching a secret pattern (`.env*`, keys, credential files, `.git-credentials`), or ignored by git (every `.gitignore`, `.git/info/exclude` and your global excludes, as git itself answers); a directory search is refused if any file it would read is denied. Secret-shaped text is redacted from both the spoken reply and the saved summary.
 
 Live capture needs `sounddevice`, which ships behind the `call` optional extra rather than as a hard dependency of `vox`:
 
@@ -333,9 +333,7 @@ pip install "punt-vox[call]"    # if you installed from PyPI
 
 `sounddevice` binds PortAudio, a system-level (non-Python) library `pip`/`uv` cannot install for you: on macOS, `brew install portaudio`; on most Linux distributions, install `libportaudio2` (e.g. `apt install libportaudio2`) through your package manager. Every other `vox` command works without either the extra or PortAudio -- only `vox call start`'s live (default) path needs them; `--script` bypasses the microphone and ElevenLabs speech-to-text, but a daemon-side TTS provider is still required either way to speak the reply, resolved the same way before the call starts.
 
-`vox call start` requires `ANTHROPIC_API_KEY` to be set. Each turn spawns `claude -p --resume --bare`, which eliminates the `SessionStart` hook cascade a non-bare spawn otherwise pays -- most of the per-turn latency a live call would otherwise wait through in silence -- but `--bare` has no OAuth support at all (`claude --help`: auth is "strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings`"). An OAuth-only setup with no API key configured fails fast, before any subprocess is spawned, with an actionable error rather than a silent hang.
-
-While a call is active, your own interactive prompts are paused (a `UserPromptSubmit` hook blocks them) until you run `/call stop` or `/call transfer` -- both remain available even while paused.
+While a call is active, your own interactive prompts are paused (a `UserPromptSubmit` hook blocks them) until you run `/call stop` (or `/vox:call stop`), which remains available while paused.
 
 ## Commands
 
@@ -343,8 +341,7 @@ While a call is active, your own interactive prompts are paused (a `UserPromptSu
 |---------|---------|
 | `/enable` | Turn vox on for this repo |
 | `/disable` | Turn vox off for this repo |
-| `/call start [--script <path>] [--session <id>]` | Start a live voice call (real mic + ElevenLabs by default) |
-| `/call transfer [--session <id>]` | Re-attach the running call to a different session |
+| `/call start <topic>` | Start a live voice call with a read-only call agent, opened with a snapshot of `<topic>` |
 | `/call stop` | Hang up |
 | `/vox:model [<name>]` | Switch TTS model (no arg opens a picker) |
 | `/vox:provider [<name>]` | Switch TTS provider (no arg opens a picker) |
@@ -540,9 +537,8 @@ vox music get 7f3a91                           # Materialize an album into the C
 vox music get 7f3a91 --dest ~/Music             # ...or into a directory you name
 vox music remove 7f3a91                        # Delete an album from the catalog
 vox music stop                                 # Stop background music
-vox call start                                 # Real voice call: microphone + ElevenLabs speech-to-text
-vox call start --script turns.jsonl            # Dev/test: scripted turns, no microphone, no ElevenLabs
-vox call transfer                              # Re-attach the running call to a different session
+vox call start --context snapshot.md           # Real voice call with the read-only call agent
+vox call start --context snapshot.md --script turns.jsonl   # Dev/test: scripted turns, no microphone, no ElevenLabs
 vox call stop                                  # Hang up
 vox status                                     # Current state
 vox version                                    # Print version

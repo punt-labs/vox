@@ -202,10 +202,10 @@ tests/
 Vox has no NATS/relay/multi-user surface, so this is not biff's eight-tier
 pyramid. Vox's actual shape is five TTS providers (mocked at the SDK
 boundary), a `voxd` daemon over WebSocket, an MCP server, a CLI, Claude Code
-hook shell scripts, a Lux display applet, and (arriving separately) a
-`conversation_mode` subpackage that will spawn a real `claude -p --resume`
-process and, eventually, drive a real Claude Agent SDK session. The tiers
-below reflect that shape, not a copy of biff's.
+hook shell scripts, a Lux display applet, and a `conversation_mode`
+subpackage whose call agent is one persistent `pi --mode rpc` process per
+call, spoken to as JSON lines over its stdin and stdout. The tiers below
+reflect that shape, not a copy of biff's.
 
 ```text
              ┌───────────┐
@@ -303,10 +303,13 @@ stays in the default tier.
 This tier is the vox equivalent of biff's tier 3a (`StdioTransport`
 subprocess tests) -- the same underlying problem (a real process, real
 stdio/exit-code plumbing) applied to shell scripts instead of an MCP server
-process. When `conversation_mode` lands and needs to spawn a real
-`claude -p --resume` process, its subprocess-spawning tests belong under this
-same `subprocess` marker, not a new one -- it is the same problem repeated in
-a different domain.
+process. `conversation_mode`'s call agent follows the same split. Its
+`pi --mode rpc` process is faked at the subprocess boundary
+(`tests/conversation_mode/_pi_rpc_fakes.py`: real pipes, scripted JSONL
+records), so the channel, record parsing, and agent state machine run in the
+default tier. The pi-side secret guard extension runs under real `node` in
+`test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
+problem repeated in a different domain, not a new marker.
 
 ### Tier 3b: `integration` -- reserved, deliberately empty
 

@@ -23,6 +23,7 @@ import typer
 from punt_vox.commands import call_live_driver as driver_module
 from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_scripted import ScriptedTurn
+from punt_vox.commands.call_wiring import CallWiring
 from punt_vox.types import HealthCheck
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
@@ -32,12 +33,14 @@ from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
+from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator as _AsyncIterator
 
     from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+    from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 
@@ -131,6 +134,19 @@ async def _no_op_chime() -> None:
     """
 
 
+def _wiring(
+    tmp_path: Path, session_attach: SessionAttach, speak: SpeakFn
+) -> CallWiring:
+    return CallWiring(
+        session_attach=session_attach,
+        speak=speak,
+        chime=_no_op_chime,
+        control=_control(tmp_path),
+        apply_control=_never_stop,
+        turn_timer=LoggingTurnTimer(),
+    )
+
+
 def _driver(
     tmp_path: Path, *, live_chunks: list[AudioChunk], reply_text: str = "a reply"
 ) -> tuple[LiveCallDriver, _FakeMicSource, list[str]]:
@@ -141,11 +157,7 @@ def _driver(
         spoken.append(text)
 
     driver = LiveCallDriver(
-        session_attach=_FakeSessionAttach(reply_text),
-        speak=speak,
-        chime=_no_op_chime,
-        control=_control(tmp_path),
-        apply_control=_never_stop,
+        _wiring(tmp_path, _FakeSessionAttach(reply_text), speak),
         detector=TurnDetector(),
         # A structural fake standing in for MicAudioSource -- this module has
         # no test seam (Protocol) for it, only the concrete @final class, so
@@ -249,11 +261,7 @@ class TestLiveCallDriverCreate:
             ),
         ):
             driver = await LiveCallDriver.create(
-                session_attach=_FakeSessionAttach("reply"),
-                speak=speak,
-                chime=_no_op_chime,
-                control=_control(tmp_path),
-                apply_control=_never_stop,
+                _wiring(tmp_path, _FakeSessionAttach("reply"), speak),
             )
         assert mic_source.calibration_durations == [driver_module._CALIBRATION_S]
         assert isinstance(driver, LiveCallDriver)
@@ -280,11 +288,7 @@ class TestLiveCallDriverCreate:
             pytest.raises(typer.BadParameter, match="no API key"),
         ):
             await LiveCallDriver.create(
-                session_attach=_FakeSessionAttach("reply"),
-                speak=speak,
-                chime=_no_op_chime,
-                control=_control(tmp_path),
-                apply_control=_never_stop,
+                _wiring(tmp_path, _FakeSessionAttach("reply"), speak),
             )
         assert mic_source.calibration_durations == []
 
@@ -359,7 +363,7 @@ class TestLiveCallDriverControlPollInterval:
     async def test_a_stop_request_past_the_interval_is_still_picked_up(
         self, tmp_path: Path
     ) -> None:
-        """Proves the gate does not starve a real stop/transfer request --
+        """Proves the gate does not starve a real stop request --
         once due again, the very next chunk still reaches ``_apply_control``.
         """
         chunks = [AudioChunk(pcm=b"\x00\x00", duration_s=0.02)] * 2
@@ -410,11 +414,7 @@ class TestLiveCallDriverAbnormalExit:
             spoken.append(text)
 
         driver = LiveCallDriver(
-            session_attach=_FakeSessionAttach("a reply"),
-            speak=speak,
-            chime=_no_op_chime,
-            control=_control(tmp_path),
-            apply_control=_never_stop,
+            _wiring(tmp_path, _FakeSessionAttach("a reply"), speak),
             detector=cast("TurnDetector", _RaisingTurnDetector()),
             mic_source=cast("MicAudioSource", mic_source),
             stt_provider=_FakeSTTProvider(),
@@ -467,8 +467,8 @@ class _AuthFailingSTTProvider:
 
 class TestLiveCallDriverSessionEndedMidLoop:
     """CallSession can apply ``EndCall()`` on its own, from inside
-    ``process_chunk`` -- a rejected STT credential (this test) or a missing
-    ``ANTHROPIC_API_KEY`` (``reply_recovery.py``'s ``BareAuthMissingError``
+    ``process_chunk`` -- a rejected STT credential (this test) or a call
+    agent that ended (``reply_recovery.py``'s ``CallAgentEndedError``
     handling) both do. ``run()`` must notice and return, not keep consuming
     mic chunks forever against a call that has already ended.
     """
@@ -486,11 +486,7 @@ class TestLiveCallDriverSessionEndedMidLoop:
             spoken.append(text)
 
         driver = LiveCallDriver(
-            session_attach=_FakeSessionAttach("unreachable"),
-            speak=speak,
-            chime=_no_op_chime,
-            control=_control(tmp_path),
-            apply_control=_never_stop,
+            _wiring(tmp_path, _FakeSessionAttach("unreachable"), speak),
             detector=cast("TurnDetector", _AlwaysTurnEndedDetector()),
             mic_source=cast("MicAudioSource", mic_source),
             stt_provider=cast("STTProvider", _AuthFailingSTTProvider()),
