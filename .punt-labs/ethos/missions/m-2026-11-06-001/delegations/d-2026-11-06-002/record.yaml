@@ -1,0 +1,9 @@
+id: d-2026-11-06-002
+tier: B
+mission: m-2026-11-06-001
+parent_session: 483dd625-0a0a-4e01-b346-279eaa9edf91
+agent_type: rmh
+created_at: "2026-11-06T00:06:27Z"
+closed_at: "2026-11-06T00:22:44Z"
+verdict: pass
+bound_via: active_mission_sidecar_dispatch

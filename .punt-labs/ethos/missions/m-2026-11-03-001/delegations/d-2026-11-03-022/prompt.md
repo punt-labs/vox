@@ -1,0 +1,3 @@
+You are the worker on ethos mission m-2026-11-03-001 (bead vox-o2gd, P1 security). Read the contract first: `direnv exec <repo> ethos mission show m-2026-11-03-001`. It holds the goal, write set, and success criteria; follow them exactly.
+
+Work only in the worktree <repo>/.claude/worktrees/vox-o2gd (branch fix/vox-o2gd-authlib-dnspython). Run `biff plan` before your first commit. Commit on your branch; do not push, do not touch PRs or merge — the leader does that. If anything requires a code change outside the write set, or a decision the contract does not settle, stop and report rather than deciding. When done, submit via `ethos mission result` and reply with a short summary: version table, floors raised, release-note findings, and the final make check summary lines.

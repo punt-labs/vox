@@ -1,0 +1,30 @@
+mission_id: m-2026-11-06-001
+status: closed
+type: implement
+created_at: "2026-11-06T00:06:19Z"
+updated_at: "2026-11-06T00:22:44Z"
+closed_at: "2026-11-06T00:22:44Z"
+repo: punt-labs/vox
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-11-06T00:06:19Z"
+    hash: 471d1e686543fd13d2ace4f48c83b52b4425b387cea4b4d6d9d516aa91687f9b
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/conversation_mode/pi_extension/
+    - plugin/hooks/call-lock.sh
+    - tests/
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+success_criteria:
+    - secret_guard.js lists directory-grep candidates with `rg --files --null` and splits on NUL, so a filename containing a newline cannot evade a directory-anchored pattern; a node-level test with a newline-named file under a directory-anchored pattern proves the grep is blocked
+    - 'plugin/hooks/call-lock.sh no longer has a VOX_CALL_RELAY bypass or a /call transfer bypass (both are dead since vox-hobl.2 removed transfer and the relay); its stop bypass matches both `/call stop` and `/vox:call stop`; tests/test_hook_gate.py updated: transfer/relay bypass tests removed, a `/vox:call stop` test added'
+    - make check passes on every commit; the subprocess-marked guard tests pass when run directly
+budget:
+    rounds: 1
+    reflection_after_each: false
+current_round: 1
+context: |
+    Successor to m-2026-11-05-005 (vox-hobl.2), closed failed at its 3-round cap with one djb Low open. Same worktree <repo>/.claude/worktrees/call-agent, branch feat/vox-hobl2-call-agent. Two small fixes only: the guard's NUL-delimited listing (djb round-3 LOW, secret_guard.js:[redacted-secret]) and the call-lock hook's dead transfer/relay bypasses plus the /vox:call stop match. Do not touch README.md, CHANGELOG.md, DESIGN.md. No push, no real call.

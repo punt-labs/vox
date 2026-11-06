@@ -1,0 +1,36 @@
+mission_id: m-2026-11-05-001
+status: closed
+type: implement
+created_at: "2026-11-05T01:37:42Z"
+updated_at: "2026-11-05T02:42:48Z"
+closed_at: "2026-11-05T02:42:48Z"
+repo: punt-labs/vox
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-11-05T01:37:42Z"
+    hash: 471d1e686543fd13d2ace4f48c83b52b4425b387cea4b4d6d9d516aa91687f9b
+inputs: {}
+write_set:
+    - src/punt_vox/service/
+    - tests/
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+    - .suppression-baseline.json
+success_criteria:
+    - 'stop''s report is built only from outcomes recorded when each signal was sent; no probe (exited(), ps, identity, service_owned) runs on the reporting path, so a probe failure after a signal yields backend_failed naming every signalled pid, never a traceback (djb B1; regression test: fake exited() and service_owned(201) raise after a terminate)'
+    - 'every pid stop signals is named in its report: STOPPED names each confirmed-gone signalled pid as killed (including one that exits on a later tick after a below-floor SIGTERM-only terminate); timeout/backend_failed name unconfirmed ones with the true reason, and a SIGTERM-only handle''s reason says the deadline left no time for a grace period, not ''ignored the signals'' (djb B2, code-reviewer 1, silent-failure-hunter High/Medium)'
+    - serve.port cleanup runs once per stop, only after a signalled handle is confirmed gone, only when the file names 8421 and no visible voxd holds 8421 at that moment, and removes an unparseable (stale) file; a cleanup failure is noted once in the detail, not once per tick (code-reviewer 2, silent-failure-hunter R8 and Low, Qodo efaee7f7 and 8f5ca9c8)
+    - a pid spared because it is in the service cgroup is not later reported as both spared and killed; the manager-active re-check runs before each individual signal, not once per tick (silent-failure-hunter Low, Qodo dacfeb5c)
+    - 'no wait overruns its bound: Poll.until never sleeps past the remaining budget; each launchctl/systemctl query inside a bounded wait (wait_until_unregistered, HealthVerifier''s active-state poll) gets a timeout no larger than that wait''s remaining time (Qodo 0e1f71da, 1a65ddde, 3316be35)'
+    - each fix lands with a test that fails without it; make check passes on every commit (ruff, mypy, pyright, markdownlint, pytest, check-oo, check-coupling, check-suppressions); test count does not drop; any ratchet relaxation is scoped to named file+metric entries, each justified in the audit log
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 2
+context: |
+    Successor to m-2026-11-04-011 (closed failed at its 3-round cap). Bead vox-9354: vox daemon stop/start, restart composed from them. Worktree <repo>/.claude/worktrees/daemon-stop-start, branch feat/vox-9354-daemon-stop-start, head c8b39c5. Design: docs/daemon-lifecycle-design.md and docs/daemon-lifecycle.tex (final; implement it as written; stop and report any conflict). Prior rulings: .tmp/missions/vox-9354-round2.md and vox-9354-round3.md in the main vox checkout. Everything ruled there stays fixed; this mission closes only the defects listed in success_criteria, all in the stop reporting and bounded-wait paths.
+    Follow vox CLAUDE.md and the OO rules in ../.claude/rules/python-*.md. No migration or compat code. Do not touch README.md or CHANGELOG.md, do not control the real voxd daemon, do not run make install, do not push.

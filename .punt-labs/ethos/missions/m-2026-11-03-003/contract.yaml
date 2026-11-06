@@ -1,0 +1,59 @@
+mission_id: m-2026-11-03-003
+status: failed
+type: implement
+created_at: "2026-11-03T15:01:37Z"
+updated_at: "2026-11-03T16:17:33Z"
+closed_at: "2026-11-03T16:17:33Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-11-03T15:01:37Z"
+    hash: e5cf9652298c444252da17b53c247f6c05928f5e8f5afa54887cd31c1b43ba76
+inputs:
+    ticket: vox-ob5u
+    files:
+        - pyproject.toml
+        - uv.lock
+        - CHANGELOG.md
+        - src/punt_vox/providers/elevenlabs.py
+write_set:
+    - pyproject.toml
+    - CHANGELOG.md
+    - src
+    - tests
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+success_criteria:
+    - Read bead vox-ob5u (`direnv exec <repo> bd show vox-ob5u`) and the two branch commits 0e3e146 (menu callbacks carry their frame_id so a closed Vox panel / voxd > Music window reopens; dead frame.raise_ path dropped) and 3596465 (ElevenLabs 401 rationale; punt-lux cap below 0.34).
+    - 'Rebase the branch onto origin/main (8520016 or newer). Resolve every conflict preserving BOTH sides intent: main rewrote src/punt_vox/providers/elevenlabs.py into several modules (elevenlabs_client.py, transport_faults.py, provider_status.py, caller_errors.py and others) — re-express 3596465 on top of main''s structure, and drop any part main already covers, saying which. Keep main''s `mcp>=1.30.0` floor and its comment; keep the branch''s `punt-lux>=0.33.0,<0.34` and its comment. A rebase rewrites branch history; that is expected here.'
+    - 'Do NOT commit uv.lock: punt-lux 0.33.0 is not on PyPI yet (bead lux-rt3m), so the final relock is a later step. To verify, build a wheel from the sibling lux checkout (~/Coding/punt-labs/lux, origin/main bd60fed9, which carries lux#521) into a scratch dir under .tmp/, point uv at it for a local, uncommitted lock and sync, and run the gates against it. Restore uv.lock to the branch version (`git restore uv.lock`) before every commit. State exactly how you did this in your result.'
+    - With that local lux, `make check` passes in full — OO ratchet, coupling and suppression gates included. Read the full output; never pipe it through tail, head or grep. The pyright failure the bead names (staticmethod over contextmanager in elevenlabs) must be gone. If the ratchet needs a paydown, make a genuine improvement per CLAUDE.md, never a blanket rebaseline.
+    - 'Tests assert the fix: every vox lux menu registration (vox-panel item and voxd > Music) passes a frame_id equal to the scoped frame id its scene is installed into. If such tests exist from 0e3e146, confirm they still pass after the rebase; if not, add them.'
+    - Commit incrementally — one commit per logical step. Commit only the files you changed (`git add <file>`, never -A or -a). Do not accumulate more than 30 minutes of uncommitted changes.
+    - 'Commit on your branch; do not push, do not touch PRs or merge — the leader does that (the leader will force-push the rebased branch). Submit via `ethos mission result` with: conflicts and how each was resolved, what of 3596465 main already covered, the local-lux verification method, and the final make check summary lines.'
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    The vox half of a cross-repo fix (lux-ghhf, merged as lux#521): after a
+    user closes the Vox panel or the voxd > Music window, its Lux menu item
+    does nothing until Windows > Clear All, because vox registered the menu
+    items without a frame_id. The branch was written against unreleased lux
+    and has sat 16+ commits behind main. lux will publish 0.33.0 (bead
+    lux-rt3m); the leader relocks after that.
+
+    Working directory: the worktree at
+    <repo>/.claude/worktrees/menu-frame-id on
+    branch fix/menu-callback-frame-id. Prefix env-needing commands with
+    `direnv exec <repo>`. Do not touch the
+    main checkout, the lux checkout (read and build only), or other
+    worktrees — another worker is active in .claude/worktrees/vox-o2gd. Run
+    `biff plan` before your first commit or the write gate blocks it. Never
+    print a process environment (env, printenv, /proc/<pid>/environ): it
+    holds live credentials.
+
+    Bead: vox-ob5u (P2, claimed, in_progress).

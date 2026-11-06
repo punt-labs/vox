@@ -1,0 +1,60 @@
+mission_id: m-2026-10-22-003
+status: closed
+type: implement
+created_at: "2026-10-22T07:15:18Z"
+updated_at: "2026-10-22T07:24:28Z"
+closed_at: "2026-10-22T07:24:28Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-10-22T07:15:18Z"
+    hash: e5cf9652298c444252da17b53c247f6c05928f5e8f5afa54887cd31c1b43ba76
+inputs:
+    ticket: vox-rmyx
+    files:
+        - pyproject.toml
+        - uv.lock
+        - CHANGELOG.md
+        - .tmp/missions/m-2026-10-22-002-r1-gvr-reflection.yaml
+write_set:
+    - pyproject.toml
+    - uv.lock
+    - CHANGELOG.md
+success_criteria:
+    - Read gvr's round-1 reflection on the predecessor mission m-2026-10-22-002 (path in inputs.files). This mission resolves both of its points on the same branch, on top of commit e67864e.
+    - 'Raise the mcp floor in pyproject.toml from `mcp>=1.28.1` to `mcp>=1.30.0`, so an install from PyPI can no longer resolve the release covered by Dependabot alert #57. Add a one-line comment above it in the style of the existing punt-lux floor comment: keep this floor at or above the locked version, and why (security alert #57).'
+    - 'Re-lock with `uv lock` (no --upgrade flags) so uv.lock''s recorded requirement for mcp matches the new floor. No package version may change: the four upgraded in e67864e stay at anyio 4.14.2/4.15.1, PyJWT 2.15.1, urllib3 2.8.0, mcp 1.30.0. If anything else moves, stop and report it.'
+    - 'Correct the CHANGELOG Security entry: anyio, PyJWT and urllib3 are transitive dependencies; mcp is a direct dependency whose minimum is now 1.30.0. Remove the false claims that all four are transitive and that pyproject.toml is unchanged. Keep the version numbers and the alert range and counts (#39-#57: 2 critical, 7 high, 10 medium).'
+    - '`make check` passes in full. Read the full output — never pipe it through tail, head or grep — and paste the final summary lines in your result.'
+    - Commit incrementally — one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Commit and push your feature branch (fix/vox-rmyx-security-lock-bump). Do not amend or force-push e67864e. Do not open, update, or comment on a PR, do not request reviews, do not merge, and do not push to main — the leader does all of that. Submit via `ethos mission result` with the diff stat, the before/after mcp requirement line in uv.lock, and the make check summary.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Round 2 of the vox-rmyx security fix, re-scoped from mission
+    m-2026-10-22-002 (closed escalated) because the fix needs
+    pyproject.toml, which that mission's write set did not include.
+
+    The predecessor's lock change is correct and stays as is: gvr
+    independently confirmed every new version clears all 19 alerts and
+    that nothing vox uses changed in mcp 1.28.1 -> 1.30.0. gvr found
+    two problems, both caused by the leader's contract wrongly calling
+    all four packages transitive:
+    1. mcp is a direct dependency (pyproject.toml:30, imported by
+       src/punt_vox/server.py), so the CHANGELOG entry is wrong.
+    2. The `mcp>=1.28.1` floor still lets a PyPI install resolve the
+       vulnerable mcp; uv.lock only protects dev and CI. pyproject.toml
+       already states the floor-tracks-the-lock rule for punt-lux.
+
+    Working directory: the worktree at
+    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-rmyx-security
+    on branch fix/vox-rmyx-security-lock-bump (head e67864e, pushed).
+    Prefix env-needing commands with
+    `direnv exec /home/jfreeman/Coding/punt-labs/vox`. Do not touch the
+    main checkout or other worktrees. Run `biff plan` before your first
+    commit or the write gate blocks it.
+
+    Bead: vox-rmyx (P1, claimed, in_progress).

@@ -1,0 +1,61 @@
+mission_id: m-2026-10-22-002
+status: escalated
+type: implement
+created_at: "2026-10-22T07:05:30Z"
+updated_at: "2026-10-22T07:15:03Z"
+closed_at: "2026-10-22T07:15:03Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-10-22T07:05:30Z"
+    hash: e5cf9652298c444252da17b53c247f6c05928f5e8f5afa54887cd31c1b43ba76
+inputs:
+    ticket: vox-rmyx
+    files:
+        - pyproject.toml
+        - uv.lock
+        - CHANGELOG.md
+write_set:
+    - uv.lock
+    - CHANGELOG.md
+success_criteria:
+    - 'Fix bead vox-rmyx (read it: `direnv exec /home/jfreeman/Coding/punt-labs/vox bd show vox-rmyx`). Upgrade exactly four packages in uv.lock to versions that clear all 19 open Dependabot alerts: anyio >= 4.14.2, PyJWT >= 2.15.0, urllib3 >= 2.8.0, mcp >= 1.30.0. Use `uv lock --upgrade-package anyio --upgrade-package pyjwt --upgrade-package urllib3 --upgrade-package mcp` — a dry run already resolves to anyio 4.14.2/4.15.1, PyJWT 2.15.1, urllib3 2.8.0, mcp 1.30.0.'
+    - 'Lock-only change: do NOT edit pyproject.toml and do NOT run a blanket `uv lock --upgrade`. Any other package the resolver moves as a forced consequence of these four must be listed by name and version in your result, with the reason it moved.'
+    - 'Verify the diff: `git diff --stat` shows only uv.lock and CHANGELOG.md, and every [[package]] version change in uv.lock is either one of the four or a forced consequence you listed.'
+    - Read the upstream changelogs for mcp 1.28.1 -> 1.30.0 and anyio 4.12.1 -> 4.14.2+ and report any behaviour or API change that touches what vox uses (FastMCP server, stdio/streamable transport, anyio task groups, threads). If one does, stop and report rather than adapting code — code changes are outside the write set.
+    - '`make check` passes in full (lint, type, tests, check-oo, check-coupling, check-suppressions). Read the full output; paste the final summary lines in your result. If check-oo reports no metric improved on touched files, report it — do not rebaseline; a lock-only change touches no Python, so the leader will rule on it.'
+    - 'Add a CHANGELOG entry under `## [Unreleased]` -> `### Security` naming the four packages, old -> new versions, and that it clears Dependabot alerts #39-#57 (2 critical, 7 high, 10 medium).'
+    - Commit incrementally — one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Commit and push your feature branch (fix/vox-rmyx-security-lock-bump). Do not open, update, or comment on a PR, do not request reviews, do not merge, and do not push to main — the leader does all of that. Submit via `ethos mission result` with the version table, any forced extra moves, the upstream-changelog findings, and the make check summary.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Security P1. All 19 open Dependabot alerts on punt-labs/vox
+    (2 critical, 7 high, 10 medium) are on four packages vox pulls in
+    through other dependencies: anyio 4.12.1, PyJWT 2.13.0,
+    urllib3 2.7.0, mcp 1.28.1. None of the eight open Dependabot PRs
+    (#512-#519) touches them, and Dependabot security updates are
+    disabled on the repo, so this was never fixed. Nothing in
+    pyproject.toml holds them back — the bead's original claim of an
+    anyio pin was wrong and has been corrected.
+
+    mcp is the riskiest move: vox's MCP server (server.py, the `mic`
+    tools) runs on FastMCP, so a transport or tool-registration change
+    between 1.28 and 1.30 matters. The leader will run the audio demo
+    (make install, vox daemon restart, mic tool calls) after your
+    result; your job is the lock, the gate, and an honest changelog
+    read.
+
+    Working directory: the dedicated worktree at
+    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-rmyx-security
+    on branch fix/vox-rmyx-security-lock-bump (from origin/main
+    30df1a4). The worktree's .envrc may be direnv-blocked; prefix
+    env-needing commands with
+    `direnv exec /home/jfreeman/Coding/punt-labs/vox`. Do not touch the
+    main checkout or other worktrees. Run `biff plan` before your first
+    commit or the write gate blocks it.
+
+    Bead: vox-rmyx (P1, claimed, in_progress).

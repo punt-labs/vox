@@ -1,0 +1,27 @@
+mission_id: m-2026-11-04-006
+status: closed
+type: implement
+created_at: "2026-11-04T14:54:08Z"
+updated_at: "2026-11-04T15:40:57Z"
+closed_at: "2026-11-04T15:40:57Z"
+repo: punt-labs/vox
+leader: claude
+worker: jms
+evaluator:
+    handle: jra
+    pinned_at: "2026-11-04T14:54:08Z"
+    hash: 3aef6140f304d599ae0a45cadde1d745bb18e48bf57ba33aa5d4d185b6544df6
+inputs: {}
+write_set:
+    - docs/daemon-lifecycle.tex
+success_criteria:
+    - 'docs/daemon-lifecycle.tex models the daemon lifecycle in docs/daemon-lifecycle-design.md §4 and §8: a state schema (installed, active, visible voxd pids on 8421, serving, previous pid) with the invariants in its predicate, and one operation schema per outcome row group for Stop, Start and Restart (Restart = Stop then Start, gated on the stop outcome, Start with require_fresh)'
+    - fuzz -t exits 0
+    - 'ProB model-checks it over a bounded pid set (2-3 pids) and shows: every reachable observation maps to exactly one outcome per verb (total and deterministic); Start never acts while a previous voxd is alive; Restart never reports restarted for a stale or foreign daemon (T2-inside-restart); no signal goes outside visible voxd processes on 8421; no token is sent when no visible voxd holds 8421'
+    - any finding the model surfaces against the design (an unclassified state, a nondeterministic row, a reachable invariant violation) is reported with the state that triggers it; the design text is not edited
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 2
+context: |
+    Bead vox-9354: add 'vox daemon stop' and 'vox daemon start', with restart composed from the two. The ratified design is docs/daemon-lifecycle-design.md (commit ef47cd3) in the worktree <repo>/.claude/worktrees/daemon-stop-start, branch feat/vox-9354-daemon-stop-start. vox CLAUDE.md requires a Z model, fuzz-clean and ProB-checked, before the implementation mission dispatches. Precedent models: docs/vox-notify.tex and docs/audio-programs.tex. Write only docs/daemon-lifecycle.tex. Keep the spec flat, bound integer ranges, and prefix free types so ProB accepts it.

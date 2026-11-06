@@ -1,0 +1,41 @@
+mission_id: m-2026-11-05-005
+status: failed
+type: implement
+created_at: "2026-11-05T21:50:45Z"
+updated_at: "2026-11-06T00:06:09Z"
+closed_at: "2026-11-06T00:06:09Z"
+repo: punt-labs/vox
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-11-05T21:50:45Z"
+    hash: 471d1e686543fd13d2ace4f48c83b52b4425b387cea4b4d6d9d516aa91687f9b
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/conversation_mode/
+    - src/punt_vox/paths.py
+    - src/punt_vox/commands/
+    - src/punt_vox/__main__.py
+    - src/punt_vox/cli_call.py
+    - plugin/commands/call.md
+    - plugin/hooks/session-start.sh
+    - tests/
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+    - .suppression-baseline.json
+success_criteria:
+    - 'implements bead vox-hobl.2 as specified in its description and notes, per DESIGN.md DES-066 and DES-067 and the Z model docs/conversation-mode-call-agent.tex: one pi --mode rpc --no-session --no-extensions process per call, spawned at call start and held for the call, driven over its JSONL RPC protocol, implementing the existing SessionAttach Protocol (session_attach.py); ClaudeSessionAttach and its tests are deleted, with no compat shim'
+    - the spawned process runs with --tools read,grep,find,ls only; voxd's provider API keys (ElevenLabs, OpenAI, AWS) are stripped from its environment; a deny-list blocks reads of .env* and the repo's gitignored secret patterns before the agent can read them — each with a test
+    - the reply bound is an inactivity timeout (no RPC event of any kind for N seconds), never a total-turn timeout, so a tool-heavy reply is not killed as a hang; --verbose turn timing gains a distinct mark for the first tool event
+    - 'context snapshot (DES-067): /vox:call start <topic> has the primary session author the snapshot and pass it to vox call start; summary handoff: calls_dir() in paths.py and the agent''s final-turn summary written to calls_dir()/<call-id>-summary.md in the DES-067 format; the two flag/wire-format details left open in the bead are decided by the worker and stated in the result'
+    - tests assert the Z model's invariants by name (Spawn, SendTurn, ReplyComplete, Teardown, AbortTurn; readOnly over the process's whole live extent); make check passes on every commit; test count does not drop; OO ratchet improves at least one metric with any rebaseline scoped and justified
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 3
+context: |
+    Bead vox-hobl.2 (P1, active epic vox-hobl). Worktree <repo>/.claude/worktrees/call-agent, branch feat/vox-hobl2-call-agent. The design is ratified (DES-066, DES-067, docs/conversation-mode-call-agent.tex); implement it. If code reality contradicts the design, stop and report the conflict instead of improvising. `pi` is installed at ~/.local/bin/pi.
+    Follow vox CLAUDE.md: OO rules under ../.claude/rules/python-*.md, the ratchet policy, no migration or compat code. Do not touch README.md, CHANGELOG.md or DESIGN.md (the leader writes them). Do not start a real call or restart the daemon; the leader runs the demo.
