@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **No hang-up mid-work:** the reply bound is an inactivity timeout, so a
     reply that spends minutes reading files is not killed as a hang; the
     `--trace-turns` trace gains `turn sent` and `first tool event` marks.
+  - **Provider retries:** when `pi` retries a failed model call, the failed
+    attempt's text is dropped from the spoken reply and the summary; earlier
+    messages in the same turn are kept. A turn that ends with no text says
+    "I don't have anything to add." instead of ending the call.
   - **Read-only and secret-safe:** the agent has only `read`, `grep`, `find`
     and `ls`; no extensions, skills, MCP or repo context files; and an
     environment allowlist with no API keys or tokens. A vox-owned `pi` guard
