@@ -12,13 +12,22 @@
 // deny-list patterns, case-insensitively. A grep `glob` or find `pattern` is
 // checked against the patterns too. Any other tool is refused outright.
 //
+// A grep over a directory reads every file in it that ripgrep does not ignore,
+// so before allowing one the guard lists exactly those files -- the same rg
+// binary pi's grep uses, the same flags (`--hidden`, `--no-config`, the call's
+// own `--glob`, so a negated glob widens the listing just as it widens the
+// search) -- and blocks if any listed file fails the path check. A listing that
+// fails, or no rg at all, blocks the grep: the guard cannot vouch for a search
+// it cannot see.
+//
 // Configuration comes from vox through two environment variables:
 //   VOX_CALL_GUARD_ROOT      the repository root
 //   VOX_CALL_GUARD_PATTERNS  a JSON array of .gitignore-shaped patterns
 // Missing or malformed configuration blocks every call: the guard fails closed.
 // So does an exception in the handler, by pi's own contract.
 
-import { realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,18 +103,55 @@ function compile(pattern) {
     parts.some((_, end) => regex.test(parts.slice(0, end + 1).join("/")));
 }
 
-export function createGuard({ root, patterns }) {
+// The rg pi's grep runs: pi's own tools dir first, then PATH (pi's getToolPath).
+export function ripgrep() {
+  const agentDir = process.env.PI_CODING_AGENT_DIR
+    ? normalize(process.env.PI_CODING_AGENT_DIR)
+    : path.join(homedir(), ".pi", "agent");
+  const local = path.join(agentDir, "bin", "rg");
+  return existsSync(local) ? local : "rg";
+}
+
+// The files `rg` would search under searchPath, with pi grep's ignore rules.
+export function listSearchedFiles(searchPath, glob) {
+  const args = ["--files", "--hidden", "--no-config"];
+  if (glob) args.push("--glob", glob);
+  args.push("--", searchPath);
+  const result = spawnSync(ripgrep(), args, {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: 15000,
+  });
+  if (result.error) throw new Error(result.error.message);
+  if (result.status === 1 && !result.stdout) return [];
+  if (result.status !== 0) throw new Error(`rg --files exited ${result.status}`);
+  return result.stdout.split("\n").filter(Boolean);
+}
+
+function isDirectory(p) {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export function createGuard({ root, patterns, listFiles = listSearchedFiles }) {
   if (typeof root !== "string" || !root) throw new Error("no repository root");
   if (!Array.isArray(patterns)) throw new Error("patterns is not a list");
   const realRoot = realpathSync(root);
   const matchers = patterns.map(compile);
   const denied = (parts) => matchers.some((matches) => matches(parts));
 
-  const checkPath = (raw, cwd) => {
+  const resolve = (raw, cwd) => {
     const normalized = normalize(raw);
-    const absolute = path.isAbsolute(normalized)
+    return path.isAbsolute(normalized)
       ? path.resolve(normalized)
       : path.resolve(normalize(cwd), normalized);
+  };
+
+  const checkPath = (raw, cwd) => {
+    const absolute = resolve(raw, cwd);
     for (const candidate of [absolute, realpathLoose(absolute)]) {
       const rel = path.relative(realRoot, realpathLoose(candidate));
       if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
@@ -128,6 +174,23 @@ export function createGuard({ root, patterns }) {
       : "";
   };
 
+  const checkDirectoryGrep = (searchPath, glob) => {
+    let files;
+    try {
+      files = listFiles(searchPath, glob);
+    } catch (error) {
+      return `${REASON_PREFIX} cannot list the files grep would read (${error.message})`;
+    }
+    for (const file of files) {
+      const reason = checkPath(file, searchPath);
+      if (reason) {
+        const name = path.relative(searchPath, resolve(file, searchPath));
+        return `${REASON_PREFIX} grep would read ${name}, which may hold secrets`;
+      }
+    }
+    return "";
+  };
+
   return (toolName, input, cwd) => {
     if (!PATH_TOOLS.has(toolName)) return `${REASON_PREFIX} ${toolName} is not allowed`;
     const args = input ?? {};
@@ -140,6 +203,11 @@ export function createGuard({ root, patterns }) {
         const globReason = checkGlob(args[key]);
         if (globReason) return globReason;
       }
+    }
+    const searchPath = resolve(pathArg, cwd);
+    if (toolName === "grep" && isDirectory(searchPath)) {
+      const glob = typeof args.glob === "string" && args.glob ? args.glob : "";
+      return checkDirectoryGrep(searchPath, glob);
     }
     return "";
   };

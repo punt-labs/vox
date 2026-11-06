@@ -85,10 +85,15 @@ templates, no project-local pi configuration, no repo context files, and no
 extensions but one: vox's own secret guard. Its environment is an allowlist
 (`PATH`, `HOME`, locale, terminal, temp and XDG directories, `PI_*`), so no
 token or key from your shell reaches it; pi authenticates from its own
-`~/.pi/agent` configuration. The guard confines every read to the repository
-and refuses paths that may hold secrets (`.env*`, key files, and the
-secret-looking patterns in the repo's `.gitignore`) before the read happens;
-the agent then tells the caller it can't open that file. If a denied read
+`~/.pi/agent` configuration. Before any tool runs, the guard checks the path
+every read, grep, find, and ls names: it must lie inside the repository and
+must not match a secret pattern (`.env*`, key files, and the secret-looking
+patterns in the repo's `.gitignore`); grep globs and find patterns are checked
+too. A grep over a directory is allowed only after the guard lists the files
+ripgrep would search there (same binary, same ignore rules, same glob) and
+finds none that is denied; if it cannot list them, the grep is refused. On a
+refusal the agent tells the caller it can't open that. find and ls can still
+reveal file *names* inside the repository, never contents. If a denied read
 ever ran anyway, the call ends before a word of the reply is spoken.
 
 Summaries are written to `~/.punt-labs/vox/calls/<call-id>-summary.md`; the

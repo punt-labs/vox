@@ -131,3 +131,29 @@ def test_an_ordinary_tool_failure_is_not_a_guard_refusal() -> None:
         }
     )
     assert not ToolScreen.guard_refused(record)
+
+
+def test_a_directory_grep_that_read_a_non_ignored_envrc_is_a_breach(
+    screen: ToolScreen,
+) -> None:
+    """Behind the guard's pre-grep listing: if an .envrc match ever came back,
+    the call ends."""
+    assert _run(screen, "grep", {"pattern": "TOKEN"}, output=".envrc:1: export TOKEN=x")
+
+
+def test_a_negated_glob_grep_landing_in_a_secret_is_a_breach(
+    screen: ToolScreen,
+) -> None:
+    """``!*.py`` widens the search; the output, not the glob, shows what it read."""
+    assert _run(
+        screen,
+        "grep",
+        {"pattern": "TOKEN", "glob": "!*.py"},
+        output="deploy/.env.production:2: TOKEN=x",
+    )
+
+
+def test_a_negated_glob_alone_is_not_a_breach(screen: ToolScreen) -> None:
+    assert not _run(
+        screen, "grep", {"pattern": "def", "glob": "!*.md"}, output="a.py:1: def f"
+    )

@@ -49,11 +49,20 @@ console.log(JSON.stringify({ reasons, decision }));
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
+    """A git repo whose secrets are all gitignored, as pi's grep would see it.
+
+    pi's grep runs rg without ``--no-require-git``, so ``.gitignore`` only
+    hides files inside a git repository -- hence the ``git init``.
+    """
     root = tmp_path / "repo"
     (root / ".punt-labs" / "ethos").mkdir(parents=True)
     (root / "src").mkdir()
-    (root / ".gitignore").write_text(".punt-labs/**/*.local.*\n.envrc.local\n")
+    (root / "src" / "app.py").write_text("def main(): ...\n")
+    (root / ".gitignore").write_text(
+        ".punt-labs/**/*.local.*\n.envrc.local\n.env.local\n"
+    )
     (root / ".env.local").write_text("FAKE_API_KEY=not-real\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
     outside = tmp_path / "outside.txt"
     outside.write_text("outside the repo")
     (root / "innocent.txt").symlink_to(outside)
@@ -61,8 +70,13 @@ def repo(tmp_path: Path) -> Path:
 
 
 def _guard(
-    repo: Path, cases: list[tuple[str, dict[str, str], str]], env: dict[str, str]
+    repo: Path,
+    cases: list[tuple[str, dict[str, str], str]],
+    env: dict[str, str],
+    *,
+    path_var: str | None = None,
 ) -> dict[str, object]:
+    """Run the harness; *path_var* replaces ``PATH`` for the guard's own lookups."""
     node = shutil.which("node")
     assert node is not None, "node is required: pi itself runs on it"
     result = subprocess.run(
@@ -77,7 +91,11 @@ def _guard(
         capture_output=True,
         text=True,
         check=True,
-        env={"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], **env},
+        env={
+            "PATH": os.environ["PATH"] if path_var is None else path_var,
+            "HOME": os.environ["HOME"],
+            **env,
+        },
         timeout=30,
     )
     parsed: dict[str, object] = json.loads(result.stdout)
@@ -151,6 +169,45 @@ def test_the_guard_allows_ordinary_repo_reads(
     repo: Path, tool: str, args: dict[str, str]
 ) -> None:
     assert _reasons(repo, [(tool, args, str(repo))]) == [""]
+
+
+class TestDirectoryGrep:
+    """A grep over a directory reads every file rg lists there, so each one
+    is judged before the grep may run."""
+
+    def test_a_non_ignored_envrc_in_the_searched_directory_blocks_the_grep(
+        self, repo: Path
+    ) -> None:
+        (repo / "src" / ".envrc").write_text("export TOKEN=sk-not-real\n")
+        (reason,) = _reasons(repo, [("grep", {"pattern": "TOKEN"}, str(repo))])
+        assert ".envrc" in reason
+
+    def test_a_negated_glob_is_judged_by_what_it_widens_to(self, repo: Path) -> None:
+        (repo / ".envrc").write_text("export TOKEN=sk-not-real\n")
+        args = {"pattern": "TOKEN", "glob": "!*.py"}
+        (reason,) = _reasons(repo, [("grep", args, str(repo))])
+        assert reason
+
+    def test_a_glob_that_excludes_the_secret_lets_the_grep_through(
+        self, repo: Path
+    ) -> None:
+        (repo / ".envrc").write_text("export TOKEN=sk-not-real\n")
+        args = {"pattern": "def", "glob": "*.py"}
+        assert _reasons(repo, [("grep", args, str(repo))]) == [""]
+
+    def test_gitignored_secrets_do_not_block_a_grep(self, repo: Path) -> None:
+        """rg skips them, exactly as pi's grep will."""
+        assert _reasons(repo, [("grep", {"pattern": "def"}, str(repo))]) == [""]
+
+    def test_a_listing_failure_blocks_the_grep(self, repo: Path) -> None:
+        """No rg anywhere: the guard cannot know what grep would read."""
+        env = SecretPathPolicy.for_repo(repo).guard_env() | {
+            "PI_CODING_AGENT_DIR": str(repo / "no-such-agent-dir")
+        }
+        cases = [("grep", {"pattern": "def"}, str(repo))]
+        reasons = _guard(repo, cases, env, path_var="")["reasons"]
+        assert isinstance(reasons, list)
+        assert "cannot list" in str(reasons[0])
 
 
 def test_the_handler_blocks_and_terminates(repo: Path) -> None:

@@ -18,10 +18,11 @@ killed; the model makes ``ended`` terminal):
   tool calls streams tool events the whole time, so it is never mistaken for
   a hang however long it runs.
 - **A denied read that ran.** The pi-side secret guard
-  (``pi_extension/secret_guard.js``) is the primary control: it blocks a
-  tool call aimed outside the repo or at the deny-list
-  (:class:`~.secret_path_policy.SecretPathPolicy`) before the tool executes,
-  and a blocked call is no breach -- the turn ends on the refusal, which is
+  (``pi_extension/secret_guard.js``) is the primary control: before a tool
+  executes it blocks a path outside the repo or on the deny-list
+  (:class:`~.secret_path_policy.SecretPathPolicy`), and a grep over a
+  directory unless every file ripgrep would search there passes; a blocked
+  call is no breach -- the turn ends on the refusal, which is
   spoken (:data:`GUARD_REFUSAL`), and the call goes on. As defence in depth,
   :class:`~.tool_screen.ToolScreen` re-checks every call that did execute;
   if a denied read ever ran anyway, the turn's reply is never spoken, never
