@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.call_agent_env import CallAgentEnv
+from punt_vox.voxd.conversation_mode.ripgrep import Ripgrep
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -99,6 +100,14 @@ class CallAgentLaunch:
     def system_prompt(self) -> str:
         """Return the text appended to pi's own system prompt for a call."""
         return f"{_ROLE}\n\n{self._policy.prompt_clause()}"
+
+    def require_ripgrep(self, parent: Mapping[str, str]) -> Path:
+        """Return the ``rg`` the guard will run in the child started from *parent*.
+
+        Raises :class:`~.call_agent_errors.CallAgentSpawnError` when there is
+        none: every directory grep of the call would be refused.
+        """
+        return Ripgrep.locate(self.env(parent))
 
     def env(self, parent: Mapping[str, str]) -> dict[str, str]:
         """Return the child's environment: allowlisted, plus the guard's config."""

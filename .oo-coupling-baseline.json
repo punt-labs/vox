@@ -1596,11 +1596,11 @@
     "avg_lcom": 0.393
   },
   "src/punt_vox/voxd/conversation_mode/call_agent_launch.py": {
-    "efferent_coupling": 1.0,
+    "efferent_coupling": 2.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.4,
-    "avg_lcom": 0.4
+    "max_lcom": 0.571,
+    "avg_lcom": 0.571
   },
   "src/punt_vox/voxd/conversation_mode/call_agent_state.py": {
     "efferent_coupling": 0.0,
@@ -1804,6 +1804,13 @@
     "circular_imports": 0.0,
     "max_lcom": 1.0,
     "avg_lcom": 1.0
+  },
+  "src/punt_vox/voxd/conversation_mode/ripgrep.py": {
+    "efferent_coupling": 2.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/conversation_mode/secret_path_policy.py": {
     "efferent_coupling": 3.0,

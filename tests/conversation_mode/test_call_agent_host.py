@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +18,10 @@ from conversation_mode._pi_rpc_fakes import (
     ToolUse,
 )
 from punt_vox.voxd.conversation_mode import call_agent_host as host_module
-from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentEndedError
+from punt_vox.voxd.conversation_mode.call_agent_errors import (
+    CallAgentEndedError,
+    CallAgentSpawnError,
+)
 from punt_vox.voxd.conversation_mode.call_agent_host import CallAgentHost, CallOutcome
 from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
 from punt_vox.voxd.conversation_mode.call_summary import CallSummaryStore
@@ -181,6 +185,16 @@ class TestAbandon:
 
 
 class TestOpen:
+    @pytest.fixture(autouse=True)
+    def ripgrep(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """pi's own rg, as the guard will find it: open checks for it first."""
+        rg = tmp_path / "agent" / "bin" / "rg"
+        rg.parent.mkdir(parents=True)
+        rg.write_text("#!/bin/sh\n")
+        rg.chmod(0o755)
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "agent"))
+        return rg
+
     async def test_open_spawns_with_the_snapshot_from_stdin(
         self, tmp_path: Path
     ) -> None:
@@ -202,6 +216,30 @@ class TestOpen:
         with patch(_EXEC, recorder), pytest.raises(ValueError, match="empty"):
             await CallAgentHost.open(
                 Path("-"), cwd=tmp_path, repo_root=tmp_path, stdin=io.StringIO("")
+            )
+        assert recorder.argv == ()
+
+    async def test_no_ripgrep_fails_the_call_before_any_process_starts(
+        self, tmp_path: Path, ripgrep: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard refuses every directory grep without rg; say so up front."""
+        ripgrep.unlink()
+        git_only = tmp_path / "git-only"
+        git_only.mkdir()
+        git = shutil.which("git")
+        assert git is not None
+        (git_only / "git").symlink_to(git)
+        monkeypatch.setenv("PATH", str(git_only))
+        recorder = SpawnRecorder(FakePiProcess([]))
+        with (
+            patch(_EXEC, recorder),
+            pytest.raises(CallAgentSpawnError, match="ripgrep"),
+        ):
+            await CallAgentHost.open(
+                Path("-"),
+                cwd=tmp_path,
+                repo_root=tmp_path,
+                stdin=io.StringIO("Topic: x"),
             )
         assert recorder.argv == ()
 

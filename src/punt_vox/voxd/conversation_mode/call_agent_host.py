@@ -23,6 +23,7 @@ Either way the process never outlives the call.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
@@ -103,6 +104,7 @@ class CallAgentHost:
         snapshot = CallSnapshot.read(context, stdin)
         turn_timer = LoggingTurnTimer()
         launch = CallAgentLaunch(SecretPathPolicy.for_repo(repo_root))
+        launch.require_ripgrep(os.environ)
         agent = await PiCallAgent.spawn(
             launch,
             cwd=cwd,
