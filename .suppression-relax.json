@@ -1,5 +1,11 @@
 [
   {
+    "file": "src/punt_vox/voxd/conversation_mode/git_ignores.py",
+    "ceiling": 1,
+    "justify": "S603 per-file-ignore: GitIgnores runs a fixed git argv (rev-parse, check-ignore) so the secret guard honours every ignore source git does; no shell, no caller-built program name -- the same allowance every other subprocess module in src has",
+    "added_at": "2026-11-06T04:28:12Z"
+  },
+  {
     "file": "src/punt_vox/voxd/conversation_mode/mic_audio_source.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio dependency) -- matches 6 existing precedents in this pyproject.toml for optional heavy providers; a hard top-level import would break every vox invocation on a host without PortAudio.",

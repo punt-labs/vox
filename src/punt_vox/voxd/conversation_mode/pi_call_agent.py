@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 
 # Guard refusals that mean the guard itself is degraded, not that a read
 # was on the deny-list.
-_DEGRADED_GUARD = re.compile(r"misconfigured|cannot list")
+_DEGRADED_GUARD = re.compile(r"misconfigured|cannot (?:list|check)")
 
 # Seconds with no RPC record of any kind before a turn is declared hung.
 REPLY_INACTIVITY_S = 60.0
@@ -237,8 +237,8 @@ class PiCallAgent:
     def _log_diagnostics(record: PiRpcRecord) -> None:
         """Log a guard refusal's full reason and any extension error, as seen."""
         if reason := ToolScreen.guard_refusal(record):
-            # A guard that cannot list a grep's files refuses every directory
-            # grep: that is degraded service, not an ordinary refusal.
+            # A guard that cannot list a grep's files or ask git what it ignores
+            # refuses whole classes of reads: degraded service, not a refusal.
             level = logging.WARNING if _DEGRADED_GUARD.search(reason) else logging.INFO
             logger.log(level, "call agent read refused: %s", reason)
         if error := record.extension_error():

@@ -4,9 +4,10 @@ A read-only tool allowlist stops writes; it does not stop disclosure, and on
 a call disclosure is audible: a secret the agent reads can be narrated aloud
 to anyone in the room. :class:`SecretPathPolicy` names the paths that are off
 limits -- anything outside the repository root, a fixed set of well-known
-secret files, and every secret-looking pattern in the repo's own
-``.gitignore`` -- and answers one question about a candidate path: is it
-denied?
+secret files, every secret-looking pattern in the repo's own ``.gitignore``,
+and every path git itself ignores, by any ignore source git honours
+(:class:`~.git_ignores.GitIgnores`) -- and answers one question about a
+candidate path: is it denied?
 
 It is enforced in three layers. The system prompt states it as a hard rule
 (:meth:`SecretPathPolicy.prompt_clause`). The pi-side guard extension,
@@ -26,6 +27,7 @@ denied with it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from fnmatch import fnmatchcase
@@ -33,12 +35,15 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentSpawnError
+from punt_vox.voxd.conversation_mode.git_ignores import GitIgnoreError, GitIgnores
 from punt_vox.voxd.conversation_mode.pi_path import PiPath
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 __all__ = ["SecretPathPolicy"]
+
+logger = logging.getLogger(__name__)
 
 # Well-known secret locations, denied in every repo whatever its .gitignore
 # says. ``auth.json`` is pi's own credential store (``~/.pi/agent``), and
@@ -83,16 +88,24 @@ _GLOB_CHARS = re.compile(r"[*?\[\]{}!]")
 class SecretPathPolicy:
     """Decide whether a path the call agent names is on the secret deny-list."""
 
-    __slots__ = ("_patterns", "_real_root", "_root")
+    __slots__ = ("_git", "_patterns", "_real_root", "_root")
     _root: Path
     _real_root: Path
     _patterns: tuple[str, ...]
+    _git: GitIgnores
 
-    def __new__(cls, root: Path, patterns: Iterable[str] = ()) -> Self:
+    def __new__(
+        cls,
+        root: Path,
+        patterns: Iterable[str] = (),
+        # None: a policy of patterns alone, which consults no git rules.
+        git: GitIgnores | None = None,
+    ) -> Self:
         self = super().__new__(cls)
         self._root = Path(os.path.normpath(root.expanduser().absolute()))
         self._real_root = self._root.resolve()
         self._patterns = tuple(dict.fromkeys((*_BUILTIN_PATTERNS, *patterns)))
+        self._git = git or GitIgnores(self._real_root, active=False)
         return self
 
     @classmethod
@@ -111,7 +124,8 @@ class SecretPathPolicy:
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"cannot read {gitignore} to build the secret deny-list: {exc}"
             raise CallAgentSpawnError(msg) from exc
-        return cls(root, cls._secret_lines(text.splitlines()))
+        git = GitIgnores.for_root(root.expanduser().resolve())
+        return cls(root, cls._secret_lines(text.splitlines()), git)
 
     @property
     def patterns(self) -> tuple[str, ...]:
@@ -122,17 +136,17 @@ class SecretPathPolicy:
 
         The path is normalized as pi normalizes it (:class:`~.pi_path.PiPath`),
         then denied when it resolves -- symlinks followed -- outside the repo
-        root, or when it or its resolved form matches a pattern,
-        case-insensitively.
+        root, when it or its resolved form matches a pattern,
+        case-insensitively, or when git ignores either form.
         """
         lexical = PiPath.resolve(candidate, cwd)
         real = lexical.resolve(strict=False)
         if not real.is_relative_to(self._real_root):
             return True
-        forms = [real.relative_to(self._real_root).parts]
+        forms = [real.relative_to(self._real_root)]
         if lexical.is_relative_to(self._root):
-            forms.append(lexical.relative_to(self._root).parts)
-        return any(self._matches(parts) for parts in forms)
+            forms.append(lexical.relative_to(self._root))
+        return any(self._matches(form.parts) for form in forms) or self._ignored(forms)
 
     def denies_glob(self, glob: str) -> bool:
         """Return whether a grep ``glob`` or find ``pattern`` aims at secrets.
@@ -149,6 +163,7 @@ class SecretPathPolicy:
         return {
             "VOX_CALL_GUARD_ROOT": str(self._real_root),
             "VOX_CALL_GUARD_PATTERNS": json.dumps(self._patterns),
+            "VOX_CALL_GUARD_GIT_IGNORES": json.dumps(self._git.active),
         }
 
     def prompt_clause(self) -> str:
@@ -161,6 +176,16 @@ class SecretPathPolicy:
             "read is a secret disclosed. If asked for one of these files, "
             "refuse and say why; the tools will refuse it too."
         )
+
+    def _ignored(self, forms: Iterable[Path]) -> bool:
+        """Return whether git ignores any form; a git that cannot answer denies."""
+        try:
+            return bool(
+                self._git.ignored(form.as_posix() for form in forms if form.parts)
+            )
+        except GitIgnoreError:
+            logger.warning("cannot check what git ignores; denying", exc_info=True)
+            return True
 
     def _matches(self, parts: tuple[str, ...]) -> bool:
         folded = tuple(part.lower() for part in parts)

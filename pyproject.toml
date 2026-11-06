@@ -188,6 +188,8 @@ ignore = [
 "src/punt_vox/service/systemd.py" = ["S603", "S607"]
 "src/punt_vox/service/installer.py" = ["PLC0415"]
 "src/punt_vox/playback.py" = ["S603", "S607"]
+# git check-ignore: the call agent's secret guard asks git what it ignores.
+"src/punt_vox/voxd/conversation_mode/git_ignores.py" = ["S603"]
 "src/punt_vox/voices.py" = ["S311"]
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603", "S607"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]

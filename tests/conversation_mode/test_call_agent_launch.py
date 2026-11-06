@@ -68,12 +68,9 @@ class TestSystemPrompt:
         assert launch.policy.prompt_clause() in prompt
 
 
-_GUARD_VARS = {"VOX_CALL_GUARD_ROOT", "VOX_CALL_GUARD_PATTERNS"}
-
-
 def _passed(launch: CallAgentLaunch, parent: dict[str, str]) -> set[str]:
     """Return the names of *parent* the child receives, guard config aside."""
-    return set(launch.env(parent)) - _GUARD_VARS
+    return set(launch.env(parent)) - set(launch.policy.guard_env())
 
 
 class TestEnvironment:

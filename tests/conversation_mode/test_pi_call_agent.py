@@ -403,10 +403,16 @@ class TestSecretPathDenyList:
             await _reply(agent)
         assert "vox secret guard: {'path': '.env'}" in caplog.text
 
-    async def test_a_guard_that_cannot_list_files_is_logged_as_a_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "vox secret guard: cannot list the files grep would read (no rg)",
+            "vox secret guard: cannot check what git ignores (spawnSync git ENOENT)",
+        ],
+    )
+    async def test_a_degraded_guard_refusal_is_logged_as_a_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, reason: str
     ) -> None:
-        reason = "vox secret guard: cannot list the files grep would read (no rg)"
         tool = ToolUse("grep", {"pattern": "x"}, blocked=True, reason=reason)
         refused = PiReply(text="", tools=(tool,))
         agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), refused]))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ def repo(tmp_path: Path) -> Path:
             ]
         )
     )
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
     return root
 
 
@@ -180,9 +182,42 @@ class TestGitignoreSecretPatterns:
         assert not any(p.startswith(("!", "#")) for p in policy.patterns)
 
     def test_a_repo_without_a_gitignore_still_gets_the_builtins(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # git must not find the repo these tests run inside.
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
         assert SecretPathPolicy.for_repo(tmp_path).denies(".env", cwd=tmp_path)
+
+
+class TestEveryIgnoreSourceGitHonours:
+    """A path git ignores is denied, whichever file ignores it."""
+
+    @pytest.fixture
+    def nested(self, repo: Path) -> Path:
+        (repo / "sub").mkdir()
+        (repo / "sub" / ".gitignore").write_text("creds.json\n*.txt\n!keep.txt\n")
+        (repo / "sub" / "creds.json").write_text('{"token": "not-real"}\n')
+        (repo / "sub" / "keep.txt").write_text("plain\n")
+        (repo / ".git" / "info" / "exclude").write_text("private.md\n")
+        return repo
+
+    @pytest.mark.parametrize("path", ["sub/creds.json", "sub/notes.txt", "private.md"])
+    def test_an_ignored_path_is_denied(self, nested: Path, path: str) -> None:
+        assert SecretPathPolicy.for_repo(nested).denies(path, cwd=nested)
+
+    def test_a_negated_nested_pattern_is_allowed(self, nested: Path) -> None:
+        assert not SecretPathPolicy.for_repo(nested).denies("sub/keep.txt", cwd=nested)
+
+    def test_a_git_that_cannot_answer_denies(
+        self, nested: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        policy = SecretPathPolicy.for_repo(nested)
+        monkeypatch.setenv("PATH", "")
+        assert policy.denies("sub/keep.txt", cwd=nested)
+
+    def test_the_guard_is_told_to_ask_git(self, nested: Path) -> None:
+        env = SecretPathPolicy.for_repo(nested).guard_env()
+        assert json.loads(env["VOX_CALL_GUARD_GIT_IGNORES"]) is True
 
 
 class TestGlobs:

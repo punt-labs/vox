@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     (root / ".punt-labs" / "ethos").mkdir(parents=True)
     (root / ".gitignore").write_text(".punt-labs/**/*.local.*\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
     return root
 
 
@@ -73,6 +75,24 @@ def test_an_executed_read_outside_the_repo_is_a_breach(screen: ToolScreen) -> No
 
 def test_an_executed_ordinary_read_is_fine(screen: ToolScreen) -> None:
     assert not _run(screen, "read", {"path": "README.md"})
+
+
+def test_an_executed_read_of_a_nested_ignored_file_is_a_breach(
+    screen: ToolScreen, repo: Path
+) -> None:
+    (repo / "sub").mkdir()
+    (repo / "sub" / ".gitignore").write_text("creds.json\n")
+    assert _run(screen, "read", {"path": "sub/creds.json"})
+
+
+def test_a_grep_landing_in_a_nested_ignored_file_is_a_breach(
+    screen: ToolScreen, repo: Path
+) -> None:
+    (repo / "sub").mkdir()
+    (repo / "sub" / ".gitignore").write_text("creds.json\n")
+    (repo / "sub" / "creds.json").write_text("TOKEN=x\n")
+    args: dict[str, object] = {"pattern": "TOKEN", "glob": "*.json"}
+    assert _run(screen, "grep", args, output="sub/creds.json:1: TOKEN=x")
 
 
 def test_a_grep_glob_aimed_at_env_files_is_a_breach(screen: ToolScreen) -> None:

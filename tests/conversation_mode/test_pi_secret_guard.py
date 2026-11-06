@@ -38,6 +38,7 @@ try {
   const guard = mod.createGuard({
     root: process.env.VOX_CALL_GUARD_ROOT,
     patterns: JSON.parse(process.env.VOX_CALL_GUARD_PATTERNS),
+    gitIgnores: JSON.parse(process.env.VOX_CALL_GUARD_GIT_IGNORES ?? "null"),
   });
   reasons = cases.map(([tool, input, cwd]) => guard(tool, input, cwd));
 } catch {
@@ -230,6 +231,7 @@ class TestDirectoryGrep:
         env = {
             "VOX_CALL_GUARD_ROOT": str(repo),
             "VOX_CALL_GUARD_PATTERNS": json.dumps([pattern]),
+            "VOX_CALL_GUARD_GIT_IGNORES": "false",
         }
         cases = [("grep", {"pattern": "TOKEN"}, str(repo))]
         reasons = _guard(repo, cases, env)["reasons"]
@@ -245,6 +247,52 @@ class TestDirectoryGrep:
         reasons = _guard(repo, cases, env, path_var="")["reasons"]
         assert isinstance(reasons, list)
         assert "cannot list" in str(reasons[0])
+
+
+class TestEveryIgnoreSourceGitHonours:
+    """A path git ignores is refused, whichever ignore file says so -- asked of git."""
+
+    @pytest.fixture
+    def nested(self, repo: Path) -> Path:
+        sub = repo / "sub"
+        sub.mkdir()
+        (sub / ".gitignore").write_text("creds.json\n*.txt\n!keep.txt\n")
+        (sub / "creds.json").write_text('{"token": "not-real"}\n')
+        (sub / "notes.txt").write_text("plain words\n")
+        (sub / "keep.txt").write_text("plain words\n")
+        (repo / ".git" / "info" / "exclude").write_text("private.md\n")
+        (repo / "private.md").write_text("not-real\n")
+        return repo
+
+    @pytest.mark.parametrize("path", ["sub/creds.json", "sub/notes.txt", "private.md"])
+    def test_an_ignored_path_is_refused(self, nested: Path, path: str) -> None:
+        (reason,) = _reasons(nested, [("read", {"path": path}, str(nested))])
+        assert "ignored by git" in reason
+
+    def test_a_negated_nested_pattern_is_allowed(self, nested: Path) -> None:
+        case = ("read", {"path": "sub/keep.txt"}, str(nested))
+        assert _reasons(nested, [case]) == [""]
+
+    def test_a_directory_grep_that_would_read_an_ignored_file_is_refused(
+        self, nested: Path
+    ) -> None:
+        """A glob makes rg search files git ignores; each one is asked of git."""
+        args = {"pattern": "token", "path": "sub", "glob": "*.json"}
+        (reason,) = _reasons(nested, [("grep", args, str(nested))])
+        assert "creds.json" in reason
+
+    def test_a_directory_grep_rg_keeps_off_ignored_files_is_allowed(
+        self, nested: Path
+    ) -> None:
+        args = {"pattern": "plain", "path": "sub"}
+        assert _reasons(nested, [("grep", args, str(nested))]) == [""]
+
+    def test_a_git_that_cannot_answer_refuses(self, nested: Path) -> None:
+        env = SecretPathPolicy.for_repo(nested).guard_env()
+        cases = [("read", {"path": "sub/keep.txt"}, str(nested))]
+        reasons = _guard(nested, cases, env, path_var="")["reasons"]
+        assert isinstance(reasons, list)
+        assert "cannot check what git ignores" in str(reasons[0])
 
 
 def test_the_handler_blocks_and_terminates(repo: Path) -> None:

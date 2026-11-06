@@ -9,8 +9,12 @@
 // the path (unicode spaces to plain, strip a leading "@", expand "~", decode a
 // file:// URL, resolve against the session cwd), resolves symlinks, and requires
 // the result to lie inside the repository root. Then it applies the secret
-// deny-list patterns, case-insensitively. A grep `glob` or find `pattern` is
-// checked against the patterns too. Any other tool is refused outright.
+// deny-list patterns, case-insensitively, and -- in a git work tree -- asks git
+// whether it ignores the path: every ignore source git honours (a .gitignore at
+// any depth, .git/info/exclude, core.excludesFile), with git's own scoping,
+// negation, and anchoring. A git that cannot answer refuses the call. A grep
+// `glob` or find `pattern` is checked against the patterns too. Any other tool
+// is refused outright.
 //
 // A grep over a directory reads every file in it that ripgrep does not ignore,
 // so before allowing one the guard lists exactly those files -- the same rg
@@ -20,9 +24,10 @@
 // fails, or no rg at all, blocks the grep: the guard cannot vouch for a search
 // it cannot see.
 //
-// Configuration comes from vox through two environment variables:
-//   VOX_CALL_GUARD_ROOT      the repository root
-//   VOX_CALL_GUARD_PATTERNS  a JSON array of .gitignore-shaped patterns
+// Configuration comes from vox through three environment variables:
+//   VOX_CALL_GUARD_ROOT         the repository root
+//   VOX_CALL_GUARD_PATTERNS     a JSON array of .gitignore-shaped patterns
+//   VOX_CALL_GUARD_GIT_IGNORES  JSON true when the root is in a git work tree
 // Missing or malformed configuration fails the extension's load, and pi exits
 // at startup: the guard fails closed by never letting the agent start. An
 // exception in the handler blocks that call, by pi's own contract.
@@ -131,6 +136,26 @@ export function listSearchedFiles(searchPath, glob) {
   return result.stdout.split("\0").filter(Boolean);
 }
 
+// Those of `paths` (relative to `root`, "/"-separated) that git ignores, asked
+// of git itself. --no-index: a tracked file a rule matches counts as ignored
+// too, the safe side. Throws when git does not answer.
+export function gitIgnored(root, paths) {
+  if (paths.length === 0) return new Set();
+  const result = spawnSync("git", ["check-ignore", "--no-index", "-z", "--stdin"], {
+    cwd: root,
+    input: `${paths.join("\0")}\0`,
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+    timeout: 15000,
+  });
+  if (result.error) throw new Error(result.error.message);
+  // 0: some paths are ignored; 1: none are; anything else: no answer.
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`git check-ignore exited ${result.status}: ${result.stderr.trim()}`);
+  }
+  return new Set(result.stdout.split("\0").filter(Boolean));
+}
+
 function isDirectory(p) {
   try {
     return statSync(p).isDirectory();
@@ -139,9 +164,16 @@ function isDirectory(p) {
   }
 }
 
-export function createGuard({ root, patterns, listFiles = listSearchedFiles }) {
+export function createGuard({
+  root,
+  patterns,
+  gitIgnores,
+  listFiles = listSearchedFiles,
+  checkIgnored = gitIgnored,
+}) {
   if (typeof root !== "string" || !root) throw new Error("no repository root");
   if (!Array.isArray(patterns)) throw new Error("patterns is not a list");
+  if (typeof gitIgnores !== "boolean") throw new Error("gitIgnores is not a boolean");
   const realRoot = realpathSync(root);
   const matchers = patterns.map(compile);
   const denied = (parts) => matchers.some((matches) => matches(parts));
@@ -153,21 +185,57 @@ export function createGuard({ root, patterns, listFiles = listSearchedFiles }) {
       : path.resolve(normalize(cwd), normalized);
   };
 
-  const checkPath = (raw, cwd) => {
+  const outside = (rel) =>
+    rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+
+  // A path relative to the root, symlinks resolved, then as named.
+  const relativeForms = (raw, cwd) => {
     const absolute = resolve(raw, cwd);
-    for (const candidate of [absolute, realpathLoose(absolute)]) {
-      const rel = path.relative(realRoot, realpathLoose(candidate));
-      if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-        return `${REASON_PREFIX} ${raw} is outside the repository`;
-      }
-      const lexical = path.relative(realRoot, candidate);
-      for (const r of [rel, lexical]) {
-        const parts = r ? r.split(path.sep) : [];
-        if (denied(parts)) return `${REASON_PREFIX} ${raw} may hold secrets`;
-      }
-    }
-    return "";
+    return [
+      path.relative(realRoot, realpathLoose(absolute)),
+      path.relative(realRoot, absolute),
+    ];
   };
+
+  const checkPatterns = (raw, cwd) => {
+    const forms = relativeForms(raw, cwd);
+    if (outside(forms[0])) return `${REASON_PREFIX} ${raw} is outside the repository`;
+    const secret = forms.some((rel) => denied(rel ? rel.split(path.sep) : []));
+    return secret ? `${REASON_PREFIX} ${raw} may hold secrets` : "";
+  };
+
+  // The first of `paths` ([raw, cwd] pairs) git ignores, "" for none; one git
+  // call for the lot. Throws when git does not answer.
+  const firstIgnored = (paths) => {
+    if (!gitIgnores) return "";
+    const asked = paths.map(([raw, cwd]) => [
+      raw,
+      relativeForms(raw, cwd)
+        .filter((rel) => rel && !outside(rel))
+        .map((rel) => rel.split(path.sep).join("/")),
+    ]);
+    const rels = [...new Set(asked.flatMap(([, forms]) => forms))];
+    const ignored = checkIgnored(realRoot, rels);
+    const hit = asked.find(([, rels]) => rels.some((rel) => ignored.has(rel)));
+    return hit ? hit[0] : "";
+  };
+
+  const checkIgnores = (paths, describe) => {
+    let ignored;
+    try {
+      ignored = firstIgnored(paths);
+    } catch (error) {
+      return `${REASON_PREFIX} cannot check what git ignores (${error.message})`;
+    }
+    return ignored ? describe(ignored) : "";
+  };
+
+  const checkPath = (raw, cwd) =>
+    checkPatterns(raw, cwd) ||
+    checkIgnores(
+      [[raw, cwd]],
+      (name) => `${REASON_PREFIX} ${name} is ignored by git and may hold secrets`,
+    );
 
   const checkGlob = (raw) => {
     const parts = String(raw).split("/").filter(Boolean);
@@ -184,14 +252,16 @@ export function createGuard({ root, patterns, listFiles = listSearchedFiles }) {
     } catch (error) {
       return `${REASON_PREFIX} cannot list the files grep would read (${error.message})`;
     }
+    const readName = (file) => path.relative(searchPath, resolve(file, searchPath));
     for (const file of files) {
-      const reason = checkPath(file, searchPath);
-      if (reason) {
-        const name = path.relative(searchPath, resolve(file, searchPath));
-        return `${REASON_PREFIX} grep would read ${name}, which may hold secrets`;
+      if (checkPatterns(file, searchPath)) {
+        return `${REASON_PREFIX} grep would read ${readName(file)}, which may hold secrets`;
       }
     }
-    return "";
+    return checkIgnores(
+      files.map((file) => [file, searchPath]),
+      (file) => `${REASON_PREFIX} grep would read ${readName(file)}, which git ignores`,
+    );
   };
 
   return (toolName, input, cwd) => {
@@ -224,6 +294,7 @@ function guardFromEnvironment() {
     return createGuard({
       root: process.env.VOX_CALL_GUARD_ROOT,
       patterns: JSON.parse(process.env.VOX_CALL_GUARD_PATTERNS ?? "null"),
+      gitIgnores: JSON.parse(process.env.VOX_CALL_GUARD_GIT_IGNORES ?? "null"),
     });
   } catch (error) {
     throw new Error(`${REASON_PREFIX} misconfigured: ${error.message}`);
