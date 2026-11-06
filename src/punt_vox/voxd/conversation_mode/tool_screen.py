@@ -14,6 +14,7 @@ breach: the guard's refusal goes back to the model and the call carries on.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.pi_path import PiPath
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 
 __all__ = ["ToolScreen"]
+
+# Where a grep output line's path ends: ``:<line>: `` on a match line,
+# ``-<line>- `` on a context line.
+_GREP_SEPARATOR = re.compile(r":\d+: |-\d+- ")
 
 logger = logging.getLogger(__name__)
 
@@ -90,18 +95,32 @@ class ToolScreen:
     def _grep_output_denied(self, args: dict[str, object], output: str) -> bool:
         """Check each file grep's output names, relative to grep's search path.
 
-        pi prints a match as ``<path>:<line>: <text>``, the path relative to
-        the directory searched -- or only the basename when a single file was
-        searched, a file already judged as grep's own path argument.
+        pi prints a match as ``<path>:<line>: <text>`` and a context line as
+        ``<path>-<line>- <text>``, the path relative to the directory
+        searched -- or only the basename when a single file was searched, a
+        file already judged as grep's own path argument.
         """
         base = PiPath.resolve(self._path_arg(args), self._cwd)
         if not base.is_dir():
             return False
         return any(
-            self._policy.denies(line.split(":", 1)[0], cwd=base)
+            self._policy.denies(path, cwd=base)
             for line in output.splitlines()
-            if ":" in line
+            for path in self._grep_paths(line, base)
         )
+
+    @staticmethod
+    def _grep_paths(line: str, base: Path) -> list[str]:
+        """Return the path(s) one grep output line may name.
+
+        A filename may itself contain ``:5: `` (``a:.env`` does), so the
+        first separator is not necessarily the path's end. The candidate
+        that exists as a file is the path; when none does, every candidate
+        is judged -- failing toward denial, never toward ``a``.
+        """
+        candidates = [line[: m.start()] for m in _GREP_SEPARATOR.finditer(line)]
+        existing = [c for c in candidates if PiPath.resolve(c, base).is_file()]
+        return existing or candidates
 
     @staticmethod
     def _path_arg(args: dict[str, object]) -> str:

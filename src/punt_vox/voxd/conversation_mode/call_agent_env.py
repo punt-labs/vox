@@ -4,7 +4,11 @@ A developer shell carries GitHub tokens, database passwords, and API keys for
 a dozen services; a deny-list misses whichever one nobody thought of, and the
 call agent's output is spoken aloud. The child gets only what a process needs
 to run -- ``PATH``, ``HOME``, the locale, the terminal, temp and XDG
-directories -- plus pi's own ``PI_*`` settings.
+directories -- plus the handful of pi's own settings a headless agent uses,
+named one by one. Never a ``PI_`` prefix: that would pass any ``PI_API_KEY``
+or ``PI_*_TOKEN`` a shell happens to hold, and pi reads no such variable.
+pi variables it does read but a call must not inherit -- the session to
+resume, a gateway, the TUI's display settings -- stay out too.
 
 No credential is passed at all. pi authenticates from its own configuration
 under ``~/.pi/agent`` (``models.json``, ``auth.json``), reached through
@@ -30,9 +34,30 @@ class CallAgentEnv:
     __slots__ = ()
 
     NAMES = frozenset(
-        {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR"}
+        {
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+            "LANG",
+            "TERM",
+            "TMPDIR",
+            # pi's documented settings (docs/environment-variables.md) that
+            # shape a headless RPC run: where its config and credentials
+            # live, which model, and its offline/telemetry switches.
+            "PI_CODING_AGENT_DIR",
+            "PI_PACKAGE_DIR",
+            "PI_PROVIDER",
+            "PI_MODEL",
+            "PI_REASONING_LEVEL",
+            "PI_CACHE_RETENTION",
+            "PI_OFFLINE",
+            "PI_SKIP_VERSION_CHECK",
+            "PI_TELEMETRY",
+        }
     )
-    PREFIXES = ("LC_", "XDG_", "PI_")
+    PREFIXES = ("LC_", "XDG_")
 
     @classmethod
     def allowlisted(cls, parent: Mapping[str, str]) -> dict[str, str]:

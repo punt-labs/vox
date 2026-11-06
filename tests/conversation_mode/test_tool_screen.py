@@ -193,3 +193,27 @@ def test_a_negated_glob_alone_is_not_a_breach(screen: ToolScreen) -> None:
     assert not _run(
         screen, "grep", {"pattern": "def", "glob": "!*.md"}, output="a.py:1: def f"
     )
+
+
+def test_a_grep_match_in_a_filename_with_a_colon_is_judged_whole(
+    screen: ToolScreen, repo: Path
+) -> None:
+    """``a:.env`` is one file, matched by ``*.env`` -- not ``a`` plus a line."""
+    (repo / "a:.env").write_text("KEY=x\n")
+    assert _run(screen, "grep", {"pattern": "KEY"}, output="a:.env:1: KEY=x")
+
+
+def test_a_grep_context_line_is_judged_too(screen: ToolScreen, repo: Path) -> None:
+    (repo / "a:.env").write_text("x\nKEY=x\n")
+    output = "a:.env-1- x\na:.env:2: KEY=x"
+    assert _run(screen, "grep", {"pattern": "KEY", "context": "1"}, output=output)
+
+
+def test_a_colon_in_the_matched_text_does_not_invent_a_path(
+    screen: ToolScreen, repo: Path
+) -> None:
+    """The path is the prefix that exists as a file, not every colon split."""
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x")
+    output = "src/a.py:1: see deploy/.env:2: for the KEY"
+    assert not _run(screen, "grep", {"pattern": "KEY"}, output=output)
