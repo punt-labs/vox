@@ -2,10 +2,8 @@
 
 A lock file, written when a call starts and removed when it ends, that a
 Claude Code ``UserPromptSubmit`` hook checks before letting the human's
-interactive prompt through. The call's own turns never trip this lock --
-``plugin/hooks/call-lock.sh`` reads the ``VOX_CALL_RELAY`` environment
-variable, which is set only on the subprocess the call's session-attach
-spawns to relay a turn, and bypasses the block when it is present.
+interactive prompt through. The call's own turns never meet this lock: they
+go to the call agent, a ``pi`` process that runs no Claude Code hooks.
 """
 
 from __future__ import annotations
@@ -46,9 +44,8 @@ class CallLockActiveError(RuntimeError):
     exclusivity. No custom ``__new__``: :class:`RuntimeError` already
     accepts and stores an arbitrary positional argument via ``args``, so
     the live holder's :class:`CallLockState` rides there directly --
-    :attr:`state` reads it back, the same shape
-    :class:`~.session_attach.BareAuthMissingError` uses for a plain string
-    payload, generalised to a structured one.
+    :attr:`state` reads it back -- the plain-string ``args`` payload of
+    an ordinary exception, generalised to a structured one.
     """
 
     @property
@@ -85,7 +82,7 @@ class CallLock:
     def for_repo(cls) -> Self:
         """Build a :class:`CallLock` at this repo's ``call.lock`` path.
 
-        ``vox call start/stop/transfer`` each rebuilt the same
+        ``vox call start/stop`` each rebuilt the same
         ``<config-dir>/call/call.lock`` path independently -- this is the
         single place that construction is written, mirroring
         :meth:`~punt_vox.session_spec.SessionSpec.for_repo`'s own precedent.
@@ -117,10 +114,9 @@ class CallLock:
         if existing is not None and self._process_is_alive(existing.pid):
             raise CallLockActiveError(existing)
         payload = {"reason": reason, "pid": os.getpid()}
-        # Session ids reachable through call.control's transfer requests are
-        # capability-like for --resume -- whoever can read this directory
-        # can potentially attach to the call's session. 0o700 dir / 0o600
-        # file, not the AtomicFile default (0o644 world-readable).
+        # The lock gates a live call's input; no other local user may read
+        # or race it. 0o700 dir / 0o600 file, not the AtomicFile default
+        # (0o644 world-readable).
         PrivateState(self._path).ensure_private_tree()
         AtomicFile(self._path).replace(json.dumps(payload), mode=0o600)
 
@@ -174,7 +170,7 @@ class CallLock:
         treated identically to "no call is active": :meth:`acquire` already
         makes this distinction to decide whether to refuse or silently
         overwrite; callers that only ask "is a call running" (``vox call
-        stop``/``transfer``) need the same answer, not just file existence.
+        stop``) need the same answer, not just file existence.
         """
         state = self.read()
         return state is not None and self._process_is_alive(state.pid)

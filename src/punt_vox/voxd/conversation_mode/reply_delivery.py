@@ -15,6 +15,7 @@ import secrets
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.quips import CALL_ACK_PHRASES
+from punt_vox.voxd.conversation_mode.reply_assembly import ReplyAssembly
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.reply_recovery import ReplyRecovery
@@ -30,9 +31,13 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
-__all__ = ["ReplyDelivery"]
+__all__ = ["NO_REPLY_PHRASE", "ReplyDelivery"]
 
 logger = logging.getLogger(__name__)
+
+# Spoken in place of a turn that settled with no reply text, so the caller
+# hears an answer rather than silence before "Ready.".
+NO_REPLY_PHRASE = "I don't have anything to add."
 
 
 @final
@@ -72,20 +77,11 @@ class ReplyDelivery:
         self._wait_cue = WaitCue(chime)
         return self
 
-    def replace_session_attach(self, session_attach: SessionAttach) -> None:
-        """Re-attach to a different session (``/call transfer``).
-
-        Takes effect on the next :meth:`deliver` call -- a turn already
-        mid-flight when a transfer request lands keeps talking to the
-        session it started with.
-        """
-        self._session_attach = session_attach
-
     async def deliver(self, turn: TranscribedTurn) -> None:
         """Run *turn* through session-attach and speak the (redacted) reply."""
-        # The per-turn claude subprocess spawn measured 13-25s median -- an
+        # A turn can take seconds before the call agent's first word -- an
         # instant acknowledgment covers the human's first few seconds of
-        # otherwise-dead silence, before the STT->claude->TTS round trip
+        # otherwise-dead silence, before the STT->agent->TTS round trip
         # even starts. Goes through self._speak, the same mic-gated channel
         # every other cue in this flow uses, so it is never captured as if
         # the human said it.
@@ -99,10 +95,7 @@ class ReplyDelivery:
         self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())
         self._turn_timer.mark("tts_request_sent")
-        # Full text to vox.log (0600); only the redacted text is ever spoken
-        # -- see reply_redactor's own docstring for the threat this guards.
-        logger.info("call reply (unredacted, vox.log only): %s", reply_text)
-        await self._speak(reply_redactor(reply_text))
+        await self._speak_reply(reply_text, turn)
         # "playback_started" is the best available proxy, not a real signal:
         # SpeakFn's own contract (see that Protocol's docstring) is "returns
         # once playback has started OR completed" -- this class cannot tell
@@ -119,23 +112,42 @@ class ReplyDelivery:
         await self._speak("Ready.")
         self._actor.apply(ReplyEnds())
 
+    async def _speak_reply(self, text: str, turn: TranscribedTurn) -> None:
+        """Speak the redacted *text*, or :data:`NO_REPLY_PHRASE` when it is blank.
+
+        voxd rejects empty text -- a failed speak would skip "Ready." and end
+        the call over a turn that merely had nothing to say -- and
+        whitespace-only text would reach the provider; the guard covers both.
+        """
+        if not text.strip():
+            # vox.log (0600) already holds the unredacted reply; the turn and
+            # the reply's exact shape say why it came back blank.
+            logger.warning(
+                "call agent turn produced no reply text (reply=%r, turn=%r)",
+                text,
+                turn.text,
+            )
+            await self._speak(NO_REPLY_PHRASE)
+            return
+        # Full text to vox.log (0600); only the redacted text is ever spoken
+        # -- see reply_redactor's own docstring for the threat this guards.
+        logger.info("call reply (unredacted, vox.log only): %s", text)
+        await self._speak(reply_redactor(text))
+
     async def _exchange(self, turn: TranscribedTurn) -> str | None:
-        """Run session-attach for *turn*, returning the assembled reply text.
+        """Run session-attach for *turn*, returning the reply text that stands.
 
         Returns ``None`` after a ``SessionAttachError`` is already handled by
         :class:`ReplyRecovery` (which speaks its own recovery message and, on
         a permanent failure, ends the call itself) -- :meth:`deliver` treats
         that as nothing left to do for this turn.
         """
-        # "claude_spawned"/"first_reply_frame" approximate a subprocess this
-        # class has no visibility into: SessionAttach is a Protocol, and the
-        # production ClaudeSessionAttach spawns claude -p --resume as the
-        # very first thing send_turn does, before its first yield -- so
-        # marking just before iterating starts, and again on the first
-        # chunk received, is accurate for that implementation even though
-        # this class cannot see inside it.
-        self._turn_timer.mark("claude_spawned")
-        pieces: list[str] = []
+        # The turn goes out the moment iteration starts: send_turn writes its
+        # prompt before its first yield. "first_reply_frame" is the first
+        # chunk of reply text back; a turn that reads the repo first marks
+        # "first_tool_event" in between, from inside the call agent.
+        self._turn_timer.mark("turn_sent")
+        reply = ReplyAssembly()
         first_frame_seen = False
         try:
             async with self._wait_cue.active():
@@ -143,8 +155,8 @@ class ReplyDelivery:
                     if not first_frame_seen:
                         self._turn_timer.mark("first_reply_frame")
                         first_frame_seen = True
-                    pieces.append(chunk.text)
+                    reply.add(chunk)
         except SessionAttachError as exc:
             await self._reply_recovery.recover(exc)
             return None
-        return "".join(pieces)
+        return reply.text

@@ -11,20 +11,21 @@ Drives the real :class:`CallActor` (brought to ``waiting`` via
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+
+import pytest
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
+from punt_vox.voxd.conversation_mode.reply_delivery import (
+    NO_REPLY_PHRASE,
+    ReplyDelivery,
+)
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
-
-if TYPE_CHECKING:
-    import pytest
 
 
 class _Recorder:
@@ -116,24 +117,6 @@ async def test_ready_cue_is_spoken_while_still_in_speaking_mode() -> None:
     assert actor.mode is Mode.LISTENING  # ReplyEnds applied only afterward
 
 
-async def test_replace_session_attach_takes_effect_on_the_next_deliver() -> None:
-    speak = _Recorder()
-    first = FakeSessionAttach((ScriptedChunk(ReplyChunk(text="old", is_final=True)),))
-    second = FakeSessionAttach((ScriptedChunk(ReplyChunk(text="new", is_final=True)),))
-    actor = _actor_waiting()
-    delivery = ReplyDelivery(
-        session_attach=first, speak=speak, actor=actor, turn_timer=LoggingTurnTimer()
-    )
-
-    await delivery.deliver(TranscribedTurn(text="one"))
-    delivery.replace_session_attach(second)
-    actor.apply(TurnDetected())  # back to waiting for the next turn
-    await delivery.deliver(TranscribedTurn(text="two"))
-
-    assert first.turns() == ["one"]
-    assert second.turns() == ["two"]
-
-
 async def test_secret_shaped_reply_is_redacted_before_speaking_and_logged_verbatim(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -157,3 +140,101 @@ async def test_secret_shaped_reply_is_redacted_before_speaking_and_logged_verbat
     assert not any(secret in phrase for phrase in speak.said)
     assert any("[redacted]" in phrase for phrase in speak.said)
     assert any(secret in record.message for record in caplog.records)
+
+
+def _restarted_reply() -> FakeSessionAttach:
+    """A reply whose first attempt wrote text, then failed and was retried."""
+    return FakeSessionAttach(
+        (
+            ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
+            ScriptedChunk(
+                ReplyChunk(text="", is_final=False, retracts=len("I think the "))
+            ),
+            ScriptedChunk(ReplyChunk(text="It returns the sum.", is_final=True)),
+        )
+    )
+
+
+async def test_a_restarted_reply_speaks_only_the_text_that_stands() -> None:
+    """The reply is spoken once the turn settles: the retracted text was never heard."""
+    speak = _Recorder()
+    delivery = ReplyDelivery(
+        session_attach=_restarted_reply(),
+        speak=speak,
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert speak.said[1:] == ["It returns the sum.", "Ready."]
+
+
+async def test_a_restarted_reply_never_speaks_the_failed_attempt() -> None:
+    speak = _Recorder()
+    delivery = ReplyDelivery(
+        session_attach=_restarted_reply(),
+        speak=speak,
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert not any("I think" in phrase for phrase in speak.said)
+
+
+_RETRACTED = len("I think the ")
+
+# A turn that settles with no reply text to speak.
+_BLANK_REPLIES = {
+    "retry-retracted-everything": (
+        ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
+        ScriptedChunk(ReplyChunk(text="", is_final=True, retracts=_RETRACTED)),
+    ),
+    "whitespace-only": (ScriptedChunk(ReplyChunk(text=" \n\t ", is_final=True)),),
+}
+
+
+@pytest.mark.parametrize("chunks", _BLANK_REPLIES.values(), ids=_BLANK_REPLIES.keys())
+async def test_a_blank_reply_speaks_the_no_reply_phrase_and_the_turn_ends(
+    chunks: tuple[ScriptedChunk, ...],
+) -> None:
+    """The caller hears a reply, never silence, and never blank text."""
+    speak = _Recorder()
+    actor = _actor_waiting()
+    delivery = ReplyDelivery(
+        session_attach=FakeSessionAttach(chunks),
+        speak=speak,
+        actor=actor,
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert (speak.said[1:], actor.mode) == (
+        [NO_REPLY_PHRASE, "Ready."],
+        Mode.LISTENING,
+    )
+
+
+async def test_a_blank_reply_warning_names_the_reply_and_the_turn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.WARNING, logger="punt_vox.voxd.conversation_mode.reply_delivery"
+    )
+    delivery = ReplyDelivery(
+        session_attach=FakeSessionAttach(_BLANK_REPLIES["whitespace-only"]),
+        speak=_Recorder(),
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    (warning,) = [r for r in caplog.records if r.levelno == logging.WARNING]
+    blank, turn = repr(" \n\t "), repr("what does this do")
+    assert warning.message == (
+        f"call agent turn produced no reply text (reply={blank}, turn={turn})"
+    )

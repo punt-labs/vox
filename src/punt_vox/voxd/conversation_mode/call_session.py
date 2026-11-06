@@ -145,8 +145,8 @@ class CallSession:
         :meth:`hangup` on an idle call raises (``EndCall`` requires an
         active mode) -- both drivers' ``finally`` blocks need this guard
         since ``timeout()`` or a mid-loop self-inflicted ``EndCall()``
-        (a rejected STT credential, a missing ``ANTHROPIC_API_KEY``) can
-        already have returned the call to idle by the time they run it.
+        (a rejected STT credential, a call agent that ended) can already
+        have returned the call to idle by the time they run it.
         """
         if self._actor.mode is not Mode.IDLE:
             await self.hangup()
@@ -172,16 +172,6 @@ class CallSession:
         del before
         if after in (Mode.SPEAKING, Mode.IDLE):  # ReplyBegins / EndCall / TimeoutCall
             self._capture.discard()
-
-    def replace_session_attach(self, session_attach: SessionAttach) -> None:
-        """Re-attach this call to a different session (``/call transfer``).
-
-        Takes effect on the next turn's :meth:`~.session_attach.SessionAttach.send_turn`
-        call -- a turn already mid-flight when a transfer request lands
-        keeps talking to the session it started with, since it already has
-        a reply streaming back from that session's own subprocess.
-        """
-        self._reply_delivery.replace_session_attach(session_attach)
 
     async def process_chunk(self, chunk: AudioChunk) -> None:
         """Feed one captured chunk to the turn detector; act on a closed run.

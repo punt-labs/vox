@@ -17,8 +17,11 @@ class ReplyChunk:
     finished string. ``is_final`` marks the last chunk of a given turn's
     reply; a caller (the sentence-streamed synthesis pipeline) uses it to
     know when the agent has finished, not to infer completion from the
-    stream simply ending.
+    stream simply ending. ``retracts`` withdraws that many characters from
+    the end of the reply so far: the message that wrote them failed, and the
+    agent is writing that message again.
     """
 
     text: str
     is_final: bool
+    retracts: int = 0

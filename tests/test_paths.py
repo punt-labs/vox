@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from punt_vox.paths import (
+    calls_dir,
     config_dir,
     ensure_user_dirs,
     installed_version,
@@ -49,6 +50,10 @@ def test_run_dir_under_state() -> None:
     assert run_dir() == user_state_dir() / "run"
 
 
+def test_calls_dir_under_state() -> None:
+    assert calls_dir() == user_state_dir() / "calls"
+
+
 def test_keys_env_file_in_config_dir() -> None:
     assert keys_env_file() == config_dir() / "keys.env"
 
@@ -56,7 +61,7 @@ def test_keys_env_file_in_config_dir() -> None:
 def test_no_fhs_paths_leak_into_helpers() -> None:
     """None of the helpers may return /etc, /var, or brew prefix paths."""
     forbidden_prefixes = ("/etc/", "/var/", "/opt/homebrew/etc", "/usr/local/etc")
-    for helper in (user_state_dir, config_dir, log_dir, run_dir):
+    for helper in (user_state_dir, config_dir, log_dir, run_dir, calls_dir):
         resolved = str(helper())
         for prefix in forbidden_prefixes:
             assert not resolved.startswith(prefix), (
@@ -77,6 +82,7 @@ def test_ensure_user_dirs_creates_all_subdirs(tmp_path: Path) -> None:
     assert (state / "logs").is_dir()
     assert (state / "run").is_dir()
     assert (state / "cache").is_dir()
+    assert (state / "calls").is_dir()
 
 
 def test_ensure_user_dirs_sets_all_subdirs_mode_0700(tmp_path: Path) -> None:
@@ -87,7 +93,7 @@ def test_ensure_user_dirs_sets_all_subdirs_mode_0700(tmp_path: Path) -> None:
     """
     state = tmp_path / "state"
     ensure_user_dirs(state)
-    for name in ("", "logs", "run", "cache"):
+    for name in ("", "logs", "run", "cache", "recordings", "calls"):
         target = state / name if name else state
         mode = stat.S_IMODE(target.stat().st_mode)
         assert mode == 0o700, f"{target} mode is {oct(mode)}, expected 0o700"

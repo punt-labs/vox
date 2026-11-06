@@ -187,36 +187,6 @@ async def test_start_speaks_the_listening_cue() -> None:
     assert speak.said == ["Listening."]
 
 
-async def test_replace_session_attach_redirects_subsequent_turns() -> None:
-    """``/call transfer`` re-attaches a live call without ending it."""
-    speak = _Recorder()
-    stt = FakeSTTProvider(
-        [TranscriptEvent(text="hello", confidence=0.95, is_final=True)]
-    )
-    old_attach = FakeSessionAttach(
-        (ScriptedChunk(ReplyChunk(text="old reply", is_final=True)),)
-    )
-    new_attach = FakeSessionAttach(
-        (ScriptedChunk(ReplyChunk(text="new reply", is_final=True)),)
-    )
-    session = CallSession(
-        turn_detector=_detector(),
-        stt_provider=stt,
-        session_attach=old_attach,
-        speak=speak,
-    )
-    await session.start()
-    await _feed_one_turn(session)
-
-    session.replace_session_attach(new_attach)
-    await _feed_one_turn(session)
-
-    assert old_attach.turns() == ["hello"]
-    assert new_attach.turns() == ["hello"]
-    assert "old reply" in speak.said
-    assert "new reply" in speak.said
-
-
 class TestProcessChunkGatedOnMode:
     """FR-8/mode.py's ``activeDetector`` axiom: only ``listening``/``waiting``
     feed the turn detector -- never ``speaking``, where the mic would be
@@ -362,7 +332,11 @@ class TestSessionAttachFailureRecovery:
         """Recovery must leave the call in a state that accepts the next turn."""
         speak = _Recorder()
         stt = _SequencedSTTProvider(["first question", "second question"])
-        session_attach = FakeSessionAttach(attach_error="claude exited 1")
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),),
+            attach_error="provider overloaded",
+            failing_turns=1,
+        )
         session = CallSession(
             turn_detector=_detector(),
             stt_provider=stt,
@@ -373,14 +347,11 @@ class TestSessionAttachFailureRecovery:
         await _feed_one_turn(session)
         assert session.actor.mode is Mode.LISTENING
 
-        # A second, healthy session-attach receives the next turn cleanly.
-        healthy_attach = FakeSessionAttach(
-            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
-        )
-        session.replace_session_attach(healthy_attach)
+        # The same call agent, ready again, receives the next turn cleanly.
         await _feed_one_turn(session)
 
-        assert healthy_attach.turns() == ["second question"]
+        assert session_attach.turns() == ["first question", "second question"]
+        assert "reply" in speak.said
         assert session.actor.mode is Mode.LISTENING
 
 
@@ -911,7 +882,7 @@ class TestTurnTimerMarks:
             "stt_request_sent",
             "stt_response_received",
             "ack_spoken",
-            "claude_spawned",
+            "turn_sent",
             "first_reply_frame",
             "reply_complete",
             "tts_request_sent",
@@ -1018,8 +989,8 @@ class TestTurnTimerMarks:
 
         details = dict(timer.marks)
         assert details["stt_response_received"] == "no transcript"
-        # The turn never reached session-attach -- no claude_spawned mark.
-        assert "claude_spawned" not in details
+        # The turn never reached session-attach -- no turn_sent mark.
+        assert "turn_sent" not in details
 
     async def test_capture_during_wait_then_reply_begins_clears_pending_capture(
         self,

@@ -16,11 +16,11 @@ from punt_vox.commands.call_scripted import (
     ScriptedTurn,
 )
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentEndedError
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 
@@ -131,13 +131,10 @@ class _RecordingSpeak:
         self.said.append(text)
 
 
-class _BareAuthSessionAttach:
-    """A ``SessionAttach`` that always raises ``BareAuthMissingError``.
-
-    Stands in for ``ClaudeSessionAttach`` discovering the key is gone at
-    spawn time (its own last-line-of-defense check), bypassing
-    :meth:`ScriptedCallDriver.create`'s pre-flight so this test proves the
-    *loop's own hangup guard*, not just the pre-flight.
+class _EndedAgentSessionAttach:
+    """A ``SessionAttach`` whose call agent has ended: every turn raises
+    :class:`CallAgentEndedError`, so this test proves the *loop's own hangup
+    guard* after a call that ended itself mid-turn.
     """
 
     def __init__(self) -> None:
@@ -151,19 +148,20 @@ class _BareAuthSessionAttach:
     async def send_turn(self, turn: object) -> AsyncIterator[ReplyChunk]:
         del turn
         if self._always_fails:
-            raise BareAuthMissingError.for_missing_key()
+            msg = "no event from the call agent in 60s"
+            raise CallAgentEndedError(msg)
         yield ReplyChunk(  # pragma: no cover -- unreachable
             text="", is_final=True
         )
 
 
 class TestScriptedCallDriverRun:
-    async def test_run_ends_cleanly_with_one_message_when_bare_auth_fails_mid_call(
+    async def test_run_ends_cleanly_with_one_message_when_the_agent_ends_mid_call(
         self, tmp_path: Path
     ) -> None:
-        """Regression: a scripted call whose session-attach discovers a
-        missing ``ANTHROPIC_API_KEY`` mid-turn must end with exactly one
-        spoken message (ReplyRecovery's own goodbye) -- not crash with
+        """Regression: a scripted call whose call agent ends mid-turn must
+        end with exactly one spoken message (ReplyRecovery's own goodbye) --
+        not crash with
         ``IllegalTransitionError`` from an unconditional ``hangup()`` after
         the loop, which would also trigger a second, contradictory message
         from call.py's outer boundary handler.
@@ -177,7 +175,7 @@ class TestScriptedCallDriverRun:
         session = CallSession(
             turn_detector=ScriptedTurn.calibrated_detector(),
             stt_provider=ScriptedSTTProvider(turns),
-            session_attach=_BareAuthSessionAttach(),
+            session_attach=_EndedAgentSessionAttach(),
             speak=speak,
             chime=chime,
         )
@@ -225,7 +223,7 @@ class TestScriptedCallDriverAbnormalExit:
         session = CallSession(
             turn_detector=cast("TurnDetector", _RaisingTurnDetector()),
             stt_provider=ScriptedSTTProvider(turns),
-            session_attach=_BareAuthSessionAttach(),
+            session_attach=_EndedAgentSessionAttach(),
             speak=speak,
             chime=chime,
         )
