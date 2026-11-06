@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.7] - 2026-11-06
+
 ### Added
 
 - **`vox call` talks to a persistent, read-only call agent** (vox-hobl.2,
