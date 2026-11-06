@@ -192,6 +192,14 @@ Vox enabled. You'll hear when tasks finish or need approval.
 Pick a voice with /vox:voice.
 ```
 
+`vox enable` also adds vox's permission rules (`Bash(vox:*)`,
+`mcp__plugin_vox_mic__*`, and a `Skill()` rule per vox command) to the repo's
+`.claude/settings.json`, so Claude doesn't prompt for vox's own tools there.
+`vox disable` removes exactly those. Nothing outside the repo is changed.
+Rules older versions put in `~/.claude/settings.json` stay until you delete
+them. Maintainers running the `vox-dev` plugin add
+`mcp__plugin_vox-dev_mic__*` by hand.
+
 ### Get a Recap
 
 ```text
