@@ -32,12 +32,11 @@ from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
 from punt_vox.voxd.conversation_mode.call_agent_state import (
     IllegalAgentTransitionError,
 )
-from punt_vox.voxd.conversation_mode.pi_call_agent import (
-    GUARD_REFUSAL,
-    PiCallAgent,
-)
+from punt_vox.voxd.conversation_mode.pi_call_agent import PiCallAgent
+from punt_vox.voxd.conversation_mode.pi_turn_reply import GUARD_REFUSAL
 from punt_vox.voxd.conversation_mode.pi_turn_verdict import GuardRefusalError
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.reply_assembly import ReplyAssembly
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 from punt_vox.voxd.conversation_mode.session_attach import (
     SessionAttach,
@@ -79,8 +78,21 @@ async def _spawn(
 
 
 async def _reply(agent: PiCallAgent, text: str = "what does this do") -> str:
+    """Return the reply as a consumer assembles it, retractions applied."""
     chunks: AsyncIterator[ReplyChunk] = agent.send_turn(TranscribedTurn(text=text))
-    return "".join([chunk.text async for chunk in chunks])
+    reply = ReplyAssembly()
+    async for chunk in chunks:
+        reply.add(chunk)
+    return reply.text
+
+
+async def _chunks(agent: PiCallAgent) -> list[ReplyChunk]:
+    return [c async for c in agent.send_turn(TranscribedTurn(text="q"))]
+
+
+def _retried_after_partial(text: str) -> PiReply:
+    """A reply whose first attempt wrote some text, then the provider failed it."""
+    return PiReply(text=text, retried=("529 overloaded",), partial="I think the ")
 
 
 def test_pi_call_agent_satisfies_the_session_attach_protocol(tmp_path: Path) -> None:
@@ -189,6 +201,37 @@ class TestSendTurnAndReplyComplete:
         retried = PiReply(text="It returns the sum.", retried=("529 overloaded",))
         agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), retried]))
         assert await _reply(agent) == "It returns the sum."
+
+    async def test_a_failed_attempt_s_text_is_retracted_before_the_retry_s(
+        self, tmp_path: Path
+    ) -> None:
+        replies = [PiReply("Ready."), _retried_after_partial("It returns the sum.")]
+        agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
+        chunks = await _chunks(agent)
+        restart = next(i for i, c in enumerate(chunks) if c.is_restart)
+        after = "".join(c.text for c in chunks[restart:])
+        assert (chunks[0].text, after) == ("I ", "It returns the sum.")
+
+    async def test_a_retry_after_text_was_written_yields_only_the_retry(
+        self, tmp_path: Path
+    ) -> None:
+        replies = [PiReply("Ready."), _retried_after_partial("It returns the sum.")]
+        agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
+        assert await _reply(agent) == "It returns the sum."
+
+    async def test_a_retry_before_any_text_retracts_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        retried = PiReply(text="ok", retried=("529 overloaded",))
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), retried]))
+        assert not any(c.is_restart for c in await _chunks(agent))
+
+    async def test_the_summary_keeps_only_the_successful_attempt_s_text(
+        self, tmp_path: Path
+    ) -> None:
+        replies = [PiReply("Ready."), _retried_after_partial("## Decisions Made")]
+        agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
+        assert await agent.final_turn("summarize") == "## Decisions Made"
 
     async def test_retries_that_all_fail_fail_the_turn(self, tmp_path: Path) -> None:
         exhausted = PiReply(text="", retried=("529",), error="529 still overloaded")

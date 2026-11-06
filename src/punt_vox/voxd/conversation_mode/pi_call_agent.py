@@ -22,15 +22,16 @@ killed; the model makes ``ended`` terminal):
   executes it blocks a path outside the repo or on the deny-list
   (:class:`~.secret_path_policy.SecretPathPolicy`), and a grep over a
   directory unless every file ripgrep would search there passes; a blocked
-  call is no breach -- the turn ends on the refusal, which is
-  spoken (:data:`GUARD_REFUSAL`), and the call goes on. As defence in depth,
-  :class:`~.tool_screen.ToolScreen` re-checks every call that did execute;
-  if a denied read ever ran anyway, the turn's reply is never spoken, never
-  reaches the summary, and the context that saw it is destroyed.
+  call is no breach -- the turn ends on the refusal, which is spoken
+  (:data:`~.pi_turn_reply.GUARD_REFUSAL`), and the call goes on. As defence
+  in depth, :class:`~.tool_screen.ToolScreen` re-checks every call that did
+  execute; if a denied read ever ran anyway, the turn's reply is never
+  spoken, never reaches the summary, and the context that saw it is destroyed.
 - **The process dying**, or the wire contract breaking.
 
 A reply the provider fails is different: pi retries it on its own, and only
-the final attempt decides the turn (:class:`~.pi_turn_verdict.PiTurnVerdict`).
+the final attempt decides the turn and supplies its words
+(:class:`~.pi_turn_reply.PiTurnReply`).
 When every attempt fails -- or the run ends aborted with nothing said -- pi
 settles normally, the process is ready again (``ReplyFailed``), and the turn
 raises a plain, transient :class:`~.session_attach.SessionAttachError`; the
@@ -51,11 +52,13 @@ from punt_vox.voxd.conversation_mode.call_agent_errors import (
 )
 from punt_vox.voxd.conversation_mode.call_agent_state import AgentProc, CallAgentState
 from punt_vox.voxd.conversation_mode.pi_rpc_channel import PiRpcChannel
+from punt_vox.voxd.conversation_mode.pi_turn_reply import PiTurnReply
 from punt_vox.voxd.conversation_mode.pi_turn_verdict import (
     GuardRefusalError,
     PiTurnVerdict,
 )
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.reply_assembly import ReplyAssembly
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
 from punt_vox.voxd.conversation_mode.tool_screen import ToolScreen
 
@@ -68,7 +71,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
     from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
 
-__all__ = ["GUARD_REFUSAL", "REPLY_INACTIVITY_S", "PiCallAgent"]
+__all__ = ["REPLY_INACTIVITY_S", "PiCallAgent"]
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +81,6 @@ _DEGRADED_GUARD = re.compile(r"misconfigured|cannot list")
 
 # Seconds with no RPC record of any kind before a turn is declared hung.
 REPLY_INACTIVITY_S = 60.0
-
-# Spoken when the secret guard blocked a read and the turn ended on it.
-GUARD_REFUSAL = (
-    "I can't open that -- it's outside the repository or may hold secrets, "
-    "and anything I read on a call is spoken aloud."
-)
 
 
 @final
@@ -140,9 +137,9 @@ class PiCallAgent:
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncGenerator[ReplyChunk]:
         """Forward *turn* and stream the reply text back as it is written."""
-        async with contextlib.aclosing(self._turn(turn.text, spoken=True)) as pieces:
-            async for piece in pieces:
-                yield ReplyChunk(text=piece, is_final=False)
+        async with contextlib.aclosing(self._turn(turn.text, spoken=True)) as chunks:
+            async for chunk in chunks:
+                yield chunk
         yield ReplyChunk(text="", is_final=True)
 
     async def final_turn(self, prompt: str) -> str:
@@ -152,8 +149,11 @@ class PiCallAgent:
         blocked a read along the way: text written around a refused read is
         incomplete, and the guard's refusal sentence is no summary either.
         """
-        async with contextlib.aclosing(self._turn(prompt, spoken=False)) as pieces:
-            return "".join([piece async for piece in pieces])
+        reply = ReplyAssembly()
+        async with contextlib.aclosing(self._turn(prompt, spoken=False)) as chunks:
+            async for chunk in chunks:
+                reply.add(chunk)
+        return reply.text
 
     async def close(self) -> None:
         """End the process: ``Teardown`` when ready, ``AbortTurn`` when busy."""
@@ -181,7 +181,7 @@ class PiCallAgent:
             raise CallAgentSpawnError(msg)
         self._state.spawn()
 
-    async def _turn(self, message: str, *, spoken: bool) -> AsyncGenerator[str]:
+    async def _turn(self, message: str, *, spoken: bool) -> AsyncGenerator[ReplyChunk]:
         """Run one turn from ``SendTurn`` to ``ReplyComplete``, or abort it.
 
         Any exit other than a settled reply -- an error, a cancellation, the
@@ -190,15 +190,15 @@ class PiCallAgent:
         reply that settled but failed is ``ReplyFailed``: the process lives.
         """
         self._state.send_turn()
-        verdict = PiTurnVerdict()
+        reply = PiTurnReply()
         try:
             async for record in self._records(message, timed=spoken):
-                verdict.observe(record)
-                if delta := record.text_delta():
-                    yield delta
+                for chunk in reply.chunks(record):
+                    yield chunk
         except BaseException:
             await self._abort()
             raise
+        verdict = reply.verdict
         if verdict.failure:
             self._state.reply_failed()
             msg = f"call agent reply failed: {verdict.failure}"
@@ -209,9 +209,7 @@ class PiCallAgent:
         if not spoken:
             msg = "the secret guard blocked a read this turn needed"
             raise GuardRefusalError(msg)
-        # The guard ends the turn the moment it blocks (terminate), so the
-        # model never gets to explain; say why after whatever it did say.
-        yield f" {GUARD_REFUSAL}" if verdict.spoke else GUARD_REFUSAL
+        yield reply.refusal()
 
     async def _records(
         self, message: str, *, timed: bool

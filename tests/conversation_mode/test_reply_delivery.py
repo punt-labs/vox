@@ -17,6 +17,7 @@ from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedC
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.reply_assembly import RESTART_PHRASE
 from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
@@ -139,3 +140,42 @@ async def test_secret_shaped_reply_is_redacted_before_speaking_and_logged_verbat
     assert not any(secret in phrase for phrase in speak.said)
     assert any("[redacted]" in phrase for phrase in speak.said)
     assert any(secret in record.message for record in caplog.records)
+
+
+def _restarted_reply() -> FakeSessionAttach:
+    """A reply whose first attempt wrote text, then failed and was retried."""
+    return FakeSessionAttach(
+        (
+            ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
+            ScriptedChunk(ReplyChunk(text="", is_final=False, is_restart=True)),
+            ScriptedChunk(ReplyChunk(text="It returns the sum.", is_final=True)),
+        )
+    )
+
+
+async def test_a_restarted_reply_speaks_the_restart_phrase_then_the_retry() -> None:
+    speak = _Recorder()
+    delivery = ReplyDelivery(
+        session_attach=_restarted_reply(),
+        speak=speak,
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert speak.said[1:] == [f"{RESTART_PHRASE} It returns the sum.", "Ready."]
+
+
+async def test_a_restarted_reply_never_speaks_the_failed_attempt() -> None:
+    speak = _Recorder()
+    delivery = ReplyDelivery(
+        session_attach=_restarted_reply(),
+        speak=speak,
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert not any("I think" in phrase for phrase in speak.said)

@@ -58,6 +58,8 @@ class PiReply:
     # before the attempt this reply describes; with ``error`` set too, the
     # retries were exhausted.
     retried: tuple[str, ...] = ()
+    # Reply text each retried attempt wrote before the provider failed it.
+    partial: str = ""
     # The run was aborted: it settles with ``aborted: true`` and no reply.
     aborted: bool = False
     # An extension handler threw: pi reports it in an ``extension_error``.
@@ -199,6 +201,10 @@ class FakePiProcess:
                 )
             )
         for attempt, error in enumerate(reply.retried, start=1):
+            records += [
+                _update({"type": "text_delta", "delta": piece})
+                for piece in re.findall(r"\S+\s*", reply.partial)
+            ]
             records += [
                 _record(
                     {

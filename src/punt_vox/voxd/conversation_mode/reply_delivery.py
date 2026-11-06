@@ -15,6 +15,7 @@ import secrets
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.quips import CALL_ACK_PHRASES
+from punt_vox.voxd.conversation_mode.reply_assembly import ReplyAssembly
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.reply_recovery import ReplyRecovery
@@ -111,7 +112,7 @@ class ReplyDelivery:
         self._actor.apply(ReplyEnds())
 
     async def _exchange(self, turn: TranscribedTurn) -> str | None:
-        """Run session-attach for *turn*, returning the assembled reply text.
+        """Run session-attach for *turn*, returning the reply as it is spoken.
 
         Returns ``None`` after a ``SessionAttachError`` is already handled by
         :class:`ReplyRecovery` (which speaks its own recovery message and, on
@@ -123,7 +124,7 @@ class ReplyDelivery:
         # chunk of reply text back; a turn that reads the repo first marks
         # "first_tool_event" in between, from inside the call agent.
         self._turn_timer.mark("turn_sent")
-        pieces: list[str] = []
+        reply = ReplyAssembly()
         first_frame_seen = False
         try:
             async with self._wait_cue.active():
@@ -131,8 +132,8 @@ class ReplyDelivery:
                     if not first_frame_seen:
                         self._turn_timer.mark("first_reply_frame")
                         first_frame_seen = True
-                    pieces.append(chunk.text)
+                    reply.add(chunk)
         except SessionAttachError as exc:
             await self._reply_recovery.recover(exc)
             return None
-        return "".join(pieces)
+        return reply.spoken
