@@ -73,6 +73,26 @@ def test_a_bare_key_in_speech_is_not_an_assignment() -> None:
     assert reply_redactor(text) == text
 
 
+_PATH = "src/punt_vox/voxd/conversation_mode/pi_call_agent.py"
+
+
+def test_a_long_snake_case_path_is_spoken_intact() -> None:
+    text = f"Edit {_PATH} next."
+    assert reply_redactor(text) == text
+
+
+def test_a_long_camel_case_path_is_spoken_intact() -> None:
+    text = "See src/VoiceEngine/ConversationMode/module_name.py for it."
+    assert reply_redactor(text) == text
+
+
+def test_a_base64_secret_with_slashes_and_pluses_is_still_redacted() -> None:
+    secret = "q8Zr+Tk3/Lm9wXa2Pb7Vc4Nd1Ye6Hf0Jg5Ks8Rt3Qw="
+    assert reply_redactor(f"the value is {secret} here") == (
+        "the value is [redacted] here"
+    )
+
+
 def test_passes_through_ordinary_text_unchanged() -> None:
     text = "The weather today is sunny with a high of seventy two degrees."
     assert reply_redactor(text) == text

@@ -43,6 +43,12 @@ def test_a_secret_shaped_line_in_a_summary_is_stored_redacted(
     )
 
 
+def test_a_summary_keeps_the_file_paths_it_names(tmp_path: Path) -> None:
+    path = "src/punt_vox/voxd/conversation_mode/pi_call_agent.py"
+    body = f"## Action Items\n- Edit {path}"
+    assert path in CallSummaryStore(tmp_path).write("c1", body).read_text()
+
+
 def test_a_summary_is_private(tmp_path: Path) -> None:
     root = tmp_path / "calls"
     path = CallSummaryStore(root).write("id1", "text")

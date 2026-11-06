@@ -46,9 +46,16 @@ _ASSIGNMENT_PATTERN = re.compile(
 # The userinfo of a URL -- ``user:password@`` or a token used as the user.
 _URL_USERINFO_PATTERN = re.compile(r"(?<=://)[^/\s@]+(?=@)")
 
-# A long, unbroken run of high-entropy characters -- base64 or hex, unusual
-# in ordinary spoken/written text at this length.
-_HIGH_ENTROPY_PATTERN = re.compile(r"\b[A-Za-z0-9+/_-]{32,}={0,2}\b")
+# A long, unbroken run of base64-ish characters that mixes character classes
+# the way a key does: an upper-case letter, a lower-case letter, and a digit.
+# The mix is what tells a secret from a snake_case path or identifier, which
+# is just as long but lacks one class; padding ``=`` belongs to the run.
+_KEY_CHARS = "[A-Za-z0-9+/_-]"
+_HIGH_ENTROPY_PATTERN = re.compile(
+    rf"(?<!{_KEY_CHARS})"
+    rf"(?={_KEY_CHARS}*[A-Z])(?={_KEY_CHARS}*[a-z])(?={_KEY_CHARS}*[0-9])"
+    rf"{_KEY_CHARS}{{32,}}={{0,2}}(?![A-Za-z0-9+/_=-])"
+)
 
 
 @final
