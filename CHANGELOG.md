@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`vox call` talks to a persistent, read-only call agent** (vox-hobl.2,
+  DES-066/067/074). One `pi --mode rpc` process is held for the whole call
+  instead of a `claude -p --resume` spawn per turn.
+  - **Opening context:** `vox call start --context <path|->` is required;
+    `/call start <topic>` has your session write the snapshot.
+  - **Summary:** a call that ends cleanly writes a structured summary under
+    `~/.punt-labs/vox/calls/` (newest 50 kept), which `/call start` reads back.
+  - **No hang-up mid-work:** the reply bound is an inactivity timeout, so a
+    reply that spends minutes reading files is not killed as a hang; the
+    `--trace-turns` trace gains `turn sent` and `first tool event` marks.
+  - **Read-only and secret-safe:** the agent has only `read`, `grep`, `find`
+    and `ls`; no extensions, skills, MCP or repo context files; and an
+    environment allowlist with no API keys or tokens. A vox-owned `pi` guard
+    checks every tool call before it runs and refuses paths outside the repo
+    or matching secret patterns, including any directory search that would
+    read a denied file.
 - **`vox daemon stop` and `vox daemon start`**, with `vox daemon restart`
   now composed from the two (vox-9354). Each verb checks the result against
   the real process instead of trusting the service manager.
@@ -57,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. `127.0.0.1`); `install` refuses a hostname before writing anything.
 - **`vox daemon uninstall` refuses to run as root**, like `install`.
 - **websockets 15.0 or newer is required.**
+
+### Removed
+
+- **`vox call start --session` and `vox call transfer`** (and
+  `/call transfer`). The call agent is not attached to a Claude Code
+  session, so there is nothing to choose or transfer; `vox call` no longer
+  needs `ANTHROPIC_API_KEY` or spawns `claude`.
+- **The call-lock hook's relay and transfer bypasses.** While a call runs,
+  only `/call stop` or `/vox:call stop` passes the prompt lock.
 
 ### Fixed
 
