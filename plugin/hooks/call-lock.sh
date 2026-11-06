@@ -4,12 +4,6 @@
 # .punt-labs/vox/call/call.lock (written by CallLock, punt_vox.voxd.conversation_mode.call_lock)
 # means a call is live. Exit 2 blocks submission and shows stderr to the user
 # (Claude Code's documented UserPromptSubmit blocking convention).
-#
-# VOX_CALL_RELAY=1 bypasses the block: set only on the headless `claude -p
-# --resume` subprocess ClaudeSessionAttach spawns for the call's own turns
-# (src/punt_vox/voxd/conversation_mode/claude_session_attach.py), so the
-# call's own traffic is never blocked by the lock it itself holds.
-[[ "${VOX_CALL_RELAY:-}" == "1" ]] && exit 0
 
 _stdin=$(cat)
 if command -v jq >/dev/null 2>&1; then
@@ -61,15 +55,15 @@ if [ -z "$_lock_pid" ] \
   exit 0
 fi
 
-# The escape hatch must not block itself: `/call stop` and `/call transfer`
-# are UserPromptSubmit prompts too, and this hook runs before the CLI
-# invocation that would otherwise let the human end or redirect the call.
+# The escape hatch must not block itself: `/call stop` (or its namespaced
+# form `/vox:call stop`) is a UserPromptSubmit prompt too, and this hook runs
+# before the CLI invocation that would otherwise let the human end the call.
 if command -v jq >/dev/null 2>&1; then
   _prompt=$(printf '%s' "$_stdin" | jq -r '.prompt // empty' 2>/dev/null)
 else
   _prompt=$(printf '%s' "$_stdin" | grep -oE '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
 fi
-if [[ "$_prompt" =~ ^/call[[:space:]]+(stop|transfer)([[:space:]]|$) ]]; then
+if [[ "$_prompt" =~ ^/(vox:)?call[[:space:]]+stop([[:space:]]|$) ]]; then
   exit 0
 fi
 
