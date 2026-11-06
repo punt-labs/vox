@@ -91,10 +91,7 @@ class ReplyDelivery:
         self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())
         self._turn_timer.mark("tts_request_sent")
-        # Full text to vox.log (0600); only the redacted text is ever spoken
-        # -- see reply_redactor's own docstring for the threat this guards.
-        logger.info("call reply (unredacted, vox.log only): %s", reply_text)
-        await self._speak(reply_redactor(reply_text))
+        await self._speak_reply(reply_text)
         # "playback_started" is the best available proxy, not a real signal:
         # SpeakFn's own contract (see that Protocol's docstring) is "returns
         # once playback has started OR completed" -- this class cannot tell
@@ -110,6 +107,20 @@ class ReplyDelivery:
         # treated as human speech by a SpeakFn that doesn't gate the mic.
         await self._speak("Ready.")
         self._actor.apply(ReplyEnds())
+
+    async def _speak_reply(self, text: str) -> None:
+        """Speak the redacted *text*; a blank reply is logged, never spoken.
+
+        voxd rejects blank text, and a failed speak would skip "Ready." and
+        end the call over a turn that merely had nothing to say.
+        """
+        if not text.strip():
+            logger.warning("call agent turn produced no reply text")
+            return
+        # Full text to vox.log (0600); only the redacted text is ever spoken
+        # -- see reply_redactor's own docstring for the threat this guards.
+        logger.info("call reply (unredacted, vox.log only): %s", text)
+        await self._speak(reply_redactor(text))
 
     async def _exchange(self, turn: TranscribedTurn) -> str | None:
         """Run session-attach for *turn*, returning the reply text that stands.

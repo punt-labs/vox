@@ -11,7 +11,8 @@ Drives the real :class:`CallActor` (brought to ``waiting`` via
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+
+import pytest
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -22,9 +23,6 @@ from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
-
-if TYPE_CHECKING:
-    import pytest
 
 
 class _Recorder:
@@ -183,21 +181,50 @@ async def test_a_restarted_reply_never_speaks_the_failed_attempt() -> None:
     assert not any("I think" in phrase for phrase in speak.said)
 
 
-async def test_a_retry_that_says_nothing_new_speaks_no_apology() -> None:
+_RETRACTED = len("I think the ")
+
+# A turn that settles with no reply text to speak.
+_BLANK_REPLIES = {
+    "retry-retracted-everything": (
+        ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
+        ScriptedChunk(ReplyChunk(text="", is_final=True, retracts=_RETRACTED)),
+    ),
+    "whitespace-only": (ScriptedChunk(ReplyChunk(text=" \n\t ", is_final=True)),),
+}
+
+
+@pytest.mark.parametrize("chunks", _BLANK_REPLIES.values(), ids=_BLANK_REPLIES.keys())
+async def test_a_blank_reply_is_never_spoken_and_the_turn_still_ends(
+    chunks: tuple[ScriptedChunk, ...],
+) -> None:
+    """voxd rejects blank text: speaking it would fail the turn and the call."""
     speak = _Recorder()
-    retracted = len("I think the ")
+    actor = _actor_waiting()
     delivery = ReplyDelivery(
-        session_attach=FakeSessionAttach(
-            (
-                ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
-                ScriptedChunk(ReplyChunk(text="", is_final=True, retracts=retracted)),
-            )
-        ),
+        session_attach=FakeSessionAttach(chunks),
         speak=speak,
+        actor=actor,
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert (speak.said[1:], actor.mode) == (["Ready."], Mode.LISTENING)
+
+
+async def test_a_blank_reply_is_logged_as_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.WARNING, logger="punt_vox.voxd.conversation_mode.reply_delivery"
+    )
+    delivery = ReplyDelivery(
+        session_attach=FakeSessionAttach(_BLANK_REPLIES["whitespace-only"]),
+        speak=_Recorder(),
         actor=_actor_waiting(),
         turn_timer=LoggingTurnTimer(),
     )
 
     await delivery.deliver(TranscribedTurn(text="what does this do"))
 
-    assert speak.said[1:] == ["", "Ready."]
+    assert "call agent turn produced no reply text" in caplog.text
