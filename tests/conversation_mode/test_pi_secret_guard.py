@@ -17,7 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.voxd.conversation_mode.call_agent_launch import SECRET_GUARD
+from punt_vox.voxd.conversation_mode.call_agent_launch import (
+    SECRET_GUARD,
+    CallAgentLaunch,
+)
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 
 pytestmark = pytest.mark.subprocess
@@ -270,3 +273,31 @@ def test_a_misconfigured_guard_fails_to_load(repo: Path, env: dict[str, str]) ->
     """Fail closed at startup: pi will not start with an extension that throws."""
     result = _guard(repo, [("read", {"path": ".gitignore"}, str(repo))], env)
     assert str(result["loadError"]).startswith("vox secret guard: misconfigured")
+
+
+@pytest.mark.skipif(
+    shutil.which("pi") is None,
+    reason="the real pi CLI is not installed; the node harness above still "
+    "covers the guard's own load failure",
+)
+def test_real_pi_refuses_to_start_with_a_misconfigured_guard(repo: Path) -> None:
+    """The fail-closed claim end to end: the call agent's own argv, real pi."""
+    pi = shutil.which("pi")
+    assert pi is not None
+    launch = CallAgentLaunch(SecretPathPolicy.for_repo(repo), pi_bin=pi)
+    env = launch.env(os.environ) | {"VOX_CALL_GUARD_PATTERNS": "not json"}
+    result = subprocess.run(
+        launch.argv(),
+        cwd=repo,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    refused = (
+        result.returncode != 0,
+        "vox secret guard: misconfigured" in result.stderr,
+    )
+    assert refused == (True, True), result.stderr
