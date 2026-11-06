@@ -145,7 +145,7 @@ class PiCallAgent:
     async def final_turn(self, prompt: str) -> str:
         """Run one last, unspoken turn (the post-call summary); return its text.
 
-        Raises :class:`~.call_agent_errors.GuardRefusalError` when the guard
+        Raises :class:`~.pi_turn_verdict.GuardRefusalError` when the guard
         blocked a read along the way: text written around a refused read is
         incomplete, and the guard's refusal sentence is no summary either.
         """
