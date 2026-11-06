@@ -816,7 +816,9 @@ class TestCallLockHook:
         assert result.returncode == 0
         assert not self._lock_path(repo).exists(), "stale lock was not self-cleared"
 
-    @pytest.mark.parametrize("prompt", ["/call stop", "/vox:call stop"])
+    @pytest.mark.parametrize(
+        "prompt", ["/call stop", "/vox:call stop", "/vox-dev:call stop"]
+    )
     def test_call_stop_prompt_bypasses_a_live_lock(
         self, tmp_path: Path, prompt: str
     ) -> None:
@@ -830,7 +832,13 @@ class TestCallLockHook:
 
     @pytest.mark.parametrize(
         "prompt",
-        ["/call status", "/vox:call status", "/call transfer --session abc"],
+        [
+            "/call status",
+            "/vox:call status",
+            "/vox-dev:call status",
+            "/vox-devx:call stop",
+            "/call transfer --session abc",
+        ],
     )
     def test_any_other_call_prompt_still_blocks_a_live_lock(
         self, tmp_path: Path, prompt: str

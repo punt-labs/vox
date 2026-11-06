@@ -56,14 +56,15 @@ if [ -z "$_lock_pid" ] \
 fi
 
 # The escape hatch must not block itself: `/call stop` (or its namespaced
-# form `/vox:call stop`) is a UserPromptSubmit prompt too, and this hook runs
-# before the CLI invocation that would otherwise let the human end the call.
+# form `/vox:call stop`, or `/vox-dev:call stop` under the dev plugin) is a
+# UserPromptSubmit prompt too, and this hook runs before the CLI invocation
+# that would otherwise let the human end the call.
 if command -v jq >/dev/null 2>&1; then
   _prompt=$(printf '%s' "$_stdin" | jq -r '.prompt // empty' 2>/dev/null)
 else
   _prompt=$(printf '%s' "$_stdin" | grep -oE '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
 fi
-if [[ "$_prompt" =~ ^/(vox:)?call[[:space:]]+stop([[:space:]]|$) ]]; then
+if [[ "$_prompt" =~ ^/(vox(-dev)?:)?call[[:space:]]+stop([[:space:]]|$) ]]; then
   exit 0
 fi
 
