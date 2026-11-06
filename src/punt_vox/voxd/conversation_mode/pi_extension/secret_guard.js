@@ -90,7 +90,8 @@ function globToRegex(glob) {
       out += c.replace(/[.+^${}()|\\]/g, "\\$&");
     }
   }
-  return new RegExp(`^${out}$`, "i");
+  // dotAll: `**` must cross a newline inside a filename, as `*` already does.
+  return new RegExp(`^${out}$`, "is");
 }
 
 function compile(pattern) {
@@ -114,7 +115,7 @@ export function ripgrep() {
 
 // The files `rg` would search under searchPath, with pi grep's ignore rules.
 export function listSearchedFiles(searchPath, glob) {
-  const args = ["--files", "--hidden", "--no-config"];
+  const args = ["--files", "--null", "--hidden", "--no-config"];
   if (glob) args.push("--glob", glob);
   args.push("--", searchPath);
   const result = spawnSync(ripgrep(), args, {
@@ -125,7 +126,8 @@ export function listSearchedFiles(searchPath, glob) {
   if (result.error) throw new Error(result.error.message);
   if (result.status === 1 && !result.stdout) return [];
   if (result.status !== 0) throw new Error(`rg --files exited ${result.status}`);
-  return result.stdout.split("\n").filter(Boolean);
+  // NUL, not newline: a filename may contain "\n" but never "\0".
+  return result.stdout.split("\0").filter(Boolean);
 }
 
 function isDirectory(p) {

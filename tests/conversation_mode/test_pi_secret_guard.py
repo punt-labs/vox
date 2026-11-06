@@ -199,6 +199,29 @@ class TestDirectoryGrep:
         """rg skips them, exactly as pi's grep will."""
         assert _reasons(repo, [("grep", {"pattern": "def"}, str(repo))]) == [""]
 
+    @pytest.mark.parametrize(
+        ("pattern", "secret"),
+        [
+            ("config/*.secret.json", "config/a\nb.secret.json"),
+            ("vault/**/*.key", "vault/a\nb/x.key"),
+        ],
+    )
+    def test_a_newline_in_a_filename_does_not_evade_an_anchored_pattern(
+        self, repo: Path, pattern: str, secret: str
+    ) -> None:
+        """A newline must not split one listed path into two innocent ones."""
+        target = repo / secret
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("TOKEN=sk-not-real\n")
+        env = {
+            "VOX_CALL_GUARD_ROOT": str(repo),
+            "VOX_CALL_GUARD_PATTERNS": json.dumps([pattern]),
+        }
+        cases = [("grep", {"pattern": "TOKEN"}, str(repo))]
+        reasons = _guard(repo, cases, env)["reasons"]
+        assert isinstance(reasons, list)
+        assert reasons[0]
+
     def test_a_listing_failure_blocks_the_grep(self, repo: Path) -> None:
         """No rg anywhere: the guard cannot know what grep would read."""
         env = SecretPathPolicy.for_repo(repo).guard_env() | {
