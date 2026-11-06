@@ -29,6 +29,20 @@ def test_the_document_carries_a_header_and_the_agent_text(tmp_path: Path) -> Non
     )
 
 
+def test_a_secret_shaped_line_in_a_summary_is_stored_redacted(
+    tmp_path: Path,
+) -> None:
+    """A summary outlives the call on disk; a secret the agent quoted must not."""
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    body = f"## Decisions Made\n- Rotate the key {secret}\n- DB_PASSWORD=hunter2"
+    stored = CallSummaryStore(tmp_path).write("c1", body).read_text()
+    assert (secret in stored, "hunter2" in stored, "[redacted]" in stored) == (
+        False,
+        False,
+        True,
+    )
+
+
 def test_a_summary_is_private(tmp_path: Path) -> None:
     root = tmp_path / "calls"
     path = CallSummaryStore(root).write("id1", "text")

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.paths import calls_dir
 from punt_vox.private_state import PrivateState
+from punt_vox.voxd.conversation_mode.reply_redaction import reply_redactor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,9 +88,14 @@ class CallSummaryStore:
         return self._root / f"{call_id}{_SUFFIX}"
 
     def write(self, call_id: str, body: str) -> Path:
-        """Write *body* as *call_id*'s summary (0600, atomically); prune; return it."""
+        """Write *body*, redacted, as *call_id*'s summary (0600, atomically); prune.
+
+        A summary outlives the call on disk, so a secret the agent quoted in it
+        is masked as it would be in speech (:data:`~.reply_redaction.reply_redactor`).
+        """
         path = self.path_for(call_id)
-        document = f"# Call Summary\n**Call:** {call_id}\n\n{body.strip()}\n"
+        summary = reply_redactor(body.strip())
+        document = f"# Call Summary\n**Call:** {call_id}\n\n{summary}\n"
         PrivateState(path).ensure_private_tree()
         AtomicFile(path).replace(document, mode=0o600)
         self._prune()
