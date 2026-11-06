@@ -20,7 +20,7 @@ write_set:
     - uv.lock
     - CHANGELOG.md
 success_criteria:
-    - 'Fix bead vox-rmyx (read it: `direnv exec /home/jfreeman/Coding/punt-labs/vox bd show vox-rmyx`). Upgrade exactly four packages in uv.lock to versions that clear all 19 open Dependabot alerts: anyio >= 4.14.2, PyJWT >= 2.15.0, urllib3 >= 2.8.0, mcp >= 1.30.0. Use `uv lock --upgrade-package anyio --upgrade-package pyjwt --upgrade-package urllib3 --upgrade-package mcp` — a dry run already resolves to anyio 4.14.2/4.15.1, PyJWT 2.15.1, urllib3 2.8.0, mcp 1.30.0.'
+    - 'Fix bead vox-rmyx (read it: `direnv exec <repo> bd show vox-rmyx`). Upgrade exactly four packages in uv.lock to versions that clear all 19 open Dependabot alerts: anyio >= 4.14.2, PyJWT >= 2.15.0, urllib3 >= 2.8.0, mcp >= 1.30.0. Use `uv lock --upgrade-package anyio --upgrade-package pyjwt --upgrade-package urllib3 --upgrade-package mcp` — a dry run already resolves to anyio 4.14.2/4.15.1, PyJWT 2.15.1, urllib3 2.8.0, mcp 1.30.0.'
     - 'Lock-only change: do NOT edit pyproject.toml and do NOT run a blanket `uv lock --upgrade`. Any other package the resolver moves as a forced consequence of these four must be listed by name and version in your result, with the reason it moved.'
     - 'Verify the diff: `git diff --stat` shows only uv.lock and CHANGELOG.md, and every [[package]] version change in uv.lock is either one of the four or a forced consequence you listed.'
     - Read the upstream changelogs for mcp 1.28.1 -> 1.30.0 and anyio 4.12.1 -> 4.14.2+ and report any behaviour or API change that touches what vox uses (FastMCP server, stdio/streamable transport, anyio task groups, threads). If one does, stop and report rather than adapting code — code changes are outside the write set.
@@ -50,11 +50,11 @@ context: |
     read.
 
     Working directory: the dedicated worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-rmyx-security
+    <repo>/.claude/worktrees/vox-rmyx-security
     on branch fix/vox-rmyx-security-lock-bump (from origin/main
     30df1a4). The worktree's .envrc may be direnv-blocked; prefix
     env-needing commands with
-    `direnv exec /home/jfreeman/Coding/punt-labs/vox`. Do not touch the
+    `direnv exec <repo>`. Do not touch the
     main checkout or other worktrees. Run `biff plan` before your first
     commit or the write gate blocks it.
 

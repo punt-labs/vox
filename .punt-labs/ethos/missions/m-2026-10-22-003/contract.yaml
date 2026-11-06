@@ -50,10 +50,10 @@ context: |
        already states the floor-tracks-the-lock rule for punt-lux.
 
     Working directory: the worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-rmyx-security
+    <repo>/.claude/worktrees/vox-rmyx-security
     on branch fix/vox-rmyx-security-lock-bump (head e67864e, pushed).
     Prefix env-needing commands with
-    `direnv exec /home/jfreeman/Coding/punt-labs/vox`. Do not touch the
+    `direnv exec <repo>`. Do not touch the
     main checkout or other worktrees. Run `biff plan` before your first
     commit or the write gate blocks it.
 

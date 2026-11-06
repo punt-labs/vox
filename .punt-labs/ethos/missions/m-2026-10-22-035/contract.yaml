@@ -20,7 +20,7 @@ write_set:
     - uv.lock
     - CHANGELOG.md
 success_criteria:
-    - 'Fix bead vox-tvbi (read it: `direnv exec /home/jfreeman/Coding/punt-labs/vox bd show vox-tvbi`). Upgrade exactly two packages in uv.lock: certifi to >= 2026.10.19 (Dependabot alert #58, critical) and opentelemetry-api to >= 1.45.1 (alert #59, medium). Use `uv lock --upgrade-package certifi --upgrade-package opentelemetry-api`; a dry run on main 4c58395 resolves to certifi 2026.10.19 and opentelemetry-api 1.45.1 and removes importlib-metadata 8.7.1 and zipp 3.23.0.'
+    - 'Fix bead vox-tvbi (read it: `direnv exec <repo> bd show vox-tvbi`). Upgrade exactly two packages in uv.lock: certifi to >= 2026.10.19 (Dependabot alert #58, critical) and opentelemetry-api to >= 1.45.1 (alert #59, medium). Use `uv lock --upgrade-package certifi --upgrade-package opentelemetry-api`; a dry run on main 4c58395 resolves to certifi 2026.10.19 and opentelemetry-api 1.45.1 and removes importlib-metadata 8.7.1 and zipp 3.23.0.'
     - 'Lock-only change: neither package is a direct dependency (verified: neither appears in pyproject.toml), so do NOT edit pyproject.toml and do NOT run a blanket `uv lock --upgrade`. Any package that moves or disappears beyond the four named above must be listed by name and version in your result, with the reason.'
     - Confirm the two removed packages (importlib-metadata, zipp) are not imported anywhere in src/ or tests/ (grep), and that nothing else in the lock still requires them.
     - 'Read the upstream release notes for certifi 2026.2.25 -> 2026.10.19 (which root CAs were added or removed) and opentelemetry-api 1.40.0 -> 1.45.1, and report anything that touches vox: TLS to the ElevenLabs, OpenAI, and AWS Polly endpoints for certifi; for opentelemetry-api, which vox package pulls it in and whether vox code uses it. If you cannot reach the notes, say so and compare the installed sources instead. If a change needs a code change, stop and report; code is outside the write set.'
@@ -41,10 +41,10 @@ context: |
     makes to its TTS providers, so it is the one with runtime reach.
 
     Working directory: the worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-tvbi on
+    <repo>/.claude/worktrees/vox-tvbi on
     branch fix/vox-tvbi-certifi-otel (from origin/main 4c58395). Prefix
     env-needing commands with
-    `direnv exec /home/jfreeman/Coding/punt-labs/vox`. Do not touch the
+    `direnv exec <repo>`. Do not touch the
     main checkout (another leader's branch occupies it) or other
     worktrees. Run `biff plan` before your first commit or the write
     gate blocks it. Never print a process environment (env, printenv,
