@@ -6,10 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.reply_assembly import (
-    RESTART_PHRASE,
-    ReplyAssembly,
-)
+from punt_vox.voxd.conversation_mode.reply_assembly import ReplyAssembly
 
 if TYPE_CHECKING:
     import pytest
@@ -43,13 +40,8 @@ def test_a_restart_retracts_everything_before_it() -> None:
     assert reply.text == "It returns the sum."
 
 
-def test_a_restarted_reply_is_spoken_after_the_restart_phrase() -> None:
-    reply = _assembled(_text("I think the "), _RESTART, _text("It returns."))
-    assert reply.spoken == f"{RESTART_PHRASE} It returns."
-
-
-def test_a_reply_with_no_restart_is_spoken_as_written() -> None:
-    assert _assembled(_text("ok")).spoken == "ok"
+def test_retracting_everything_leaves_no_text() -> None:
+    assert _assembled(_text("I think the "), _RESTART).text == ""
 
 
 def test_a_restart_is_logged_with_what_it_discarded(

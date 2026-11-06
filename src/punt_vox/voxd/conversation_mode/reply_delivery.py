@@ -112,7 +112,7 @@ class ReplyDelivery:
         self._actor.apply(ReplyEnds())
 
     async def _exchange(self, turn: TranscribedTurn) -> str | None:
-        """Run session-attach for *turn*, returning the reply as it is spoken.
+        """Run session-attach for *turn*, returning the reply text that stands.
 
         Returns ``None`` after a ``SessionAttachError`` is already handled by
         :class:`ReplyRecovery` (which speaks its own recovery message and, on
@@ -136,4 +136,4 @@ class ReplyDelivery:
         except SessionAttachError as exc:
             await self._reply_recovery.recover(exc)
             return None
-        return reply.spoken
+        return reply.text

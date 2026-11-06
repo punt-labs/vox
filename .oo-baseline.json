@@ -3395,10 +3395,10 @@
   "src/punt_vox/voxd/conversation_mode/reply_assembly.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.25,
+    "avg_params": 0.33,
     "max_complexity": 2.0,
-    "avg_complexity": 1.5,
-    "module_size": 45.0,
+    "avg_complexity": 1.33,
+    "module_size": 36.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

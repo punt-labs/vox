@@ -8,12 +8,9 @@ from typing import TYPE_CHECKING, Self, final
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 
-__all__ = ["RESTART_PHRASE", "ReplyAssembly"]
+__all__ = ["ReplyAssembly"]
 
 logger = logging.getLogger(__name__)
-
-# Spoken ahead of a reply the agent had to write again from the start.
-RESTART_PHRASE = "Sorry, let me start that again."
 
 
 @final
@@ -22,18 +19,16 @@ class ReplyAssembly:
 
     A retracting chunk withdraws the text of a message the agent's provider
     failed: the agent is writing that message again, so its failed words
-    are no part of the reply -- not spoken, not saved. Text already played
-    aloud cannot be recalled, so the spoken form owns up to the restart.
+    are no part of the reply -- not spoken, not saved. A call speaks the reply
+    only once the turn settles, so retracted text was never heard.
     """
 
-    __slots__ = ("_pieces", "_restarted")
+    __slots__ = ("_pieces",)
     _pieces: list[str]
-    _restarted: bool
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._pieces = []
-        self._restarted = False
         return self
 
     def add(self, chunk: ReplyChunk) -> None:
@@ -45,15 +40,9 @@ class ReplyAssembly:
             )
             kept = self.text[: -chunk.retracts]
             self._pieces[:] = [kept]
-            self._restarted = True
         self._pieces.append(chunk.text)
 
     @property
     def text(self) -> str:
-        """The reply as it now stands: the post-call summary saves this."""
+        """The reply as it now stands: spoken on a call, saved as a summary."""
         return "".join(self._pieces)
-
-    @property
-    def spoken(self) -> str:
-        """The reply as said aloud, owning up to a restart first."""
-        return f"{RESTART_PHRASE} {self.text}" if self._restarted else self.text

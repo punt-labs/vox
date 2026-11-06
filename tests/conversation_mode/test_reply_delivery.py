@@ -17,7 +17,6 @@ from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedC
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.reply_assembly import RESTART_PHRASE
 from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
@@ -155,7 +154,8 @@ def _restarted_reply() -> FakeSessionAttach:
     )
 
 
-async def test_a_restarted_reply_speaks_the_restart_phrase_then_the_retry() -> None:
+async def test_a_restarted_reply_speaks_only_the_text_that_stands() -> None:
+    """The reply is spoken once the turn settles: the retracted text was never heard."""
     speak = _Recorder()
     delivery = ReplyDelivery(
         session_attach=_restarted_reply(),
@@ -166,7 +166,7 @@ async def test_a_restarted_reply_speaks_the_restart_phrase_then_the_retry() -> N
 
     await delivery.deliver(TranscribedTurn(text="what does this do"))
 
-    assert speak.said[1:] == [f"{RESTART_PHRASE} It returns the sum.", "Ready."]
+    assert speak.said[1:] == ["It returns the sum.", "Ready."]
 
 
 async def test_a_restarted_reply_never_speaks_the_failed_attempt() -> None:
@@ -181,3 +181,23 @@ async def test_a_restarted_reply_never_speaks_the_failed_attempt() -> None:
     await delivery.deliver(TranscribedTurn(text="what does this do"))
 
     assert not any("I think" in phrase for phrase in speak.said)
+
+
+async def test_a_retry_that_says_nothing_new_speaks_no_apology() -> None:
+    speak = _Recorder()
+    retracted = len("I think the ")
+    delivery = ReplyDelivery(
+        session_attach=FakeSessionAttach(
+            (
+                ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
+                ScriptedChunk(ReplyChunk(text="", is_final=True, retracts=retracted)),
+            )
+        ),
+        speak=speak,
+        actor=_actor_waiting(),
+        turn_timer=LoggingTurnTimer(),
+    )
+
+    await delivery.deliver(TranscribedTurn(text="what does this do"))
+
+    assert speak.said[1:] == ["", "Ready."]
