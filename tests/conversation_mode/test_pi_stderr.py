@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 import pytest
 
+from conversation_mode._cancellation import (
+    cancelled_while_reaping,
+    swallow_a_cancellation,
+)
 from punt_vox.voxd.conversation_mode import pi_stderr as stderr_module
 from punt_vox.voxd.conversation_mode.pi_stderr import PiStderr
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable
 
 
 async def _drained(*lines: bytes, limit: int = 2**16) -> PiStderr:
@@ -59,22 +59,26 @@ async def test_stop_ends_a_drain_whose_stream_never_closes() -> None:
     assert stderr.tail() == "(no stderr)"
 
 
-async def _cancelled_while_stopping(stop: Awaitable[None]) -> asyncio.Task[None]:
-    """Cancel the task running *stop* once it is waiting on the cancelled drain."""
-    stopper = asyncio.ensure_future(stop)
-    others = asyncio.all_tasks() - {stopper, asyncio.current_task()}
-    (drain,) = others
-    while not drain.cancelling():
-        await asyncio.sleep(0)
-    stopper.cancel()
-    return stopper
-
-
 async def test_stop_never_swallows_its_caller_s_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(stderr_module, "_SETTLE_S", 0.0)
     stderr = PiStderr(asyncio.StreamReader())
-    stopper = await _cancelled_while_stopping(stderr.stop())
+    stopper = await cancelled_while_reaping(stderr.stop())
     with pytest.raises(asyncio.CancelledError):
         await stopper
+
+
+async def test_stop_after_a_swallowed_cancellation_raises_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An old, already-handled cancel must not turn orderly cleanup into one."""
+    monkeypatch.setattr(stderr_module, "_SETTLE_S", 0.0)
+
+    async def stop_after_a_handled_cancel() -> str:
+        await swallow_a_cancellation()
+        await PiStderr(asyncio.StreamReader()).stop()
+        return "stopped"
+
+    stopping = asyncio.ensure_future(stop_after_a_handled_cancel())
+    assert await stopping == "stopped"

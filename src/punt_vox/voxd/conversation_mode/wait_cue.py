@@ -23,6 +23,8 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Protocol, Self, final, runtime_checkable
 
+from punt_vox.voxd.conversation_mode.task_reaper import TaskReaper
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["ChimeFn", "WaitCue"]
@@ -71,7 +73,8 @@ class WaitCue:
         in a loop, for the duration of the body (the call agent's round
         trip); cancelled and awaited on exit either way, so a reply that
         arrives before the first interval elapses never chimes at all, and
-        the task never outlives this method.
+        the task never outlives this method; a turn cancelled meanwhile stays
+        cancelled.
         """
         chime = self._chime
         if chime is None:
@@ -81,9 +84,7 @@ class WaitCue:
         try:
             yield
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await TaskReaper.reap(task)
 
     @staticmethod
     async def _repeat(chime: ChimeFn) -> None:
@@ -92,10 +93,10 @@ class WaitCue:
         The caller cancels once the wait ends. A failing *chime* is logged
         and swallowed, never left to propagate out of this loop: this task
         races the real turn's own ``send_turn`` inside :meth:`active`'s
-        ``finally: await task`` cleanup, and an uncaught chime failure
-        arriving around the same time as a genuine turn failure could win
-        that race and mask the turn's own exception -- the one the caller
-        actually needs to see.
+        ``finally`` cleanup (:class:`~.task_reaper.TaskReaper`), and an
+        uncaught chime failure arriving around the same time as a genuine
+        turn failure could win that race and mask the turn's own exception --
+        the one the caller actually needs to see.
         """
         while True:
             await asyncio.sleep(_WAIT_CHIME_INTERVAL_S)

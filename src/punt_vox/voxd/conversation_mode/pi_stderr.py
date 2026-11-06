@@ -14,6 +14,8 @@ import logging
 from collections import deque
 from typing import Self, final
 
+from punt_vox.voxd.conversation_mode.task_reaper import TaskReaper
+
 __all__ = ["PiStderr"]
 
 logger = logging.getLogger(__name__)
@@ -58,20 +60,10 @@ class PiStderr:
         A caller cancelled while stopping is still cancelled.
         """
         await self.settle()
-        self._drain.cancel()  # a no-op once the drain has finished
         try:
-            await self._drain
-        except asyncio.CancelledError:
-            if self._caller_cancelling() or not self._drain.cancelled():
-                raise
+            await TaskReaper.reap(self._drain)
         except Exception:
             logger.exception("call agent stderr drain failed")
-
-    @staticmethod
-    def _caller_cancelling() -> bool:
-        """Whether the task running this has itself been asked to cancel."""
-        caller = asyncio.current_task()
-        return caller is not None and caller.cancelling() > 0
 
     async def _read(self, stream: asyncio.StreamReader | None) -> None:
         """Read until pi closes stderr.
