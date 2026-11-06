@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentSpawnError
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 
 
@@ -214,3 +215,10 @@ class TestPromptClause:
     ) -> None:
         clause = policy.prompt_clause()
         assert all(pattern in clause for pattern in policy.patterns)
+
+
+def test_an_unreadable_gitignore_fails_the_call_start(repo: Path) -> None:
+    """The deny-list cannot be built without it, so the agent must not start."""
+    (repo / ".gitignore").write_bytes(b"\xff\xfe not utf-8 \xff")
+    with pytest.raises(CallAgentSpawnError, match=r"\.gitignore"):
+        SecretPathPolicy.for_repo(repo)

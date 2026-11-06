@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import stat
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from punt_vox.voxd.conversation_mode import call_summary as summary_module
 from punt_vox.voxd.conversation_mode.call_summary import (
     SUMMARY_PROMPT,
     CallSummaryStore,
@@ -49,6 +52,22 @@ def test_pruning_ignores_unrelated_files(tmp_path: Path) -> None:
     (tmp_path / "notes.txt").write_text("mine")
     CallSummaryStore(tmp_path, keep=1).write("id1", "text")
     assert (tmp_path / "notes.txt").exists()
+
+
+def test_a_prune_failure_is_logged_and_the_summary_still_lands(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = CallSummaryStore(tmp_path, keep=1)
+    store.write("20261105T000001Z-aaaaaa", "old")
+    with (
+        patch.object(Path, "unlink", side_effect=PermissionError("read-only")),
+        caplog.at_level(logging.WARNING, logger=summary_module.__name__),
+    ):
+        path = store.write("20261105T000002Z-bbbbbb", "new")
+    assert (path.read_text().endswith("new\n"), "read-only" in caplog.text) == (
+        True,
+        True,
+    )
 
 
 def test_keep_must_be_positive(tmp_path: Path) -> None:

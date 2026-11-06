@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from conversation_mode._pi_rpc_fakes import (
     SpawnRecorder,
     ToolUse,
 )
+from punt_vox.voxd.conversation_mode import call_agent_host as host_module
 from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentEndedError
 from punt_vox.voxd.conversation_mode.call_agent_host import CallAgentHost, CallOutcome
 from punt_vox.voxd.conversation_mode.call_agent_launch import CallAgentLaunch
@@ -29,7 +31,9 @@ _EXEC = "punt_vox.voxd.conversation_mode.pi_rpc_channel.asyncio.create_subproces
 _SUMMARY = "## Decisions Made\n- Keep the pool at 12.\n## Action Items\n- None."
 
 
-async def _host(tmp_path: Path, process: FakePiProcess) -> CallAgentHost:
+async def _host(
+    tmp_path: Path, process: FakePiProcess, store_root: Path | None = None
+) -> CallAgentHost:
     timer = LoggingTurnTimer()
     with patch(_EXEC, SpawnRecorder(process)):
         agent = await PiCallAgent.spawn(
@@ -38,7 +42,7 @@ async def _host(tmp_path: Path, process: FakePiProcess) -> CallAgentHost:
             opening_message="snapshot",
             turn_timer=timer,
         )
-    store = CallSummaryStore(tmp_path / "calls")
+    store = CallSummaryStore(store_root or tmp_path / "calls")
     return CallAgentHost(
         agent, store, call_id="20261105T140302Z-abc123", turn_timer=timer
     )
@@ -101,6 +105,31 @@ class TestFinish:
             "no call summary: the secret guard blocked a read this turn needed"
         )
         assert not (tmp_path / "calls").exists()
+
+    async def test_a_summary_that_cannot_be_saved_is_an_outcome_not_a_crash(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        blocker = tmp_path / "not-a-dir"
+        blocker.write_text("")
+        process = FakePiProcess.answering("Ready.", "a", _SUMMARY)
+        host = await _host(tmp_path, process, store_root=blocker / "calls")
+        await _one_turn(host)
+        with caplog.at_level(logging.ERROR, logger=host_module.__name__):
+            outcome = await host.finish()
+        assert outcome.line().startswith("no call summary: it could not be saved")
+        assert f"{len(_SUMMARY)} characters" in caplog.text
+        assert process.returncode is not None
+
+    async def test_an_empty_summary_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        process = FakePiProcess.answering("Ready.", "a", "   ")
+        host = await _host(tmp_path, process)
+        await _one_turn(host)
+        with caplog.at_level(logging.WARNING, logger=host_module.__name__):
+            outcome = await host.finish()
+        assert outcome.summary_path is None
+        assert "empty summary" in caplog.text
 
     async def test_an_ended_agent_reports_why_there_is_no_summary(
         self, tmp_path: Path

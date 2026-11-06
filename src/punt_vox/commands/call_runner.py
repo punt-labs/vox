@@ -15,6 +15,7 @@ call's own sequence:
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["CallRunner"]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -82,9 +85,17 @@ class CallRunner:
         try:
             await self._drive(script, wiring)
         except BaseException:
-            await host.abandon()
+            await self._abandon(host)
             raise
         return await host.finish()
+
+    @staticmethod
+    async def _abandon(host: CallAgentHost) -> None:
+        """End the agent after a failed call; never mask the call's own error."""
+        try:
+            await host.abandon()
+        except Exception:
+            logger.exception("could not end the call agent after the call failed")
 
     @staticmethod
     async def _drive(script: Path | None, wiring: CallWiring) -> None:

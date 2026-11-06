@@ -58,14 +58,30 @@ class CallSnapshot:
         """Read the snapshot from *source*, or from *stdin* when *source* is ``-``.
 
         Raises :class:`ValueError` for an unreadable, empty, or oversized
-        snapshot -- an expected usage error the CLI reports cleanly.
+        snapshot -- an expected usage error the CLI reports cleanly. At most
+        one byte past the limit is ever read, so an endless or enormous
+        source is refused without being drained into memory.
         """
         try:
-            text = stdin.read() if str(source) == _STDIN else source.read_text()
+            data = cls._read_bounded(source, stdin)
+            if len(data) > _MAX_BYTES:
+                msg = f"the context snapshot is over the {_MAX_BYTES}-byte limit"
+                raise ValueError(msg)
+            text = data.decode()
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"cannot read the context snapshot from {source}: {exc}"
             raise ValueError(msg) from exc
         return cls(text)
+
+    @staticmethod
+    def _read_bounded(source: Path, stdin: TextIO) -> bytes:
+        """Return at most one byte more than the limit from *source*."""
+        if str(source) == _STDIN:
+            # Every character is at least one byte, so limit+1 characters
+            # are enough to tell an oversized snapshot from one that fits.
+            return stdin.read(_MAX_BYTES + 1).encode()
+        with source.open("rb") as file:
+            return file.read(_MAX_BYTES + 1)
 
     @property
     def text(self) -> str:

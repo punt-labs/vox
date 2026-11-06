@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
+from punt_vox.voxd.conversation_mode import tool_screen as screen_module
 from punt_vox.voxd.conversation_mode.pi_rpc_record import PiRpcRecord
 from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 from punt_vox.voxd.conversation_mode.tool_screen import ToolScreen
@@ -101,6 +103,40 @@ def test_an_ordinary_grep_is_fine(screen: ToolScreen) -> None:
 
 def test_a_find_pattern_aimed_at_keys_is_a_breach(screen: ToolScreen) -> None:
     assert _run(screen, "find", {"pattern": "**/*.pem"})
+
+
+def test_an_executed_end_with_no_start_is_treated_as_a_breach(
+    screen: ToolScreen, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Its arguments are unknown, so what it read is unknown: fail closed."""
+    end = {
+        "type": "tool_execution_end",
+        "toolCallId": "never-started",
+        "toolName": "read",
+        "isError": False,
+        "result": {"content": [{"type": "text", "text": "FAKE_KEY=x"}]},
+    }
+    with caplog.at_level(logging.WARNING, logger=screen_module.__name__):
+        assert screen.breached(_record(end))
+    assert "never-started" in caplog.text
+
+
+def test_a_progress_update_does_not_forget_the_start(screen: ToolScreen) -> None:
+    start = {
+        "type": "tool_execution_start",
+        "toolCallId": "c1",
+        "toolName": "read",
+        "args": {"path": "README.md"},
+    }
+    update = {"type": "tool_execution_update", "toolCallId": "c1", "toolName": "read"}
+    end = {"type": "tool_execution_end", "toolCallId": "c1", "isError": False}
+    breaches = [screen.breached(_record(r)) for r in (start, update, end)]
+    assert breaches == [False, False, False]
+
+
+def test_a_failed_end_with_no_start_read_nothing(screen: ToolScreen) -> None:
+    end = {"type": "tool_execution_end", "toolCallId": "x", "isError": True}
+    assert not screen.breached(_record(end))
 
 
 def test_records_that_are_not_tool_ends_never_breach(screen: ToolScreen) -> None:

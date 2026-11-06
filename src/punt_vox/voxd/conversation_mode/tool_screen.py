@@ -13,6 +13,7 @@ breach: the guard's refusal goes back to the model and the call carries on.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.pi_path import PiPath
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.secret_path_policy import SecretPathPolicy
 
 __all__ = ["ToolScreen"]
+
+logger = logging.getLogger(__name__)
 
 # How the pi-side guard's refusals begin (``REASON_PREFIX`` in
 # ``pi_extension/secret_guard.js``).
@@ -53,9 +56,18 @@ class ToolScreen:
             return False
         if record.kind != "tool_execution_end":
             return False
-        name, args = self._started.pop(record.tool_call_id, (record.tool_name, {}))
+        # Absent exactly when no start was seen for this call.
+        started = self._started.pop(record.tool_call_id, None)
         if record.is_error:
             return False
+        if started is None:
+            # What it read is unknown, so it may have been anything: fail closed.
+            logger.warning(
+                "call agent tool call %r ended with no start; treated as a breach",
+                record.tool_call_id,
+            )
+            return True
+        name, args = started
         return self._arguments_denied(name, args) or (
             name == "grep" and self._grep_output_denied(args, record.result_text())
         )

@@ -20,6 +20,7 @@ without letting ``calls_dir()`` -- which holds whatever every call discussed
 
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self, final
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = ["KEEP_SUMMARIES", "SUMMARY_PROMPT", "CallSummaryStore"]
+
+logger = logging.getLogger(__name__)
 
 KEEP_SUMMARIES = 50
 
@@ -93,6 +96,14 @@ class CallSummaryStore:
         return path
 
     def _prune(self) -> None:
+        """Remove all but the newest summaries; a failure is logged, never raised.
+
+        The summary itself is already written: a stale one that will not go
+        away must not cost the call its handoff.
+        """
         summaries = sorted(self._root.glob(f"*{_SUFFIX}"))
         for stale in summaries[: -self._keep]:
-            stale.unlink(missing_ok=True)
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("could not prune call summary %s: %s", stale, exc)

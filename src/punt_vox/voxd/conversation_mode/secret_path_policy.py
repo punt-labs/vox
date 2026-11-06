@@ -32,6 +32,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.conversation_mode.call_agent_errors import CallAgentSpawnError
 from punt_vox.voxd.conversation_mode.pi_path import PiPath
 
 if TYPE_CHECKING:
@@ -96,10 +97,19 @@ class SecretPathPolicy:
 
     @classmethod
     def for_repo(cls, root: Path) -> Self:
-        """Build *root*'s policy: the built-ins plus its ``.gitignore`` secrets."""
+        """Build *root*'s policy: the built-ins plus its ``.gitignore`` secrets.
+
+        Raises :class:`~.call_agent_errors.CallAgentSpawnError` when the
+        ``.gitignore`` exists but cannot be read: a deny-list missing the
+        repo's own secret patterns is not one to start an agent under.
+        """
         gitignore = root / ".gitignore"
-        lines = gitignore.read_text().splitlines() if gitignore.is_file() else []
-        return cls(root, cls._secret_lines(lines))
+        try:
+            text = gitignore.read_text() if gitignore.is_file() else ""
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"cannot read {gitignore} to build the secret deny-list: {exc}"
+            raise CallAgentSpawnError(msg) from exc
+        return cls(root, cls._secret_lines(text.splitlines()))
 
     @property
     def patterns(self) -> tuple[str, ...]:

@@ -32,6 +32,29 @@ def test_an_oversized_snapshot_is_refused() -> None:
         CallSnapshot("x" * (64 * 1024 + 1))
 
 
+class _EndlessStdin(io.StringIO):
+    """A stdin that never ends: only a bounded read can return."""
+
+    def read(self, size: int | None = -1, /) -> str:
+        if size is None or size < 0:
+            msg = "unbounded read of an endless stream"
+            raise AssertionError(msg)
+        return "x" * size
+
+
+def test_an_endless_stdin_is_refused_after_a_bounded_read() -> None:
+    with pytest.raises(ValueError, match="limit"):
+        CallSnapshot.read(Path("-"), _EndlessStdin())
+
+
+def test_an_oversized_file_is_refused_before_it_is_decoded(tmp_path: Path) -> None:
+    """Only limit+1 bytes are read, so a split multi-byte tail never matters."""
+    path = tmp_path / "huge.md"
+    path.write_bytes("é".encode() * (64 * 1024))
+    with pytest.raises(ValueError, match="limit"):
+        CallSnapshot.read(path, io.StringIO())
+
+
 def test_an_unreadable_file_is_a_value_error(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="cannot read"):
         CallSnapshot.read(tmp_path / "missing.md", io.StringIO())

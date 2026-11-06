@@ -150,6 +150,17 @@ class CallAgentHost:
         except SessionAttachError:
             logger.exception("the call agent could not write the call summary")
             return CallOutcome(None, "the call agent could not write it (see vox.log)")
+        return self._save(text)
+
+    def _save(self, text: str) -> CallOutcome:
+        """Persist *text* as the summary, or say why there is none."""
         if not text.strip():
+            logger.warning("the call agent returned an empty summary")
             return CallOutcome(None, "the call agent returned an empty summary")
-        return CallOutcome(self._store.write(self._call_id, text))
+        try:
+            return CallOutcome(self._store.write(self._call_id, text))
+        except OSError as exc:
+            logger.exception(
+                "could not save the call summary (%d characters)", len(text)
+            )
+            return CallOutcome(None, f"it could not be saved: {exc}")
