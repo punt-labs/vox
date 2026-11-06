@@ -255,6 +255,16 @@ class TestSendTurnAndReplyComplete:
             await _reply(agent)
         assert agent.can_accept_turn
 
+    async def test_a_retry_that_ends_aborted_with_nothing_new_is_a_failed_turn(
+        self, tmp_path: Path
+    ) -> None:
+        """The failed attempt's retracted text does not make the retry a reply."""
+        aborted = PiReply(retried=("529",), partial="I think the ", aborted=True)
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), aborted]))
+        with pytest.raises(SessionAttachError, match="aborted"):
+            await _reply(agent)
+        assert (agent.can_accept_turn, agent.turns_handled) == (True, 0)
+
     async def test_a_failed_turn_is_not_counted_as_handled(
         self, tmp_path: Path
     ) -> None:

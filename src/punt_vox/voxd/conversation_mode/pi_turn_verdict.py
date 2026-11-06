@@ -53,8 +53,10 @@ class PiTurnVerdict:
     def observe(self, record: PiRpcRecord) -> None:
         """Fold the next record of the turn into the verdict."""
         if record.is_retry_start:
-            # pi is retrying the failed attempt: only the retry's outcome counts.
+            # pi is retrying the failed attempt: only the retry's outcome and
+            # words count, so a retry that settles aborted and silent failed.
             self._failure = ""
+            self._spoke = False
         elif failure := record.failure():
             self._failure = failure
         self._refused = self._refused or bool(ToolScreen.guard_refusal(record))
@@ -77,5 +79,5 @@ class PiTurnVerdict:
 
     @property
     def spoke(self) -> bool:
-        """Whether the turn wrote any reply text."""
+        """Whether the turn's latest attempt wrote any reply text."""
         return self._spoke

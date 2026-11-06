@@ -60,7 +60,8 @@ class PiReply:
     retried: tuple[str, ...] = ()
     # Reply text each retried attempt wrote before the provider failed it.
     partial: str = ""
-    # The run was aborted: it settles with ``aborted: true`` and no reply.
+    # The run was aborted: it settles with ``aborted: true`` and no reply
+    # (after any ``retried`` attempts).
     aborted: bool = False
     # An extension handler threw: pi reports it in an ``extension_error``.
     extension_error: str = ""
@@ -183,12 +184,6 @@ class FakePiProcess:
         if reply.hang or reply.die:
             return records
         records.append(_record({"type": "agent_start"}))
-        if reply.aborted:
-            return [
-                *records,
-                _record({"type": "agent_end", "messages": []}),
-                _record({"type": "agent_settled", "aborted": True}),
-            ]
         if reply.extension_error:
             records.append(
                 _record(
@@ -225,6 +220,12 @@ class FakePiProcess:
                     }
                 ),
                 _record({"type": "agent_start"}),
+            ]
+        if reply.aborted:
+            return [
+                *records,
+                _record({"type": "agent_end", "messages": []}),
+                _record({"type": "agent_settled", "aborted": True}),
             ]
         for index, tool in enumerate(reply.tools):
             call_id = f"call_{index}"

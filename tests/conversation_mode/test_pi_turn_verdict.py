@@ -79,6 +79,16 @@ def test_an_aborted_run_after_some_text_stands() -> None:
     assert _verdict(_text("partial"), _ABORTED).failure == ""
 
 
+def test_an_aborted_retry_after_a_failed_attempt_s_text_is_a_failure() -> None:
+    """Only the final attempt speaks for the turn: earlier text was retracted."""
+    verdict = _verdict(_text("I think "), _errored("529"), _RETRY, _ABORTED)
+    assert "aborted" in verdict.failure
+
+
+def test_a_retry_forgets_what_the_failed_attempt_said() -> None:
+    assert not _verdict(_text("I think "), _errored("529"), _RETRY).spoke
+
+
 def test_a_guard_block_is_a_refusal() -> None:
     blocked = _record(
         {
