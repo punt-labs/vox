@@ -6,11 +6,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+import pytest
+
 from punt_vox.voxd.conversation_mode import pi_stderr as stderr_module
 from punt_vox.voxd.conversation_mode.pi_stderr import PiStderr
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Awaitable
 
 
 async def _drained(*lines: bytes, limit: int = 2**16) -> PiStderr:
@@ -55,3 +57,24 @@ async def test_stop_ends_a_drain_whose_stream_never_closes() -> None:
     stderr = PiStderr(asyncio.StreamReader())
     await stderr.stop()
     assert stderr.tail() == "(no stderr)"
+
+
+async def _cancelled_while_stopping(stop: Awaitable[None]) -> asyncio.Task[None]:
+    """Cancel the task running *stop* once it is waiting on the cancelled drain."""
+    stopper = asyncio.ensure_future(stop)
+    others = asyncio.all_tasks() - {stopper, asyncio.current_task()}
+    (drain,) = others
+    while not drain.cancelling():
+        await asyncio.sleep(0)
+    stopper.cancel()
+    return stopper
+
+
+async def test_stop_never_swallows_its_caller_s_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(stderr_module, "_SETTLE_S", 0.0)
+    stderr = PiStderr(asyncio.StreamReader())
+    stopper = await _cancelled_while_stopping(stderr.stop())
+    with pytest.raises(asyncio.CancelledError):
+        await stopper

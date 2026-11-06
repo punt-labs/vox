@@ -53,17 +53,25 @@ class PiStderr:
         await asyncio.wait({self._drain}, timeout=_SETTLE_S)
 
     async def stop(self) -> None:
-        """Settle, then stop the drain; a failure in it is logged, never raised."""
+        """Settle, then stop the drain; a drain failure is logged, never raised.
+
+        A caller cancelled while stopping is still cancelled.
+        """
         await self.settle()
-        if not self._drain.done():
-            self._drain.cancel()
+        self._drain.cancel()  # a no-op once the drain has finished
         try:
             await self._drain
         except asyncio.CancelledError:
-            if not self._drain.cancelled():
+            if self._caller_cancelling() or not self._drain.cancelled():
                 raise
         except Exception:
             logger.exception("call agent stderr drain failed")
+
+    @staticmethod
+    def _caller_cancelling() -> bool:
+        """Whether the task running this has itself been asked to cancel."""
+        caller = asyncio.current_task()
+        return caller is not None and caller.cancelling() > 0
 
     async def _read(self, stream: asyncio.StreamReader | None) -> None:
         """Read until pi closes stderr.
