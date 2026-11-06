@@ -147,7 +147,9 @@ def _restarted_reply() -> FakeSessionAttach:
     return FakeSessionAttach(
         (
             ScriptedChunk(ReplyChunk(text="I think the ", is_final=False)),
-            ScriptedChunk(ReplyChunk(text="", is_final=False, is_restart=True)),
+            ScriptedChunk(
+                ReplyChunk(text="", is_final=False, retracts=len("I think the "))
+            ),
             ScriptedChunk(ReplyChunk(text="It returns the sum.", is_final=True)),
         )
     )

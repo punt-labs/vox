@@ -21,6 +21,9 @@ from typing import Self, cast, final
 
 __all__ = ["MalformedRecordError", "PiRpcRecord"]
 
+# The stop reasons of an assistant message the provider failed.
+_FAILED_STOPS = frozenset({"error", "aborted"})
+
 _TOOL_EVENT_TYPES = frozenset(
     {"tool_execution_start", "tool_execution_update", "tool_execution_end"}
 )
@@ -77,6 +80,12 @@ class PiRpcRecord:
         return self.kind == "auto_retry_start"
 
     @property
+    def ends_reply_message(self) -> bool:
+        """Whether this record ends an assistant message without an error."""
+        message = self._ended_assistant_message()
+        return bool(message) and message.get("stopReason") not in _FAILED_STOPS
+
+    @property
     def is_tool_event(self) -> bool:
         """Whether this record reports a tool starting, progressing, or ending."""
         return self.kind in _TOOL_EVENT_TYPES or self._assistant_event_kind() in {
@@ -105,15 +114,11 @@ class PiRpcRecord:
         """
         if self.kind in {"response", "auto_retry_end"}:
             return self._unsuccessful()
-        if self.kind == "message_end":
-            message = self._mapping(self._fields.get("message"))
-            if message.get("role") == "assistant" and message.get("stopReason") in {
-                "error",
-                "aborted",
-            }:
-                error = message.get("errorMessage")
-                return error if isinstance(error, str) and error else "reply failed"
-        return ""
+        message = self._ended_assistant_message()
+        if message.get("stopReason") not in _FAILED_STOPS:
+            return ""
+        error = message.get("errorMessage")
+        return error if isinstance(error, str) and error else "reply failed"
 
     def extension_error(self) -> str:
         """Return an ``extension_error`` record's extension, event, and error."""
@@ -169,6 +174,12 @@ class PiRpcRecord:
     @staticmethod
     def _text(value: object) -> str:
         return value if isinstance(value, str) else ""
+
+    def _ended_assistant_message(self) -> dict[str, object]:
+        """Return the assistant message a ``message_end`` closes, or ``{}``."""
+        message = self._mapping(self._fields.get("message"))
+        ended = self.kind == "message_end" and message.get("role") == "assistant"
+        return message if ended else {}
 
     def _assistant_event(self) -> dict[str, object]:
         if self.kind != "message_update":

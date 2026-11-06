@@ -20,11 +20,10 @@ RESTART_PHRASE = "Sorry, let me start that again."
 class ReplyAssembly:
     """The text of one turn's reply, folded chunk by chunk.
 
-    A restart chunk retracts everything before it: the agent's provider
-    failed that attempt and the agent is writing the reply again, so the
-    failed attempt's words are no part of the reply -- not spoken, not
-    saved. Text already played aloud cannot be recalled, so the spoken form
-    owns up to the restart instead.
+    A retracting chunk withdraws the text of a message the agent's provider
+    failed: the agent is writing that message again, so its failed words
+    are no part of the reply -- not spoken, not saved. Text already played
+    aloud cannot be recalled, so the spoken form owns up to the restart.
     """
 
     __slots__ = ("_pieces", "_restarted")
@@ -38,17 +37,16 @@ class ReplyAssembly:
         return self
 
     def add(self, chunk: ReplyChunk) -> None:
-        """Fold *chunk* in; a restart discards the reply so far."""
-        if not chunk.is_restart:
-            self._pieces.append(chunk.text)
-            return
-        logger.info(
-            "call agent restarted its reply after a failed attempt; "
-            "discarded %d characters of it",
-            len(self.text),
-        )
-        self._pieces.clear()
-        self._restarted = True
+        """Fold *chunk* in, withdrawing what it retracts first."""
+        if chunk.retracts:
+            logger.info(
+                "call agent retried a failed message; discarded %d characters of it",
+                chunk.retracts,
+            )
+            kept = self.text[: -chunk.retracts]
+            self._pieces[:] = [kept]
+            self._restarted = True
+        self._pieces.append(chunk.text)
 
     @property
     def text(self) -> str:

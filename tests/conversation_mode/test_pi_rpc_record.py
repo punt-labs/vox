@@ -115,6 +115,23 @@ class TestFailure:
         assert record.failure() == ""
 
 
+class TestMessageEnd:
+    @staticmethod
+    def _end(role: str, stop: str) -> PiRpcRecord:
+        return _record(
+            {"type": "message_end", "message": {"role": role, "stopReason": stop}}
+        )
+
+    def test_an_assistant_message_ending_cleanly_ends_a_reply_message(self) -> None:
+        assert self._end("assistant", "toolUse").ends_reply_message
+
+    def test_an_errored_assistant_message_does_not(self) -> None:
+        assert not self._end("assistant", "error").ends_reply_message
+
+    def test_a_user_message_end_does_not(self) -> None:
+        assert not self._end("user", "stop").ends_reply_message
+
+
 class TestRetryAndAbort:
     def test_auto_retry_start_starts_a_retry(self) -> None:
         record = _record(

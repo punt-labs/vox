@@ -18,17 +18,15 @@ GUARD_REFUSAL = (
     "and anything I read on a call is spoken aloud."
 )
 
-# Retracts the reply so far: the attempt that wrote it failed and pi retries.
-_RESTART = ReplyChunk(text="", is_final=False, is_restart=True)
-
 
 @final
 class PiTurnReply:
     """One turn's reply as it streams, and the verdict its records add up to.
 
-    Only the final attempt's words may be spoken or saved: when pi retries
-    an attempt that already wrote text, a restart chunk retracts that text
-    before the retry writes its own.
+    Only the final attempt's words may be spoken or saved: when pi retries a
+    message that already wrote text, a chunk retracts that message's text --
+    and only it; pi keeps the turn's earlier messages -- before the retry
+    writes its own.
     """
 
     __slots__ = ("_verdict",)
@@ -46,12 +44,15 @@ class PiTurnReply:
 
     def chunks(self, record: PiRpcRecord) -> tuple[ReplyChunk, ...]:
         """Fold *record* into the verdict; return the reply chunks it carries."""
-        # Ask before observing: a retry start resets what the attempt said.
-        restart = (_RESTART,) if record.is_retry_start and self._verdict.spoke else ()
+        # Ask before observing: a retry start forgets the failed message's text.
+        failed = self._verdict.unkept if record.is_retry_start else 0
         self._verdict.observe(record)
+        chunks: list[ReplyChunk] = []
+        if failed:
+            chunks.append(ReplyChunk(text="", is_final=False, retracts=failed))
         if delta := record.text_delta():
-            return (*restart, ReplyChunk(text=delta, is_final=False))
-        return restart
+            chunks.append(ReplyChunk(text=delta, is_final=False))
+        return tuple(chunks)
 
     def refusal(self) -> ReplyChunk:
         """Return the guard's refusal, said after whatever the reply did say.

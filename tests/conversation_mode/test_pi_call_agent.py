@@ -95,6 +95,16 @@ def _retried_after_partial(text: str) -> PiReply:
     return PiReply(text=text, retried=("529 overloaded",), partial="I think the ")
 
 
+def _retried_after_lead(text: str) -> PiReply:
+    """Message 1 spoke and read a file; message 2 wrote some text, then failed."""
+    return PiReply(
+        text=text,
+        lead="Let me look. ",
+        retried=("529 overloaded",),
+        partial="I think the ",
+    )
+
+
 def test_pi_call_agent_satisfies_the_session_attach_protocol(tmp_path: Path) -> None:
     del tmp_path
     assert issubclass(PiCallAgent, SessionAttach)
@@ -208,7 +218,7 @@ class TestSendTurnAndReplyComplete:
         replies = [PiReply("Ready."), _retried_after_partial("It returns the sum.")]
         agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
         chunks = await _chunks(agent)
-        restart = next(i for i, c in enumerate(chunks) if c.is_restart)
+        restart = next(i for i, c in enumerate(chunks) if c.retracts)
         after = "".join(c.text for c in chunks[restart:])
         assert (chunks[0].text, after) == ("I ", "It returns the sum.")
 
@@ -224,7 +234,7 @@ class TestSendTurnAndReplyComplete:
     ) -> None:
         retried = PiReply(text="ok", retried=("529 overloaded",))
         agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), retried]))
-        assert not any(c.is_restart for c in await _chunks(agent))
+        assert not any(c.retracts for c in await _chunks(agent))
 
     async def test_the_summary_keeps_only_the_successful_attempt_s_text(
         self, tmp_path: Path
@@ -232,6 +242,30 @@ class TestSendTurnAndReplyComplete:
         replies = [PiReply("Ready."), _retried_after_partial("## Decisions Made")]
         agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
         assert await agent.final_turn("summarize") == "## Decisions Made"
+
+    async def test_a_retry_keeps_the_text_of_the_messages_before_it(
+        self, tmp_path: Path
+    ) -> None:
+        """pi drops only the failed message; the turn's earlier messages stand."""
+        replies = [PiReply("Ready."), _retried_after_lead("It returns the sum.")]
+        agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
+        assert await _reply(agent) == "Let me look. It returns the sum."
+
+    async def test_the_summary_keeps_earlier_messages_and_the_retry(
+        self, tmp_path: Path
+    ) -> None:
+        replies = [PiReply("Ready."), _retried_after_lead("## Decisions Made")]
+        agent, _ = await _spawn(tmp_path, FakePiProcess(replies))
+        assert await agent.final_turn("summarize") == "Let me look. ## Decisions Made"
+
+    async def test_an_aborted_silent_retry_after_a_spoken_message_completes(
+        self, tmp_path: Path
+    ) -> None:
+        aborted = PiReply(
+            lead="Let me look. ", retried=("529",), partial="I think ", aborted=True
+        )
+        agent, _ = await _spawn(tmp_path, FakePiProcess([PiReply("Ready."), aborted]))
+        assert (await _reply(agent), agent.turns_handled) == ("Let me look. ", 1)
 
     async def test_retries_that_all_fail_fail_the_turn(self, tmp_path: Path) -> None:
         exhausted = PiReply(text="", retried=("529",), error="529 still overloaded")

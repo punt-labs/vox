@@ -60,6 +60,10 @@ class PiReply:
     retried: tuple[str, ...] = ()
     # Reply text each retried attempt wrote before the provider failed it.
     partial: str = ""
+    # An earlier assistant message of the same run: its text, then a read it
+    # asked for, ended ``toolUse`` before the retried message began. pi
+    # keeps it when it retries a later message.
+    lead: str = ""
     # The run was aborted: it settles with ``aborted: true`` and no reply
     # (after any ``retried`` attempts).
     aborted: bool = False
@@ -166,6 +170,45 @@ class FakePiProcess:
             self.exit(1)
 
     @staticmethod
+    def _lead(text: str) -> list[bytes]:
+        read = {"path": "README.md"}
+        return [
+            *(
+                _update({"type": "text_delta", "delta": piece})
+                for piece in re.findall(r"\S+\s*", text)
+            ),
+            _update(
+                {
+                    "type": "toolcall_end",
+                    "toolCall": {"name": "read", "arguments": read},
+                }
+            ),
+            _record(
+                {
+                    "type": "message_end",
+                    "message": {"role": "assistant", "stopReason": "toolUse"},
+                }
+            ),
+            _record(
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": "lead",
+                    "toolName": "read",
+                    "args": read,
+                }
+            ),
+            _record(
+                {
+                    "type": "tool_execution_end",
+                    "toolCallId": "lead",
+                    "toolName": "read",
+                    "isError": False,
+                    "result": {"content": [{"type": "text", "text": "# readme"}]},
+                }
+            ),
+        ]
+
+    @staticmethod
     def _records(reply: PiReply) -> list[bytes]:
         if reply.refuse:
             return [
@@ -195,6 +238,8 @@ class FakePiProcess:
                     }
                 )
             )
+        if reply.lead:
+            records += FakePiProcess._lead(reply.lead)
         for attempt, error in enumerate(reply.retried, start=1):
             records += [
                 _update({"type": "text_delta", "delta": piece})

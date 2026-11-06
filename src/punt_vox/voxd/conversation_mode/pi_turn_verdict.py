@@ -36,31 +36,35 @@ class GuardRefusalError(SessionAttachError):
 class PiTurnVerdict:
     """One turn's outcome, decided by its final attempt."""
 
-    __slots__ = ("_aborted", "_failure", "_refused", "_spoke")
+    __slots__ = ("_aborted", "_failure", "_kept", "_refused", "_unkept")
     _failure: str
     _aborted: bool
     _refused: bool
-    _spoke: bool
+    # Reply characters written by messages that ended, and by the open one.
+    _kept: int
+    _unkept: int
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._failure = ""
         self._aborted = False
         self._refused = False
-        self._spoke = False
+        self._kept = 0
+        self._unkept = 0
         return self
 
     def observe(self, record: PiRpcRecord) -> None:
         """Fold the next record of the turn into the verdict."""
         if record.is_retry_start:
-            # pi is retrying the failed attempt: only the retry's outcome and
-            # words count, so a retry that settles aborted and silent failed.
-            self._failure = ""
-            self._spoke = False
+            # pi drops only the failed message and writes it again: forget its
+            # failure and its words; the turn's earlier messages stand.
+            self._failure, self._unkept = "", 0
         elif failure := record.failure():
             self._failure = failure
+        elif record.ends_reply_message:
+            self._kept, self._unkept = self._kept + self._unkept, 0
+        self._unkept += len(record.text_delta())
         self._refused = self._refused or bool(ToolScreen.guard_refusal(record))
-        self._spoke = self._spoke or bool(record.text_delta())
         self._aborted = self._aborted or record.is_aborted
 
     @property
@@ -68,7 +72,7 @@ class PiTurnVerdict:
         """Why the turn failed, or ``""`` when its reply stands."""
         if self._failure:
             return self._failure
-        if self._aborted and not self._spoke:
+        if self._aborted and not self.spoke:
             return "the reply was aborted before any of it was written"
         return ""
 
@@ -79,5 +83,10 @@ class PiTurnVerdict:
 
     @property
     def spoke(self) -> bool:
-        """Whether the turn's latest attempt wrote any reply text."""
-        return self._spoke
+        """Whether any reply text of the turn still stands."""
+        return bool(self._kept or self._unkept)
+
+    @property
+    def unkept(self) -> int:
+        """Reply characters the open message wrote, which a retry would drop."""
+        return self._unkept

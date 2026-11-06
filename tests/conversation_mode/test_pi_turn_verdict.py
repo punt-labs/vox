@@ -89,6 +89,25 @@ def test_a_retry_forgets_what_the_failed_attempt_said() -> None:
     assert not _verdict(_text("I think "), _errored("529"), _RETRY).spoke
 
 
+_ENDED = _record(
+    {"type": "message_end", "message": {"role": "assistant", "stopReason": "toolUse"}}
+)
+
+
+def test_a_retry_keeps_what_an_ended_message_said() -> None:
+    assert _verdict(_text("Let me look."), _ENDED, _errored("529"), _RETRY).spoke
+
+
+def test_an_aborted_silent_retry_after_an_ended_message_stands() -> None:
+    records = (_text("Let me look."), _ENDED, _text("I "), _errored("529"))
+    assert _verdict(*records, _RETRY, _ABORTED).failure == ""
+
+
+def test_unkept_text_is_the_open_message_s_alone() -> None:
+    verdict = _verdict(_text("Let me look. "), _ENDED, _text("I think "))
+    assert verdict.unkept == len("I think ")
+
+
 def test_a_guard_block_is_a_refusal() -> None:
     blocked = _record(
         {
