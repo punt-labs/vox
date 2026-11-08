@@ -637,3 +637,4 @@
 {"ts":"2026-11-08T06:37:51Z","commit":"b525c48","source":null,"files_scored":408,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-11-08T06:40:19Z","commit":"271566d","source":null,"files_scored":408,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-11-08T06:50:56Z","commit":"2f81659","source":null,"files_scored":408,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-11-08T07:02:56Z","commit":"f2a23ab","source":null,"files_scored":408,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/claude_md.py":{"max_lcom":[0.067,0.0],"avg_lcom":[0.067,0.0]}}}
