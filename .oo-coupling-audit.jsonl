@@ -632,3 +632,4 @@
 {"ts":"2026-11-06T05:03:09Z","commit":"5dc5db3","source":null,"files_scored":409,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"the summary store imports reply_redactor to mask secrets before a summary is written (+1 efferent)","deltas":{"src/punt_vox/voxd/conversation_mode/call_summary.py":{"efferent_coupling":[3.0,4.0]}}}
 {"ts":"2026-11-06T05:03:10Z","commit":"5dc5db3","source":null,"files_scored":409,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-11-06T05:09:38Z","commit":"a3600a0","source":null,"files_scored":409,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-11-08T04:27:16Z","commit":"cca5b7d","source":null,"files_scored":408,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/__main__.py":{"public_names":[37.0,36.0]}}}

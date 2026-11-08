@@ -2,10 +2,10 @@
 
 Claude Code loads a ``CLAUDE.md`` and resolves any top-level ``@path`` line as
 an included file. A punt tool registers exactly one *bare* import line pointing
-at a file it owns entirely -- ``@.punt-labs/vox/CLAUDE.md`` in a repo's
-``CLAUDE.md`` (repo scope) or ``@~/.punt-labs/vox/CLAUDE.md`` in
-``~/.claude/CLAUDE.md`` (user scope) -- so the guide loads with no per-project
-edit. Composition happens at read time, when Claude Code resolves the import;
+at a file it owns entirely -- ``@.punt-labs/vox/CLAUDE.md`` in the repo's
+``CLAUDE.md``, written only by ``vox enable`` -- so the guide loads in every
+session in that repo. Composition happens at read time, when Claude Code
+resolves the import;
 this module never merges, marks, or manages a section inside the user's file
 (``tool-enable-disable.md`` § 2.1). Every byte outside the single import line is
 preserved verbatim.

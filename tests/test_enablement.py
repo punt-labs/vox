@@ -82,6 +82,22 @@ def test_enable_reaches_enabled(tmp_path: Path) -> None:
     _assert_biconditional(tmp_path)
 
 
+def test_enable_writes_repo_scope_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enable deposits guidance in the repo and never at user scope."""
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    RepoEnablement.for_repo(repo).enable()
+
+    assert _import_count(repo) == 1
+    assert not (home / ".claude" / "CLAUDE.md").exists()
+    assert not (home / ".punt-labs" / "vox" / "CLAUDE.md").exists()
+
+
 def test_enable_registers_settings(tmp_path: Path) -> None:
     RepoEnablement.for_repo(tmp_path).enable()
     settings = tmp_path / ".claude" / "settings.json"

@@ -1738,16 +1738,7 @@ class TestDoctorCommand:
 class TestInstallCommand:
     @pytest.fixture(autouse=True)
     def _redirect_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Redirect ``Path.home()`` so no install test writes the real home.
-
-        Step 3 of ``install`` calls ``VoxGuidance.for_current_user()``, which
-        resolves both the guide path (``~/.punt-labs/vox/CLAUDE.md`` via
-        ``user_state_dir``) and the global import target
-        (``~/.claude/CLAUDE.md``) from ``Path.home()``. Patching the classmethod
-        redirects both to the per-test temp tree, so the command exercises its
-        real write path against a redirected home rather than the developer's
-        (the vox-73m5 class of test-suite pollution).
-        """
+        """Redirect ``Path.home()`` so no install test can reach the real home."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     def test_install_success(self) -> None:
@@ -1825,44 +1816,33 @@ class TestInstallCommand:
         assert "Skipped" in result.output
         assert "Restart Claude Code" in result.output
 
-    def test_install_writes_under_redirected_home_only(self, tmp_path: Path) -> None:
-        """Guard: the install path never escapes the redirected home.
+    def test_install_creates_no_claude_md(self, tmp_path: Path) -> None:
+        """Install installs software only: no guide, no ``@``-import, anywhere.
 
-        Mirrors ``TestSuiteDoesNotTouchRealDaemon``. The guide + global import
-        are resolved entirely from ``Path.home()``, so with the autouse redirect
-        active every write lands under the temp tree. If that redirect
-        regresses, ``Path.home()`` resolves the developer's real home and these
-        assertions fail loudly -- making a real-home write structurally
-        impossible to ship silently (the vox-73m5 class).
+        Enable is the sole writer of vox's guidance, and only at repo scope.
+        With nothing in the home beforehand, install must leave both the
+        user-scope host file and a user-scope guide absent.
         """
-        assert Path.home() == tmp_path
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
-            patch(f"{_CLI}.subprocess.run") as mock_run,
-            patch("punt_vox.service.install", return_value="voxd running"),
-        ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = runner.invoke(app, ["install"])
+        _invoke_cli_with_plugin(["install"])
 
-        assert result.exit_code == 0
-        # Both artifacts landed under the redirected home, proving the command
-        # resolved neither the real ~/.punt-labs nor the real ~/.claude.
-        assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
-        assert (tmp_path / ".claude" / "CLAUDE.md").is_file()
+        assert not (tmp_path / ".claude" / "CLAUDE.md").exists()
+        assert not (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").exists()
+
+    def test_install_leaves_existing_claude_md_byte_identical(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-existing user ``CLAUDE.md`` and guide stay byte-identical."""
+        before = _seed_user_scope_files(tmp_path)
+
+        _invoke_cli_with_plugin(["install"])
+
+        assert _snapshot(before) == before
 
 
 class TestUninstallCommand:
     @pytest.fixture(autouse=True)
     def _redirect_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Redirect ``Path.home()`` so no uninstall test writes the real home.
-
-        ``uninstall`` calls ``VoxGuidance.for_current_user().uninstall()``,
-        which deletes ``~/.punt-labs/vox/CLAUDE.md`` and prunes the
-        ``~/.claude/CLAUDE.md`` import -- both resolved from ``Path.home()``.
-        Patching the classmethod keeps the teardown inside the per-test temp
-        tree (the vox-73m5 class of test-suite pollution).
-        """
+        """Redirect ``Path.home()`` so no uninstall test can reach the real home."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     def test_uninstall_success(self) -> None:
@@ -1877,75 +1857,62 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Uninstalled." in result.output
 
-    def test_uninstall_reports_failure_when_teardown_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A raising guide teardown exits non-zero and names what survives.
-
-        ``uninstall`` writes the user's global ``~/.claude/CLAUDE.md``, so a
-        teardown that fails (permissions, filesystem error) must not print
-        ``Uninstalled.`` and exit 0 -- that would be a silent failure hiding an
-        orphaned guide or ``@``-import. The command surfaces the error, names
-        the paths that may remain, and exits 1, distinct from a healthy
-        plugin-step outcome.
-        """
-        from punt_vox.guidance import VoxGuidance
-
-        def boom_uninstall(_self: VoxGuidance) -> str:
-            raise OSError("simulated teardown failure")
-
-        monkeypatch.setattr(VoxGuidance, "uninstall", boom_uninstall)
-
+    def test_uninstall_reports_plugin_failure(self) -> None:
+        """A failed ``claude plugin uninstall`` exits 1 and never claims success."""
         runner = CliRunner()
         with (
             patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
             patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
-            mock_run.return_value = MagicMock(returncode=0)  # plugin step succeeds
+            mock_run.return_value = MagicMock(returncode=1)
             result = runner.invoke(app, ["uninstall"])
 
         assert result.exit_code == 1
         assert "Uninstalled." not in result.output
-        assert "teardown failed" in result.stderr
-        assert "simulated teardown failure" in result.stderr
-        # Names the surviving artifacts so the user can finish by hand.
-        assert ".punt-labs/vox/CLAUDE.md" in result.stderr
-        assert "@~/.punt-labs/vox/CLAUDE.md" in result.stderr
-        assert ".claude/CLAUDE.md" in result.stderr
+        assert "plugin uninstall failed" in result.stderr
 
-    def test_uninstall_operates_under_redirected_home_only(
+    def test_uninstall_leaves_existing_claude_md_byte_identical(
         self, tmp_path: Path
     ) -> None:
-        """Guard: the uninstall teardown never escapes the redirected home.
+        """Uninstall touches no ``CLAUDE.md``; a stale user line is removed by hand."""
+        before = _seed_user_scope_files(tmp_path)
 
-        With a guide installed under the temp home, ``uninstall`` removes it and
-        prunes its import in place -- touching only the redirected tree. A
-        regressed redirect makes ``Path.home()`` real and fails this loudly, so
-        the real ``~/.claude`` / ``~/.punt-labs`` can never be torn down by the
-        suite (the vox-73m5 class).
-        """
-        assert Path.home() == tmp_path
-        from punt_vox.guidance import VoxGuidance
+        _invoke_cli_with_plugin(["uninstall"])
 
-        VoxGuidance.for_current_user().install()
-        doc = tmp_path / ".punt-labs" / "vox" / "CLAUDE.md"
-        global_md = tmp_path / ".claude" / "CLAUDE.md"
-        assert doc.is_file()
-        assert "@~/.punt-labs/vox/CLAUDE.md" in global_md.read_text(encoding="utf-8")
+        assert _snapshot(before) == before
 
-        runner = CliRunner()
-        with (
-            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
-            patch(f"{_CLI}.subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0)
-            result = runner.invoke(app, ["uninstall"])
 
-        assert result.exit_code == 0
-        assert not doc.exists()
-        assert "@~/.punt-labs/vox/CLAUDE.md" not in global_md.read_text(
-            encoding="utf-8"
-        )
+def _invoke_cli_with_plugin(args: list[str]) -> None:
+    """Run a plugin-lifecycle command with the claude CLI and daemon stubbed out.
+
+    The ``claude`` subprocess and the system service are the only boundaries
+    mocked; everything vox itself would do to the filesystem runs for real.
+    """
+    with (
+        patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+        patch(f"{_CLI}.subprocess.run") as mock_run,
+        patch("punt_vox.service.install", return_value="voxd running"),
+    ):
+        mock_run.return_value = MagicMock(returncode=0)
+        result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+
+
+def _seed_user_scope_files(home: Path) -> dict[Path, bytes]:
+    """Write a user ``CLAUDE.md`` carrying a stale vox import, plus a stale guide."""
+    files = {
+        home / ".claude" / "CLAUDE.md": b"# mine\n@~/.punt-labs/vox/CLAUDE.md\n",
+        home / ".punt-labs" / "vox" / "CLAUDE.md": b"stale guide\n",
+    }
+    for path, data in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return files
+
+
+def _snapshot(files: dict[Path, bytes]) -> dict[Path, bytes]:
+    """Re-read every path in *files* so a rewrite or a deletion shows up."""
+    return {path: path.read_bytes() for path in files}
 
 
 # ---------------------------------------------------------------------------

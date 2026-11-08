@@ -1,9 +1,8 @@
 """Content-hash stamp for the deposited vox agent guide.
 
-The deposited guide -- ``~/.punt-labs/vox/CLAUDE.md`` for the per-user
-:class:`~punt_vox.guidance.VoxGuidance` install, and the per-repo
-``.punt-labs/vox/CLAUDE.md`` for :class:`~punt_vox.deposited_files.DepositedGuide`
--- is a copy of the packaged asset ``src/punt_vox/assets/global-guidance.md``.
+The deposited guide -- the per-repo ``.punt-labs/vox/CLAUDE.md`` written by
+:class:`~punt_vox.deposited_files.DepositedGuide` -- is a copy of the packaged
+asset ``src/punt_vox/assets/global-guidance.md``.
 Nothing on disk previously told a reader which version of the packaged asset the
 deposited copy was written from, so the deposited copy could rot silently every
 time the packaged asset changed without ``enable`` being re-run. Agents then

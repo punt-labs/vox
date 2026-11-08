@@ -11,10 +11,7 @@ import pytest
 
 from punt_vox.claude_md import ClaudeMdImport
 
-# Both scopes the writer serves: the repo-scope line the mission adds and the
-# user-scope line install already registers.
 _REPO = "@.punt-labs/vox/CLAUDE.md"
-_USER = "@~/.punt-labs/vox/CLAUDE.md"
 
 
 def _writer(tmp_path: Path, import_line: str = _REPO) -> ClaudeMdImport:
@@ -76,13 +73,6 @@ def test_is_registered_reflects_presence(tmp_path: Path) -> None:
     assert writer.is_registered() is True
     writer.prune()
     assert writer.is_registered() is False
-
-
-def test_user_scope_line_is_also_supported(tmp_path: Path) -> None:
-    writer = _writer(tmp_path, _USER)
-    assert writer.register() is True
-    assert writer.path.read_text(encoding="utf-8") == f"{_USER}\n"
-    assert writer.prune() is True
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +370,6 @@ def test_construction_rejects_malformed_import_line(
         ClaudeMdImport(tmp_path / "CLAUDE.md", bad_line)
 
 
-def test_valid_lines_are_accepted(tmp_path: Path) -> None:
-    for line in (_REPO, _USER):
-        writer = ClaudeMdImport(tmp_path / "CLAUDE.md", line)
-        assert writer.import_line == line
+def test_canonical_repo_line_is_accepted(tmp_path: Path) -> None:
+    writer = ClaudeMdImport(tmp_path / "CLAUDE.md", _REPO)
+    assert writer.import_line == _REPO
