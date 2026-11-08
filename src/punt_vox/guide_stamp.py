@@ -77,8 +77,7 @@ class GuideStamp:
     @classmethod
     def for_packaged_asset(cls) -> Self:
         """Wire the real packaged-asset path bundled beside this package."""
-        asset = Path(__file__).resolve().parent / "assets" / "agent-guide.md"
-        return cls(asset)
+        return cls(Path(__file__).resolve().parent / "assets" / "agent-guide.md")
 
     def packaged_hash(self) -> str:
         """Return the hex SHA-256 of the packaged asset bytes."""
@@ -87,15 +86,16 @@ class GuideStamp:
     def stamped(self) -> str:
         """Return the packaged asset text with its source-hash stamp appended.
 
-        Body and digest come from the one bound asset, so they cannot disagree.
+        Body and digest come from one read of the asset, so they cannot disagree.
         The stamp is one HTML-comment line at the tail: a Markdown renderer
         shows nothing and a diff against the packaged asset differs only in the
         trailing lines. A missing final newline is padded so the stamp always
         sits on its own line, where :meth:`read` finds it by tag.
         """
-        text = self._packaged.read_text(encoding="utf-8")
-        suffix = "" if text.endswith("\n") else "\n"
-        return f"{text}{suffix}<!-- {self._STAMP_TAG}: {self.packaged_hash()} -->\n"
+        data = self._packaged.read_bytes()
+        body = data.decode("utf-8").removesuffix("\n")
+        digest = hashlib.sha256(data).hexdigest()
+        return f"{body}\n<!-- {self._STAMP_TAG}: {digest} -->\n"
 
     def read(self, deposited: Path) -> str | None:
         """Return the embedded digest from *deposited*, or ``None`` if unstamped.
