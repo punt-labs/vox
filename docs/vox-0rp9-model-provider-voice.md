@@ -3,7 +3,7 @@
 **Beads:** vox-0rp9.1 (model), vox-0rp9.2 (provider), vox-0rp9.3 (voice),
 vox-0rp9.4 (strip `mic:unmute` overloads). Parent epic: vox-0rp9.
 
-**Superseded in part (vox-f9ih, 2026-11-08):** the user-scope guide this
+**Superseded in part (vox-f9ih, 2026-11-07):** the user-scope guide this
 record describes (`VoxGuidance`, `guidance.py`, `~/.punt-labs/vox/CLAUDE.md`,
 `global-guidance.md`) is gone. `vox enable` now deposits the guide per repo
 from `assets/agent-guide.md`; install writes no `CLAUDE.md`.

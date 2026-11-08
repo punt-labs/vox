@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`. The agent
   guide is per repo: `vox enable` deposits `.punt-labs/vox/CLAUDE.md`, the
   enabled marker, and the `@.punt-labs/vox/CLAUDE.md` import. A stale
-  user-scope import line from an older install is left alone; delete it by
-  hand. The packaged guide asset is renamed `agent-guide.md`.
+  user-scope import line and `~/.punt-labs/vox/CLAUDE.md` file from an older
+  install are left alone; delete both by hand. The packaged guide asset is renamed `agent-guide.md`.
 
 ### Removed
 

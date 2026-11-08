@@ -470,7 +470,7 @@ Shell        ──► vox say "hi"  ── WebSocket ──►    │
 
 The agent-facing usage guide — how to drive the `mic` MCP tools and the vox slash commands — is per repo. `vox enable` (or `/vox enable`) deposits it at `.punt-labs/vox/CLAUDE.md`, writes the `.punt-labs/vox/enabled` marker, and adds the line `@.punt-labs/vox/CLAUDE.md` to the repo's `CLAUDE.md`; `vox disable` removes the import line and the marker. Re-running `vox enable` upgrades the deposited guide. `vox install` installs software only: it never reads or writes any `CLAUDE.md`, in the repo or under `~/.claude/`.
 
-If an older vox left an `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`, delete that line by hand; current vox neither writes nor removes it.
+If an older vox left an `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`, delete that line and the file `~/.punt-labs/vox/CLAUDE.md` by hand; current vox neither writes nor removes either, and the old guide goes stale.
 
 ### Service Install
 
