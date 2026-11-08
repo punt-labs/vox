@@ -94,8 +94,20 @@ class DepositedGuide:
         detect a copy that has fallen behind the packaged source without
         re-hashing the whole file. The stamp is an HTML comment, invisible to a
         Markdown reader.
+
+        The asset is read in full before the truncating write, so a broken
+        install raises with the reinstall step and leaves any existing deposit
+        byte-identical.
         """
-        self._file.write(GuideStamp.for_packaged_asset().stamped())
+        try:
+            text = GuideStamp.for_packaged_asset().stamped()
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = (
+                f"vox package is missing its agent guide asset ({exc}); "
+                "reinstall punt-vox"
+            )
+            raise OSError(msg) from exc
+        self._file.write(text)
 
     def verify(self) -> GuideStampVerdict:
         """Compare this deposit's embedded stamp to the packaged asset."""

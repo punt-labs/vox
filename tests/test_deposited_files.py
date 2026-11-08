@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from punt_vox.deposited_files import DepositedGuide
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 
@@ -40,3 +42,33 @@ def test_hand_edited_deposit_is_unstamped(tmp_path: Path) -> None:
     guide.path.parent.mkdir(parents=True)
     guide.path.write_text("hand-written guide\n", encoding="utf-8")
     assert guide.verify() is GuideStampVerdict.ABSENT_STAMP
+
+
+def _missing_asset(tmp_path: Path) -> GuideStamp:
+    return GuideStamp(tmp_path / "site-packages" / "agent-guide.md")
+
+
+def test_deposit_with_missing_asset_names_the_reinstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        GuideStamp, "for_packaged_asset", lambda: _missing_asset(tmp_path)
+    )
+    with pytest.raises(
+        OSError, match=r"missing its agent guide asset \(.+\); reinstall punt-vox$"
+    ):
+        _guide(tmp_path).deposit()
+
+
+def test_deposit_with_missing_asset_leaves_the_existing_deposit_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guide = _guide(tmp_path)
+    guide.deposit()
+    before = guide.path.read_bytes()
+    monkeypatch.setattr(
+        GuideStamp, "for_packaged_asset", lambda: _missing_asset(tmp_path)
+    )
+    with pytest.raises(OSError):
+        guide.deposit()
+    assert guide.path.read_bytes() == before
