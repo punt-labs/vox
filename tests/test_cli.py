@@ -1761,6 +1761,21 @@ class TestInstallCommand:
 
         assert result.exit_code != 0
 
+    def test_install_reports_plugin_failure_with_exit_code(self) -> None:
+        """A failed ``claude plugin install`` names the command and its status."""
+        with (
+            patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
+            patch(f"{_CLI}.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=2)
+            result = CliRunner().invoke(app, ["install"])
+
+        assert result.exit_code == 1
+        assert "Restart Claude Code" not in result.output
+        assert result.stderr == (
+            "Error: 'claude plugin install vox@punt-labs' exited 2.\n"
+        )
+
     def test_install_degrades_when_launchctl_fails(self) -> None:
         """macOS bring-up failure (LaunchctlError) skips gracefully, exit 0.
 
@@ -1864,12 +1879,14 @@ class TestUninstallCommand:
             patch(f"{_CLI}.shutil.which", return_value="/usr/bin/claude"),
             patch(f"{_CLI}.subprocess.run") as mock_run,
         ):
-            mock_run.return_value = MagicMock(returncode=1)
+            mock_run.return_value = MagicMock(returncode=3)
             result = runner.invoke(app, ["uninstall"])
 
         assert result.exit_code == 1
         assert "Uninstalled." not in result.output
-        assert "plugin uninstall failed" in result.stderr
+        assert result.stderr == (
+            "Error: 'claude plugin uninstall vox@punt-labs' exited 3.\n"
+        )
 
     def test_uninstall_leaves_existing_claude_md_byte_identical(
         self, tmp_path: Path

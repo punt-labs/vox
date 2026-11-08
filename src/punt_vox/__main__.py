@@ -781,23 +781,26 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 _PLUGIN_ID = "vox@punt-labs"
 
 
+def _claude_plugin(verb: str) -> None:
+    """Run ``claude plugin <verb>`` on the vox plugin; exit 1 if it fails."""
+    claude = shutil.which("claude")
+    if not claude:
+        typer.echo("Error: claude CLI not found on PATH", err=True)
+        raise typer.Exit(code=1)
+    argv = [claude, "plugin", verb, _PLUGIN_ID, "--scope", "user"]
+    returncode = subprocess.run(argv, check=False).returncode
+    if returncode != 0:
+        command = f"claude plugin {verb} {_PLUGIN_ID}"
+        typer.echo(f"Error: '{command}' exited {returncode}.", err=True)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def install() -> None:
     """Install the Claude Code plugin and daemon service."""
     # Step 1: Claude Code plugin
     typer.echo("[1/2] Installing Claude Code plugin...")
-    claude = shutil.which("claude")
-    if not claude:
-        typer.echo("Error: claude CLI not found on PATH", err=True)
-        raise typer.Exit(code=1)
-
-    result = subprocess.run(
-        [claude, "plugin", "install", _PLUGIN_ID, "--scope", "user"],
-        check=False,
-    )
-    if result.returncode != 0:
-        typer.echo("Error: plugin install failed", err=True)
-        raise typer.Exit(code=1)
+    _claude_plugin("install")
     typer.echo("  \u2713 plugin installed")
 
     # Step 2: daemon service (best-effort — not available in CI/containers)
@@ -833,19 +836,7 @@ def install() -> None:
 @app.command()
 def uninstall() -> None:
     """Uninstall the Claude Code plugin."""
-    claude = shutil.which("claude")
-    if not claude:
-        typer.echo("Error: claude CLI not found on PATH", err=True)
-        raise typer.Exit(code=1)
-
-    result = subprocess.run(
-        [claude, "plugin", "uninstall", _PLUGIN_ID, "--scope", "user"],
-        check=False,
-    )
-    if result.returncode != 0:
-        typer.echo("Error: plugin uninstall failed", err=True)
-        raise typer.Exit(code=1)
-
+    _claude_plugin("uninstall")
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
 
 
