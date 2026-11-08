@@ -3,6 +3,11 @@
 **Beads:** vox-0rp9.1 (model), vox-0rp9.2 (provider), vox-0rp9.3 (voice),
 vox-0rp9.4 (strip `mic:unmute` overloads). Parent epic: vox-0rp9.
 
+**Superseded in part (vox-f9ih, 2026-11-08):** the user-scope guide this
+record describes (`VoxGuidance`, `guidance.py`, `~/.punt-labs/vox/CLAUDE.md`,
+`global-guidance.md`) is gone. `vox enable` now deposits the guide per repo
+from `assets/agent-guide.md`; install writes no `CLAUDE.md`.
+
 **Sequence:** implementation missions dispatch AFTER PR #396 (vox-0rp9.5,
 `mic:notify` off-mode retirement) merges to main. This design is one document
 covering four sibling units of one architectural change; the implementation

@@ -76,7 +76,7 @@ tests/
   test_audible_notify.py     # Audible notification gating
   test_suppress_output.py    # PostToolUse output suppression
   test_control.py            # Control-action (zero-text) handling
-  test_guidance.py           # Deposited guidance content
+  test_deposited_files.py    # Repo guide deposit + stamp verification
   test_claude_md.py          # CLAUDE.md @-import management
 
   # MCP server (mic)

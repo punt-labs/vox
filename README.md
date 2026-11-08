@@ -46,7 +46,7 @@ Restart Claude Code, then:
 
 ### CLI-Only Install (No Claude Code Plugin)
 
-Install the `vox` CLI without the Claude Code plugin — for a non-Claude harness (Codex, Cursor, a plain terminal) or a Claude environment where org policy blocks plugin installation. The binary, daemon, tool directories, seed content, and the `~/.punt-labs/vox/CLAUDE.md` guide import all still install; only the marketplace + plugin steps are skipped. Turn a repo on with `vox enable`.
+Install the `vox` CLI without the Claude Code plugin — for a non-Claude harness (Codex, Cursor, a plain terminal) or a Claude environment where org policy blocks plugin installation. The binary, daemon, tool directories, and seed content all still install; only the marketplace + plugin steps are skipped. Turn a repo on with `vox enable`.
 
 ```bash
 # Flag form
@@ -460,7 +460,6 @@ Shell        ──► vox say "hi"  ── WebSocket ──►    │
 | Purpose | Path |
 |---------|------|
 | Config (API keys) | `~/.punt-labs/vox/keys.env` |
-| Agent usage guide | `~/.punt-labs/vox/CLAUDE.md` |
 | Logs | `~/.punt-labs/vox/logs/vox.log` |
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
@@ -469,7 +468,9 @@ Shell        ──► vox say "hi"  ── WebSocket ──►    │
 
 ### Agent Usage Guide
 
-`vox install` writes an agent-facing usage guide to `~/.punt-labs/vox/CLAUDE.md` — how to drive the `mic` MCP tools and the vox slash commands — and registers the line `@~/.punt-labs/vox/CLAUDE.md` in `~/.claude/CLAUDE.md` inside a shared `<!-- punt:mandatory-reading -->` section. Claude Code resolves that top-level `@`-import into every session's context, so agents get vox guidance in any project without a per-project edit. The installer rewrites the guide on every install (single source of truth), and the registration is a no-op when already present — it never rewrites `~/.claude/CLAUDE.md` unnecessarily. `vox uninstall` deletes the guide and prunes the import line.
+The agent-facing usage guide — how to drive the `mic` MCP tools and the vox slash commands — is per repo. `vox enable` (or `/vox enable`) deposits it at `.punt-labs/vox/CLAUDE.md`, writes the `.punt-labs/vox/enabled` marker, and adds the line `@.punt-labs/vox/CLAUDE.md` to the repo's `CLAUDE.md`; `vox disable` removes the import line and the marker. Re-running `vox enable` upgrades the deposited guide. `vox install` installs software only: it never reads or writes any `CLAUDE.md`, in the repo or under `~/.claude/`.
+
+If an older vox left an `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`, delete that line by hand; current vox neither writes nor removes it.
 
 ### Service Install
 
