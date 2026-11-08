@@ -161,12 +161,8 @@ MagicMock/
 # including worktrees under .claude/worktrees/ and pytest temp roots.
 *.punt-import.lock
 
-# ethos runtime (never track) — DES-058 live zone + mission locks
-.punt-labs/**/*.ethos-tmp*
-.punt-labs/**/local/**
-.punt-labs/ethos/missions/**/*.lock
-# ethos: machine-local files (.local.*) — may hold secrets, never track
-.punt-labs/**/*.local.*
+# Biff private configuration (not Ethos-owned)
+.punt-labs/biff/config.local.yaml
 
 # vox-bst7 spike: the live EL agent handle is account-scoped identity —
 # recreate with setup_agent.py, never commit
