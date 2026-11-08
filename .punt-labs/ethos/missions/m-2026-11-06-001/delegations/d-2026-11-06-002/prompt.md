@@ -1,7 +1,0 @@
-You are the worker on ethos mission m-2026-11-06-001 (successor to m-2026-11-05-005, bead vox-hobl.2). Read `ethos mission show m-2026-11-06-001` first, then run `biff plan "vox-hobl.2 guard NUL + call-lock"`. Work only in <repo>/.claude/worktrees/call-agent (branch feat/vox-hobl2-call-agent), inside the contract write-set.
-
-Two fixes, tests first, one commit each, make check green each, `git add <file>` only, messages end with `Co-Authored-By: Claude Opus 5.5 <[redacted-email]>`:
-1. secret_guard.js (lines ~117, ~128): list directory-grep candidates with `rg --files --null` and split on "\0" so a newline in a filename cannot split one path into two pieces that evade a directory-anchored pattern (djb proved `config/a\nb.secret.json` under `config/*.secret.json` evades today). Node-level test reproducing that case; it must fail before the fix.
-2. plugin/hooks/call-lock.sh: remove the dead VOX_CALL_RELAY bypass and the `/call transfer` bypass (transfer and the relay no longer exist); make the stop bypass match both `/call stop` and `/vox:call stop`. Update tests/test_hook_gate.py accordingly (drop transfer/relay bypass tests, add a `/vox:call stop` test).
-
-Commit on your branch; do not push, do not touch PRs or merge — the leader does that. No real call. Submit with `ethos mission result m-2026-11-06-001` and report shas, tests (including the subprocess-marked guard tests run directly), and make check.
