@@ -539,8 +539,8 @@ vox doctor                                     # Check setup
 vox log debug                                  # Raise daemon log verbosity (info | debug)
 vox cache status                               # Show synthesis cache entries, size, and path
 vox cache clear                                # Delete all cached MP3 files
-vox install                                    # Install Claude Code plugin + register usage guide
-vox uninstall                                  # Remove the Claude Code plugin + usage guide
+vox install                                    # Install Claude Code plugin + daemon (no CLAUDE.md changes)
+vox uninstall                                  # Remove the Claude Code plugin
 vox desktop install                            # Register the MCP server with Claude Desktop
 vox desktop uninstall                          # Remove the MCP server registration
 vox mcp                                        # Start MCP server (stdio)
