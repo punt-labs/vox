@@ -32,7 +32,7 @@ def test_stamped_appends_tag_line_at_tail(tmp_path: Path) -> None:
     asset = tmp_path / "asset.md"
     asset.write_text("body text\n", encoding="utf-8")
     stamp = GuideStamp(asset)
-    stamped = stamp.stamped("body text\n")
+    stamped = stamp.stamped()
     # The whole asset lands verbatim first, then the stamp on its own line.
     assert stamped.startswith("body text\n")
     tail = stamped.removeprefix("body text\n")
@@ -45,7 +45,7 @@ def test_stamped_pads_missing_final_newline(tmp_path: Path) -> None:
     asset = tmp_path / "asset.md"
     asset.write_text("no trailing newline", encoding="utf-8")
     stamp = GuideStamp(asset)
-    stamped = stamp.stamped("no trailing newline")
+    stamped = stamp.stamped()
     assert stamped == (
         "no trailing newline\n"
         f"<!-- vox-guide-source-sha256: {stamp.packaged_hash()} -->\n"
@@ -70,7 +70,7 @@ def test_read_recovers_embedded_digest(tmp_path: Path) -> None:
     asset.write_text("body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     assert stamp.read(deposited) == stamp.packaged_hash()
 
 
@@ -126,7 +126,7 @@ def test_verify_agrees_on_fresh_deposit(tmp_path: Path) -> None:
     asset.write_text("body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     assert stamp.verify(deposited) is GuideStampVerdict.AGREE
 
 
@@ -135,7 +135,7 @@ def test_verify_diverges_after_asset_changes(tmp_path: Path) -> None:
     asset.write_text("original body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("original body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     # Packaged asset drifts after the deposit was stamped.
     asset.write_text("new body\n", encoding="utf-8")
     assert stamp.verify(deposited) is GuideStampVerdict.DIVERGE

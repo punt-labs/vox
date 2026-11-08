@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Self, final
 
+from punt_vox.deposited_files import DepositedGuide
 from punt_vox.dirs import find_repo_root
 from punt_vox.doctor_result import CheckResult
-from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
+from punt_vox.guide_stamp import GuideStampVerdict
 
 __all__ = ["GuideCheck"]
 
@@ -65,8 +66,7 @@ class GuideCheck:
             return []
         if not deposited_present:
             return []
-        verdict = GuideStamp.for_packaged_asset().verify(deposited)
-        return [self._result(verdict)]
+        return [self._result(DepositedGuide(deposited, root).verify())]
 
     @staticmethod
     def _result(verdict: GuideStampVerdict) -> CheckResult:

@@ -46,7 +46,7 @@ class TestGuideCheck:
         packaged = self._packaged(tmp_path)
         stamp = GuideStamp(packaged)
         deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
-        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
 
         with (
             patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
@@ -62,7 +62,7 @@ class TestGuideCheck:
         packaged = self._packaged(tmp_path)
         stamp = GuideStamp(packaged)
         deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
-        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
         # Packaged asset drifts after the deposit was stamped.
         packaged.write_text("new packaged body\n", encoding="utf-8")
 

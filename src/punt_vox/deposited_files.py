@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Self, final
 
-from punt_vox.guide_stamp import GuideStamp
+from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.tool_owned_file import ToolOwnedFile
 
 __all__ = ["DepositedGuide", "VoxMarker"]
@@ -72,8 +72,6 @@ class DepositedGuide:
 
     _file: ToolOwnedFile
 
-    _ASSET_NAME = "global-guidance.md"
-
     def __new__(cls, path: Path, base: Path) -> Self:
         self = super().__new__(cls)
         self._file = ToolOwnedFile(path, base)
@@ -97,11 +95,8 @@ class DepositedGuide:
         re-hashing the whole file. The stamp is an HTML comment, invisible to a
         Markdown reader.
         """
-        stamp = GuideStamp.for_packaged_asset()
-        self._file.write(stamp.stamped(self._asset_text()))
+        self._file.write(GuideStamp.for_packaged_asset().stamped())
 
-    @classmethod
-    def _asset_text(cls) -> str:
-        """Read the guide bundled beside this package."""
-        asset = Path(__file__).resolve().parent / "assets" / cls._ASSET_NAME
-        return asset.read_text(encoding="utf-8")
+    def verify(self) -> GuideStampVerdict:
+        """Compare this deposit's embedded stamp to the packaged asset."""
+        return GuideStamp.for_packaged_asset().verify(self._file.path)
