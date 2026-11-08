@@ -118,10 +118,18 @@ class GuideStamp:
         return None if match is None else match.group(1)
 
     def verify(self, deposited: Path) -> GuideStampVerdict:
-        """Compare *deposited*'s embedded stamp to a fresh packaged hash."""
+        """Compare *deposited*'s embedded stamp to a fresh packaged hash.
+
+        The packaged asset is hashed first, whatever the deposit holds: it is the
+        reference every verdict is judged against, so a missing or unreadable
+        asset raises its ``OSError`` here rather than hiding behind an
+        ``ABSENT_STAMP`` verdict whose remedy (``vox enable``) would fail on the
+        same broken install.
+        """
+        packaged_digest = self.packaged_hash()
         stamped_digest = self.read(deposited)
         if stamped_digest is None:
             return GuideStampVerdict.ABSENT_STAMP
-        if stamped_digest == self.packaged_hash():
+        if stamped_digest == packaged_digest:
             return GuideStampVerdict.AGREE
         return GuideStampVerdict.DIVERGE
