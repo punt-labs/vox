@@ -2,17 +2,7 @@
 
 > **Authoritative workflow is `CLAUDE.md` (noted 2026-07-03).** This file is a generic beads onboarding stub. vox requires **all changes to land via pull request; direct pushes to `main` are prohibited** (branch protection). Below, "push" means push your **feature branch** and open a PR — never push to `main`.
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
-
-## Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-```
+Read `.punt-labs/punt/CLAUDE.md` before planning or writing to the issue tracker. Linear is the tracker of record where this repo is migrated. Beads is a local mirror there and the tracker of record elsewhere.
 
 ## Landing the Plane (Session Completion)
 
