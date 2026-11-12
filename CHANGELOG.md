@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enabled marker, and the `@.punt-labs/vox/CLAUDE.md` import. A stale
   user-scope import line and `~/.punt-labs/vox/CLAUDE.md` file from an older
   install are left alone; delete both by hand. The packaged guide asset is renamed `agent-guide.md`.
+- **Linear is the tracker of record for vox; beads is a scoped local
+  mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
+  team Punt Labs) each carrying the `repo:vox` label and a type label;
+  the three open epics are Linear projects (`vox Packaging remediation`,
+  `vox opencode host support`, `vox Conversation Mode`).
+  `.beads/config.yaml` sets `issue-prefix: vox` and
+  `linear.pull_label: repo:vox` with the prefix-precedence and by-id-pull
+  notes, and `.beads/.gitignore` ignores the Linear sync lock and the pull
+  clock. The deposited tracker guide (`.punt-labs/punt/CLAUDE.md`) and the
+  `CLAUDE.md` Issue-tracking section already point at Linear.
 
 ### Removed
 
