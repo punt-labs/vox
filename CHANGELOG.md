@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vox enable` grants named data-plane CLI rules and scoped skill
   rules only (PL-1033).** `Bash(vox:*)` is replaced by one
   `Bash(vox <subcommand>:*)` rule per data-plane subcommand (`call`,
-  `doctor`, `log`, `model`, `music`, `provider`, `rec`, `say`, `speak`,
+  `doctor`, `log`, `model`, `music`, `notify`, `provider`, `rec`, `say`, `speak`,
   `status`, `version`, `vibe`, `voice`), so `install`, `uninstall`,
   `enable`, `disable`, `daemon`, `desktop` and `cache` keep prompting.
   Every `Skill()` rule now uses its plugin-scoped `Skill(vox:<cmd>)` name.

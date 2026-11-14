@@ -9,7 +9,7 @@ from __future__ import annotations
 __all__ = ["VOX_RULES"]
 
 # Least privilege (permissions.md §§ 3, 6): the CLI data plane by name, so
-# install/uninstall/enable/disable/daemon/desktop/cache keep prompting, and
+# install/uninstall/enable/disable/daemon/desktop/cache/mcp keep prompting, and
 # skills by scoped name (scripts/check-skill-permissions.sh checks _COMMANDS).
 _CLI_SUBCOMMANDS: tuple[str, ...] = (
     "call",
@@ -17,6 +17,7 @@ _CLI_SUBCOMMANDS: tuple[str, ...] = (
     "log",
     "model",
     "music",
+    "notify",
     "provider",
     "rec",
     "say",
