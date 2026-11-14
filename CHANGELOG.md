@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`vox enable` grants named data-plane CLI rules and scoped skill
+  rules only (PL-1033).** `Bash(vox:*)` is replaced by one
+  `Bash(vox <subcommand>:*)` rule per data-plane subcommand (`call`,
+  `doctor`, `log`, `model`, `music`, `notify`, `provider`, `rec`, `say`, `speak`,
+  `status`, `version`, `vibe`, `voice`), so `install`, `uninstall`,
+  `enable`, `disable`, `daemon`, `desktop` and `cache` keep prompting.
+  Every `Skill()` rule now uses its plugin-scoped `Skill(vox:<cmd>)` name.
+  `vox disable` removes the new set; the old `Bash(vox:*)` and bare
+  `Skill(<cmd>)` rules an earlier `vox enable` wrote stay until you delete
+  them (no cleanup code, punt-kit#396).
+
 - **Linear is the tracker of record for vox; beads is a scoped local
   mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
   team Punt Labs) each carrying the `repo:vox` label and a type label;

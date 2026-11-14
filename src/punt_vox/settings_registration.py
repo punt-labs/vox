@@ -2,9 +2,11 @@
 
 ``tool-enable-disable.md`` § 2.8 lets ``enable`` touch one file outside vox's own
 subtree -- ``<repo>/.claude/settings.json`` -- and only additively. The
-deterministic entry set (``_VOX_RULES``) is vox's identity in that file:
-``Bash(vox:*)`` for a ``--no-plugin`` agent driving the ``vox`` CLI, plus the
-plugin's MCP tool wildcard and a ``Skill()`` rule per shipped command, so an
+deterministic entry set (:data:`punt_vox.permission_rules.VOX_RULES`) is vox's
+identity in that file:
+a ``Bash(vox <subcommand>:*)`` rule per data-plane CLI subcommand for an agent
+driving the ``vox`` CLI, plus the plugin's MCP tool wildcard and a scoped
+``Skill(vox:<cmd>)`` rule per shipped command, so an
 enabled repo never prompts for vox's own tools. Nothing is granted outside the
 repo, and the ``vox-dev`` rules are left to maintainers to add by hand.
 :class:`SettingsRegistration` adds the missing members with the
@@ -24,6 +26,7 @@ import pwd
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.permission_rules import VOX_RULES
 from punt_vox.pinned_directory import PinnedDirectory
 from punt_vox.settings_document import SettingsDocument
 from punt_vox.sibling_lock import SiblingLock
@@ -32,23 +35,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = ["SettingsRegistration"]
-
-# Skill names must match plugin/commands/*.md (namespaced-only commands as
-# vox:<name>); scripts/check-skill-permissions.sh enforces the parity.
-_VOX_RULES: tuple[str, ...] = (
-    "Bash(vox:*)",
-    "mcp__plugin_vox_mic__*",
-    "Skill(call)",
-    "Skill(music)",
-    "Skill(mute)",
-    "Skill(unmute)",
-    "Skill(vibe)",
-    "Skill(vox)",
-    "Skill(vox:model)",
-    "Skill(vox:provider)",
-    "Skill(vox:recap)",
-    "Skill(vox:voice)",
-)
 
 
 @final
@@ -67,9 +53,7 @@ class SettingsRegistration:
     _lock: SiblingLock
     _entries: tuple[str, ...]
 
-    def __new__(
-        cls, settings_path: Path, entries: tuple[str, ...] = _VOX_RULES
-    ) -> Self:
+    def __new__(cls, settings_path: Path, entries: tuple[str, ...] = VOX_RULES) -> Self:
         self = super().__new__(cls)
         self._path = settings_path
         self._lock = SiblingLock(settings_path)

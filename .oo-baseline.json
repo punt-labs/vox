@@ -1468,6 +1468,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/permission_rules.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.0,
+    "max_complexity": 0.0,
+    "avg_complexity": 0.0,
+    "module_size": 42.0,
+    "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/pinned_directory.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -2501,7 +2514,7 @@
     "avg_params": 0.67,
     "max_complexity": 3.0,
     "avg_complexity": 1.78,
-    "module_size": 131.0,
+    "module_size": 116.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
-# Verify _VOX_RULES (the rules `vox enable` grants in a repo's
-# .claude/settings.json) has a Skill(<name>) rule for every command in
-# plugin/commands/*.md, and no other. Drift here causes unexplained
-# permission prompts on first use. NAMESPACED_ONLY is read from
-# plugin/hooks/session-start.sh. Fast (no network; uses standard shell
+# Verify VOX_RULES (the rules `vox enable` grants in a repo's
+# .claude/settings.json) has a scoped Skill(vox:<name>) rule for every
+# command in plugin/commands/*.md, and no other (permissions.md § 3 bans the
+# bare Skill(<name>) form). Drift here causes unexplained permission
+# prompts on first use. Fast (no network; uses standard shell
 # utilities only).
 set -euo pipefail
 shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/plugin/hooks/session-start.sh"
-RULES="$ROOT/src/punt_vox/settings_registration.py"
+RULES="$ROOT/src/punt_vox/permission_rules.py"
 COMMANDS_DIR="$ROOT/plugin/commands"
 
-if [[ ! -f "$HOOK" ]]; then
-  echo "error: $HOOK not found" >&2
-  exit 2
-fi
 if [[ ! -f "$RULES" ]]; then
   echo "error: $RULES not found" >&2
   exit 2
@@ -45,69 +40,21 @@ if [[ ${#COMMANDS[@]} -eq 0 ]]; then
   exit 2
 fi
 
-# Commands the hook deploys only under their plugin-namespaced form
-# (/vox:model, never bare /model) — parsed from the hook's own
-# NAMESPACED_ONLY array so the two lists cannot drift apart. Each such
-# command's Skill() grant must read Skill(vox:<name>), not Skill(<name>).
-NAMESPACED=()
-while IFS= read -r name; do
-  NAMESPACED+=("$name")
-done < <(
-  sed -n 's/^NAMESPACED_ONLY=(\(.*\))$/\1/p' "$HOOK" \
-    | tr ' ' '\n' \
-    | sed -E 's/\.md$//' \
-    | sort
-)
-
-# Skill() rules declared in the hook's PLUGIN_RULES jq expression.
-# Scoped to the PLUGIN_RULES=$(jq -n ...) assignment block ONLY -- a
-# `Skill(...)` token can legitimately appear in an explanatory comment
-# elsewhere in the hook (as it does, describing why a grant is
-# namespaced), and grepping the whole file would count that prose as a
-# real grant. Scoping to the block that actually builds PLUGIN_RULES
-# means a grant deleted from the array is caught even if a comment still
-# mentions its name. A colon is allowed in the extraction regex so a
-# namespaced grant like Skill(vox:model) is captured whole, not split at
-# the colon.
+# Skill() rules: one Skill(vox:<name>) per name in the _COMMANDS tuple of
+# src/punt_vox/permission_rules.py.
 ALLOWED=()
 while IFS= read -r allow; do
-  ALLOWED+=("$allow")
+  ALLOWED+=("vox:$allow")
 done < <(
-  # shellcheck disable=SC2016  # single quotes deliberate: this is a sed
-  # address expression, not a shell variable expansion.
-  sed -n '/^_VOX_RULES: /,/^)$/p' "$RULES" \
-    | grep -oE 'Skill\([a-z_:-]+\)' \
-    | sed -E 's/Skill\(|\)//g' \
+  sed -n '/^_COMMANDS: /,/^)$/p' "$RULES" \
+    | grep -oE '"[^"]+"' \
+    | tr -d '"' \
     | sort -u
 )
 
-_is_namespaced() {
-  local cmd="$1" n
-  # Guard against an empty NAMESPACED: on bash 3.2 (stock macOS /bin/bash),
-  # "${empty_array[@]}" raises "unbound variable" under `set -u` even after
-  # `arr=()` -- a real bug in that bash version, fixed in 4.4. NAMESPACED is
-  # non-empty today, but a future edit to session-start.sh's NAMESPACED_ONLY
-  # line (or a sed-pattern drift) could empty it, and this gate must fail
-  # with a clear message, not crash on an unbound-variable error.
-  [[ ${#NAMESPACED[@]} -eq 0 ]] && return 1
-  for n in "${NAMESPACED[@]}"; do
-    [[ "$cmd" == "$n" ]] && return 0
-  done
-  return 1
-}
-
-# ALLOWED can legitimately be empty (e.g. a future edit breaks the
-# _VOX_RULES sed extraction above), and on bash 3.2 (stock macOS
-# /bin/bash) "${empty_array[@]}" raises "unbound variable" under `set -u`
-# even after `arr=()`. Guard every loop over it so an empty ALLOWED is
-# reported as "everything is missing", not a crash.
 missing=()
 for cmd in "${COMMANDS[@]}"; do
-  if _is_namespaced "$cmd"; then
-    want="vox:$cmd"
-  else
-    want="$cmd"
-  fi
+  want="vox:$cmd"
   found=0
   if [[ ${#ALLOWED[@]} -gt 0 ]]; then
     for allow in "${ALLOWED[@]}"; do
@@ -122,8 +69,7 @@ if [[ ${#ALLOWED[@]} -gt 0 ]]; then
   for allow in "${ALLOWED[@]}"; do
     found=0
     for cmd in "${COMMANDS[@]}"; do
-      want="$cmd"
-      _is_namespaced "$cmd" && want="vox:$cmd"
+      want="vox:$cmd"
       [[ "$want" == "$allow" ]] && { found=1; break; }
     done
     [[ $found -eq 0 ]] && extra+=("$allow")
@@ -132,12 +78,12 @@ fi
 
 status=0
 if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "error: plugin/commands/*.md has no matching Skill() rule in _VOX_RULES (src/punt_vox/settings_registration.py):" >&2
+  echo "error: plugin/commands/*.md has no matching Skill() rule in VOX_RULES (src/punt_vox/permission_rules.py):" >&2
   for m in "${missing[@]}"; do echo "  - $m" >&2; done
   status=1
 fi
 if [[ ${#extra[@]} -gt 0 ]]; then
-  echo "error: _VOX_RULES grants Skill() for commands that do not exist:" >&2
+  echo "error: VOX_RULES grants Skill() for commands that do not exist:" >&2
   for e in "${extra[@]}"; do echo "  - $e" >&2; done
   status=1
 fi
