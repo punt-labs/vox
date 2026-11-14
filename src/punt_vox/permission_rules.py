@@ -1,4 +1,4 @@
-"""The allow rules ``vox enable`` grants in a repo's ``.claude/settings.json``.
+"""The permission rules ``vox enable`` grants in a repo's ``.claude/settings.json``.
 
 Pure data, kept apart from the settings-file mechanics in
 :mod:`punt_vox.settings_registration`.
@@ -6,42 +6,34 @@ Pure data, kept apart from the settings-file mechanics in
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 __all__ = ["VOX_RULES"]
 
-# Least privilege (permissions.md §§ 3, 6): the CLI data plane by name, so
-# install/uninstall/enable/disable/daemon/desktop/cache/mcp keep prompting, and
-# skills by scoped name (scripts/check-skill-permissions.sh checks _COMMANDS).
-_CLI_SUBCOMMANDS: tuple[str, ...] = (
-    "call",
-    "doctor",
-    "log",
-    "model",
-    "music",
-    "notify",
-    "provider",
-    "rec",
-    "say",
-    "speak",
-    "status",
-    "version",
-    "vibe",
-    "voice",
-)
-_COMMANDS: tuple[str, ...] = (
-    "call",
-    "model",
-    "music",
-    "mute",
-    "provider",
-    "recap",
-    "unmute",
-    "vibe",
-    "voice",
-    "vox",
-)
-
-VOX_RULES: tuple[str, ...] = (
-    "mcp__plugin_vox_mic__*",
-    *(f"Bash(vox {name}:*)" for name in _CLI_SUBCOMMANDS),
-    *(f"Skill(vox:{name})" for name in _COMMANDS),
+# Broad allow per surface with exact ask carve-outs (permissions.md § 6): ask
+# beats allow, so the verbs that install software, change enablement, manage
+# the daemon or clear the cache keep prompting while new safe commands, MCP
+# tools and skills work without a rule update. ``Bash(vox -*)`` asks for a
+# global option before the verb, which the verb rules would not match. The
+# music and rec ``remove`` verbs stay allowed by owner decision (PL-1033).
+VOX_RULES: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "allow": ("Bash(vox:*)", "mcp__plugin_vox_mic__*", "Skill(vox:*)"),
+        "ask": (
+            "Bash(vox -*)",
+            *(
+                f"Bash(vox {verb}:*)"
+                for verb in (
+                    "install",
+                    "uninstall",
+                    "enable",
+                    "disable",
+                    "daemon",
+                    "desktop",
+                    "cache",
+                    "mcp",
+                )
+            ),
+        ),
+    }
 )

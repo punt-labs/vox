@@ -9,16 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`vox enable` grants named data-plane CLI rules and scoped skill
-  rules only (PL-1033).** `Bash(vox:*)` is replaced by one
-  `Bash(vox <subcommand>:*)` rule per data-plane subcommand (`call`,
-  `doctor`, `log`, `model`, `music`, `notify`, `provider`, `rec`, `say`, `speak`,
-  `status`, `version`, `vibe`, `voice`), so `install`, `uninstall`,
-  `enable`, `disable`, `daemon`, `desktop` and `cache` keep prompting.
-  Every `Skill()` rule now uses its plugin-scoped `Skill(vox:<cmd>)` name.
-  `vox disable` removes the new set; the old `Bash(vox:*)` and bare
-  `Skill(<cmd>)` rules an earlier `vox enable` wrote stay until you delete
-  them (no cleanup code, punt-kit#396).
+- **`vox enable` allows each surface broadly with exact `ask` carve-outs
+  (PL-1033, punt-kit#471).** It adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*`
+  and `Skill(vox:*)` to `permissions.allow`, and `ask` rules for `install`,
+  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp` and
+  any global option before the verb (`Bash(vox -*)`), which prompt even though
+  the broad allow matches. New safe commands, MCP tools and skills work with
+  no rule update. `vox disable` removes both sets; the bare `Skill(<cmd>)`
+  rules an earlier `vox enable` wrote stay until you delete them (no cleanup
+  code, punt-kit#396). `scripts/check-skill-permissions.sh` is removed: with
+  `Skill(vox:*)` there is no per-command list to keep in sync.
 
 - **Linear is the tracker of record for vox; beads is a scoped local
   mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
