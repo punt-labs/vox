@@ -11,14 +11,15 @@ import pytest
 
 from punt_vox.claude_md import ClaudeMdImport
 
-# Both scopes the writer serves: the repo-scope line the mission adds and the
-# user-scope line install already registers.
 _REPO = "@.punt-labs/vox/CLAUDE.md"
-_USER = "@~/.punt-labs/vox/CLAUDE.md"
+
+
+def _host(tmp_path: Path) -> Path:
+    return tmp_path / "CLAUDE.md"
 
 
 def _writer(tmp_path: Path, import_line: str = _REPO) -> ClaudeMdImport:
-    return ClaudeMdImport(tmp_path / "CLAUDE.md", import_line)
+    return ClaudeMdImport(_host(tmp_path), import_line)
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ def _writer(tmp_path: Path, import_line: str = _REPO) -> ClaudeMdImport:
 def test_register_creates_file_with_bare_line(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     assert writer.register() is True
-    text = writer.path.read_text(encoding="utf-8")
+    text = _host(tmp_path).read_text(encoding="utf-8")
     assert text == f"{_REPO}\n"
 
 
@@ -43,12 +44,12 @@ def test_register_appends_to_existing_content(tmp_path: Path) -> None:
 def test_second_register_is_a_no_op(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     assert writer.register() is True
-    first = writer.path.read_text(encoding="utf-8")
-    mtime = writer.path.stat().st_mtime_ns
+    first = _host(tmp_path).read_text(encoding="utf-8")
+    mtime = _host(tmp_path).stat().st_mtime_ns
     # AppendImport is 0->1->1: the second enable adds nothing and rewrites nothing.
     assert writer.register() is False
-    assert writer.path.read_text(encoding="utf-8") == first
-    assert writer.path.stat().st_mtime_ns == mtime
+    assert _host(tmp_path).read_text(encoding="utf-8") == first
+    assert _host(tmp_path).stat().st_mtime_ns == mtime
 
 
 def test_register_only_ever_writes_one_line(tmp_path: Path) -> None:
@@ -56,7 +57,7 @@ def test_register_only_ever_writes_one_line(tmp_path: Path) -> None:
     writer.register()
     writer.register()
     writer.register()
-    text = writer.path.read_text(encoding="utf-8")
+    text = _host(tmp_path).read_text(encoding="utf-8")
     assert text.count(_REPO) == 1
 
 
@@ -78,13 +79,6 @@ def test_is_registered_reflects_presence(tmp_path: Path) -> None:
     assert writer.is_registered() is False
 
 
-def test_user_scope_line_is_also_supported(tmp_path: Path) -> None:
-    writer = _writer(tmp_path, _USER)
-    assert writer.register() is True
-    assert writer.path.read_text(encoding="utf-8") == f"{_USER}\n"
-    assert writer.prune() is True
-
-
 # ---------------------------------------------------------------------------
 # prune — remove every match (RemoveImport 2->0)
 # ---------------------------------------------------------------------------
@@ -94,7 +88,7 @@ def test_prune_removes_the_line(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     writer.register()
     assert writer.prune() is True
-    assert writer.path.read_text(encoding="utf-8") == ""
+    assert _host(tmp_path).read_text(encoding="utf-8") == ""
 
 
 def test_prune_absent_line_is_a_no_op(tmp_path: Path) -> None:
@@ -107,7 +101,7 @@ def test_prune_absent_line_is_a_no_op(tmp_path: Path) -> None:
 def test_prune_missing_file_is_a_no_op(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     assert writer.prune() is False
-    assert not writer.path.exists()
+    assert not _host(tmp_path).exists()
 
 
 def test_prune_collapses_a_preexisting_duplicate(tmp_path: Path) -> None:
@@ -271,7 +265,7 @@ def test_symlink_host_is_updated_and_link_preserved(tmp_path: Path) -> None:
 def test_new_host_gets_0644(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     assert writer.register() is True
-    assert stat.S_IMODE(writer.path.stat().st_mode) == 0o644
+    assert stat.S_IMODE(_host(tmp_path).stat().st_mode) == 0o644
 
 
 def test_existing_host_mode_is_preserved(tmp_path: Path) -> None:
@@ -380,7 +374,11 @@ def test_construction_rejects_malformed_import_line(
         ClaudeMdImport(tmp_path / "CLAUDE.md", bad_line)
 
 
-def test_valid_lines_are_accepted(tmp_path: Path) -> None:
-    for line in (_REPO, _USER):
-        writer = ClaudeMdImport(tmp_path / "CLAUDE.md", line)
-        assert writer.import_line == line
+@pytest.mark.parametrize("good_line", ["@a.md", "@", "@dir/a b.md", "@a\tb.md"])
+def test_construction_accepts_a_lone_at_line(tmp_path: Path, good_line: str) -> None:
+    assert ClaudeMdImport(tmp_path / "CLAUDE.md", good_line).import_line == good_line
+
+
+def test_canonical_repo_line_is_accepted(tmp_path: Path) -> None:
+    writer = ClaudeMdImport(tmp_path / "CLAUDE.md", _REPO)
+    assert writer.import_line == _REPO

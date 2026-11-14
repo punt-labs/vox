@@ -2,10 +2,10 @@
 
 Claude Code loads a ``CLAUDE.md`` and resolves any top-level ``@path`` line as
 an included file. A punt tool registers exactly one *bare* import line pointing
-at a file it owns entirely -- ``@.punt-labs/vox/CLAUDE.md`` in a repo's
-``CLAUDE.md`` (repo scope) or ``@~/.punt-labs/vox/CLAUDE.md`` in
-``~/.claude/CLAUDE.md`` (user scope) -- so the guide loads with no per-project
-edit. Composition happens at read time, when Claude Code resolves the import;
+at a file it owns entirely -- ``@.punt-labs/vox/CLAUDE.md`` in the repo's
+``CLAUDE.md``, written only by ``vox enable`` -- so the guide loads in every
+session in that repo. Composition happens at read time, when Claude Code
+resolves the import;
 this module never merges, marks, or manages a section inside the user's file
 (``tool-enable-disable.md`` § 2.1). Every byte outside the single import line is
 preserved verbatim.
@@ -21,7 +21,8 @@ serialize the read-modify-write against parallel invocations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+import re
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.markdown_doc import MarkdownDoc
@@ -50,6 +51,8 @@ class ClaudeMdImport:
     _import_line: str
     _lock: SiblingLock
 
+    _IMPORT_LINE: ClassVar[re.Pattern[str]] = re.compile(r"@(?:[^\r\n]*\S)?")
+
     def __new__(cls, host_path: Path, import_line: str) -> Self:
         cls._validate(import_line)
         self = super().__new__(cls)
@@ -57,11 +60,6 @@ class ClaudeMdImport:
         self._import_line = import_line
         self._lock = SiblingLock(host_path)
         return self
-
-    @property
-    def path(self) -> Path:
-        """Return the host ``CLAUDE.md`` path (the symlink itself when it is one)."""
-        return self._file.path
 
     @property
     def import_line(self) -> str:
@@ -104,21 +102,19 @@ class ClaudeMdImport:
             self._file.replace(new_text)
             return True
 
-    @staticmethod
-    def _validate(import_line: str) -> None:
+    @classmethod
+    def _validate(cls, import_line: str) -> None:
         """Raise ``ValueError`` unless *import_line* is a lone top-level ``@`` line.
 
         Validated at the construction boundary (PY-EH-1): the line is spliced
         into the host file verbatim, so a padded, multi-line, or non-``@`` value
-        would inject a duplicate, a blank line, or inert markdown.
+        would inject a duplicate, a blank line, or inert markdown. One grammar
+        states all of it: ``@`` first, no CR or LF anywhere, and no trailing
+        whitespace (a leading one already fails the ``@``-first rule).
         """
-        if not import_line or import_line.isspace():
-            raise ValueError("import line must be non-empty")
-        if "\n" in import_line or "\r" in import_line:
-            raise ValueError(f"import line must be a single line: {import_line!r}")
-        if import_line != import_line.strip():
-            raise ValueError(
-                f"import line must have no leading/trailing whitespace: {import_line!r}"
+        if cls._IMPORT_LINE.fullmatch(import_line) is None:
+            msg = (
+                "import line must be one '@' line with no surrounding "
+                f"whitespace: {import_line!r}"
             )
-        if not import_line.startswith("@"):
-            raise ValueError(f"import line must begin with '@': {import_line!r}")
+            raise ValueError(msg)

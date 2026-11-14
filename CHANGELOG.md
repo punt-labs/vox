@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
+  (vox-f9ih, punt-kit#425). `vox install`, `vox uninstall`, and
+  `install.sh` no longer write `~/.punt-labs/vox/CLAUDE.md` or an
+  `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`. The agent
+  guide is per repo: `vox enable` deposits `.punt-labs/vox/CLAUDE.md`, the
+  enabled marker, and the `@.punt-labs/vox/CLAUDE.md` import. A stale
+  user-scope import line and `~/.punt-labs/vox/CLAUDE.md` file from an older
+  install are left alone; delete both by hand. The packaged guide asset is renamed `agent-guide.md`.
 - **Linear is the tracker of record for vox; beads is a scoped local
   mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
   team Punt Labs) each carrying the `repo:vox` label and a type label;
@@ -19,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notes, and `.beads/.gitignore` ignores the Linear sync lock and the pull
   clock. The deposited tracker guide (`.punt-labs/punt/CLAUDE.md`) and the
   `CLAUDE.md` Issue-tracking section already point at Linear.
+
+### Removed
+
+- The hidden `vox register-guidance` command and the user-scope guidance
+  module (`guidance.py`).
 
 ## [5.0.7] - 2026-11-06
 

@@ -781,23 +781,26 @@ def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
 _PLUGIN_ID = "vox@punt-labs"
 
 
-@app.command()
-def install() -> None:
-    """Install the Claude Code plugin and daemon service."""
-    # Step 1: Claude Code plugin
-    typer.echo("[1/3] Installing Claude Code plugin...")
+def _claude_plugin(verb: str) -> None:
+    """Run ``claude plugin <verb>`` on the vox plugin; exit 1 if it fails."""
     claude = shutil.which("claude")
     if not claude:
         typer.echo("Error: claude CLI not found on PATH", err=True)
         raise typer.Exit(code=1)
-
-    result = subprocess.run(
-        [claude, "plugin", "install", _PLUGIN_ID, "--scope", "user"],
-        check=False,
-    )
-    if result.returncode != 0:
-        typer.echo("Error: plugin install failed", err=True)
+    argv = [claude, "plugin", verb, _PLUGIN_ID, "--scope", "user"]
+    returncode = subprocess.run(argv, check=False).returncode
+    if returncode != 0:
+        command = f"claude plugin {verb} {_PLUGIN_ID}"
+        typer.echo(f"Error: '{command}' exited {returncode}.", err=True)
         raise typer.Exit(code=1)
+
+
+@app.command()
+def install() -> None:
+    """Install the Claude Code plugin and daemon service."""
+    # Step 1: Claude Code plugin
+    typer.echo("[1/2] Installing Claude Code plugin...")
+    _claude_plugin("install")
     typer.echo("  \u2713 plugin installed")
 
     # Step 2: daemon service (best-effort — not available in CI/containers)
@@ -805,7 +808,7 @@ def install() -> None:
     # OSError/CalledProcessError: subprocess and filesystem failures during install.
     # LaunchctlError: macOS bring-up (bootstrap/kickstart) fails on a GUI-less host.
     # ServiceHealthError: voxd registered but never answered health (silent-down).
-    typer.echo("[2/3] Registering vox daemon...")
+    typer.echo("[2/2] Registering vox daemon...")
     from punt_vox.service import install as svc_install
     from punt_vox.service.health_verify import ServiceHealthError
     from punt_vox.service.launchctl_query import LaunchctlError
@@ -823,17 +826,6 @@ def install() -> None:
         typer.echo(f"  \u2022 Skipped: {exc}")
         typer.echo("    Daemon registration is optional — vox works without it.")
 
-    # Step 3: write the usage guide and register its @-import so it loads in
-    # every Claude Code session. OSError only -- a read-only home should warn,
-    # not abort an otherwise-successful plugin install.
-    typer.echo("[3/3] Registering vox usage guide...")
-    from punt_vox.guidance import VoxGuidance
-
-    try:
-        typer.echo(f"  ✓ {VoxGuidance.for_current_user().install()}")
-    except OSError as exc:
-        typer.echo(f"  • Skipped: {exc}")
-
     typer.echo()
     _formatter.emit(
         {"installed": True},
@@ -844,71 +836,8 @@ def install() -> None:
 @app.command()
 def uninstall() -> None:
     """Uninstall the Claude Code plugin."""
-    claude = shutil.which("claude")
-    if not claude:
-        typer.echo("Error: claude CLI not found on PATH", err=True)
-        raise typer.Exit(code=1)
-
-    result = subprocess.run(
-        [claude, "plugin", "uninstall", _PLUGIN_ID, "--scope", "user"],
-        check=False,
-    )
-    plugin_failed = result.returncode != 0
-    if plugin_failed:
-        typer.echo("Error: plugin uninstall failed", err=True)
-
-    # Prune the usage guide + its @-import regardless of the plugin outcome:
-    # uninstall must be idempotent and self-healing, so a plugin step that fails
-    # (e.g. the plugin was already gone) must not orphan ~/.punt-labs/vox/CLAUDE.md
-    # or its global import line. A teardown failure (OSError -- a permissions
-    # error or a filesystem hiccup) is surfaced distinctly from the plugin
-    # outcome and forces a non-zero exit: reporting ``Uninstalled.`` while the
-    # guide or its global @-import survives would be a silent failure.
-    from punt_vox.guidance import VoxGuidance
-
-    guide = VoxGuidance.for_current_user()
-    guide_failed = False
-    try:
-        typer.echo(guide.uninstall())
-    except OSError as exc:
-        guide_failed = True
-        typer.echo(f"Error: vox usage guide teardown failed: {exc}", err=True)
-        typer.echo(
-            f"  These may remain -- remove by hand or re-run 'vox uninstall': "
-            f"guide {guide.doc_path}; import {guide.import_line} "
-            f"in {guide.global_path}",
-            err=True,
-        )
-
-    if plugin_failed or guide_failed:
-        raise typer.Exit(code=1)
-
+    _claude_plugin("uninstall")
     _formatter.emit({"uninstalled": True}, "Uninstalled.")
-
-
-@app.command("register-guidance", hidden=True)
-def register_guidance(
-    *,
-    remove: Annotated[
-        bool,
-        typer.Option("--remove", "-r", help="Prune the guide instead of writing it."),
-    ] = False,
-) -> None:
-    """Write (or remove) the usage guide and its ``@``-import.
-
-    Hidden plumbing for install scripts (``install.sh``) that register the
-    plugin directly via ``claude plugin install`` and so never reach the
-    ``vox install`` command. Idempotent: the global ``CLAUDE.md`` is rewritten
-    only when the import line actually changes.
-    """
-    from punt_vox.guidance import VoxGuidance
-
-    guide = VoxGuidance.for_current_user()
-    try:
-        typer.echo(guide.uninstall() if remove else guide.install())
-    except OSError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,8 @@
 """Content-hash stamp for the deposited vox agent guide.
 
-The deposited guide -- ``~/.punt-labs/vox/CLAUDE.md`` for the per-user
-:class:`~punt_vox.guidance.VoxGuidance` install, and the per-repo
-``.punt-labs/vox/CLAUDE.md`` for :class:`~punt_vox.deposited_files.DepositedGuide`
--- is a copy of the packaged asset ``src/punt_vox/assets/global-guidance.md``.
+The deposited guide -- the per-repo ``.punt-labs/vox/CLAUDE.md`` written by
+:class:`~punt_vox.deposited_files.DepositedGuide` -- is a copy of the packaged
+asset ``src/punt_vox/assets/agent-guide.md``.
 Nothing on disk previously told a reader which version of the packaged asset the
 deposited copy was written from, so the deposited copy could rot silently every
 time the packaged asset changed without ``enable`` being re-run. Agents then
@@ -78,25 +77,25 @@ class GuideStamp:
     @classmethod
     def for_packaged_asset(cls) -> Self:
         """Wire the real packaged-asset path bundled beside this package."""
-        asset = Path(__file__).resolve().parent / "assets" / "global-guidance.md"
-        return cls(asset)
+        return cls(Path(__file__).resolve().parent / "assets" / "agent-guide.md")
 
     def packaged_hash(self) -> str:
         """Return the hex SHA-256 of the packaged asset bytes."""
         return hashlib.sha256(self._packaged.read_bytes()).hexdigest()
 
-    def stamped(self, asset_text: str) -> str:
-        """Return *asset_text* with the source-hash stamp appended.
+    def stamped(self) -> str:
+        """Return the packaged asset text with its source-hash stamp appended.
 
-        The stamp is one HTML-comment line at the tail so a Markdown renderer
+        Body and digest come from one read of the asset, so they cannot disagree.
+        The stamp is one HTML-comment line at the tail: a Markdown renderer
         shows nothing and a diff against the packaged asset differs only in the
-        trailing lines. A missing final newline in *asset_text* is padded so the
-        stamp always sits on its own line -- required by :meth:`read`, which
-        anchors on the tag rather than on position but reads cleaner this way.
+        trailing lines. A missing final newline is padded so the stamp always
+        sits on its own line, where :meth:`read` finds it by tag.
         """
-        digest = self.packaged_hash()
-        suffix = "" if asset_text.endswith("\n") else "\n"
-        return f"{asset_text}{suffix}<!-- {self._STAMP_TAG}: {digest} -->\n"
+        data = self._packaged.read_bytes()
+        body = data.decode("utf-8").removesuffix("\n")
+        digest = hashlib.sha256(data).hexdigest()
+        return f"{body}\n<!-- {self._STAMP_TAG}: {digest} -->\n"
 
     def read(self, deposited: Path) -> str | None:
         """Return the embedded digest from *deposited*, or ``None`` if unstamped.
@@ -119,10 +118,18 @@ class GuideStamp:
         return None if match is None else match.group(1)
 
     def verify(self, deposited: Path) -> GuideStampVerdict:
-        """Compare *deposited*'s embedded stamp to a fresh packaged hash."""
+        """Compare *deposited*'s embedded stamp to a fresh packaged hash.
+
+        The packaged asset is hashed first, whatever the deposit holds: it is the
+        reference every verdict is judged against, so a missing or unreadable
+        asset raises its ``OSError`` here rather than hiding behind an
+        ``ABSENT_STAMP`` verdict whose remedy (``vox enable``) would fail on the
+        same broken install.
+        """
+        packaged_digest = self.packaged_hash()
         stamped_digest = self.read(deposited)
         if stamped_digest is None:
             return GuideStampVerdict.ABSENT_STAMP
-        if stamped_digest == self.packaged_hash():
+        if stamped_digest == packaged_digest:
             return GuideStampVerdict.AGREE
         return GuideStampVerdict.DIVERGE

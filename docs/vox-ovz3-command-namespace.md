@@ -5,6 +5,10 @@
 also namespace `/recap` (`/vox:recap`), as a preemptive consistency call
 with no known collision. See §3.
 **Author:** mdm (design mission)
+**Superseded in part (vox-f9ih, 2026-11-07):** references here to the
+user-scope `~/.punt-labs/vox/CLAUDE.md` guide and `global-guidance.md` are
+historical. The guide is now deposited per repo by `vox enable` from
+`assets/agent-guide.md`; install writes no `CLAUDE.md`.
 
 ## 1. The confirmed root-cause mechanism
 

@@ -25,6 +25,7 @@ from punt_vox.enablement import (
     ProviderProposal,
     RepoEnablement,
 )
+from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
 from punt_vox.settings_registration import SettingsRegistration
@@ -80,6 +81,22 @@ def test_enable_reaches_enabled(tmp_path: Path) -> None:
     assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
     assert _dir_present(tmp_path)
     _assert_biconditional(tmp_path)
+
+
+def test_enable_writes_repo_scope_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enable deposits guidance in the repo and never at user scope."""
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    RepoEnablement.for_repo(repo).enable()
+
+    assert _import_count(repo) == 1
+    assert not (home / ".claude" / "CLAUDE.md").exists()
+    assert not (home / ".punt-labs" / "vox" / "CLAUDE.md").exists()
 
 
 def test_enable_registers_settings(tmp_path: Path) -> None:
@@ -302,6 +319,18 @@ def test_enable_leaves_no_marker_when_settings_register_raises(
     _assert_partial_enable_writes_no_marker(
         tmp_path, monkeypatch, SettingsRegistration, "register"
     )
+
+
+def test_enable_with_missing_guide_asset_names_the_reinstall_and_writes_no_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken install fails ``enable`` with a next step, before any write."""
+    missing = GuideStamp(tmp_path / "site-packages" / "agent-guide.md")
+    monkeypatch.setattr(GuideStamp, "for_packaged_asset", lambda: missing)
+    with pytest.raises(OSError, match="reinstall punt-vox"):
+        RepoEnablement.for_repo(tmp_path).enable()
+    assert not _marker_present(tmp_path)
+    assert not (tmp_path / "CLAUDE.md").exists()
 
 
 # ---------------------------------------------------------------------------

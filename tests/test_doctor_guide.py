@@ -46,7 +46,7 @@ class TestGuideCheck:
         packaged = self._packaged(tmp_path)
         stamp = GuideStamp(packaged)
         deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
-        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
 
         with (
             patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
@@ -62,7 +62,7 @@ class TestGuideCheck:
         packaged = self._packaged(tmp_path)
         stamp = GuideStamp(packaged)
         deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
-        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
         # Packaged asset drifts after the deposit was stamped.
         packaged.write_text("new packaged body\n", encoding="utf-8")
 
@@ -114,6 +114,87 @@ class TestGuideCheck:
         assert len(results) == 1
         assert results[0].symbol == "⚠"
         assert "unstamped" in results[0].message
+
+    def test_missing_asset_is_a_fail_row_not_a_crash(self, tmp_path: Path) -> None:
+        # A broken install (asset deleted) must surface as its own fail row; an
+        # uncaught FileNotFoundError would abort the whole ``vox doctor`` run.
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
+        packaged.unlink()
+
+        with (
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = GuideCheck().run()
+        assert len(results) == 1
+        assert results[0].symbol == "✗"
+        assert results[0].message == (
+            "deposited guide: packaged asset unreadable "
+            "(no such file or directory) — reinstall punt-vox"
+        )
+
+    def test_unreadable_asset_is_a_fail_row(self, tmp_path: Path) -> None:
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_text(stamp.stamped(), encoding="utf-8")
+
+        def raise_permission(*_args: object, **_kwargs: object) -> bytes:
+            raise PermissionError(13, "Permission denied", str(packaged))
+
+        with (
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+            patch.object(Path, "read_bytes", raise_permission),
+        ):
+            results = GuideCheck().run()
+        assert len(results) == 1
+        assert results[0].symbol == "✗"
+        assert "packaged asset unreadable (permission denied)" in results[0].message
+
+    def test_asset_failure_names_no_host_path(self, tmp_path: Path) -> None:
+        # Doctor emits verdicts, never host locations: the asset row carries
+        # the reason, not the absolute install path inside the exception.
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        (repo / ".punt-labs" / "vox" / "CLAUDE.md").write_text(
+            stamp.stamped(), encoding="utf-8"
+        )
+        packaged.unlink()
+
+        with (
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = GuideCheck().run()
+        assert str(packaged) not in results[0].message
+
+    def test_missing_asset_wins_over_an_unstamped_deposit(self, tmp_path: Path) -> None:
+        # An unstamped deposit never needed the asset to reach ABSENT_STAMP, so
+        # doctor used to advise "run vox enable" -- which then fails on the same
+        # missing asset. The broken install is the real fault; report it.
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_text("unstamped body\n", encoding="utf-8")
+        packaged.unlink()
+
+        with (
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = GuideCheck().run()
+        assert len(results) == 1
+        assert results[0].symbol == "✗"
+        assert "packaged asset unreadable" in results[0].message
+        assert "unstamped" not in results[0].message
 
     def test_is_file_oserror_reports_not_applicable(self, tmp_path: Path) -> None:
         # A rare failure of ``is_file`` (permission-denied on the parent, a
