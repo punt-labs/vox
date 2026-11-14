@@ -86,7 +86,7 @@ def test_enable_registers_settings(tmp_path: Path) -> None:
     RepoEnablement.for_repo(tmp_path).enable()
     settings = tmp_path / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
-    assert "Bash(vox:*)" in data["permissions"]["allow"]
+    assert "Bash(vox say:*)" in data["permissions"]["allow"]
 
 
 def test_enable_is_idempotent_no_second_import(tmp_path: Path) -> None:
@@ -181,7 +181,7 @@ def test_disable_deregisters_settings(tmp_path: Path) -> None:
     enablement.enable()
     enablement.disable()
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text("utf-8"))
-    assert "Bash(vox:*)" not in data["permissions"]["allow"]
+    assert "Bash(vox say:*)" not in data["permissions"]["allow"]
 
 
 def test_disable_on_absent_repo_does_not_create_a_directory(tmp_path: Path) -> None:

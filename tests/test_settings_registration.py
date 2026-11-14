@@ -216,8 +216,14 @@ def test_default_entries_are_vox_rules_and_no_dev_rule(tmp_path: Path) -> None:
     assert _default_reg(tmp_path).register() is True
     rules = _default_reg(tmp_path).entries
     assert _allow(tmp_path / ".claude" / "settings.json") == list(rules)
-    assert "Bash(vox:*)" in rules
+    assert "Bash(vox:*)" not in rules
+    assert "Bash(vox say:*)" in rules
     assert "mcp__plugin_vox_mic__*" in rules
+    for verb in ("install", "uninstall", "enable", "disable", "daemon", "desktop"):
+        assert not [rule for rule in rules if rule.startswith(f"Bash(vox {verb}:")]
+    skills = [rule for rule in rules if rule.startswith("Skill(")]
+    assert skills
+    assert all(rule.startswith("Skill(vox:") for rule in skills)
     assert not [rule for rule in rules if "vox-dev" in rule]
 
 
