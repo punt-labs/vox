@@ -242,7 +242,7 @@ def test_unsafe_verbs_and_global_options_ask(tmp_path: Path) -> None:
         assert f"Bash(vox {verb}:*)" in ask
     assert "Bash(vox music:*)" not in ask
     assert "Bash(vox rec:*)" not in ask
-    assert _default_reg(tmp_path).entries == (*VOX_RULES["allow"], *ask)
+    assert _default_reg(tmp_path).rules == VOX_RULES
 
 
 def test_no_dev_rule_is_granted() -> None:

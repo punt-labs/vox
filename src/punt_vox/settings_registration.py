@@ -62,9 +62,9 @@ class SettingsRegistration:
         return self
 
     @property
-    def entries(self) -> tuple[str, ...]:
-        """Return every rule this instance owns, across its tiers."""
-        return tuple(rule for rules in self._rules.values() for rule in rules)
+    def rules(self) -> Mapping[str, tuple[str, ...]]:
+        """Return the rules this instance owns, keyed by ``permissions`` tier."""
+        return self._rules
 
     def register(self) -> bool:
         """Add each owned rule to its tier if absent. Return whether changed.
