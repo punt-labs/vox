@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vox enable` allows each surface broadly with exact `ask` carve-outs
   (PL-1033, punt-kit#471).** It adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*`
   and `Skill(vox:*)` to `permissions.allow`, and `ask` rules for `install`,
-  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp` and
-  any global option before the verb (`Bash(vox -*)`), which prompt even though
+  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp`,
+  `register-guidance` (its `--remove` drops the Claude guidance) and any
+  global option before the verb (`Bash(vox -*)`), which prompt even though
   the broad allow matches. New safe commands, MCP tools and skills work with
   no rule update. `vox disable` removes both sets; the bare `Skill(<cmd>)`
   rules an earlier `vox enable` wrote stay until you delete them (no cleanup

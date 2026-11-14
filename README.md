@@ -196,7 +196,8 @@ Pick a voice with /vox:voice.
 `mcp__plugin_vox_mic__*` and `Skill(vox:*)`) in the repo's
 `.claude/settings.json`, so Claude doesn't prompt for vox's own tools there.
 Exact `ask` rules keep `install`, `uninstall`, `enable`, `disable`, `daemon`,
-`desktop`, `cache`, `mcp` and any global option before the verb
+`desktop`, `cache`, `mcp`, `register-guidance` and any global option before
+the verb
 (`Bash(vox -*)`) prompting.
 `vox disable` removes exactly those. Nothing outside the repo is changed.
 Rules older versions put in `~/.claude/settings.json` stay until you delete

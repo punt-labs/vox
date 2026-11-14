@@ -230,7 +230,15 @@ def test_default_rules_allow_each_surface_broadly(tmp_path: Path) -> None:
 def test_unsafe_verbs_and_global_options_ask(tmp_path: Path) -> None:
     ask = VOX_RULES["ask"]
     assert "Bash(vox -*)" in ask
-    for verb in ("install", "uninstall", "enable", "disable", "daemon", "desktop"):
+    for verb in (
+        "install",
+        "uninstall",
+        "enable",
+        "disable",
+        "daemon",
+        "desktop",
+        "register-guidance",
+    ):
         assert f"Bash(vox {verb}:*)" in ask
     assert "Bash(vox music:*)" not in ask
     assert "Bash(vox rec:*)" not in ask
