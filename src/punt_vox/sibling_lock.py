@@ -58,14 +58,19 @@ class SiblingLock:
     _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 
     @contextlib.contextmanager
-    def held(self) -> Generator[None]:
+    def held(self, *, dir_fd: int | None = None) -> Generator[None]:
         """Hold the exclusive lock for the duration of the ``with`` block.
 
+        With *dir_fd* (a descriptor for the host's directory), the lock opens
+        relative to it, so a rename of that directory cannot move the lock.
         A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
         untouched, as is whatever it points at.
         """
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        lock = os.open(self._path, self._OPEN_FLAGS, 0o600)
+        if dir_fd is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock = os.open(self._path, self._OPEN_FLAGS, 0o600)
+        else:
+            lock = os.open(self._path.name, self._OPEN_FLAGS, 0o600, dir_fd=dir_fd)
         try:
             self._acquire(lock)
             try:

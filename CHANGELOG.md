@@ -85,6 +85,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Permission rules are repo-level only.** The SessionStart hook no longer
+  reads or writes `~/.claude/settings.json`: it used to add
+  `mcp__plugin_vox_mic__*` (or the `-dev` glob) and vox's `Skill()` rules to
+  it on every session, and prune legacy and stale bare rules there. Now
+  `vox enable` adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*` and a `Skill()`
+  rule per vox command to the repo's `.claude/settings.json` and prints them,
+  and `vox disable` removes exactly those. A symlinked `.claude/` or
+  `settings.json`, a non-UTF-8 file, or a repo rooted at your home directory
+  is refused, and the lock file is never followed through a symlink.
+  `.claude/` is opened once without following a symlink, and the lock, read
+  and atomic replace all go through that handle, so swapping `.claude/` for a
+  symlink while `vox enable` waits on the lock cannot redirect the write. The
+  home-directory check also consults the passwd entry, so overriding `HOME`
+  does not let it through. Rules
+  older versions put in `~/.claude/settings.json` are left in place; delete
+  them by hand if you want them gone. Dev-plugin rules are not granted.
 - **`vox daemon restart --json` has a new shape**: the stop-then-start
   report described above. The old `{"restarted": …}` object is gone, not
   aliased.
