@@ -11,16 +11,25 @@ repo, and the ``vox-dev`` rules are left to maintainers to add by hand.
 order-preserving merge of [permissions.md § 6] and removes them by exact
 value-match, both under the shared sibling lock (``.settings.json.punt-import.lock``)
 because the file is read-modified-written by other tools and invocations too.
+``.claude/`` is opened once without following a symlink and held across the lock
+and the whole read-modify-write (:class:`~punt_vox.pinned_directory.PinnedDirectory`),
+so a ``.claude`` swapped for a symlink while the lock is awaited is never
+written through.
 """
 
 from __future__ import annotations
 
-import json
+import os
+import pwd
 from pathlib import Path
-from typing import Any, Self, cast, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.atomic_file import AtomicFile
+from punt_vox.pinned_directory import PinnedDirectory
+from punt_vox.settings_document import SettingsDocument
 from punt_vox.sibling_lock import SiblingLock
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = ["SettingsRegistration"]
 
@@ -52,9 +61,9 @@ class SettingsRegistration:
     the whole read-modify-write, so a parallel ``enable`` never loses an update.
     """
 
-    __slots__ = ("_entries", "_file", "_lock")
+    __slots__ = ("_entries", "_lock", "_path")
 
-    _file: AtomicFile
+    _path: Path
     _lock: SiblingLock
     _entries: tuple[str, ...]
 
@@ -62,7 +71,7 @@ class SettingsRegistration:
         cls, settings_path: Path, entries: tuple[str, ...] = _VOX_RULES
     ) -> Self:
         self = super().__new__(cls)
-        self._file = AtomicFile(settings_path)
+        self._path = settings_path
         self._lock = SiblingLock(settings_path)
         self._entries = entries
         return self
@@ -78,15 +87,7 @@ class SettingsRegistration:
         Order-preserving and idempotent: an entry already present is skipped, so a
         re-run of ``enable`` adds nothing and rewrites nothing.
         """
-        self._refuse_unsafe_path()
-        with self._lock.held():
-            data = self._load()
-            allow = self._existing_allow(data)
-            missing = [entry for entry in self._entries if entry not in allow]
-            if not missing:
-                return False
-            self._store_allow(data, allow + missing)
-            return True
+        return self._rewrite(self._with_entries)
 
     def deregister(self) -> bool:
         """Remove every owned entry from ``permissions.allow``. Return whether changed.
@@ -94,87 +95,63 @@ class SettingsRegistration:
         Exact value-match removal -- the identity is the entry set itself, so no tag
         schema is needed. Unrelated entries are left untouched.
         """
-        self._refuse_unsafe_path()
-        with self._lock.held():
-            data = self._load()
-            allow = self._existing_allow(data)
-            kept = [entry for entry in allow if entry not in self._entries]
-            if len(kept) == len(allow):
+        return self._rewrite(self._without_entries)
+
+    def _with_entries(self, allow: list[str]) -> list[str]:
+        """Return *allow* with each missing owned entry appended in order."""
+        return allow + [entry for entry in self._entries if entry not in allow]
+
+    def _without_entries(self, allow: list[str]) -> list[str]:
+        """Return *allow* without any owned entry."""
+        return [entry for entry in allow if entry not in self._entries]
+
+    def _rewrite(self, edit: Callable[[list[str]], list[str]]) -> bool:
+        """Apply *edit* to ``permissions.allow`` under the lock. Return whether changed.
+
+        Every lookup after the open goes through the pinned ``.claude/``
+        descriptor: the lock, the read, and the atomic replace all land in the
+        directory that was checked, never a symlink swapped in afterwards.
+        """
+        self._refuse_home_repo()
+        with (
+            PinnedDirectory.opened(self._path.parent) as directory,
+            self._lock.held(dir_fd=directory.fd),
+        ):
+            document = self._load(directory)
+            allow = document.allow
+            updated = edit(allow)
+            if updated == allow:
                 return False
-            self._store_allow(data, kept)
+            document.set_allow(updated)
+            directory.replace_text(self._path.name, document.dumps())
             return True
 
-    def _refuse_unsafe_path(self) -> None:
-        """Raise ``ValueError`` unless the write would land in the repo's own file.
+    def _refuse_home_repo(self) -> None:
+        """Raise ``ValueError`` when the repo is the home directory.
 
-        A symlinked ``.claude/`` or ``settings.json`` could point anywhere, and
-        a repo rooted at ``$HOME`` makes this the user-global settings file.
+        There ``.claude/settings.json`` is the user-global file. Both ``$HOME``
+        and the account's passwd entry are checked, so overriding ``HOME`` does
+        not let the real home directory through.
         """
-        path = self._file.path
-        if path.parent.is_symlink() or path.is_symlink():
-            msg = f"{path}: refusing a symlinked .claude/settings.json"
-            raise ValueError(msg)
-        if path.parent.parent.resolve() == Path.home().resolve():
-            msg = f"{path}: the repo is your home directory, so this is user-global"
+        repo = self._path.parent.parent.resolve()
+        homes = {
+            Path.home().resolve(),
+            Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(),
+        }
+        if repo in homes:
+            msg = (
+                f"{self._path}: the repo is your home directory, so this is user-global"
+            )
             raise ValueError(msg)
 
-    def _load(self) -> dict[str, Any]:
-        """Return the parsed settings object, or ``{}`` when the file is empty/absent.
+    def _load(self, directory: PinnedDirectory) -> SettingsDocument:
+        """Return the settings document; an absent or empty file is ``{}``.
 
-        A malformed existing file is a boundary error (PY-EH-1/PY-EH-8): raise
-        rather than silently discard a user's settings, which resetting to ``{}``
-        would do. ``dict[str, Any]`` is the JSON wire boundary -- the shape is the
-        user's whole settings file, narrowed only where this class writes.
+        Invalid UTF-8 raises ``ValueError`` rather than being discarded.
         """
         try:
-            text = self._file.read()
+            text = directory.read_text(self._path.name)
         except UnicodeDecodeError as exc:
-            msg = f"{self._file.path}: settings file is not valid UTF-8"
+            msg = f"{self._path}: settings file is not valid UTF-8"
             raise ValueError(msg) from exc
-        if not text.strip():
-            return {}
-        # The wire boundary: JSON deserialization yields object until narrowed.
-        parsed: object = json.loads(text)
-        if not isinstance(parsed, dict):
-            msg = f"{self._file.path}: settings root must be a JSON object"
-            raise ValueError(msg)
-        return cast("dict[str, Any]", parsed)
-
-    def _store_allow(self, data: dict[str, Any], allow: list[str]) -> None:
-        """Write *allow* back into ``data.permissions.allow`` and replace the file.
-
-        Only an *absent* ``permissions`` key is created here; a present one is
-        guaranteed a dict by :meth:`_existing_allow` (which runs first and raises
-        on a malformed value -- including an explicit ``null``), so this never
-        overwrites the user's data.
-        """
-        if "permissions" not in data:
-            data["permissions"] = {}
-        perms = cast("dict[str, Any]", data["permissions"])
-        perms["allow"] = allow
-        self._file.replace(json.dumps(data, indent=2) + "\n")
-
-    def _existing_allow(self, data: dict[str, Any]) -> list[str]:
-        """Return the current ``permissions.allow`` entries as strings, else ``[]``.
-
-        Symmetric with :meth:`_load`'s root check: a *present but malformed*
-        nested value is a boundary error, not an empty default. Presence is keyed
-        on membership, never on truthiness -- a present but ``null`` ``permissions``
-        (or ``permissions.allow``) is malformed and raises, exactly like a string
-        or number would, rather than being read as absent and silently overwritten.
-        Only a genuinely *absent* key is safe to treat as empty and create later.
-        """
-        if "permissions" not in data:
-            return []
-        perms: Any = data["permissions"]
-        if not isinstance(perms, dict):
-            msg = f"{self._file.path}: permissions must be a JSON object"
-            raise ValueError(msg)
-        perms_dict = cast("dict[str, Any]", perms)
-        if "allow" not in perms_dict:
-            return []
-        allow: Any = perms_dict["allow"]
-        if not isinstance(allow, list):
-            msg = f"{self._file.path}: permissions.allow must be a JSON array"
-            raise ValueError(msg)
-        return [str(entry) for entry in cast("list[object]", allow)]
+        return SettingsDocument.parse(text, self._path)

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import pwd
 from pathlib import Path
 
 import pytest
 
 from punt_vox.settings_registration import SettingsRegistration
+from punt_vox.sibling_lock import SiblingLock
 
 _ENTRY = "Bash(vox:*)"
 
@@ -264,6 +266,103 @@ def test_refuses_a_repo_rooted_at_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="home directory"):
+        _reg(tmp_path).register()
+    assert not (tmp_path / ".claude").exists()
+
+
+# ---------------------------------------------------------------------------
+# swap race -- .claude/ replaced by a symlink while the lock is awaited
+# ---------------------------------------------------------------------------
+
+
+def _swap_claude_while_locking(
+    repo: Path, victim: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rename ``.claude`` aside and symlink it at *victim* during lock acquire."""
+    real_acquire = SiblingLock._acquire
+
+    def swap_then_acquire(lock: SiblingLock, fd: int) -> None:
+        (repo / ".claude").rename(repo / "claude-moved")
+        (repo / ".claude").symlink_to(victim)
+        real_acquire(lock, fd)
+
+    monkeypatch.setattr(SiblingLock, "_acquire", swap_then_acquire)
+
+
+def test_register_writes_the_checked_dir_not_a_swapped_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    victim = tmp_path / "victim-claude"
+    victim.mkdir()
+    victim_settings = victim / "settings.json"
+    victim_settings.write_text('{"env": {"K": "v"}}', encoding="utf-8")
+    _swap_claude_while_locking(repo, victim, monkeypatch)
+
+    assert _reg(repo).register() is True
+
+    assert victim_settings.read_text(encoding="utf-8") == '{"env": {"K": "v"}}'
+    assert sorted(p.name for p in victim.iterdir()) == ["settings.json"]
+    assert _allow(repo / "claude-moved" / "settings.json") == [_ENTRY]
+
+
+def test_deregister_never_strips_rules_through_a_swapped_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": [_ENTRY]}}), encoding="utf-8"
+    )
+    victim = tmp_path / "victim-claude"
+    victim.mkdir()
+    victim_settings = victim / "settings.json"
+    original = json.dumps({"permissions": {"allow": [_ENTRY, "Read"]}})
+    victim_settings.write_text(original, encoding="utf-8")
+    _swap_claude_while_locking(repo, victim, monkeypatch)
+
+    assert _reg(repo).deregister() is True
+
+    assert victim_settings.read_text(encoding="utf-8") == original
+    assert _allow(repo / "claude-moved" / "settings.json") == []
+
+
+def test_refuses_a_settings_file_swapped_for_a_symlink_while_locking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text("{}", encoding="utf-8")
+    victim = tmp_path / "victim.json"
+    victim.write_text("{}", encoding="utf-8")
+    real_acquire = SiblingLock._acquire
+
+    def swap_then_acquire(lock: SiblingLock, fd: int) -> None:
+        settings.unlink()
+        settings.symlink_to(victim)
+        real_acquire(lock, fd)
+
+    monkeypatch.setattr(SiblingLock, "_acquire", swap_then_acquire)
+
+    with pytest.raises(ValueError, match="symlinked"):
+        _reg(tmp_path).register()
+    assert victim.read_text(encoding="utf-8") == "{}"
+
+
+def test_refuses_the_real_home_even_when_home_is_overridden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("HOME", str(elsewhere))
+    account = pwd.struct_passwd(("u", "x", 0, 0, "", str(tmp_path), "/bin/sh"))
+
+    def fake_getpwuid(_uid: int) -> pwd.struct_passwd:
+        return account
+
+    monkeypatch.setattr("punt_vox.settings_registration.pwd.getpwuid", fake_getpwuid)
     with pytest.raises(ValueError, match="home directory"):
         _reg(tmp_path).register()
     assert not (tmp_path / ".claude").exists()

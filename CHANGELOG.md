@@ -80,7 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule per vox command to the repo's `.claude/settings.json` and prints them,
   and `vox disable` removes exactly those. A symlinked `.claude/` or
   `settings.json`, a non-UTF-8 file, or a repo rooted at your home directory
-  is refused, and the lock file is never followed through a symlink. Rules
+  is refused, and the lock file is never followed through a symlink.
+  `.claude/` is opened once without following a symlink, and the lock, read
+  and atomic replace all go through that handle, so swapping `.claude/` for a
+  symlink while `vox enable` waits on the lock cannot redirect the write. The
+  home-directory check also consults the passwd entry, so overriding `HOME`
+  does not let it through. Rules
   older versions put in `~/.claude/settings.json` are left in place; delete
   them by hand if you want them gone. Dev-plugin rules are not granted.
 - **`vox daemon restart --json` has a new shape**: the stop-then-start
