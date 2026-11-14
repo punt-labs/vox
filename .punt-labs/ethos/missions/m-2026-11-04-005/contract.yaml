@@ -1,0 +1,33 @@
+mission_id: m-2026-11-04-005
+status: escalated
+type: implement
+created_at: "2026-11-04T13:50:05Z"
+updated_at: "2026-11-04T14:05:03Z"
+closed_at: "2026-11-04T14:05:03Z"
+repo: punt-labs/vox
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-11-04T13:50:05Z"
+    hash: 471d1e686543fd13d2ace4f48c83b52b4425b387cea4b4d6d9d516aa91687f9b
+inputs: {}
+write_set:
+    - docs/daemon-lifecycle-design.md
+success_criteria:
+    - docs/daemon-lifecycle-design.md specifies 'vox daemon stop' and 'vox daemon start' alongside the existing restart, for both service backends (launchd on macOS, systemd on Linux), behind the existing service/ backend seam, not in the CLI layer
+    - restart is specified as composed from stop and start, with no duplicated stop or start logic
+    - 'every outcome each verb can report is enumerated: stopped, already stopped, started, already running, service not installed, permission denied (sudo), backend command failed, and a timeout waiting for the daemon to go down or come up; already-stopped and already-running are normal outcomes with exit 0, not errors'
+    - states how each verb verifies its result against the real process or port (not just the backend command's exit code), and how stop confirms the old process is gone before start runs
+    - 'names the write-set for the implementation mission (files to create, change, or extract) and the test plan: unit tests per outcome against fake backends, plus the real-entry-point demo steps on this Linux machine'
+    - explains how the change leaves service/ better (coupling, cohesion, naming) and which OO-ratchet metric it improves; contains no migration, compatibility, or shim element
+    - says whether the running/stopped lifecycle needs a Z model under vox CLAUDE.md's formal-modeling trigger, with the reason
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 2
+context: |
+    Bead vox-9354 (vox, P2): 'vox daemon' exposes install, uninstall, restart and status but no stop or start, so voxd cannot be brought down and left down, or brought up without first bringing it down. Verifying a fresh build needs a restart, which conflates the two halves and reports one outcome for both. Nothing can stop the daemon for a maintenance window, a port conflict, or to free the audio device, short of killing it by pid.
+    This is a DESIGN mission: produce docs/daemon-lifecycle-design.md only. Do not write code. The write-set for implementation is the design's output; the leader reviews it and the operator ratifies it before any implementation mission dispatches.
+    Read the existing service/ package (installer, launchd, systemd, keys_env), the 'vox daemon' CLI commands, and how 'vox daemon restart' and 'vox daemon status' work today, including the sudo path ('vox daemon restart' prompts for sudo on Linux). Follow vox CLAUDE.md (OO standards, ratchet, no migration/compat code) and docs/WORKFLOW.md.
+    Worktree: <repo>/.claude/worktrees/daemon-stop-start, branch feat/vox-9354-daemon-stop-start. It already holds one unrelated commit (98b1c3f, vendored claude.yaml); leave it alone.

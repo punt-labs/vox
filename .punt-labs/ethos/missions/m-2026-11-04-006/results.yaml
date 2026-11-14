@@ -1,0 +1,115 @@
+results:
+    - mission: m-2026-11-04-006
+      round: 1
+      created_at: "2026-11-04T15:18:42Z"
+      author: jms
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/daemon-lifecycle.tex
+          added: 1246
+          removed: 0
+      evidence:
+        - name: 'fuzz -t docs/daemon-lifecycle.tex exits 0 (z-spec check: OK)'
+          status: pass
+        - name: 'probcli -model_check -nodead, PID = {p1,p2,p3}: 181105 states, 1974748 transitions, ALL OPERATIONS COVERED (36), no counterexample, all states visited'
+          status: pass
+        - name: 'Mutation: stale warm daemon counted as running inside restart -> P3 violated (caught)'
+          status: pass
+        - name: Literal-design variants F0 F1 F1b F2 F3 -> P1 violated; syncStop=zfalse (F5) -> P2 violated; bare-pid compare (F4) -> stop-did-not-take-effect clause violated
+          status: pass
+        - name: Commit ad24a836f8ed7b8f5dda6fc7fc3877d2bd80b2f7 on feat/vox-9354-daemon-stop-start
+          status: pass
+      open_questions:
+        - 'F0: on an uninstalled host whose probe fails, the result is ambiguous: backend_failed or not_installed. The model checks the probe first. Recommend stating that order in section 4.'
+        - 'F1: S3 and T5 omit the section 3.2 re-observation, so a refusal that races a third party matches both the error row and the wait. Recommend: S3 only when still active, T5 only when still inactive.'
+        - 'F2: stop has no row for a captured handle that closed its listener but has not exited. Recommend: S8 timeout, or extend S6 to terminate captured handles that are still alive.'
+        - 'F3: with no MainPID and a fresh voxd answering, neither start path has a row. Recommend: T8 also covers mainpid = None.'
+        - 'F4: the section 4.3 pseudocode compares bare pids, which contradicts section 3.4, and pid reuse gives a false backend_failed. Recommend deleting the branch: under handle comparison it is unreachable.'
+        - 'F5: P2 holds only if is_active() turns false after the main process exits. True for systemd, unverified for launchctl bootout. Recommend capturing mainpid as a DaemonProcess at observe time and including it in section 5 condition (c).'
+      prose: |
+        docs/daemon-lifecycle.tex models the section 4 observation: installed,
+        active, mainpid, the live voxd processes, the visible holder of 8421, an
+        invisible holder, who answers health, and stale processes. Handle sets
+        (captured, oldMain, doomed) are pruned when their process exits. The rows
+        of each table are relations: stopPre, stopAct, stopSettle, startPre,
+        startAct and startDecide. There is one operation schema per row group for
+        Stop (14) and Start (11), plus 11 environment operations that race the
+        verbs. Restart = Stop[vb?=vRestart] ; Env* ; Start, with the gap after
+        stopped or already_stopped only. require_fresh is verb = vRestart, and
+        StartEnd applies the relabelling.
+
+        ProZ treats the state-schema predicate as a guard, which masks
+        violations. So the state schema holds only declarations, and the physics
+        and P1-P6 live in the Invariant schema, which probcli checks in every
+        state. I confirmed this on a toy spec first.
+
+        Properties, all holding over the 181105 reachable states:
+        P1, exactly one row at every stage of every verb (total and
+        deterministic). P2, inside restart no captured process and no
+        old-main process is alive while start acts. P3, restart never reports
+        restarted for the previous process, a process that is not the main pid,
+        or a stale version. P4, tokenTo is a subset of onport. P5, signals only to
+        S6-marked handles, and those are never the main pid. P6, the outcome set
+        of each verb matches the section 4.4 table.
+
+        The committed model carries the stated resolutions for F0-F4 and runs
+        with syncStop = ztrue (systemd semantics). Each finding was reproduced on
+        a scratch variant that reverts its resolution; the variants are in
+        ~/Coding/punt-labs/.tmp/jms-lifecycle/. The design text was
+        not edited.
+    - mission: m-2026-11-04-006
+      round: 2
+      created_at: "2026-11-04T15:36:24Z"
+      author: jms
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/daemon-lifecycle.tex
+          added: 305
+          removed: 95
+      evidence:
+        - name: 'fuzz -t docs/daemon-lifecycle.tex exits 0 (z-spec check: OK)'
+          status: pass
+        - name: 'probcli -model_check -nodead, PID = {p1,p2,p3}, syncStop = deactActive = ztrue: verdict line ''No counter example found. ALL states visited.'' States 259003, transitions 2893462, ALL OPERATIONS COVERED (37)'
+          status: pass
+        - name: 'F6 variant (deactActive = zfalse): COUNTER EXAMPLE FOUND, P2 leftAlive conjunct, trace EnvUnitStart(p1), EnvUnitDeactivating, EnvUpgrade, StopAlreadyStopped(zfalse,oAlreadyStopped,vRestart)'
+          status: pass
+        - name: 'F6 with leftAlive conjunct removed: COUNTER EXAMPLE FOUND, P5 doomed and mainpid, trace EnvUnitStart(p3), EnvUnitDeactivating, EnvBind(p3), StopObserve(zfalse,vRestart), StopRequested(rspDenied), StopEscalate'
+          status: pass
+        - name: 'F6 with leftAlive and the P5 main conjunct removed: COUNTER EXAMPLE FOUND, P2 oldMain, trace EnvUnitStart(p2), StopObserve(zfalse,vRestart), EnvSpawnUnmanaged(p1), EnvUnitDeactivating, StopRequested(rspDenied), StopConfirmed(oStopped)'
+          status: pass
+        - name: 'Mutations F0 F1 F1b F2 F3 F4 F5 and P3 re-run on the revision: each printed COUNTER EXAMPLE FOUND; traces quoted in section Model Checking, subsection Mutations'
+          status: pass
+        - name: probcli exits 0 on a counterexample too; every verdict was read from the printed line
+          status: pass
+        - name: Commit 7bb7712258198dd90bddc86c5b15e1b05a1a2157 on feat/vox-9354-daemon-stop-start
+          status: pass
+      open_questions:
+        - 'F6: the design''s is_active excludes deactivating. Three paths result: S2 already_stopped and S5 stopped while the manager''s main process lives (P2), and S6 marking the manager''s stopping process as unmanaged (P5). Recommend that deactivating, or main_pid() not None, count as active in every row. S2-only (mainpid = None) closes only the first path.'
+        - 'F5 corrected: systemctl stop closes the path only for vox''s own stop. A third-party stop in flight is F6.'
+        - 'F4: ''delete the branch'' is now conditional on the F5 and F6 fixes. Without them the branch stays, compares by handle, and must include the manager''s main process.'
+      prose: |
+        Round 2 answers jra's REVISE. Changes:
+        1. Stopping mode added. EnvUnitDeactivating (inactive, main pid still
+           reported); EnvUnitStop also completes a stop in flight; EnvUnitStart
+           requires no main pid; EnvExit keeps a stopping unit inactive. The
+           physics clause "mainpid nonempty implies active" is replaced by
+           "active or mainpid nonempty implies installed".
+        2. Constant deactActive selects the is_active reading. Every table
+           receives isActive(active, mainpid) in place of active. zfalse is the
+           design as written (F6); ztrue is the recommended fix, and the
+           committed model, checked at ztrue, is clean.
+        3. P2 is strengthened by a capture-independent ghost, leftAlive. It holds
+           the manager's main process at the moment the stop half of restart
+           declares success, pruned on exit; P2 requires it empty in phGap,
+           phStartAct and phStartWait. It catches jra's S2 path, which the round-1
+           P2 missed.
+        4. The prose now says that P4 and P5's first conjunct hold by
+           construction, while P5's second conjunct is a real check that F6
+           breaks; that P3's previous-process conjunct is subsumed by P2; and
+           that all results are for PID = {p1,p2,p3}.
+        5. F5's "Linux is safe" sentence is corrected, F4's recommendation is
+           made conditional, and F6 is added with all three paths.
+        The design text is not edited. Scratch variants are in
+        ~/Coding/punt-labs/.tmp/jms-lifecycle/r2/.

@@ -1,0 +1,298 @@
+results:
+    - mission: m-2026-11-05-001
+      round: 1
+      created_at: "2026-11-05T02:02:59Z"
+      author: adb
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 14
+          removed: 0
+        - path: .oo-baseline.json
+          added: 23
+          removed: 23
+        - path: .oo-coupling-audit.jsonl
+          added: 9
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 86
+          removed: 16
+        - path: src/punt_vox/service/backend.py
+          added: 24
+          removed: 2
+        - path: src/punt_vox/service/clock.py
+          added: 24
+          removed: 2
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 10
+          removed: 4
+        - path: src/punt_vox/service/daemon_process.py
+          added: 4
+          removed: 8
+        - path: src/punt_vox/service/health_verify.py
+          added: 4
+          removed: 1
+        - path: src/punt_vox/service/kill_ledger.py
+          added: 125
+          removed: 0
+        - path: src/punt_vox/service/launchctl.py
+          added: 70
+          removed: 14
+        - path: src/punt_vox/service/launchd.py
+          added: 8
+          removed: 0
+        - path: src/punt_vox/service/lifecycle_stop.py
+          added: 110
+          removed: 74
+        - path: src/punt_vox/service/process.py
+          added: 25
+          removed: 0
+        - path: src/punt_vox/service/systemd.py
+          added: 33
+          removed: 5
+        - path: tests/_lifecycle_fakes.py
+          added: 55
+          removed: 10
+        - path: tests/test_service_clock.py
+          added: 28
+          removed: 0
+        - path: tests/test_service_daemon_probe.py
+          added: 11
+          removed: 6
+        - path: tests/test_service_health_verify.py
+          added: 21
+          removed: 1
+        - path: tests/test_service_installer.py
+          added: 1
+          removed: 0
+        - path: tests/test_service_kill_ledger.py
+          added: 73
+          removed: 0
+        - path: tests/test_service_launchctl.py
+          added: 68
+          removed: 1
+        - path: tests/test_service_launchd.py
+          added: 21
+          removed: 0
+        - path: tests/test_service_lifecycle_stop.py
+          added: 212
+          removed: 0
+        - path: tests/test_service_process.py
+          added: 46
+          removed: 0
+        - path: tests/test_service_systemd.py
+          added: 28
+          removed: 0
+      evidence:
+        - name: make check on 6a0c16f (ruff, format, shellcheck, mypy, pyright, markdownlint, pytest 5716 passed, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: make check on f871da0 (pytest 5740 passed; check-oo PASS improved/no regressions; check-coupling PASS; check-suppressions PASS)
+          status: pass
+        - name: 'failing-first: every new test below run red against the pre-fix code before the fix'
+          status: pass
+      open_questions:
+        - 'Spared vs killed: I chose ''judged once'' -- a pid spared as in the service cgroup is never signalled later in the same stop, even if it leaves the cgroup. The alternative (signal it later and drop the spared line) also meets the criterion; tell me if you want that instead.'
+        - 'serve.port ''once per stop'': the cleanup call is made at most once, and is deferred (no probe call) while a voxd stop has not killed still holds 8421. If every holder is spared or survives, the file is never touched in that stop.'
+        - Poll.until_within runs no extra check at the deadline (a check with zero budget could only time out); a condition that becomes true in the last clipped sleep reads as not-yet. Poll.until/first keep their final check.
+        - 'A timed-out query inside a bounded wait reads as ''not confirmed'' (False), not an error: systemd is_active_within maps code 124 to False, launchctl running_within/_left_within map TimeoutExpired to False. Outside bounded waits a timeout still raises as before.'
+      prose: |
+        Commits on feat/vox-9354-daemon-stop-start:
+          6a0c16f fix(service): no bounded wait overruns its bound
+          f871da0 fix(service): stop reports from what it recorded when it signalled
+
+        Criterion -> failing-first tests
+        1. Report reads only signal-time records (djb B1):
+           test_service_lifecycle_stop.py::test_probe_failure_after_a_signal_names_every_signalled_pid
+             (djb's scratch scenario ported: exited() and service_owned(201) raise after terminate)
+           ::test_timeout_report_runs_no_probe, ::test_stopped_report_runs_no_probe
+             (every probe and manager query fails once the settle poll returns)
+        2. Every signalled pid named with the true reason (djb B2, CR1, SFH):
+           ::test_sigterm_only_kill_that_exits_on_a_later_tick_is_named_killed
+           ::test_sigterm_only_survivor_is_explained_by_the_deadline
+           test_service_kill_ledger.py (SIGNALLING named after a failed terminate; TERM_ONLY reason)
+        3. serve.port cleanup once, after a confirmed exit, no holder, stale file removed, failure noted once:
+           ::test_port_file_cleanup_runs_once_and_notes_a_failure_once
+           ::test_port_file_kept_while_a_visible_voxd_holds_the_port
+           test_service_process.py::test_discard_port_file_* (unparseable removed, other port kept, unlink/read failure raises)
+           test_service_daemon_probe.py::test_clear_port_file_discards_a_stale_service_port_file /
+             ::test_clear_port_file_leaves_the_file_of_a_voxd_on_the_port
+           (::test_port_file_cleanup_waits_for_a_confirmed_exit and
+            ::test_unparseable_port_file_is_removed_after_the_kill are guards; they passed before the fix)
+        4. Spared never also killed; active re-check before each signal:
+           ::test_spared_pid_is_never_also_reported_killed
+           ::test_manager_is_asked_again_before_each_signal
+        5. No wait overruns its bound:
+           test_service_clock.py::test_until_never_sleeps_past_the_deadline,
+             ::test_until_within_hands_each_check_the_time_that_remains
+           test_service_launchctl.py::test_wait_bounds_each_print_by_what_remains_of_the_wait,
+             ::test_wait_reads_a_print_cut_short_by_the_wait_as_still_registered,
+             ::test_running_within_* (4)
+           test_service_systemd.py::test_is_active_within_* (3)
+           test_service_launchd.py::test_launchd_is_active_within_* (2)
+           test_service_health_verify.py::test_verify_never_lets_an_active_query_outlive_the_wait
+        6. Test count 5701 -> 5740; no new suppressions; ratchet relaxations are per-file --relax
+           with justifications in .oo-audit.jsonl / .oo-coupling-audit.jsonl. The coupling update in
+           6a0c16f also recorded service modules earlier rounds added but never baselined.
+    - mission: m-2026-11-05-001
+      round: 2
+      created_at: "2026-11-05T02:35:22Z"
+      author: adb
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 15
+          removed: 0
+        - path: .oo-baseline.json
+          added: 55
+          removed: 16
+        - path: .oo-coupling-audit.jsonl
+          added: 11
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 31
+          removed: 10
+        - path: src/punt_vox/service/backend.py
+          added: 15
+          removed: 10
+        - path: src/punt_vox/service/clock.py
+          added: 19
+          removed: 12
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 8
+          removed: 7
+        - path: src/punt_vox/service/daemon_process.py
+          added: 33
+          removed: 47
+        - path: src/punt_vox/service/health_verify.py
+          added: 21
+          removed: 8
+        - path: src/punt_vox/service/kill_ledger.py
+          added: 21
+          removed: 15
+        - path: src/punt_vox/service/launchctl.py
+          added: 87
+          removed: 159
+        - path: src/punt_vox/service/launchctl_query.py
+          added: 189
+          removed: 0
+        - path: src/punt_vox/service/launchd.py
+          added: 13
+          removed: 5
+        - path: src/punt_vox/service/lifecycle_stop.py
+          added: 12
+          removed: 8
+        - path: src/punt_vox/service/port_file_cleanup.py
+          added: 31
+          removed: 0
+        - path: src/punt_vox/service/process.py
+          added: 9
+          removed: 6
+        - path: src/punt_vox/service/query_answer.py
+          added: 43
+          removed: 0
+        - path: src/punt_vox/service/signal_escalation.py
+          added: 89
+          removed: 0
+        - path: src/punt_vox/service/systemd.py
+          added: 8
+          removed: 6
+        - path: src/punt_vox/service/termination.py
+          added: 27
+          removed: 0
+        - path: tests/_lifecycle_fakes.py
+          added: 38
+          removed: 8
+        - path: tests/test_service_clock.py
+          added: 20
+          removed: 6
+        - path: tests/test_service_daemon_probe.py
+          added: 4
+          removed: 2
+        - path: tests/test_service_daemon_process.py
+          added: 90
+          removed: 10
+        - path: tests/test_service_health_verify.py
+          added: 52
+          removed: 3
+        - path: tests/test_service_installer.py
+          added: 4
+          removed: 1
+        - path: tests/test_service_kill_ledger.py
+          added: 18
+          removed: 5
+        - path: tests/test_service_launchctl.py
+          added: 101
+          removed: 37
+        - path: tests/test_service_launchctl_query.py
+          added: 64
+          removed: 0
+        - path: tests/test_service_launchd.py
+          added: 33
+          removed: 6
+        - path: tests/test_service_lifecycle_stop.py
+          added: 81
+          removed: 3
+        - path: tests/test_service_port_file_cleanup.py
+          added: 22
+          removed: 0
+        - path: tests/test_service_process.py
+          added: 18
+          removed: 7
+        - path: tests/test_service_query_answer.py
+          added: 17
+          removed: 0
+        - path: tests/test_service_signal_escalation.py
+          added: 64
+          removed: 0
+        - path: tests/test_service_systemd.py
+          added: 4
+          removed: 2
+        - path: tests/test_service_termination.py
+          added: 14
+          removed: 0
+      evidence:
+        - name: make check on 4139bf1 (pytest 5755 passed; check-oo, check-coupling, check-suppressions PASS)
+          status: pass
+        - name: make check on aa615d3 (pytest 5775 passed; ruff, format, mypy, pyright, markdownlint, check-oo, check-coupling, check-suppressions PASS)
+          status: pass
+        - name: 'each fix removed once (mutant) and its test seen failing before commit: S1, S2, S3, S4, S5, S6, S7, S9'
+          status: pass
+      open_questions:
+        - 'S1: LaunchdBackend.request_stop keeps plain bootout() (warning only) per ''stop keeps its own settle-loop behaviour''; only uninstall uses bootout_confirmed(). bootstrap''s ''did not leave'' errors now also say whether print hung or the job stayed.'
+        - launchctl.py had reached 304 lines; the bounded queries and the subprocess layer moved to launchctl_query.LaunchctlQuery. LaunchctlError is defined there and imported by launchctl.py, so __main__.py's 'from punt_vox.service.launchctl import LaunchctlError' still works (that file is outside the write set). Tests that patched punt_vox.service.launchctl.subprocess now patch launchctl_query.subprocess.
+        - A REFUSED entry is never later counted 'killed' if the process exits on its own (confirm ignores it); it is still watched through holders/captured handles.
+      prose: |
+        Commits: 4139bf1 (S1, S2, S6), aa615d3 (S3, S4, S5, S7, S8, S9).
+
+        Failing-first test per item (each fix removed once and the test seen red):
+        S1 test_service_launchd.py::test_launchd_uninstall_keeps_the_plist_when_bootout_is_unconfirmed
+           (mutant: uninstall back to bootout -> DID NOT RAISE); plus test_service_launchctl.py::
+           test_bootout_confirmed_raises_naming_a_print_that_timed_out / _when_the_job_stays_registered,
+           test_bootout_for_stop_only_warns_when_the_job_lingers
+        S2 test_service_health_verify.py::test_verify_names_a_manager_query_that_never_answered[systemd|launchd]
+           (mutant: timed_out branch disabled -> "check the daemon logs" message)
+        S3 test_service_lifecycle_stop.py::test_port_file_cleanup_declined_for_a_new_holder_is_retried
+           (mutant: _port_file_done = True -> 1 clear call, file kept)
+        S4 ::test_late_holder_given_sigterm_only_and_gone_next_tick_is_killed
+           (mutant: '| self._ledger.unconfirmed()' removed -> 'got SIGTERM only' instead of killed)
+        S5 ::test_a_terminate_that_fails_after_signalling_still_names_the_pid
+           (mutant: ledger write before terminate removed -> pid absent from detail)
+        S6 test_service_launchctl.py::test_running_within_gives_print_only_what_list_left
+           (mutant: remaining -> within_s -> timeout 0.3 > 0.1)
+        S7 test_service_daemon_process.py::test_pidfd_signal_oserror_is_port_probe_error,
+           ::test_pidfd_wait_oserror_is_port_probe_error, ::test_start_time_kill_oserror_is_port_probe_error
+           (mutant: the three 'except OSError' clauses neutralised -> raw OSError)
+        S8 test_service_kill_ledger.py::test_a_signal_whose_terminate_failed_is_still_named and the S5 test
+           assert the new 'stop began signalling voxd pid N' text (old text fails them)
+        S9 test_service_lifecycle_stop.py::test_a_refused_signal_is_reported_as_refused,
+           test_service_kill_ledger.py::test_a_refused_signal_is_its_own_outcome,
+           test_service_daemon_process.py::test_start_time_permission_denied_is_refused,
+           ::test_pidfd_refused_below_the_floor_is_refused_not_term_only,
+           test_service_signal_escalation.py::test_a_refused_signal_is_refused
+           (mutants: REFUSED -> TERM_ONLY in SignalEscalation and in the ledger table -> 6 tests red)
+
+        Test count 5740 -> 5775. No new suppressions. Ratchet relaxations are per-file --relax with
+        justifications in the audit logs; launchctl.py module_size fell 304 -> 208 by the split, and
+        daemon_process.py lost its duplicated kill sequence to SignalEscalation.

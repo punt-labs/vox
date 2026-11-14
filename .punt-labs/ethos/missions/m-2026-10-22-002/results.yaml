@@ -1,0 +1,83 @@
+results:
+    - mission: m-2026-10-22-002
+      round: 1
+      created_at: "2026-10-22T07:12:38Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: uv.lock
+          added: 52
+          removed: 23
+        - path: CHANGELOG.md
+          added: 8
+          removed: 0
+      evidence:
+        - name: 'uv lock --upgrade-package anyio/pyjwt/urllib3/mcp: anyio 4.12.1 -> 4.14.2 + 4.15.1 (forked), mcp 1.28.1 -> 1.30.0, pyjwt 2.13.0 -> 2.15.1, urllib3 2.7.0 -> 2.8.0'
+          status: pass
+        - name: 'git diff --stat origin/main..HEAD: only uv.lock and CHANGELOG.md; no other [[package]] version changed'
+          status: pass
+        - name: 'make check: ruff clean, 963 formatted, mypy 0 issues in 643 files, pyright 0 errors, markdownlint 0 issues, pytest 4689 passed / 308 deselected, oo_score and oo_coupling trivial pass (no Python touched), suppressions 202 -> 202'
+          status: pass
+        - name: 'pytest -m ''slow or subprocess'': all passed, 3 platform-conditional skips (macOS bash 3.2 tests)'
+          status: pass
+        - name: 'smoke: punt_vox.server mcp.list_tools() on mcp 1.30.0 registers all 11 mic tools'
+          status: pass
+        - name: 'source diff mcp 1.28.1 vs 1.30.0 and anyio 4.12.1 vs 4.14.2: nothing vox uses changed'
+          status: pass
+        - name: commit e67864e pushed to origin/fix/vox-rmyx-security-lock-bump
+          status: pass
+      open_questions:
+        - 'anyio forks by Python version: 4.14.2 on <3.15 (all we run), 4.15.1 on >=3.15. Cause: anyio 4.15.x needs typing-extensions>=4.16 below 3.15, and the lock keeps typing-extensions at 4.15.0. Adding --upgrade-package typing-extensions would collapse it to one anyio 4.15.1 at the cost of a fifth package moving. I followed the contract (four packages only). Leader''s call.'
+      prose: |
+        Version table:
+          anyio    4.12.1 -> 4.14.2 (python < 3.15), 4.15.1 (python >= 3.15)
+          PyJWT    2.13.0 -> 2.15.1
+          urllib3  2.7.0  -> 2.8.0
+          mcp      1.28.1 -> 1.30.0
+
+        Forced extra moves: none by version. The anyio fork rewrote the
+        anyio dependency edges of httpx, httpx2, mcp, openai,
+        py-key-value-aio[filetree], sse-starlette, starlette and watchfiles
+        into two marker-split edges, and added markers to secretstorage's
+        cryptography/jeepney edges. Those are marker rewrites only; each
+        package keeps its version.
+
+        Upstream reads. PyPI was unreachable from the sandbox (curl denied),
+        so I diffed the installed sources (main checkout venv vs worktree
+        venv) instead of reading published changelogs. Treat that as a
+        stronger check than a changelog, but it is not the changelog.
+
+        mcp 1.28.1 -> 1.30.0: mcp/server/stdio.py, lowlevel server,
+        tools/ manager, exceptions and types used by vox are byte-identical.
+        The FastMCP changes are: new HTTP/SSE settings (max_request_body_size,
+        session_idle_timeout, max_sessions) with defaults; bearer-auth
+        resource validation; Settings.model_rebuild(); related_request_id on
+        progress reports; output-schema inlining for root $ref (self-referential
+        models); and re.match -> fullmatch in resource templates and tool-name
+        validation. Vox runs stdio only, its tool names are plain ascii, and it
+        relies on call_tool, _tool_manager.get_tool, tool.parameters and
+        _mcp_server.version, none of which changed. Client-side auth and
+        streamable-HTTP changes do not reach vox.
+
+        anyio 4.12.1 -> 4.14.2: vox imports anyio nowhere. The diff is
+        additive (new itertools module, AsyncFile limiter argument, Path
+        helpers) plus internal import reshuffles (CapacityLimiter/Event moved
+        to _core._synchronization). The to_thread.run_sync and memory-stream
+        changes are docstring and import-only. No change in task-group or
+        thread semantics that touches vox.
+
+        make check summary (full output read):
+          ruff: All checks passed! / 963 files already formatted
+          mypy: Success: no issues found in 643 source files
+          pyright: 0 errors, 0 warnings, 0 informations
+          markdownlint: 0 issues in 0 files
+          pytest: 4689 passed, 308 deselected, 4 warnings in 169.12s
+          oo_score: No Python files touched -- trivial pass
+          oo_coupling: No scored Python files touched
+          suppressions: 202 -> 202, PASS
+
+        The 4 pytest warnings are SyntaxWarnings from pydub/utils.py, which is
+        unchanged by this lock bump. The ratchet passes trivially because no
+        Python file is touched; it does not report "no metric improved", so
+        there is nothing for the leader to rule on there.

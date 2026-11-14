@@ -1,0 +1,369 @@
+results:
+    - mission: m-2026-11-04-011
+      round: 1
+      created_at: "2026-11-05T00:38:08Z"
+      author: adb
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 10
+          removed: 0
+        - path: .oo-baseline.json
+          added: 36
+          removed: 49
+        - path: .oo-coupling-audit.jsonl
+          added: 7
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 19
+          removed: 19
+        - path: docs/testing/manual-tests.md
+          added: 1
+          removed: 1
+        - path: src/punt_vox/cli_daemon.py
+          added: 77
+          removed: 35
+        - path: src/punt_vox/daemon_restarter.py
+          added: 0
+          removed: 194
+        - path: src/punt_vox/service/__init__.py
+          added: 4
+          removed: 63
+        - path: src/punt_vox/service/backend.py
+          added: 201
+          removed: 0
+        - path: src/punt_vox/service/clock.py
+          added: 74
+          removed: 0
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 107
+          removed: 0
+        - path: src/punt_vox/service/daemon_process.py
+          added: 213
+          removed: 0
+        - path: src/punt_vox/service/health.py
+          added: 38
+          removed: 82
+        - path: src/punt_vox/service/health_verify.py
+          added: 26
+          removed: 34
+        - path: src/punt_vox/service/installer.py
+          added: 59
+          removed: 89
+        - path: src/punt_vox/service/launchctl.py
+          added: 38
+          removed: 12
+        - path: src/punt_vox/service/launchd.py
+          added: 57
+          removed: 42
+        - path: src/punt_vox/service/lifecycle.py
+          added: 79
+          removed: 0
+        - path: src/punt_vox/service/lifecycle_report.py
+          added: 178
+          removed: 0
+        - path: src/punt_vox/service/lifecycle_start.py
+          added: 152
+          removed: 0
+        - path: src/punt_vox/service/lifecycle_stop.py
+          added: 185
+          removed: 0
+        - path: src/punt_vox/service/lifecycle_system.py
+          added: 172
+          removed: 0
+        - path: src/punt_vox/service/process.py
+          added: 74
+          removed: 89
+        - path: src/punt_vox/service/process_identity.py
+          added: 44
+          removed: 0
+        - path: src/punt_vox/service/systemd.py
+          added: 198
+          removed: 164
+        - path: src/punt_vox/service/systemd_unit.py
+          added: 135
+          removed: 0
+        - path: src/punt_vox/service/voxd_plist.py
+          added: 24
+          removed: 1
+        - path: tests/_lifecycle_fakes.py
+          added: 333
+          removed: 0
+        - path: tests/test_cli.py
+          added: 83
+          removed: 433
+        - path: tests/test_daemon_restarter.py
+          added: 0
+          removed: 144
+        - path: tests/test_service_backend.py
+          added: 36
+          removed: 0
+        - path: tests/test_service_clock.py
+          added: 48
+          removed: 0
+        - path: tests/test_service_daemon_probe.py
+          added: 109
+          removed: 0
+        - path: tests/test_service_daemon_process.py
+          added: 240
+          removed: 0
+        - path: tests/test_service_health.py
+          added: 51
+          removed: 148
+        - path: tests/test_service_health_verify.py
+          added: 41
+          removed: 74
+        - path: tests/test_service_installer.py
+          added: 258
+          removed: 345
+        - path: tests/test_service_launchctl.py
+          added: 61
+          removed: 4
+        - path: tests/test_service_launchd.py
+          added: 87
+          removed: 105
+        - path: tests/test_service_lifecycle.py
+          added: 689
+          removed: 0
+        - path: tests/test_service_lifecycle_report.py
+          added: 102
+          removed: 0
+        - path: tests/test_service_lifecycle_system.py
+          added: 48
+          removed: 0
+        - path: tests/test_service_process.py
+          added: 135
+          removed: 155
+        - path: tests/test_service_process_identity.py
+          added: 39
+          removed: 0
+        - path: tests/test_service_systemd.py
+          added: 142
+          removed: 196
+        - path: tests/test_service_systemd_unit.py
+          added: 231
+          removed: 0
+      evidence:
+        - name: 'make check on 8c931d9: ruff, mypy, pyright, markdownlint, pytest 5604 passed (was 5457), check-oo PASS, check-coupling PASS, check-suppressions PASS (-7)'
+          status: pass
+        - name: 'tests/test_service_lifecycle.py: 66 tests, one per section 4 row (S1-S8b, T1-T10 with T2b/T2c/T3b/T4b), restart rows, F0-F6, probe failure per verb, P1 sweep, preconditions'
+          status: pass
+        - name: 'tests/test_service_systemd.py PrivilegedRun: scoped_nopasswd, exit4, exit5, exit1 no-tty, exit1 tty interactive once, mixed_nopasswd, never_reads_stderr_text'
+          status: pass
+        - name: 'real-process handle test terminates a live child on this host (start-time handle: this uv Python lacks os.pidfd_open)'
+          status: pass
+      open_questions:
+        - 'Exceptions renamed for ruff N818: PrivilegeDenied -> PrivilegeDeniedError, DaemonNotUp -> DaemonNotUpError, LifecycleRefused -> LifecycleRefusedError (a noqa would raise the suppression count)'
+        - Clock Protocol lives in backend.py (PY-IC-9), SystemClock and Poll in clock.py, not daemon_probe.py
+        - DaemonLifecycle is built with DaemonLifecycle.for_this_host() (preconditions before any backend), not DaemonLifecycle()
+        - 'VoxdPlist.content() emits the XML declaration indented (pre-existing); installed_bind lstrips before plistlib. Not changed: needs a Mac demo'
+        - uv python on pembroke has no os.pidfd_open, so the demo host exercises the start-time handle, not pidfd
+      prose: |
+        Implemented docs/daemon-lifecycle-design.md as written; see the
+        open questions for the naming and placement deviations. Commits:
+        8c931d9 (feature, tests, ratchet files) and the docs commit on top.
+    - mission: m-2026-11-04-011
+      round: 2
+      created_at: "2026-11-05T01:10:58Z"
+      author: adb
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 10
+          removed: 0
+        - path: .oo-baseline.json
+          added: 162
+          removed: 19
+        - path: .oo-coupling-audit.jsonl
+          added: 2
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 5
+          removed: 5
+        - path: src/punt_vox/service/backend.py
+          added: 20
+          removed: 2
+        - path: src/punt_vox/service/clock.py
+          added: 4
+          removed: 0
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 81
+          removed: 15
+        - path: src/punt_vox/service/daemon_process.py
+          added: 49
+          removed: 11
+        - path: src/punt_vox/service/health_verify.py
+          added: 30
+          removed: 19
+        - path: src/punt_vox/service/installer.py
+          added: 14
+          removed: 13
+        - path: src/punt_vox/service/launchctl.py
+          added: 52
+          removed: 38
+        - path: src/punt_vox/service/launchd.py
+          added: 15
+          removed: 4
+        - path: src/punt_vox/service/lifecycle_report.py
+          added: 7
+          removed: 1
+        - path: src/punt_vox/service/lifecycle_start.py
+          added: 34
+          removed: 7
+        - path: src/punt_vox/service/lifecycle_stop.py
+          added: 65
+          removed: 16
+        - path: src/punt_vox/service/lifecycle_system.py
+          added: 12
+          removed: 2
+        - path: src/punt_vox/service/process.py
+          added: 54
+          removed: 22
+        - path: src/punt_vox/service/process_identity.py
+          added: 22
+          removed: 5
+        - path: src/punt_vox/service/systemd.py
+          added: 71
+          removed: 20
+        - path: src/punt_vox/service/systemd_unit.py
+          added: 14
+          removed: 2
+        - path: src/punt_vox/service/voxd_plist.py
+          added: 54
+          removed: 35
+        - path: tests/_lifecycle_fakes.py
+          added: 161
+          removed: 8
+        - path: tests/test_cli.py
+          added: 19
+          removed: 0
+        - path: tests/test_service_daemon_probe.py
+          added: 87
+          removed: 2
+        - path: tests/test_service_daemon_process.py
+          added: 68
+          removed: 10
+        - path: tests/test_service_health_verify.py
+          added: 37
+          removed: 10
+        - path: tests/test_service_installer.py
+          added: 32
+          removed: 9
+        - path: tests/test_service_launchctl.py
+          added: 62
+          removed: 13
+        - path: tests/test_service_launchd.py
+          added: 50
+          removed: 0
+        - path: tests/test_service_lifecycle.py
+          added: 20
+          removed: 446
+        - path: tests/test_service_lifecycle_start.py
+          added: 240
+          removed: 0
+        - path: tests/test_service_lifecycle_stop.py
+          added: 360
+          removed: 0
+        - path: tests/test_service_process.py
+          added: 86
+          removed: 2
+        - path: tests/test_service_process_identity.py
+          added: 17
+          removed: 0
+        - path: tests/test_service_systemd.py
+          added: 77
+          removed: 0
+        - path: tests/test_service_systemd_unit.py
+          added: 19
+          removed: 0
+        - path: tests/test_service_voxd_plist.py
+          added: 40
+          removed: 0
+      evidence:
+        - name: 'make check on faec3bc: lint, mypy, pyright, markdownlint clean; pytest 5677 passed (was 5604); check-oo PASS, check-coupling PASS, check-suppressions PASS (-11 vs base)'
+          status: pass
+        - name: every A and B item has a test; written failing-first except the launchctl B1/B14/B18 tests and the B11 CLI JSON guard, written alongside the fix
+          status: pass
+      open_questions:
+        - 'Round 2 is one commit (faec3bc): the terminate(within_s) protocol change, the fresh-handle fakes and the stop rewrite only pass make check together'
+        - OO and coupling relaxations for round-2 growth are scoped per file and metric, each justified in .oo-audit.jsonl and .oo-coupling-audit.jsonl
+      prose: |
+        All section A and B items of .tmp/missions/vox-9354-round2.md fixed in
+        faec3bc. No design conflict hit.
+    - mission: m-2026-11-04-011
+      round: 3
+      created_at: "2026-11-05T01:23:53Z"
+      author: adb
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 10
+          removed: 0
+        - path: .oo-baseline.json
+          added: 16
+          removed: 16
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 15
+          removed: 3
+        - path: src/punt_vox/service/daemon_process.py
+          added: 18
+          removed: 3
+        - path: src/punt_vox/service/launchd.py
+          added: 5
+          removed: 1
+        - path: src/punt_vox/service/lifecycle_stop.py
+          added: 51
+          removed: 15
+        - path: src/punt_vox/service/process.py
+          added: 15
+          removed: 6
+        - path: src/punt_vox/service/process_identity.py
+          added: 5
+          removed: 2
+        - path: src/punt_vox/service/systemd.py
+          added: 4
+          removed: 1
+        - path: src/punt_vox/service/voxd_plist.py
+          added: 3
+          removed: 4
+        - path: tests/_lifecycle_fakes.py
+          added: 26
+          removed: 3
+        - path: tests/test_service_daemon_probe.py
+          added: 23
+          removed: 0
+        - path: tests/test_service_daemon_process.py
+          added: 23
+          removed: 2
+        - path: tests/test_service_launchd.py
+          added: 13
+          removed: 0
+        - path: tests/test_service_lifecycle_stop.py
+          added: 98
+          removed: 7
+        - path: tests/test_service_process.py
+          added: 23
+          removed: 3
+        - path: tests/test_service_process_identity.py
+          added: 2
+          removed: 0
+        - path: tests/test_service_systemd.py
+          added: 9
+          removed: 0
+        - path: tests/test_service_voxd_plist.py
+          added: 21
+          removed: 0
+      evidence:
+        - name: 'make check on c8b39c5: lint, mypy, pyright, markdownlint clean; pytest 5701 passed (was 5677); check-oo PASS, check-coupling PASS, check-suppressions PASS (-11 vs base)'
+          status: pass
+        - name: every R1-R10 test failed before its fix; R1 also fails with the _escalate re-check removed (mutation run)
+          status: pass
+      open_questions:
+        - 'Round 3 is one commit (c8b39c5): the shared .oo-baseline.json lock makes per-slice commits fail the in-tree baseline check unless each slice is verified in its own checkout'
+        - launchctl exit 113 as 'absent' still needs the leader's Mac check before merge (recorded item, no code change)
+      prose: |
+        All R1-R10 items of .tmp/missions/vox-9354-round3.md fixed in c8b39c5.
+        No design conflict hit.
