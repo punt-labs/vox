@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no rule update. `vox disable` removes both sets; the bare `Skill(<cmd>)`
   rules an earlier `vox enable` wrote stay until you delete them (no cleanup
   code, punt-kit#396). `scripts/check-skill-permissions.sh` is removed: with
-  `Skill(vox:*)` there is no per-command list to keep in sync.
+  `Skill(vox:*)` there is no per-command list to keep in sync. `vox enable`
+  prints the allowed rules and the rules that still prompt on separate lines
+  (`allowed` and `ask` in `--json`).
 
 - **Linear is the tracker of record for vox; beads is a scoped local
   mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
