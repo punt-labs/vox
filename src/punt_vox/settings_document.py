@@ -1,4 +1,4 @@
-"""A parsed ``settings.json`` object, narrowed only at ``permissions.allow``."""
+"""A parsed ``settings.json`` object, narrowed only at its ``permissions`` tiers."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class SettingsDocument:
     """The user's whole settings object, read and rewritten at one key path.
 
     ``dict[str, Any]`` is the JSON wire boundary -- the shape is the user's whole
-    settings file, narrowed only at ``permissions.allow``, the one place this
+    settings file, narrowed only at its ``permissions`` tiers, the one place this
     class writes. A *present but malformed* value is a boundary error
     (PY-EH-1/PY-EH-8), never an empty default: resetting it would silently
     discard the user's settings. *origin* names the file in every error.
@@ -48,36 +48,35 @@ class SettingsDocument:
             raise ValueError(msg)
         return cls(cast("dict[str, Any]", parsed), origin)
 
-    @property
-    def allow(self) -> list[str]:
-        """Return the current ``permissions.allow`` entries as strings, else ``[]``.
+    def rules(self, tier: str) -> list[str]:
+        """Return the current ``permissions.<tier>`` entries as strings, else ``[]``.
 
         Presence is keyed on membership, never on truthiness -- a present but
-        ``null`` ``permissions`` (or ``permissions.allow``) is malformed and
-        raises, exactly like a string or number would, rather than being read as
-        absent and silently overwritten. Only a genuinely *absent* key is safe to
-        treat as empty and create later.
+        ``null`` ``permissions`` (or tier) is malformed and raises, exactly like
+        a string or number would, rather than being read as absent and silently
+        overwritten. Only a genuinely *absent* key is safe to treat as empty and
+        create later.
         """
         if "permissions" not in self._data:
             return []
         perms = self._permissions()
-        if "allow" not in perms:
+        if tier not in perms:
             return []
-        allow: Any = perms["allow"]
-        if not isinstance(allow, list):
-            msg = f"{self._origin}: permissions.allow must be a JSON array"
+        rules: Any = perms[tier]
+        if not isinstance(rules, list):
+            msg = f"{self._origin}: permissions.{tier} must be a JSON array"
             raise ValueError(msg)
-        return [str(entry) for entry in cast("list[object]", allow)]
+        return [str(entry) for entry in cast("list[object]", rules)]
 
-    def set_allow(self, allow: list[str]) -> None:
-        """Set ``permissions.allow`` to *allow*, creating an absent ``permissions``.
+    def set_rules(self, tier: str, rules: list[str]) -> None:
+        """Set ``permissions.<tier>`` to *rules*, creating an absent ``permissions``.
 
         A present ``permissions`` must be an object (``ValueError`` otherwise),
         so this never overwrites the user's data.
         """
         if "permissions" not in self._data:
             self._data["permissions"] = {}
-        self._permissions()["allow"] = allow
+        self._permissions()[tier] = rules
 
     def dumps(self) -> str:
         """Return the document serialized as the file's new text."""

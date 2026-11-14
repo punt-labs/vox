@@ -87,6 +87,7 @@ def test_enable_registers_settings(tmp_path: Path) -> None:
     settings = tmp_path / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert "Bash(vox:*)" in data["permissions"]["allow"]
+    assert "Bash(vox enable:*)" in data["permissions"]["ask"]
 
 
 def test_enable_is_idempotent_no_second_import(tmp_path: Path) -> None:

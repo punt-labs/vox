@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from punt_vox.permission_rules import VOX_RULES
 from punt_vox.settings_registration import SettingsRegistration
 from punt_vox.sibling_lock import SiblingLock
 
@@ -15,7 +16,9 @@ _ENTRY = "Bash(vox:*)"
 
 
 def _reg(tmp_path: Path) -> SettingsRegistration:
-    return SettingsRegistration(tmp_path / ".claude" / "settings.json", (_ENTRY,))
+    return SettingsRegistration(
+        tmp_path / ".claude" / "settings.json", {"allow": (_ENTRY,)}
+    )
 
 
 def _default_reg(tmp_path: Path) -> SettingsRegistration:
@@ -212,13 +215,57 @@ def test_register_creates_absent_allow_key(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_entries_are_vox_rules_and_no_dev_rule(tmp_path: Path) -> None:
+def test_default_rules_allow_each_surface_broadly(tmp_path: Path) -> None:
     assert _default_reg(tmp_path).register() is True
-    rules = _default_reg(tmp_path).entries
-    assert _allow(tmp_path / ".claude" / "settings.json") == list(rules)
-    assert "Bash(vox:*)" in rules
-    assert "mcp__plugin_vox_mic__*" in rules
-    assert not [rule for rule in rules if "vox-dev" in rule]
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert data["permissions"]["allow"] == list(VOX_RULES["allow"])
+    assert data["permissions"]["ask"] == list(VOX_RULES["ask"])
+    assert VOX_RULES["allow"] == (
+        "Bash(vox:*)",
+        "mcp__plugin_vox_mic__*",
+        "Skill(vox:*)",
+    )
+
+
+def test_unsafe_verbs_and_global_options_ask(tmp_path: Path) -> None:
+    ask = VOX_RULES["ask"]
+    assert "Bash(vox -*)" in ask
+    for verb in (
+        "install",
+        "uninstall",
+        "enable",
+        "disable",
+        "daemon",
+        "desktop",
+        "register-guidance",
+    ):
+        assert f"Bash(vox {verb}:*)" in ask
+    assert "Bash(vox music:*)" not in ask
+    assert "Bash(vox rec:*)" not in ask
+    assert _default_reg(tmp_path).rules == VOX_RULES
+
+
+def test_no_dev_rule_is_granted() -> None:
+    assert not [
+        rule for rules in VOX_RULES.values() for rule in rules if "-dev" in rule
+    ]
+
+
+def test_deregister_never_creates_an_absent_tier(tmp_path: Path) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    user = {"permissions": {"allow": ["Bash(vox:*)", "Read"]}}
+    settings.write_text(json.dumps(user), encoding="utf-8")
+    assert _default_reg(tmp_path).deregister() is True
+    assert json.loads(settings.read_text()) == {"permissions": {"allow": ["Read"]}}
+
+
+def test_register_raises_when_ask_is_not_a_list(tmp_path: Path) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"permissions": {"ask": "x"}}), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"permissions\.ask must be a JSON array"):
+        _default_reg(tmp_path).register()
 
 
 def test_deregister_removes_exactly_vox_rules(tmp_path: Path) -> None:
@@ -229,7 +276,12 @@ def test_deregister_removes_exactly_vox_rules(tmp_path: Path) -> None:
     reg = _default_reg(tmp_path)
     reg.register()
     reg.deregister()
-    assert json.loads(settings.read_text(encoding="utf-8")) == user
+    # enable created the ask tier; disable empties it rather than deleting it.
+    expected = {
+        "model": "x",
+        "permissions": {"allow": ["Bash(ls:*)"], "deny": ["Y"], "ask": []},
+    }
+    assert json.loads(settings.read_text(encoding="utf-8")) == expected
 
 
 def test_refuses_invalid_utf8(tmp_path: Path) -> None:

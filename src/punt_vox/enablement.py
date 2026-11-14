@@ -54,7 +54,7 @@ from punt_vox.dirs import find_repo_root
 from punt_vox.settings_registration import SettingsRegistration
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -386,9 +386,9 @@ class RepoEnablement:
         return self._marker.path
 
     @property
-    def allow_rules(self) -> tuple[str, ...]:
-        """Return the rules enable adds to the repo's ``.claude/settings.json``."""
-        return self._settings.entries
+    def permission_rules(self) -> Mapping[str, tuple[str, ...]]:
+        """Return the rules enable adds to ``.claude/settings.json``, by tier."""
+        return self._settings.rules
 
     @property
     def import_line(self) -> str:

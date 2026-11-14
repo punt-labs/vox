@@ -32,6 +32,20 @@ def test_enable_writes_marker_and_import(
     assert _IMPORT in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
 
 
+def test_enable_reports_ask_rules_apart_from_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _point_repo_at(monkeypatch, tmp_path)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    allowed = next(line for line in lines if line.startswith("allowed in"))
+    prompts = next(line for line in lines if line.startswith("still prompts:"))
+    assert "Bash(vox:*)" in allowed
+    assert "Bash(vox daemon:*)" not in allowed
+    assert "Bash(vox daemon:*)" in prompts
+
+
 def test_disable_removes_marker_leaves_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

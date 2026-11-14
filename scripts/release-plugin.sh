@@ -8,7 +8,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PLUGIN_JSON="${REPO_ROOT}/plugin/.claude-plugin/plugin.json"
 # The dev commands live in the plugin's own commands/ directory, which is what
-# session-start.sh and check-skill-permissions.sh both skip *-dev.md from.
+# session-start.sh skips *-dev.md from.
 # This pointed at .claude/commands/ — the project-local command directory the
 # plugin's dev commands were deliberately moved OUT of (9b18a26) — so the
 # release prep had stopped stripping dev commands from the shipped surface and
