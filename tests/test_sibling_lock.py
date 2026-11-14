@@ -137,3 +137,20 @@ def test_the_lock_file_is_private_and_never_truncated(tmp_path: Path) -> None:
     lock.path.write_text("left by a peer")
     with lock.held():
         assert lock.path.read_text() == "left by a peer"
+
+
+def test_held_with_dir_fd_locks_relative_to_the_descriptor(tmp_path: Path) -> None:
+    # The lock opens inside the directory the descriptor names, even after that
+    # directory is renamed, so a swapped-in path never receives the lock file.
+    original = tmp_path / "claude"
+    original.mkdir()
+    lock = SiblingLock(original / "settings.json")
+    dir_fd = os.open(original, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        moved = tmp_path / "moved"
+        original.rename(moved)
+        with lock.held(dir_fd=dir_fd):
+            assert (moved / ".settings.json.punt-import.lock").exists()
+        assert not original.exists()
+    finally:
+        os.close(dir_fd)
