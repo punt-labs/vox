@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from punt_vox.markdown_doc import MarkdownDoc
 
 _VOX = "@.punt-labs/vox/CLAUDE.md"
@@ -98,24 +100,40 @@ def test_longer_close_delimiter_matches_shorter_open() -> None:
 
 
 # ---------------------------------------------------------------------------
-# the unterminated-opener guard — a dangling fence swallows nothing
+# an unterminated opener runs to EOF, as in Claude Code's Markdown lexer
 # ---------------------------------------------------------------------------
 
 
-def test_unterminated_opener_does_not_swallow_the_import() -> None:
-    # A dangling fence in the user's prose above the import must not fence it:
-    # the naive "odd count of preceding delimiters" rule would misclassify the
-    # column-0 import as fenced. The import stays top-level, found and removable.
+def test_import_after_an_unterminated_opener_is_fenced() -> None:
     text = f"# rules\n\n```text\nnot closed\n{_VOX}\n"
     doc = MarkdownDoc(text)
-    assert doc.contains(_VOX) is True
-    assert doc.without(_VOX) == "# rules\n\n```text\nnot closed\n"
+    assert doc.contains(_VOX) is False
+    assert doc.without(_VOX) == text
+    with pytest.raises(ValueError, match="unclosed code fence"):
+        doc.with_appended(_VOX)
 
 
-def test_two_unterminated_openers_still_leave_the_import_top_level() -> None:
-    text = f"```\none\n~~~\ntwo\n{_VOX}\n"
+def test_import_before_an_unterminated_opener_stays_top_level() -> None:
+    text = f"{_VOX}\n```\nopen\n{_VOX}\n"
     doc = MarkdownDoc(text)
     assert doc.contains(_VOX) is True
+    assert doc.without(_VOX) == f"```\nopen\n{_VOX}\n"
+
+
+def test_a_mismatched_inner_delimiter_leaves_the_fence_open() -> None:
+    doc = MarkdownDoc(f"```\none\n~~~\ntwo\n{_VOX}\n")
+    assert doc.contains(_VOX) is False
+
+
+def test_an_inline_triple_backtick_span_is_not_a_fence() -> None:
+    doc = MarkdownDoc(f"```example``` inline\n{_VOX}\n")
+    assert doc.contains(_VOX) is True
+    assert doc.with_appended(_VOX).endswith(f"{_VOX}\n{_VOX}\n")
+
+
+def test_a_balanced_document_appends_after_its_fence() -> None:
+    doc = MarkdownDoc("```\ncode\n```\n")
+    assert doc.with_appended(_VOX) == f"```\ncode\n```\n{_VOX}\n"
 
 
 # ---------------------------------------------------------------------------

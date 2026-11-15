@@ -19,9 +19,10 @@ class MarkdownDoc:
     run of *N* backticks or tildes opens a block, and only a later delimiter of
     the **same** marker whose run is **at least** *N* closes it; a shorter or
     mismatched delimiter inside the block is content, and blocks never nest. An
-    **unterminated opener delimits nothing** -- a dangling fence in the user's
-    prose does not swallow the lines below it, so the tool's own column-0 import
-    line stays matchable regardless of a stray fence above it. An **indented**
+    **unterminated opener runs to the end of the file**, as in Claude Code's
+    Markdown lexer: an import below it loads nothing, so it is not top-level,
+    and :meth:`with_appended` refuses to append one there.
+    A line above the dangling opener is unaffected. An **indented**
     line (a tab or four or more leading spaces) is an inert indented-code line,
     never top-level and never a fence delimiter.
 
@@ -29,9 +30,10 @@ class MarkdownDoc:
     :meth:`without` are the two queries the import writer needs.
     """
 
-    __slots__ = ("_lines", "_top_level")
+    __slots__ = ("_lines", "_open_fence", "_top_level")
 
     _lines: tuple[str, ...]
+    _open_fence: bool
     _top_level: tuple[bool, ...]
 
     _MARKERS = "`~"
@@ -42,7 +44,11 @@ class MarkdownDoc:
         self = super().__new__(cls)
         lines = text.splitlines(keepends=True)
         self._lines = tuple(lines)
-        self._top_level = cls._classify(lines)
+        ranges, open_at = cls._scan_fences(lines)
+        self._open_fence = open_at is not None
+        if open_at is not None:
+            ranges.append((open_at, len(lines) - 1))
+        self._top_level = cls._classify(lines, ranges)
         return self
 
     def contains(self, import_line: str) -> bool:
@@ -78,8 +84,12 @@ class MarkdownDoc:
         the user's last line, and uses the document's own EOL convention for both
         the separator and the appended line -- so the tool's line matches the
         surrounding endings and stays terminator-insensitively matchable on
-        re-run (\\S2.4).
+        re-run (\\S2.4). Raises :class:`ValueError` when the document ends
+        inside a fence that never closes, where the line would be inert.
         """
+        if self._open_fence:
+            msg = "CLAUDE.md ends inside an unclosed code fence; close it first"
+            raise ValueError(msg)
         text = "".join(self._lines)
         eol = self._eol()
         if text and not text.endswith(("\n", "\r")):
@@ -112,10 +122,12 @@ class MarkdownDoc:
         return line.rstrip("\r\n") == import_line
 
     @classmethod
-    def _classify(cls, lines: list[str]) -> tuple[bool, ...]:
+    def _classify(
+        cls, lines: list[str], ranges: list[tuple[int, int]]
+    ) -> tuple[bool, ...]:
         """Flag each line ``True`` when it is top-level (outside every code block)."""
         inside: set[int] = set()
-        for open_idx, close_idx in cls._fenced_ranges(lines):
+        for open_idx, close_idx in ranges:
             # The content and the closing delimiter are inside; the opener is not.
             inside.update(range(open_idx + 1, close_idx + 1))
         return tuple(
@@ -124,13 +136,12 @@ class MarkdownDoc:
         )
 
     @classmethod
-    def _fenced_ranges(cls, lines: list[str]) -> list[tuple[int, int]]:
-        """Return ``(open_idx, close_idx)`` pairs of matched fenced blocks.
+    def _scan_fences(cls, lines: list[str]) -> tuple[list[tuple[int, int]], int | None]:
+        """Return matched ``(open_idx, close_idx)`` pairs and any opener left open.
 
         An opener of run length *N* closes only on a later same-marker delimiter
         of run ``>= N``; a shorter or mismatched delimiter inside the block is
-        content. An unterminated opener yields no pair, so a dangling fence never
-        swallows the rest of the file.
+        content.
         """
         ranges: list[tuple[int, int]] = []
         open_at: int | None = None
@@ -144,7 +155,7 @@ class MarkdownDoc:
             elif fence is not None and fence[0] == open_marker and fence[1] >= open_len:
                 ranges.append((open_at, i))
                 open_at = None
-        return ranges
+        return ranges, open_at
 
     @classmethod
     def _parse_fence(cls, line: str) -> tuple[str, int] | None:
@@ -166,7 +177,11 @@ class MarkdownDoc:
             return None
         marker = stripped[0]
         run = len(stripped) - len(stripped.lstrip(marker))
-        return (marker, run) if run >= cls._MIN_RUN else None
+        # A backtick fence's info string cannot hold a backtick (CommonMark):
+        # such a line is an inline code span, not a fence.
+        if run < cls._MIN_RUN or (marker == "`" and "`" in stripped[run:]):
+            return None
+        return marker, run
 
     @classmethod
     def _is_indented(cls, line: str) -> bool:

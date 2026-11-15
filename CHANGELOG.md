@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An unclosed code fence in `CLAUDE.md` runs to the end of the file
+  (PL-1087).** Claude Code's Markdown lexer treats a fence that never closes
+  as code through EOF, so an `@`-import after it never loads. `vox enable`
+  now refuses, before writing any settings rule, instead of appending an
+  inert import; an import before the open fence is unaffected. A
+  triple-backtick inline span such as ```` ```x``` ```` is not a fence.
+
 ### Changed
 
 - **`vox enable` allows each surface broadly with exact `ask` carve-outs
