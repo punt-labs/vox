@@ -34,6 +34,9 @@ budget:
     rounds: 2
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |-
     This is the first implementation unit of the vox-0rp9 surface-consistency epic
     (12 tasks; this is a small independent one, chosen as the first PR to prove the

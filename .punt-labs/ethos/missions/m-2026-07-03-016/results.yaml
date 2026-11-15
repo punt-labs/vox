@@ -100,7 +100,7 @@ results:
         (`out`), a genuine DRY improvement that dropped process.py module_size
         186->185 (OO ratchet IMPROVED, no regressions), and added a regression
         test (test_find_pid_on_port_ignores_non_decimal_digits) that feeds a
-        superscript token: it would raise an uncaught ValueError under the old
+        superscript token: [redacted-secret] would raise an uncaught ValueError under the old
         isdigit guard, and is silently dropped under isdecimal.
 
         Commits:

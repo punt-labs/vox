@@ -2,9 +2,9 @@
 
 Part of [Punt Labs](https://github.com/punt-labs). This repo must be checked out inside the `punt-labs/` workspace meta-repo so that org-wide configuration loads via Claude Code's ancestor directory walk:
 
-- **`punt-labs/CLAUDE.md`** — org workflow, delegation model, beads issue tracking, tool configuration
+- **`punt-labs/CLAUDE.md`** — org workflow, delegation model, Linear issue tracking, tool configuration
 - **`punt-labs/.claude/rules/python-*.md`** — 19 Python OO coding rules, scoped via `paths:` frontmatter (load on-demand when `.py` files are touched)
-- **`punt-labs/.envrc`** — git identity, beads DB connection, API keys from platform keychain
+- **`punt-labs/.envrc`** — git identity, API keys from platform keychain
 - **`punt-kit/standards/`** — canonical reference docs
 
 If cloned outside the workspace, these rules and configuration will not be present.
@@ -20,20 +20,40 @@ Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (pre
 
 ## Mandatory Reading
 
-Source-of-truth documents, `@`-imported so they load into context at session
-start. Read them before writing code.
+`docs/WORKFLOW.md` is the three-loop development process (backlog → PR →
+mission), with pseudocode and an entry/exit Z schema at each level. It is the
+authoritative process for this repo and is `@`-imported so it loads at session
+start. Read it before writing code.
 
 @docs/WORKFLOW.md
-@../punt-kit/standards/architecture.md
-@../punt-kit/standards/oo.md
-@../punt-kit/standards/python.md
 
-`WORKFLOW.md` is the three-loop development process (backlog → PR → mission),
-with pseudocode and an entry/exit Z schema at each level. The
-`punt-kit/standards` imports are the org's canonical engine-and-clients
-architecture, object-oriented stance, and Python standard (including the OO
-ratchet vox already runs) — cross-repo (external) imports, so the first load
-may ask for approval.
+The org-wide `punt-kit` standards are the canonical source for how Punt Labs
+tools are built. They are non-autoloaded references — linked, not `@`-imported,
+because each is already carried for per-turn work by a mechanism this repo
+loads on demand. Consult the full standard by link when the per-turn rule does
+not settle the question.
+
+- The Python standard,
+  [`python.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/python.md),
+  and the object-oriented stance,
+  [`oo.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/oo.md),
+  are enforced per-turn by the `.claude/rules/python-*.md` set
+  (`paths: ["**/*.py"]`, at the workspace root), which auto-loads the moment an
+  agent touches a `.py` file — including the OO ratchet
+  (`python-oo-adoption.md`) vox already runs. Those rules are a working
+  reminder, not a substitute; the full standards are one link away.
+- The engine-and-clients architecture,
+  [`architecture.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/architecture.md),
+  is design reference consulted during architectural work, not every turn.
+
+<!-- python.md, oo.md, and architecture.md are non-autoloaded references
+     (linked above), not @-imports: python.md and oo.md are enforced per-turn
+     by .claude/rules/python-*.md (paths: **/*.py), and architecture.md is
+     on-demand design reference. Removes ~52k chars of always-on context with
+     no loss of information — each is one link away. -->
+<!-- @../punt-kit/standards/architecture.md -->
+<!-- @../punt-kit/standards/oo.md -->
+<!-- @../punt-kit/standards/python.md -->
 
 ## Architecture
 
@@ -198,7 +218,7 @@ Vox has five TTS providers, each with different SDKs, authentication, voice mode
 
 Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses ethos missions. Every non-trivial delegation has two phases: (1) **design mission** — describes problem, constraints, and invariants but does NOT prescribe a write set; (2) **implementation mission** — uses the write set produced by the design phase. The design mission's output IS the write set — the specialist decides what to create, split, or extract. This is critical: prescribing a write set before design prevents refactoring and forces code into existing modules.
 
-**Project-local ethos (2026-07-03).** `.punt-labs/ethos/` is a vendored project-local directory, no longer a `punt-labs/team` git submodule. It is trimmed to the 15 identities vox delegates to (`claude`, `jfreeman`, `rmh`, `gvr`, `bwk`, `kpz`, `mdm`, `rop`, `adb`, `djb`, `edt`, `dna`, `mcg`, `rej`, `jms`) plus the engineering team and the durable mission records (`missions/` + `missions.jsonl`; verbatim per-session activity logs are gitignored, not tracked). Rationale: vox should be self-standing — it owns its identity data rather than depending on a shared submodule whose global setup is transitional. **Caveat:** ethos still *resolves* identities from the global `~/.punt-labs/ethos/` registry, not this vendored copy, so the trim does not yet reduce context injection and the vendored set is not yet proven complete (`claudia`, used for prose curation, exists only in global). Repo-primary resolution and completeness are a pending ethos-side change, coordinated with the ethos agent.
+**Project-local ethos.** `.punt-labs/ethos/` is a vendored, self-standing identity set, not a submodule. `.punt-labs/ethos.yaml` sets `resolution: repo-only`, so ethos resolves vox's 15 delegated identities (`claude`, `jfreeman`, `rmh`, `gvr`, `bwk`, `kpz`, `mdm`, `rop`, `adb`, `djb`, `edt`, `mcg`, `rej`, `jms`, `jra`) entirely from this tree with **no global fallback** — `ethos doctor`'s "Repo-only completeness" check proves every one resolves. The vendored closure (identities, roles, attributes, `<handle>.ext/` overlays, `.vendor.yaml`) plus the durable mission records (`missions/` + `missions.jsonl`; per-session activity logs are gitignored) travel with the repo. An identity that belongs to another project (e.g. `claudia`, a website-project persona) is not vendored here and must not be named in vox delegation — under repo-only it would not resolve.
 
 **No migration, backwards-compatibility, shim, or version-compat code — ever.** Punt Labs products have no installed user base to migrate, so every migration bridge, legacy-format/dir detector, `*-migrate` command, startup "run X to migrate" hint, backward-compat wrapper, and version shim is massive work product and complexity for zero reason. When a feature supersedes an old behavior or layout, DELETE the old path outright in the same change (forward integration, PY-RF-6) — never write a bridge to it. This is a **hard design-review gate**: the leader MUST strike any migration/compat/shim element from a design BEFORE dispatching implementation — it is a defect, not a feature. Do not let it reach implementation, where it costs a full build/test/review cycle before it gets ripped out (as Audio Programs Phase 1's Sec-3 migration mapping did, 2026-07-07). Keep only true false-positives: voice names ("shimmer"), live voice/language *compatibility validation*, comments stating "no legacy fallback".
 
@@ -210,7 +230,7 @@ Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses 
 
 ### Why these pairings
 
-Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio formats, playback pipeline, daemon lifecycle — `rmh` for core Python, `gvr` for provider implementations, `kpz` for audio/playback performance; (2) **system integration** — launchd/systemd service, platform paths, hook scripts — `adb` for infrastructure, `djb` for auth/secrets, `mdm`/`rop` for shell/CLI; (3) **UX** — voice curation, vibe system, Lux applet — `claudia` for prose, `edt`/`dna` for visual.
+Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio formats, playback pipeline, daemon lifecycle — `rmh` for core Python, `gvr` for provider implementations, `kpz` for audio/playback performance; (2) **system integration** — launchd/systemd service, platform paths, hook scripts — `adb` for infrastructure, `djb` for auth/secrets, `mdm`/`rop` for shell/CLI; (3) **UX** — voice curation, vibe system, Lux applet — `mcg` for voice/vibe prose, `edt` for visual.
 
 | Task type | Worker | Evaluator |
 |-----------|--------|-----------|
@@ -224,8 +244,8 @@ Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio format
 | Provider auth / API-key handling / secrets | `djb` | `rmh` |
 | Audio playback / pydub / ffmpeg pipeline | `gvr` | `kpz` (Karpathy) |
 | Cache design (`cache.py`) — content-addressing, dedup | `rmh` | `kpz` |
-| Voice / vibe / quip prose curation | `claudia` (Massimo) | `mcg` (Cagan) |
-| Lux applet (`applet.py`) — visual surface | `edt` (Tufte) | `dna` (Norman) |
+| Voice / vibe / quip prose curation | `mcg` (Cagan) | `edt` (Tufte) |
+| Lux applet (`applet.py`) — visual surface | `edt` (Tufte) | `gvr` (van Rossum) |
 | Release / plugin name swap / cross-repo propagation | `adb` | `mdm` |
 | Test infrastructure / fixtures (esp. mock MP3 bytes) | `rmh` | `gvr` |
 

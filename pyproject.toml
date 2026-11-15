@@ -224,6 +224,7 @@ line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.13"
+platform = "linux"
 mypy_path = "typings"
 strict = true
 warn_return_any = true

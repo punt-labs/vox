@@ -33,4 +33,7 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Bug vox-q6v2: hooks spoke the launch-dir''s git repo name computed via git-in-process-pwd; fix is to use the cwd Claude puts on hook stdin. Design doc ratified by operator with the explicit instruction: NO special casing — name = repo of cwd, full stop. Dead daemon-relay branch in the shell scripts targets a non-existent voxd /hook endpoint and a wrong serve.port path; remove it. config.md gate is dead since the vox.md/vox.local.md split (7e151b1); fix it.'

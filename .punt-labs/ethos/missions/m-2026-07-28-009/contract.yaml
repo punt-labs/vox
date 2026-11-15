@@ -24,6 +24,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     M3 of vox-ck3w (branch feat/vox-enable-disable, already checked out). The
     enable/disable core (M2) is merged into the branch and accepted: the marker is

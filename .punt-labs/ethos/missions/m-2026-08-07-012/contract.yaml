@@ -29,4 +29,7 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: Third fix round on the vox-panel feature (feat/vox-panel). Two independent full-diff review passes (code-reviewer + silent-failure-hunter) both flagged the same gap in this round's own new code (HubOutageLog), plus each found one more distinct issue. Leader verified the field-name bug and the missing lock directly in the code before writing this contract.
