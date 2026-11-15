@@ -167,3 +167,6 @@ MagicMock/
 # vox-bst7 spike: the live EL agent handle is account-scoped identity —
 # recreate with setup_agent.py, never commit
 spikes/vox-bst7-el-convai/agent.json
+
+# Leftover local state from the retired beads tracker
+.beads/
