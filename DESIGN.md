@@ -3332,7 +3332,7 @@ paragraph of prose a human has to parse:
   docs consulted (both the primary session's pre-call lookups and
   anything the call agent itself read live via its own `read`/`grep`/
   `find`/`ls` tools).
-- **Beads Touched** — any bead the call agent created or updated live
+- **Tickets Touched** — any bead the call agent created or updated live
   during the call, per DES-066's standing allowance for out-of-band
   coordination state (the restriction is repo/codebase file writes
   specifically, not every side effect).

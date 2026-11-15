@@ -107,7 +107,7 @@ def test_call_ids_are_timestamped_and_unique() -> None:
         "## Decisions Made",
         "## Action Items",
         "## Context Gathered",
-        "## Beads Touched",
+        "## Tickets Touched",
         "## Notes / Open Questions",
     ],
 )

@@ -1,8 +1,8 @@
 # Agent Instructions
 
-> **Authoritative workflow is `CLAUDE.md` (noted 2026-07-03).** This file is a generic beads onboarding stub. vox requires **all changes to land via pull request; direct pushes to `main` are prohibited** (branch protection). Below, "push" means push your **feature branch** and open a PR — never push to `main`.
+> **Authoritative workflow is `CLAUDE.md` (noted 2026-07-03).** This file is a generic onboarding stub. vox requires **all changes to land via pull request; direct pushes to `main` are prohibited** (branch protection). Below, "push" means push your **feature branch** and open a PR — never push to `main`.
 
-Read `.punt-labs/punt/CLAUDE.md` before planning or writing to the issue tracker. Linear is the tracker of record where this repo is migrated. Beads is a local mirror there and the tracker of record elsewhere.
+Read `.punt-labs/punt/CLAUDE.md` before planning or writing to the issue tracker. Linear is the sole tracker of record (team Punt Labs, label `repo:vox`).
 
 ## Landing the Plane (Session Completion)
 
@@ -17,7 +17,6 @@ Read `.punt-labs/punt/CLAUDE.md` before planning or writing to the issue tracker
 
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```

@@ -2,9 +2,9 @@
 
 Part of [Punt Labs](https://github.com/punt-labs). This repo must be checked out inside the `punt-labs/` workspace meta-repo so that org-wide configuration loads via Claude Code's ancestor directory walk:
 
-- **`punt-labs/CLAUDE.md`** — org workflow, delegation model, beads issue tracking, tool configuration
+- **`punt-labs/CLAUDE.md`** — org workflow, delegation model, Linear issue tracking, tool configuration
 - **`punt-labs/.claude/rules/python-*.md`** — 19 Python OO coding rules, scoped via `paths:` frontmatter (load on-demand when `.py` files are touched)
-- **`punt-labs/.envrc`** — git identity, beads DB connection, API keys from platform keychain
+- **`punt-labs/.envrc`** — git identity, API keys from platform keychain
 - **`punt-kit/standards/`** — canonical reference docs
 
 If cloned outside the workspace, these rules and configuration will not be present.
