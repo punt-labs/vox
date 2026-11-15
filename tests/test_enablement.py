@@ -305,6 +305,18 @@ def test_enable_leaves_no_marker_when_settings_register_raises(
     )
 
 
+def test_enable_refuses_an_unclosed_fence_before_granting(tmp_path: Path) -> None:
+    host = tmp_path / "CLAUDE.md"
+    host.write_text("```text\nnever closed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unclosed code fence"):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not _marker_present(tmp_path)
+    assert host.read_text(encoding="utf-8") == "```text\nnever closed\n"
+
+
 # ---------------------------------------------------------------------------
 # Symlink refusal: an untrusted repo cannot redirect a tool-owned write
 # ---------------------------------------------------------------------------
