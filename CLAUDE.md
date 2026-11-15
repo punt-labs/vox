@@ -20,20 +20,40 @@ Text-to-speech CLI, MCP server, and Claude Code plugin. Supports ElevenLabs (pre
 
 ## Mandatory Reading
 
-Source-of-truth documents, `@`-imported so they load into context at session
-start. Read them before writing code.
+`docs/WORKFLOW.md` is the three-loop development process (backlog → PR →
+mission), with pseudocode and an entry/exit Z schema at each level. It is the
+authoritative process for this repo and is `@`-imported so it loads at session
+start. Read it before writing code.
 
 @docs/WORKFLOW.md
-@../punt-kit/standards/architecture.md
-@../punt-kit/standards/oo.md
-@../punt-kit/standards/python.md
 
-`WORKFLOW.md` is the three-loop development process (backlog → PR → mission),
-with pseudocode and an entry/exit Z schema at each level. The
-`punt-kit/standards` imports are the org's canonical engine-and-clients
-architecture, object-oriented stance, and Python standard (including the OO
-ratchet vox already runs) — cross-repo (external) imports, so the first load
-may ask for approval.
+The org-wide `punt-kit` standards are the canonical source for how Punt Labs
+tools are built. They are non-autoloaded references — linked, not `@`-imported,
+because each is already carried for per-turn work by a mechanism this repo
+loads on demand. Consult the full standard by link when the per-turn rule does
+not settle the question.
+
+- The Python standard,
+  [`python.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/python.md),
+  and the object-oriented stance,
+  [`oo.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/oo.md),
+  are enforced per-turn by the `.claude/rules/python-*.md` set
+  (`paths: ["**/*.py"]`, at the workspace root), which auto-loads the moment an
+  agent touches a `.py` file — including the OO ratchet
+  (`python-oo-adoption.md`) vox already runs. Those rules are a working
+  reminder, not a substitute; the full standards are one link away.
+- The engine-and-clients architecture,
+  [`architecture.md`](https://github.com/punt-labs/punt-kit/blob/main/standards/architecture.md),
+  is design reference consulted during architectural work, not every turn.
+
+<!-- python.md, oo.md, and architecture.md are non-autoloaded references
+     (linked above), not @-imports: python.md and oo.md are enforced per-turn
+     by .claude/rules/python-*.md (paths: **/*.py), and architecture.md is
+     on-demand design reference. Removes ~52k chars of always-on context with
+     no loss of information — each is one link away. -->
+<!-- @../punt-kit/standards/architecture.md -->
+<!-- @../punt-kit/standards/oo.md -->
+<!-- @../punt-kit/standards/python.md -->
 
 ## Architecture
 
