@@ -26,6 +26,9 @@ budget:
     rounds: 2
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |-
     Design mission for the model+provider+voice+mic:unmute-cleanup bundle of the
     vox-0rp9 surface-consistency epic. Runs in parallel with PR #396 (unit 1,

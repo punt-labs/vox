@@ -30,6 +30,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Phase 2 of the voxd Music Player (bead vox-efa6): the INTERACTIVE layer —
     play/stop of a saved album via lux, completing the MVP. Phase 1 (the catalog +

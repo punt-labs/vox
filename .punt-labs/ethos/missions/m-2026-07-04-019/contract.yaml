@@ -39,6 +39,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Implement the self-driving music playlist per the APPROVED design. Read it first, end to end:
       - DESIGN.md DES-039 (the ADR) AND its "Amendment A" (injected TrackStore).

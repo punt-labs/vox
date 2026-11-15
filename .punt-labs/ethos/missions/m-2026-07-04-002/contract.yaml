@@ -35,5 +35,8 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     From a 2026-05-16 manual test: a second identical unmute call is served from the content-addressed cache (key = text+voice+provider), but the operator could not tell whether playback was actually cached vs re-synthesized — both sound identical, and there is no reliable audible/visual signal. This blocks the cache-hit step of the manual test flight (docs/testing/manual-tests.md, Step 2, which currently tells the tester to grep the daemon log for "no new Synthesize: line"). Goal: make a cache hit vs miss OBSERVABLE, cheaply and reliably, so a manual test (and the model driving it) can confirm caching happened. This is a daemon->client boundary-crossing change: the fact lives in voxd (where the cache lookup happens) and must reach whoever asked (the MCP unmute/status response and/or a clear log). You own the design of the signal. A sensible minimum: (1) voxd logs cache hit/miss at INFO with the cache key and the resolved cache file path on the synthesize path; (2) the synthesize/unmute RESPONSE carries a boolean like `cached` so the MCP tool result and the manual flight can assert it directly. Do NOT add the QA-only "cache chime" idea from the bead unless it is trivial AND behind an off-by-default flag — prefer the log + response-field approach. Do not change what gets cached or how the cache key is computed; this is observability only.

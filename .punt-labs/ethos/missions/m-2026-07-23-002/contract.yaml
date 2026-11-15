@@ -38,4 +38,7 @@ budget:
     rounds: 2
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Bead vox-jei3. vox has two daemon-owned audio stores — recordings (flat mp3s, reached today by the top-level verbs vox record/play/fetch, one release old, vox-dvri/vox-1hbo) and music albums (reached by the coherent `vox music` Typer group: list/play/next/status). The recordings verbs are scattered, have gaps (no list, no remove), overload `play` (store id AND local file), and leak a daemon path from `record`. The goal is CLI coherence: give recordings the same group shape as music and make BOTH share one verb vocabulary so the same verbs mean the same thing across stores. The surface is already operator-ratified (see success criteria) — your job is the design doc that makes it real: the group structure, the daemon op contracts, music-generation semantics, the play/say reconciliation, the outright removal of the old verbs, the full touched-surface list, and the precise audio-programs Z-model delta. Invariants to preserve: the daemon owns the stores and every path decision (clients use bare ids, never daemon paths); reuse the vox-dvri containment + vox-1hbo WireReply audit logging; no migration/compat/shim code anywhere; one engine, thin CLI client. This is the design phase — the implementation mission (and the jms model mission) come after the leader reviews this design and the operator ratifies it.'

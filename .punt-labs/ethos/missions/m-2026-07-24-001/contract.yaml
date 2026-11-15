@@ -43,4 +43,7 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Bead vox-jei3, step 1 of 3 (daemon layer; CLI + MCP follow). The design is operator-ratified and rmh-reviewed; the formal model is fuzz-clean and probcli-explored. You implement the daemon-side wire ops + the chunked get transport + the client methods; the CLI (mdm) and MCP (rmh) missions wire the surfaces to what you build, so keep the client method signatures clean and documented. Invariants to preserve: the daemon owns the stores and every path decision (clients pass bare ids/refs, never daemon paths); reuse the vox-dvri containment + vox-1hbo WireReply audit logging; music albums are addressed by AlbumId through the Catalog, never by treating the id as a path segment; no migration/compat/shim code; one engine / thin clients. The chunked transfer and the music catalog mutations are the two modeled stateful concerns — your tests assert those modeled properties by name.'
