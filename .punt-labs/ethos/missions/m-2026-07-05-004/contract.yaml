@@ -40,6 +40,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Slice 5 (the finish) of Audio Programs Phase 1 (vox-oayr): wire the daemon to the ownership-free programs/ orchestration and RETIRE voxd/music/ by forward integration (PY-RF-6). Branch: design/audio-programs-phase1 (already at HEAD bdbc039 — slices 1-4 landed; do NOT rebase or reset). Do NOT open a PR — the leader does that AFTER a mandatory audio flight with the operator (the human's ear judges playback; make check green is necessary, not sufficient).
     READ FIRST, end to end:

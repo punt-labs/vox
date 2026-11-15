@@ -26,6 +26,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     PROBLEM. bas7 (#291) shipped the wrong music UX. Today MusicLoop, on track-end, respawns the SAME file, and the pool only grows or rotates when the user runs /music next. Result: /music on plays one track that loops forever. Confirmed by smoke test (pool stuck at 1, same track repeating). The whole thing was built around the manual skip path and the listening experience was never validated.
     TARGET BEHAVIOR (operator-locked). Put music on and forget it: 1. /music on (or a vibe change) generates track #1 and starts playing it the

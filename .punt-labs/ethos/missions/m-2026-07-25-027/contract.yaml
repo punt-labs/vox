@@ -25,6 +25,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |-
     Phase 1.5 of the Audio Programs epic (vox-ys1p). Phase 1 (the format-agnostic
     Program state machine in src/punt_vox/voxd/programs/) is BUILT. This mission

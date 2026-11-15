@@ -26,5 +26,8 @@ budget:
     rounds: 1
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Successor to m-2026-11-05-005 (vox-hobl.2), closed failed at its 3-round cap with one djb Low open. Same worktree <repo>/.claude/worktrees/call-agent, branch feat/vox-hobl2-call-agent. Two small fixes only: the guard's NUL-delimited listing (djb round-3 LOW, secret_guard.js:[redacted-secret]) and the call-lock hook's dead transfer/relay bypasses plus the /vox:call stop match. Do not touch README.md, CHANGELOG.md, DESIGN.md. No push, no real call.

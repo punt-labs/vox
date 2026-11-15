@@ -32,6 +32,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Security P1. Two Dependabot alerts opened on punt-labs/vox after
     PR #520 merged on 2026-10-22: #58 critical (certifi bundles emSign

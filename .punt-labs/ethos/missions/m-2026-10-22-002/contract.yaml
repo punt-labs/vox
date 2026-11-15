@@ -32,6 +32,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Security P1. All 19 open Dependabot alerts on punt-labs/vox
     (2 critical, 7 high, 10 medium) are on four packages vox pulls in
