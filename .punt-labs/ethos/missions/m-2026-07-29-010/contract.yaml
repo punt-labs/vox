@@ -24,6 +24,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     New feature (bead vox-efa6): the voxd Music Player. A SIMPLE collection player —
     browse vox's saved album catalog, play/stop a saved album, GNOME-Music-plain.

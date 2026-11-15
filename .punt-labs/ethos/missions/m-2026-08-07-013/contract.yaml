@@ -23,4 +23,7 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Fourth fix round on feat/vox-panel. A third full-diff review found ONE new CRITICAL issue in the core listen loop (leg.py/program.py) -- code none of the prior three rounds touched. Leader verified it directly against the code before writing this contract. This is expected to be the last round: the finding is narrow and localized to two specific gaps.'

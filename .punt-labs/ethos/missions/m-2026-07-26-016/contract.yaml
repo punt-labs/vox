@@ -32,6 +32,9 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Bug vox-suvs (branch fix/vox-suvs, already checked out): `vox cache status` and
     `vox cache clear` operate on the CLIENT's local cache dir, not the daemon's.

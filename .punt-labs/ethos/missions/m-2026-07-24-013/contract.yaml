@@ -39,4 +39,7 @@ budget:
     rounds: 3
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Bead vox-jei3, step 2 of 3 (CLI surface; MCP parity follows). The design is operator-ratified; step 1 (daemon + client + chunked transport) is done and on this branch. You give recordings the same coherent Typer-group shape music already has and make both share one verb vocabulary, deleting the scattered old top-level verbs outright. The engine boundary: RecCli/MusicCli are humble objects that parse args, call ONE client/gateway method, and format via the shared OutputFormatter — no business logic in the CLI (the daemon decides). The invariants: client never names daemon paths (bare ids only); no migration/ compat/shim; one engine / thin CLI client (dependency arrow CLI -> gateway -> client -> daemon). The structural paydown on __main__.py and the coverage rise are hard success criteria, not nice-to-haves.'

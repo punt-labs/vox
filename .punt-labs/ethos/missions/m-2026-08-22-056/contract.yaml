@@ -37,4 +37,7 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Slice 1b of the Conversation Mode epic (vox-gs9u). All three operator-reserved design forks are ratified: (1) session-attach mechanism as specified in docs/conversation-mode-session-attach-adr.md -- claude -p --resume per turn with the UserPromptSubmit lock, verified safe by direct spike against the real claude CLI; (2) continuous-stream playback ownership goes into production PlaybackQueue directly, not a new sibling component (Slice 2a territory, noted for context); (3) presence-signal mechanism is the static-asset path (Slice 2a/4 territory, noted for context). Explicitly out of scope for THIS slice: barge-in, presence signal, sentence-streamed synthesis (reply is spoken as one block), graceful degradation beyond ''the call doesn''t start'', server.py MCP wiring and the real ElevenLabs STT provider file (both blocked by an unrelated open mission -- build against a fake STTProvider, defer the real one). Read docs/conversation-mode-prd.tex Chapters 1-2, docs/conversation-mode-session-attach-adr.md, and docs/conversation-mode-call-state.tex (the Z-spec) before starting -- the design is fully settled and operator-ratified, do not re-litigate it, implement it.'
