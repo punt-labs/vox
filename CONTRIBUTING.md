@@ -1,0 +1,98 @@
+# Contributing to vox
+
+The full development workflow is in [docs/WORKFLOW.md](docs/WORKFLOW.md), and the testing tiers are in [TESTING.md](TESTING.md). This page lists the setup and the quality-gate commands.
+
+## Setup
+
+vox needs Python 3.13+ and [uv](https://docs.astral.sh/uv/). `make lint` also needs ShellCheck, and `make docs` needs Node.js (for `npx`).
+
+Install the development tools:
+
+```bash
+uv sync
+```
+
+Also install the optional `call` extra, which live microphone capture in `vox call start` needs:
+
+```bash
+uv sync --extra call
+```
+
+## Quality Gates
+
+Run the full gate before every commit. It must finish with zero violations and all tests passing:
+
+```bash
+make check
+```
+
+`make check` runs these targets, which you can also run one at a time.
+
+Lint (Ruff, ShellCheck, and the plugin-surface check):
+
+```bash
+make lint
+```
+
+Type checks (mypy and pyright):
+
+```bash
+make type
+```
+
+Markdown lint:
+
+```bash
+make docs
+```
+
+Default test tier:
+
+```bash
+make test
+```
+
+OO, coupling, and suppression ratchets:
+
+```bash
+make check-oo
+```
+
+```bash
+make check-coupling
+```
+
+```bash
+make check-suppressions
+```
+
+CI also runs the slow and subprocess test tiers:
+
+```bash
+uv run pytest -m "slow or subprocess"
+```
+
+List all Make targets:
+
+```bash
+make help
+```
+
+## Testing a Call Without a Microphone
+
+`vox call start --script` replays scripted turns from a JSONL file instead of using the microphone and ElevenLabs speech-to-text. A TTS provider is still needed to speak the replies.
+
+```bash
+vox call start --context snapshot.md --script turns.jsonl
+```
+
+## Plugin Layout
+
+Everything the Claude Code plugin ships is under `plugin/`: `plugin/.claude-plugin/plugin.json`, `plugin/commands/`, and `plugin/hooks/`. The marketplace installs only that directory, so an installed plugin has no `src/`, `tests/`, `docs/`, or `scripts/`. Two rules follow:
+
+- A hook script may use `$HOME`, the `vox` binary, and paths under the consumer's repository root, but no other path in this repository.
+- Load the plugin for development with `claude --plugin-dir plugin`, not `claude --plugin-dir .`, so `CLAUDE_PLUGIN_ROOT` is the same directory the marketplace installs.
+
+On `main`, the plugin is named `vox-dev`. `vox enable` allows only the `mcp__plugin_vox_mic__*` tools, so maintainers running `vox-dev` add `mcp__plugin_vox-dev_mic__*` to their permissions by hand.
+
+Hook scripts follow the [hooks standard](https://github.com/punt-labs/punt-kit/blob/main/standards/hooks.md): the shell script is a thin gate, and `vox hook <event>` does the work.
