@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.markdown_fence import CodeBlockMap
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -14,41 +16,21 @@ __all__ = ["MarkdownDoc"]
 class MarkdownDoc:
     """A Markdown document that knows which of its physical lines are top-level.
 
-    A line is *top-level* when Claude Code would resolve an ``@``-import written
-    on it -- outside every code block. Fenced blocks are **balanced pairs**: a
-    run of *N* backticks or tildes opens a block, and only a later delimiter of
-    the **same** marker whose run is **at least** *N* closes it; a shorter or
-    mismatched delimiter inside the block is content, and blocks never nest. An
-    **unterminated opener runs to the end of the file**, as in Claude Code's
-    Markdown lexer: an import below it loads nothing, so it is not top-level,
-    and :meth:`with_appended` refuses to append one there.
-    A line above the dangling opener is unaffected. An **indented**
-    line (a tab or four or more leading spaces) is an inert indented-code line,
-    never top-level and never a fence delimiter.
-
-    The classification is computed once at construction; :meth:`contains` and
-    :meth:`without` are the two queries the import writer needs.
+    :class:`~punt_vox.markdown_fence.CodeBlockMap` classifies the lines once at
+    construction; :meth:`contains` and :meth:`without` are the two queries the
+    import writer needs, and :meth:`with_appended` refuses to append an import
+    into a fence that never closes, where Claude Code would never load it.
     """
 
-    __slots__ = ("_lines", "_open_fence", "_top_level")
+    __slots__ = ("_blocks", "_lines")
 
+    _blocks: CodeBlockMap
     _lines: tuple[str, ...]
-    _open_fence: bool
-    _top_level: tuple[bool, ...]
-
-    _MARKERS = "`~"
-    _MIN_RUN = 3
-    _INDENT = 4
 
     def __new__(cls, text: str) -> Self:
         self = super().__new__(cls)
-        lines = text.splitlines(keepends=True)
-        self._lines = tuple(lines)
-        ranges, open_at = cls._scan_fences(lines)
-        self._open_fence = open_at is not None
-        if open_at is not None:
-            ranges.append((open_at, len(lines) - 1))
-        self._top_level = cls._classify(lines, ranges)
+        self._lines = tuple(text.splitlines(keepends=True))
+        self._blocks = CodeBlockMap(self._lines)
         return self
 
     def contains(self, import_line: str) -> bool:
@@ -87,7 +69,7 @@ class MarkdownDoc:
         re-run (\\S2.4). Raises :class:`ValueError` when the document ends
         inside a fence that never closes, where the line would be inert.
         """
-        if self._open_fence:
+        if self._blocks.open_at_eof:
             msg = "CLAUDE.md ends inside an unclosed code fence; close it first"
             raise ValueError(msg)
         text = "".join(self._lines)
@@ -114,76 +96,9 @@ class MarkdownDoc:
 
     def _pairs(self) -> Iterator[tuple[str, bool]]:
         """Yield each physical line paired with whether it is top-level."""
-        return zip(self._lines, self._top_level, strict=True)
+        return zip(self._lines, self._blocks.top_level, strict=True)
 
     @staticmethod
     def _matches(line: str, import_line: str) -> bool:
         """Match a physical line against *import_line*, net of its terminator."""
         return line.rstrip("\r\n") == import_line
-
-    @classmethod
-    def _classify(
-        cls, lines: list[str], ranges: list[tuple[int, int]]
-    ) -> tuple[bool, ...]:
-        """Flag each line ``True`` when it is top-level (outside every code block)."""
-        inside: set[int] = set()
-        for open_idx, close_idx in ranges:
-            # The content and the closing delimiter are inside; the opener is not.
-            inside.update(range(open_idx + 1, close_idx + 1))
-        return tuple(
-            i not in inside and not cls._is_indented(line)
-            for i, line in enumerate(lines)
-        )
-
-    @classmethod
-    def _scan_fences(cls, lines: list[str]) -> tuple[list[tuple[int, int]], int | None]:
-        """Return matched ``(open_idx, close_idx)`` pairs and any opener left open.
-
-        An opener of run length *N* closes only on a later same-marker delimiter
-        of run ``>= N``; a shorter or mismatched delimiter inside the block is
-        content.
-        """
-        ranges: list[tuple[int, int]] = []
-        open_at: int | None = None
-        open_marker = ""
-        open_len = 0
-        for i, line in enumerate(lines):
-            fence = cls._parse_fence(line)
-            if open_at is None:
-                if fence is not None:
-                    open_at, (open_marker, open_len) = i, fence
-            elif fence is not None and fence[0] == open_marker and fence[1] >= open_len:
-                ranges.append((open_at, i))
-                open_at = None
-        return ranges, open_at
-
-    @classmethod
-    def _parse_fence(cls, line: str) -> tuple[str, int] | None:
-        """Return ``(marker, run_length)`` if *line* is a fence delimiter, else None.
-
-        ``None`` is the documented "not a fence line" contract (an absence, like
-        ``dict.get``), not a failure to produce a value. A fence delimiter is a
-        run of three or more of a single marker character after at most three
-        leading spaces; a tab or four or more leading spaces makes the line inert
-        indented code, never a delimiter (\\S2.4).
-        """
-        bare = line.rstrip("\r\n")
-        if bare.startswith("\t"):
-            return None
-        stripped = bare.lstrip(" ")
-        if len(bare) - len(stripped) >= cls._INDENT:
-            return None
-        if not stripped or stripped[0] not in cls._MARKERS:
-            return None
-        marker = stripped[0]
-        run = len(stripped) - len(stripped.lstrip(marker))
-        # A backtick fence's info string cannot hold a backtick (CommonMark):
-        # such a line is an inline code span, not a fence.
-        if run < cls._MIN_RUN or (marker == "`" and "`" in stripped[run:]):
-            return None
-        return marker, run
-
-    @classmethod
-    def _is_indented(cls, line: str) -> bool:
-        """Return whether *line* is an indented-code line (tab or 4+ spaces)."""
-        return line.startswith("\t") or len(line) - len(line.lstrip(" ")) >= cls._INDENT
