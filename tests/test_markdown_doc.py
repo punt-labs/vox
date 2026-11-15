@@ -170,3 +170,11 @@ def test_indented_fence_delimiter_does_not_open_a_block() -> None:
     text = f"    ```\n{_VOX}\n"
     doc = MarkdownDoc(text)
     assert doc.contains(_VOX) is True
+
+
+def test_an_info_tagged_fence_line_does_not_close_a_block() -> None:
+    # An info string is valid on an opener only, so ```python inside a block is
+    # content; the bare ``` below closes it and nothing is left open.
+    doc = MarkdownDoc(f"```\n```python\n{_VOX}\n```\n")
+    assert doc.contains(_VOX) is False
+    doc.with_appended(_VOX)
