@@ -51,7 +51,8 @@ SUMMARY_PROMPT = (
     "Action Items are what the main session should do next -- be specific: "
     "file paths and the change to make; you could not make changes yourself. "
     "Context Gathered lists the files you read and the snapshot material you "
-    "relied on. Tickets Touched lists any Linear issue IDs (e.g. PL-123) created or updated during "
+    "relied on. Tickets Touched lists any Linear issue IDs (e.g. PL-123) "
+    "created or updated during "
     "the call. Never include a secret value. Start directly with the first "
     "heading."
 )
