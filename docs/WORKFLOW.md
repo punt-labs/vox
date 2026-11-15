@@ -625,91 +625,59 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
 
 ### Local review before the PR
 
-Full-diff local review is where issues die cheaply. A local round costs
-seconds; a remote review cycle costs minutes to hours. Both `code-reviewer`
-and `silent-failure-hunter` run on the full diff — silent-failure-hunter
-matters especially in vox, where a swallowed provider error becomes silence
-the user cannot diagnose. `qodo review` runs alongside them: it is the
-engine that reviews the PR, so what it finds locally does not come back as
-a PR round. Local rounds repeat until a round leaves nothing to fix: at
-most four fix rounds plus one review that verifies the last fixes. Every
-fix diff goes through the same loop before it is pushed,
-including fixes made for PR findings. Every finding is fixed now or
-dismissed with the exact finding, the specific reason, and the code
-reference. Nothing is deferred to an issue. In this repo this loop replaces
-the "re-run until zero findings" sequence in the deposited
+Full-diff local review is where issues die cheaply. `code-reviewer`,
+`silent-failure-hunter`, and `qodo review` run on the full diff —
+silent-failure-hunter matters especially in vox, where a swallowed provider
+error becomes silence the user cannot diagnose, and `qodo review` is the same
+engine that reviews the PR, so what it finds locally does not come back as a
+PR round. Local rounds repeat until a round leaves nothing to fix: at most
+four fix rounds plus one review that verifies the last fixes. Every fix diff
+goes through the same loop before it is pushed, PR-finding fixes included.
+Every finding is fixed now or dismissed with the exact finding, the specific
+reason, and the code reference — nothing deferred to an issue. This loop
+replaces the "re-run until zero findings" sequence in the deposited
 `.punt-labs/ethos/CLAUDE.md` guide.
 
-The split is deliberate: local rounds are cheap and the PR gate is short.
-In the 2026 coverage sample, 28 of the 49 real bugs a reduced PR review
-would miss were in code added by fix pushes after the PR opened — the code
-that local review of each fix diff now covers.
-
 From the second round on, the review is scoped to what the diff changed:
-regressions it introduces and Highs inside it. Without that boundary a
-failure-focused reviewer walks outward into code the diff never touched,
-and the rounds do not converge. The three reviewers are not substitutes —
-in the pilot each one found defects the other two missed — so every full
-diff and every fix diff of 20 lines or more gets all three. A fix diff
-under 20 lines gets `qodo review` alone, and `djb` joins any diff in its
-domain whatever its size.
+regressions it introduces and Highs inside it — without that boundary a
+failure-focused reviewer walks outward into untouched code and the rounds do
+not converge. The three reviewers are not substitutes (each finds defects the
+others miss), so every full diff and every fix diff of 20 lines or more gets
+all three. A fix diff under 20 lines gets `qodo review` alone, and `djb`
+joins any diff touching its domain whatever its size.
 
 ### Remote review: Qodo and Bugbot, at most two rounds
 
-Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when
-the PR opens and never on push. High findings post inline as threads, and
-the `required_review_thread_resolution` rule in ruleset 13252005 makes each
-one block the merge. Medium findings appear in the summary; every Qodo finding is closed
-through the Qodo CLI (`mark-implemented` naming the fix sha, or `dismiss`), never a ledger line,
-except one reopened by a force-push or rebase (`answered(f)`). Lows are dropped by `comments_routing`.
+Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when the
+PR opens and never on push. High findings post inline as threads, and the
+`required_review_thread_resolution` rule in ruleset 13252005 makes each one
+block the merge. Medium findings appear in the summary; every Qodo finding is
+closed through the Qodo CLI (`mark-implemented` naming the fix sha, or
+`dismiss`), never a ledger line, except one reopened by a force-push or rebase
+(`answered(f)`). Lows are dropped by `comments_routing`.
 
-Bugbot reviews each PR once, on its own, when the PR opens (Cursor
-dashboard setting, 2026-10-23); round 1 needs no `bugbot run` comment, and
-a push draws no Bugbot review. Its findings are handled whenever they
-arrive. It posts fewer comments than Copilot (about 2.4 per PR against
-5.4) and had the highest real-bug rate in the 2026 sample (28% of its
-comments, against 20% for Qodo and 12% for Copilot). The Cursor security
-automation ("Find vulnerabilities") also runs here; its threads are
-findings like any other.
+Bugbot reviews each PR once, on its own, when the PR opens (Cursor dashboard,
+2026-10-23); round 1 needs no `bugbot run` comment, and a push draws no Bugbot
+review. Its findings are handled whenever they arrive. The Cursor security
+automation ("Find vulnerabilities") also runs here; its threads are findings
+like any other.
 
-Copilot is on a trial (operator ruling, 2026-10-23): one review, requested
-at open, on 5 vox PRs after #526, and none on push. The coverage study made
-Copilot the only source of 37 of 101 real bugs; the trial counts how many
-real bugs Copilot alone finds on top of this local loop, and the operator
-keeps it only if that count is not zero. Its findings are findings like
-any other.
+Copilot is on a trial (operator ruling, 2026-10-23): one review, requested at
+open, on 5 vox PRs after #526, none on push. The trial counts how many real
+bugs Copilot alone finds on top of this local loop; the operator keeps it only
+if that count is not zero. Its findings are findings like any other.
 
 Round 1 is the review at open. Round 2 — one `/agentic_review` plus one
 `bugbot run` — happens only when round 1's fixes included a High, and it is
 the last. A new High in round 2 goes to the operator.
 
-This holds only when four settings are in place (pilot `vox-2q95`):
-
-- `.pr_agent.toml` is on `main`. Qodo reads it from the default branch, so
-  a PR opened before it merged runs on the portal defaults.
-- The `copilot_code_review` rule is gone from ruleset 13252005 (removed
-  2026-10-22), so Copilot reviews only when requested.
-- Bugbot reviews each PR once, at open, for this repo (Cursor dashboard,
-  set 2026-10-23), so a push does not re-run it.
-- "Review every push" is set to Disable in the Qodo portal; the portal
-  default is Enable.
-
-If a push still starts a Bugbot run, its findings are findings like any
-other. Whether a `bugbot run` comment still triggers a run under the
-once-per-PR setting is unverified; round 2 posts it, and `bugbot_in(2)`
-falls back after 30 minutes if no run starts.
-
-The first two PRs after the pilot (#523, #524) checked the claims:
-
-- No Low finding appeared, and a push drew no new Qodo review. Qodo still
-  marks a finding implemented when a push fixes it.
-- `/agentic_review` reviewed the new commits; its two new findings were
-  both in round-1 fix code.
-- Bugbot ran on a push with no `bugbot run` comment, so the mention-only
-  setting tried first was not in effect; the operator then set the
-  dashboard to review each PR once.
-- #524 drew no remote findings in its one round. #523 used both rounds,
-  and round 2 raised no new High.
+This holds only when four settings are in place: `.pr_agent.toml` is on `main`
+(Qodo reads it from the default branch); the `copilot_code_review` rule is gone
+from ruleset 13252005 (so Copilot reviews only when requested); Bugbot reviews
+each PR once at open (Cursor dashboard); and Qodo's "Review every push" is
+Disabled in the portal. If a push still starts a Bugbot run, its findings are
+findings like any other; round 2 posts `bugbot run`, and `bugbot_in(2)` falls
+back after 30 minutes if no run starts.
 
 ### The audio demo gate
 
