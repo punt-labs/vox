@@ -824,14 +824,14 @@ def install() -> None:
         typer.echo("    Daemon registration is optional — vox works without it.")
 
     # Step 3: write the usage guide and register its @-import so it loads in
-    # every Claude Code session. OSError only -- a read-only home should warn,
-    # not abort an otherwise-successful plugin install.
+    # every Claude Code session. A read-only home or an unclosed fence should
+    # warn, not abort an otherwise-successful plugin install.
     typer.echo("[3/3] Registering vox usage guide...")
     from punt_vox.guidance import VoxGuidance
 
     try:
         typer.echo(f"  ✓ {VoxGuidance.for_current_user().install()}")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         typer.echo(f"  • Skipped: {exc}")
 
     typer.echo()
@@ -906,7 +906,7 @@ def register_guidance(
     guide = VoxGuidance.for_current_user()
     try:
         typer.echo(guide.uninstall() if remove else guide.install())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 

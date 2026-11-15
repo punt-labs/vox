@@ -269,3 +269,33 @@ def test_register_guidance_command_round_trip(
     assert result.exit_code == 0
     assert not guide.exists()
     assert _VOX not in global_md.read_text(encoding="utf-8")
+
+
+def test_install_cleans_up_guide_when_host_ends_in_open_fence(tmp_path: Path) -> None:
+    # An import appended after an unclosed fence would never load, so register
+    # refuses; install must still leave no orphaned guide behind.
+    guide = _guidance(tmp_path)
+    host = tmp_path / ".claude" / "CLAUDE.md"
+    host.parent.mkdir(parents=True)
+    host.write_text("```text\nnever closed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unclosed"):
+        guide.install()
+
+    assert not guide.doc_path.exists()
+    assert host.read_text(encoding="utf-8") == "```text\nnever closed\n"
+
+
+def test_register_guidance_reports_open_fence_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    host = tmp_path / ".claude" / "CLAUDE.md"
+    host.parent.mkdir(parents=True)
+    host.write_text("```text\nnever closed\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["register-guidance"])
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, ValueError)
+    assert "unclosed" in result.output

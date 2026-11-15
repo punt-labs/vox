@@ -71,17 +71,17 @@ class VoxGuidance:
         """Write the guide and register its import. Return a status message.
 
         The guide must exist before the ``@``-import points at it, so the write
-        precedes the register. If ``register`` then fails (e.g. ``~/.claude`` is
-        not writable), the just-written guide would be orphaned -- present on
-        disk with nothing importing it. Unlink it best-effort and re-raise the
-        original error, so a failed install leaves no partial state behind.
+        precedes the register. If ``register`` then fails (``~/.claude`` not
+        writable, or an unclosed fence), the new guide would be orphaned.
+        Unlink it best-effort and re-raise the original error, so a failed
+        install leaves no partial state behind.
         """
         self._doc_path.parent.mkdir(parents=True, exist_ok=True)
         stamp = GuideStamp.for_packaged_asset()
         self._doc_path.write_text(stamp.stamped(self._load_doc()), encoding="utf-8")
         try:
             wrote = self._import.register()
-        except OSError:
+        except (OSError, ValueError):
             self._unlink_quietly()
             raise
         state = "registered" if wrote else "already registered"

@@ -172,6 +172,17 @@ def test_indented_fence_delimiter_does_not_open_a_block() -> None:
     assert doc.contains(_VOX) is True
 
 
+@pytest.mark.parametrize("tail", ["\t", "\u00a0"])
+def test_only_spaces_may_follow_a_closing_run(tail: str) -> None:
+    # Claude Code's lexer closes a block on trailing spaces only, so a tab or a
+    # non-breaking space after the run leaves the block open through EOF.
+    doc = MarkdownDoc(f"~~~\n~~~{tail}\n{_VOX}\n")
+    assert doc.contains(_VOX) is False
+    with pytest.raises(ValueError, match="unclosed"):
+        doc.with_appended(_VOX)
+    assert MarkdownDoc(f"~~~\n~~~  \n{_VOX}\n").contains(_VOX) is True
+
+
 def test_an_info_tagged_fence_line_does_not_close_a_block() -> None:
     # An info string is valid on an opener only, so ```python inside a block is
     # content; the bare ``` below closes it and nothing is left open.
