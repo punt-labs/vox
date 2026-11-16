@@ -145,7 +145,6 @@
       "Edit(.envrc)"
     ],
     "ask": [
-      "Bash(biff -*)",
       "Bash(biff install:*)",
       "Bash(biff uninstall:*)",
       "Bash(biff install-statusline:*)",
