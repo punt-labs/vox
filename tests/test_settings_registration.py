@@ -227,9 +227,10 @@ def test_default_rules_allow_each_surface_broadly(tmp_path: Path) -> None:
     )
 
 
-def test_unsafe_verbs_and_global_options_ask(tmp_path: Path) -> None:
+def test_unsafe_verbs_ask_but_read_only_flags_do_not(tmp_path: Path) -> None:
     ask = VOX_RULES["ask"]
-    assert "Bash(vox -*)" in ask
+    assert "Bash(vox -*)" not in ask
+    assert not [rule for rule in ask if "*" in rule.removesuffix(":*)")]
     for verb in (
         "install",
         "uninstall",
@@ -418,3 +419,33 @@ def test_refuses_the_real_home_even_when_home_is_overridden(
     with pytest.raises(ValueError, match="home directory"):
         _reg(tmp_path).register()
     assert not (tmp_path / ".claude").exists()
+
+
+# ---------------------------------------------------------------------------
+# legacy rules -- an older vox granted ``Bash(vox -*)``; both verbs retire it
+# ---------------------------------------------------------------------------
+
+
+def _seed_legacy(tmp_path: Path) -> Path:
+    path = tmp_path / ".claude" / "settings.json"
+    path.parent.mkdir()
+    ask = ["Bash(ls:*)", "Bash(vox -*)", *VOX_RULES["ask"]]
+    path.write_text(json.dumps({"permissions": {"ask": ask}}), encoding="utf-8")
+    return path
+
+
+def _ask(path: Path) -> list[str]:
+    return list(json.loads(path.read_text(encoding="utf-8"))["permissions"]["ask"])
+
+
+def test_register_strips_the_legacy_flag_rule(tmp_path: Path) -> None:
+    path = _seed_legacy(tmp_path)
+    assert _default_reg(tmp_path).register() is True
+    assert _ask(path) == ["Bash(ls:*)", *VOX_RULES["ask"]]
+    assert _default_reg(tmp_path).register() is False
+
+
+def test_deregister_strips_the_legacy_flag_rule(tmp_path: Path) -> None:
+    path = _seed_legacy(tmp_path)
+    assert _default_reg(tmp_path).deregister() is True
+    assert _ask(path) == ["Bash(ls:*)"]
