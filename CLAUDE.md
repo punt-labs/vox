@@ -291,3 +291,4 @@ Release scripts: `scripts/release-plugin.sh` (swap `vox-dev` → `vox`), `script
 @.punt-labs/z-spec/CLAUDE.md
 @.punt-labs/beadle/CLAUDE.md
 @.punt-labs/punt/CLAUDE.md
+@.punt-labs/biff/CLAUDE.md
