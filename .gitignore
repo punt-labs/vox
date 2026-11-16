@@ -23,6 +23,7 @@ lancedb/
 .mcp.json
 .claude/*
 !.claude/settings.json
+!.claude/rules/
 */**/.claude/
 Lux.ini
 research/
