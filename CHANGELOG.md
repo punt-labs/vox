@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`vox --version` and `vox --help` no longer prompt in an enabled repo
+  (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
+  rule, which matched every command starting with an option. The ask tier is
+  now one rule per unsafe verb. `vox enable` and `vox disable` both remove
+  the old rule from a repo an earlier version enabled.
 - **An unclosed code fence in `CLAUDE.md` runs to the end of the file
   (PL-1087).** Claude Code's Markdown lexer treats a fence that never closes
   as code through EOF, so an `@`-import after it never loads. `vox enable`

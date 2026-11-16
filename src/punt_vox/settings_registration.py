@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 
 __all__ = ["SettingsRegistration"]
 
+# Rules an earlier vox granted and no longer does, stripped by every rewrite so
+# enable and disable both retire them: ``Bash(vox -*)`` made ``vox --version``
+# prompt (punt-kit DES-039).
+_LEGACY_RULES: dict[str, tuple[str, ...]] = {"ask": ("Bash(vox -*)",)}
+
 
 @final
 class SettingsRegistration:
@@ -109,9 +114,12 @@ class SettingsRegistration:
         ):
             document = self._load(directory)
             changed = False
-            for tier, owned in self._rules.items():
+            for tier in dict.fromkeys((*self._rules, *_LEGACY_RULES)):
                 current = document.rules(tier)
-                updated = edit(current, owned)
+                updated = self._without_entries(
+                    edit(current, self._rules.get(tier, ())),
+                    _LEGACY_RULES.get(tier, ()),
+                )
                 if updated != current:
                     document.set_rules(tier, updated)
                     changed = True

@@ -474,9 +474,9 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) belong in `~
 `vox enable` adds these rules to the repository's `.claude/settings.json`, so Claude Code does not ask before using vox's own tools in that repository:
 
 - **Allowed:** `Bash(vox:*)`, `mcp__plugin_vox_mic__*`, and `Skill(vox:*)`.
-- **Still asks first:** the `vox` subcommands `install`, `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp`, and `register-guidance`, and any `vox` command that starts with an option (`Bash(vox -*)`).
+- **Still asks first:** the `vox` subcommands `install`, `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp`, and `register-guidance`. A `vox` command that starts with an option, such as `vox --version`, does not ask.
 
-`vox disable` removes exactly those rules. Neither command changes anything outside the repository. Rules that older versions of vox added to `~/.claude/settings.json` stay until you delete them.
+`vox disable` removes exactly those rules. Both commands also remove `Bash(vox -*)`, which earlier versions added. Neither command changes anything outside the repository. Rules that older versions of vox added to `~/.claude/settings.json` stay until you delete them.
 
 ### Upgrading
 
