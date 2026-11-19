@@ -92,18 +92,18 @@ class VoxdTransport:
             await self._ws.close()
             self._ws = None
 
-    async def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
-        """Close *ws* and, if it is still the active connection, forget it.
+    def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
+        """Drop *ws* and, if it is still the active connection, forget it.
 
-        Only the failed exchange's own socket is closed: if another request
-        has already reconnected, its connection is left alone. Close errors
-        are suppressed: the socket may already be gone, and the caller is
-        abandoning it either way.
+        The socket is aborted, not closed: a closing handshake against a peer
+        that stopped answering would wait out the close timeout after the
+        caller's own deadline has passed, and the connection is abandoned
+        either way. Only the failed exchange's own socket is dropped: if
+        another request has already reconnected, its connection is left alone.
         """
         if self._ws is ws:
             self._ws = None
-        with contextlib.suppress(Exception):
-            await ws.close()
+        ws.transport.abort()
 
     async def _ensure_connected(self) -> websockets.asyncio.client.ClientConnection:
         """Return the active connection, reconnecting if needed.
@@ -140,7 +140,7 @@ class VoxdTransport:
             await exchange.send()
             yield exchange
         except BaseException:
-            await self._discard(exchange.connection)
+            self._discard(exchange.connection)
             raise
 
     async def send_and_recv(
@@ -227,5 +227,5 @@ class VoxdTransport:
                     # Server will still send terminal_type (e.g., 'done' after
                     # 'playing'). Discard the connection so that stale message
                     # cannot be consumed by the next request on a reused one.
-                    await self._discard(exchange.connection)
+                    self._discard(exchange.connection)
                     return responses

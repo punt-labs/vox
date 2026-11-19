@@ -192,6 +192,7 @@ def test_a_failed_request_never_closes_a_connection_another_request_opened() -> 
     that newer connection and the next request reuses it.
     """
     stale, fresh = AsyncMock(), AsyncMock()
+    stale.transport, fresh.transport = MagicMock(), MagicMock()
     transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
 
     async def reconnect_then_drop() -> str:
@@ -212,6 +213,37 @@ def test_a_failed_request_never_closes_a_connection_another_request_opened() -> 
             return await transport.send_and_recv(msg, timeout=1)
 
     assert asyncio.run(run()) == {"type": "done", "voices": []}
-    stale.close.assert_awaited_once()
-    fresh.close.assert_not_awaited()
+    stale.transport.abort.assert_called_once_with()
+    fresh.transport.abort.assert_not_called()
     assert connect.await_count == 2
+
+
+def test_abandoning_a_request_never_waits_for_a_silent_peer_to_close() -> None:
+    """A cancelled request returns at its deadline, not after a close handshake.
+
+    A peer that stopped answering never completes the closing handshake, so
+    discarding by ``close()`` would hold the caller for the close timeout after
+    its own deadline; the abandoned socket is aborted instead.
+    """
+    ws = AsyncMock()
+    ws.transport = MagicMock()
+    ws.recv.side_effect = _never
+    ws.close.side_effect = _never
+    transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
+    msg: dict[str, object] = {"type": "health"}
+
+    async def run() -> float:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with (
+            patch(
+                "punt_vox.client_transport.websockets.asyncio.client.connect",
+                AsyncMock(return_value=ws),
+            ),
+            pytest.raises(TimeoutError),
+        ):
+            await asyncio.wait_for(transport.send_and_recv(msg, timeout=10), 0.05)
+        return loop.time() - started
+
+    assert asyncio.run(run()) < 1
+    ws.transport.abort.assert_called_once_with()
