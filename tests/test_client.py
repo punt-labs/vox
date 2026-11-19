@@ -8,7 +8,7 @@ import socket
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,6 +51,7 @@ def _make_mock_ws() -> AsyncMock:
     ws.close = AsyncMock()
     ws.send = AsyncMock()
     ws.ping = AsyncMock()
+    ws.transport = MagicMock()
     return ws
 
 
@@ -321,7 +322,7 @@ class TestVoxClientSynthesize:
         assert isinstance(result.request_id, str)
         assert result.deduped is False
         assert mock_ws.recv.call_count == 1
-        mock_ws.close.assert_awaited_once()
+        mock_ws.transport.abort.assert_called_once_with()
         assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
@@ -461,7 +462,7 @@ class TestVoxClientChime:
 
         await client.chime("done")
         assert mock_ws.recv.call_count == 1
-        mock_ws.close.assert_awaited_once()
+        mock_ws.transport.abort.assert_called_once_with()
         assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
@@ -950,7 +951,7 @@ class TestVoxClientPlayFetch:
         with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
             await client.fetch("x.mp3")
 
-        mock_ws.close.assert_awaited_once()
+        mock_ws.transport.abort.assert_called_once_with()
         assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.asyncio
