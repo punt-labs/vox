@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
   without a traceback or the file's contents.
 
+- **Non-UTF-8 `--api-key-file` contents report a usage error.** `vox say`
+  now exits with code 2 and a JSON error under `--json` instead of a
+  `UnicodeDecodeError` traceback, without echoing the key's bytes (PL-1186).
+
 - **Unreadable `vox say --from` inputs report a usage error.** Directory paths
   and file read failures now exit with code 2 instead of a traceback, with a
   JSON error under `--json`.

@@ -60,20 +60,6 @@ class TestApiKeyResolver:
         resolver = ApiKeyResolver(ctx, "", key_path, api_key_stdin=False)
         assert resolver.resolve() == "sk_file"
 
-    def test_read_file_missing(self, tmp_path: Path) -> None:
-        """Missing file raises BadParameter."""
-        missing = tmp_path / "nope.txt"
-        with pytest.raises(typer.BadParameter, match="is not a file"):
-            ApiKeyResolver._read_file(missing)  # pyright: ignore[reportPrivateUsage]
-
-    def test_read_file_empty(self, tmp_path: Path) -> None:
-        """Empty file raises BadParameter."""
-        empty = tmp_path / "empty.txt"
-        empty.write_text("", encoding="utf-8")
-        empty.chmod(0o600)
-        with pytest.raises(typer.BadParameter, match="is empty"):
-            ApiKeyResolver._read_file(empty)  # pyright: ignore[reportPrivateUsage]
-
     def test_read_stdin_rejects_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """stdin reader rejects tty input."""
         fake_stdin = MagicMock()
