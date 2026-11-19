@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Self, final
 
 from punt_vox.frontmatter_block import FrontmatterBlock
+from punt_vox.sibling_lock import SiblingLock
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,25 @@ class Frontmatter:
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
+        with self._lock().held():
+            self._write_fields(updates)
+
+    def _lock(self) -> SiblingLock:
+        """Share a local-state lock across every spelling of the config path."""
+        # Read-only .punt-labs requires a pre-provisioned, writable local lock zone.
+        target = self._path.resolve()
+        directory = target.parent
+        if directory.name == "vox" and directory.parent.name == ".punt-labs":
+            lock_path = directory.parent / "local" / "vox" / f"{target.name}.lock"
+        else:
+            digest = hashlib.sha256(str(target).encode()).hexdigest()
+            lock_path = (
+                Path.home() / ".punt-labs" / "vox" / "run" / "config-locks" / digest
+            )
+        return SiblingLock(target, lock_path=lock_path, mode=0o666)
+
+    def _write_fields(self, updates: dict[str, str]) -> None:
+        """Read and write the config while holding its local-state lock."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         if not self._path.exists():

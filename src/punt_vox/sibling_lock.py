@@ -32,9 +32,10 @@ class SiblingLock:
     number of times and raise :class:`TimeoutError` once the window elapses.
     """
 
-    __slots__ = ("_host", "_path")
+    __slots__ = ("_host", "_mode", "_path")
 
     _host: Path
+    _mode: int
     _path: Path
 
     # ~5s total: an honest RMW holds the lock for milliseconds, so anything past
@@ -42,18 +43,23 @@ class SiblingLock:
     _ACQUIRE_ATTEMPTS = 50
     _ACQUIRE_INTERVAL_S = 0.1
 
-    def __new__(cls, host_path: Path) -> Self:
+    def __new__(
+        cls, host_path: Path, *, lock_path: Path | None = None, mode: int = 0o600
+    ) -> Self:
         self = super().__new__(cls)
         self._host = host_path
-        self._path = host_path.parent / f".{host_path.name}.punt-import.lock"
+        self._mode = mode
+        self._path = (
+            lock_path or host_path.parent / f".{host_path.name}.punt-import.lock"
+        )
         return self
 
     @property
     def path(self) -> Path:
-        """Return the sibling lock file path."""
+        """Return the lock file path (a host sibling unless explicitly supplied)."""
         return self._path
 
-    # Never followed, never truncated, private: a root process taking the
+    # Never followed, never truncated, private by default: a root process taking the
     # lock in a user's directory must not write through a planted symlink.
     _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -61,16 +67,17 @@ class SiblingLock:
     def held(self, *, dir_fd: int | None = None) -> Generator[None]:
         """Hold the exclusive lock for the duration of the ``with`` block.
 
-        With *dir_fd* (a descriptor for the host's directory), the lock opens
+        With *dir_fd* (a descriptor for the lock's directory), the lock opens
         relative to it, so a rename of that directory cannot move the lock.
         A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
         untouched, as is whatever it points at.
+
+        Writable descriptors support exclusive locks on NFS. Readable shared
+        locks fall back to read-only descriptors when write access is denied.
         """
         if dir_fd is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            lock = os.open(self._path, self._OPEN_FLAGS, 0o600)
-        else:
-            lock = os.open(self._path.name, self._OPEN_FLAGS, 0o600, dir_fd=dir_fd)
+        lock = self._open(dir_fd)
         try:
             self._acquire(lock)
             try:
@@ -79,6 +86,14 @@ class SiblingLock:
                 fcntl.flock(lock, fcntl.LOCK_UN)
         finally:
             os.close(lock)
+
+    def _open(self, dir_fd: int | None) -> int:
+        path = self._path if dir_fd is None else self._path.name
+        try:
+            return os.open(path, self._OPEN_FLAGS, self._mode, dir_fd=dir_fd)
+        except PermissionError:
+            flags = self._OPEN_FLAGS & ~os.O_WRONLY
+            return os.open(path, flags, self._mode, dir_fd=dir_fd)
 
     def _acquire(self, lock: int) -> None:
         """Take the exclusive lock, retrying on contention, then failing loud.

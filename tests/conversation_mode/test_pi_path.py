@@ -13,8 +13,6 @@ from punt_vox.voxd.conversation_mode.pi_path import PiPath
     ("raw", "expected"),
     [
         ("@.env.local", ".env.local"),
-        ("~", str(Path.home())),
-        ("~/.ssh/id_rsa", str(Path.home() / ".ssh" / "id_rsa")),
         ("file:///etc/my%20file", "/etc/my file"),
         ("a\u00a0b", "a b"),
         ("~user/x", "~user/x"),
@@ -23,6 +21,11 @@ from punt_vox.voxd.conversation_mode.pi_path import PiPath
 )
 def test_normalize_matches_pi(raw: str, expected: str) -> None:
     assert PiPath.normalize(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["~", "~/.ssh/id_rsa"])
+def test_normalize_expands_current_home(raw: str) -> None:
+    assert PiPath.normalize(raw) == str(Path(raw).expanduser())
 
 
 def test_a_relative_path_resolves_against_the_cwd(tmp_path: Path) -> None:
