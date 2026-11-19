@@ -62,6 +62,7 @@ class DaemonProbe:
         target: Callable[[], HealthTarget],
         poll: Poll,
     ) -> Self:
+        """Create a daemon probe."""
         # *target* is resolved on use, not here: the bind is read from the
         # installed unit, and a read failure belongs inside the verb's report.
         self = super().__new__(cls)
@@ -128,6 +129,9 @@ class DaemonProbe:
 
         ``False`` when the process is gone or the host has no ``/proc``
         (macOS, where launchd keeps no cgroup). Any other read failure raises.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         cgroup = self._PROC / str(pid) / "cgroup"
         try:
@@ -168,6 +172,9 @@ class DaemonProbe:
         when its owner is another user, whom ``fuser``/``lsof`` cannot see.
         Only a refusal means "nothing listens"; a timeout, reset or
         unreachable host raises ``PortProbeError``.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         target = self._target()
         address = (target.host, target.port)

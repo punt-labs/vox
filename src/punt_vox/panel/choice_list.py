@@ -1,30 +1,9 @@
-"""``ChoiceList`` -- what a combo offers and which entry it shows as chosen.
+"""Represent a combo's options and its chosen entry.
 
-A Lux combo's ``selected`` is a total index: the protocol has no way to say
-"nothing is chosen" (``ComboElement`` documents ``selected`` as deliberately
-not optional). The panel's three combos each hold a selection that genuinely
-can be absent -- a fresh repo has no provider, a modelless provider has no
-model, an unread roster has no voice -- and each used to answer index ``0``
-for that, so the display asserted the first entry was chosen while the daemon
-held nothing. Re-picking the entry already highlighted fires no ``changed``
-event, so the user could not even confirm the claim into truth.
-
-This type gives the missing state an entry of its own: every non-empty list is
-rendered with a leading ``(none)``, and ``selected`` points at it when the
-current value is absent or names something the list does not contain -- so
-index ``0`` means what it says. Resolving a click subtracts that entry back off
-and refuses a click on ``(none)`` itself.
-
-The sentinel is unconditional rather than shown only while unchosen, and that
-is a correctness requirement, not a style choice: an index is picked from the
-list as rendered and resolved against state read later, so a sentinel that
-comes and goes shifts the whole mapping under a click already in flight.
-
-Both halves live here on purpose. The offered list and the click resolver have
-to agree about whether the sentinel is present, and they agreed only by
-coincidence when each control open-coded its own copy: the model combo once
-offered a provider-less session five ElevenLabs models that its own resolver
-refused categorically.
+Lux requires a selected index even when repo state has no selection. A constant
+leading (none) entry represents missing or unknown values without highlighting
+a real choice. Keeping it present also keeps click indexes stable across a
+refresh. The click resolver rejects that sentinel rather than unsetting state.
 """
 
 from __future__ import annotations
@@ -57,12 +36,7 @@ class ChoiceList:
 
     @property
     def _unchosen(self) -> bool:
-        """Return whether ``current`` names no entry in the list.
-
-        An unknown value counts as unchosen, not as entry zero. A typo in
-        ``vox.md`` used to render the first entry as selected, so the panel
-        showed a voice the config did not name and no error said otherwise.
-        """
+        """Return whether the current value names no entry in the list."""
         return self.current is None or self.current not in self.items
 
     def wire_items(self) -> list[str]:
@@ -83,11 +57,7 @@ class ChoiceList:
         return [_UNCHOSEN_ITEM, *self.items]
 
     def selected_index(self) -> int:
-        """Return the index the combo shows as chosen.
-
-        Zero whenever nothing is chosen -- which now points at a real entry
-        saying so, rather than at the first genuine choice.
-        """
+        """Return the selected index, or zero for the unchosen sentinel."""
         if self.is_empty or self._unchosen:
             return 0
         return self.items.index(self.current) + 1
@@ -103,6 +73,9 @@ class ChoiceList:
         (``"voice"``), so a refusal reads in the caller's vocabulary rather
         than this type's, and agrees with its own count -- a list of one
         reads "1 voice", not "1 voices".
+
+        Raises:
+            ValueError: If position is outside the available items.
         """
         position = index - 1 if not self.is_empty else index
         if not 0 <= position < len(self.items):

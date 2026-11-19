@@ -37,7 +37,7 @@ from punt_vox.types_programs.prompts import PromptSet
 __all__ = ["MusicCli"]
 
 # The three output flags, redeclared on every verb so ``--json`` parses AFTER
-# the subcommand (``vox music list --json``), not only before it (vox-cnak). The
+# the subcommand (``vox music list --json``), not only before it. The
 # shared ``OutputFlags`` ORs both positions together (cli_io.OutputFlags.apply).
 _JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
 _Verbose = Annotated[
@@ -71,6 +71,7 @@ class MusicCli:
         flags: OutputFlags | None = None,
         vibe_source: Callable[[], str | None] | None = None,
     ) -> Self:
+        """Create a music cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway

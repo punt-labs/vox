@@ -42,14 +42,17 @@ class ApiKeyCheck:
     _source: str
 
     def __new__(cls, source: str) -> Self:
+        """Create an api key check."""
         self = super().__new__(cls)
         self._source = source
         return self
 
     @classmethod
     def for_provider(cls, provider: str) -> Self:
-        """Return the check for *provider*'s key variable, as the readiness gate
-        names it -- the one place a provider's key variable is spelled."""
+        """Return the check for *provider*'s key variable, as the readiness gate.
+
+        names it -- the one place a provider's key variable is spelled.
+        """
         return cls(ProviderCredentials().api_key_env_vars()[provider])
 
     @property

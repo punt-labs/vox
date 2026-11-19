@@ -42,6 +42,10 @@ class Ripgrep:
 
         Raises :class:`~.call_agent_errors.CallAgentSpawnError`, naming
         ripgrep and how to install it, when there is none.
+
+        Raises:
+            CallAgentSpawnError: If a required executable or repository configuration is
+                unavailable.
         """
         configured = env.get("PI_CODING_AGENT_DIR")
         home = Path(env.get("HOME") or Path.home())

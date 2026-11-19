@@ -51,6 +51,7 @@ class FrontmatterBlock:
     _parts: tuple[str, str]
 
     def __new__(cls, text: str) -> Self:
+        """Create a frontmatter block."""
         self = super().__new__(cls)
         # Without a fence pair, preserve legacy reads and in-place edits.
         # Otherwise, the tail owns the newline before the closing fence.
@@ -75,6 +76,9 @@ class FrontmatterBlock:
         Raises :class:`~punt_vox.types_errors.ConfigValueError` -- its own
         type, not a bare ``ValueError``, because a caller answering this has
         a real value it cannot store, not a malformed request to discard.
+
+        Raises:
+            ConfigValueError: If the value contains a newline or double quote.
         """
         for char, kind in _UNQUOTABLE:
             if char in value:

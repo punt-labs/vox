@@ -41,6 +41,7 @@ class AlbumNames:
     _by_cell: dict[str, Album]  # friendly name -> album
 
     def __new__(cls, albums: tuple[Album, ...]) -> Self:
+        """Create an album names."""
         self = super().__new__(cls)
         self._by_id = cls._assign(albums)
         self._by_cell = {self._by_id[album.id]: album for album in albums}
@@ -86,6 +87,9 @@ class AlbumNames:
         plain friendly name. An anchor that names no album is a stale or unknown
         click and raises (PY-EH-8), so the receive boundary drops it rather than
         playing the wrong album.
+
+        Raises:
+            ValueError: If no album matches the requested name.
         """
         album = self._by_cell.get(anchor)
         if album is None:

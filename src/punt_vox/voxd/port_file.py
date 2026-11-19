@@ -45,6 +45,7 @@ class PortFile:
     _mine: FileIdentity | None  # the file written; None: never written
 
     def __new__(cls, run_dir: Path) -> Self:
+        """Create a port file."""
         self = super().__new__(cls)
         self._path = run_dir / "serve.port"
         # A sibling, never the file itself: the rename swaps serve.port's
@@ -58,6 +59,9 @@ class PortFile:
 
         The rename is atomic, so a reader never sees a half-written file. A
         write that fails removes its temporary file and raises.
+
+        Raises:
+            OSError: If the port file cannot be written or published safely.
         """
         tmp = self._path.with_name(f".serve.port.{os.getpid()}")
         with self._lock.held():

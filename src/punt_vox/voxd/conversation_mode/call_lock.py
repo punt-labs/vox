@@ -74,6 +74,7 @@ class CallLock:
     _path: Path
 
     def __new__(cls, path: Path) -> Self:
+        """Create a call lock."""
         self = super().__new__(cls)
         self._path = path
         return self
@@ -109,6 +110,9 @@ class CallLock:
         ``write_text``: a reader (``plugin/hooks/call-lock.sh``) polls this
         file every 20ms, and a truncate-then-write is a window in which it
         could read a partial, unparseable file.
+
+        Raises:
+            CallLockActiveError: If another live process owns the call lock.
         """
         existing = self.read()
         if existing is not None and self._process_is_alive(existing.pid):
@@ -161,7 +165,8 @@ class CallLock:
             return None
 
     def is_live(self) -> bool:
-        """Return whether a call is genuinely live -- a lock file recording a pid
+        """Return whether a call is genuinely live -- a lock file recording a pid.
+
         that :meth:`_process_is_alive` still confirms, not merely a lock file
         that exists.
 

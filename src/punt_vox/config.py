@@ -42,10 +42,8 @@ DURABLE_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# The whole vibe cluster is session state, not a durable preference. Keeping
-# vibe_mode in the tracked vox.md let any git checkout/stash resurrect a stale
-# "manual" mode while the gitignored mood lingered. Mode, mood, tags,
-# and the nudge cadence counter now live together in the ephemeral vox.local.md.
+# Keep vibe mode, mood, tags, and cadence together in ephemeral state so
+# git operations cannot restore a mode inconsistent with the current mood.
 #
 # ``log_level`` is ephemeral for the same reason: a debug toggle a user flips
 # "when needed" belongs in the gitignored vox.local.md, never committed to vox.md
@@ -103,9 +101,7 @@ class VoxConfig:
         if speak not in ("y", "n"):
             speak = "y"
 
-        # A present-but-invalid vibe_mode used to fail open to "auto" -- the mode
-        # that injects nudges -- silently masking a user's deliberate off/manual.
-        # Warn before defaulting; an absent field defaults silently (the legit case).
+        # Warn before defaulting because auto can enable unwanted nudges.
         vibe_mode = fields.get("vibe_mode", "auto")
         if vibe_mode not in ("auto", "manual", "off"):
             logger.warning(
@@ -155,6 +151,7 @@ class ConfigStore:
     _repo_name: str | None
 
     def __new__(cls, config_dir: Path | None = None) -> Self:
+        """Create a config store."""
         self = super().__new__(cls)
         self._dir = config_dir or DEFAULT_CONFIG_DIR
         self._durable = Frontmatter(self._dir / DURABLE_FILENAME)

@@ -22,6 +22,7 @@ class ProviderCommand:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a provider command."""
         return super().__new__(cls)
 
     async def __call__(self, ctx: Ctx, name: str | None = None) -> CommandResult:
@@ -31,7 +32,7 @@ class ProviderCommand:
         marking the current selection.
 
         Name given: validate against the closed enum. On a genuine change,
-        the cascade rule (vox-awm9) fires: writes provider + model = first
+        the cascade rule fires: writes provider + model = first
         from ``MODEL_TABLE.available(name)`` (empty string for modelless) +
         voice = first from the new provider's voice roster, all in one
         atomic ``write_fields`` call. A re-publish of the same provider is

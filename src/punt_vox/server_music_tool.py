@@ -90,6 +90,7 @@ class MusicTool:
         session_provider: Callable[[], MusicSession],
         pref_provider: Callable[[], MusicPreference],
     ) -> Self:
+        """Create a music tool."""
         self = super().__new__(cls)
         self._program_factory = program_factory
         self._catalog = CatalogVerbs(catalog_factory)
@@ -287,7 +288,7 @@ class MusicTool:
         return json.dumps({"message": f"♪ {report.summary()}", **state})
 
     def _new(self, args: MusicArgs) -> str:
-        """Author one verbatim-prompt track into a fresh catalog album."""
+        """Create one verbatim-prompt track into a fresh catalog album."""
         return self._catalog.new(args)
 
     def _get(self, args: MusicArgs) -> str:

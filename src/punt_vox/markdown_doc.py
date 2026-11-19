@@ -28,17 +28,18 @@ class MarkdownDoc:
     _lines: tuple[str, ...]
 
     def __new__(cls, text: str) -> Self:
+        """Create a markdown doc."""
         self = super().__new__(cls)
         self._lines = tuple(text.splitlines(keepends=True))
         self._blocks = CodeBlockMap(self._lines)
         return self
 
     def contains(self, import_line: str) -> bool:
-        """Return whether a top-level line equals *import_line* net of terminator.
+        r"""Return whether a top-level line equals *import_line* net of terminator.
 
-        The comparison strips each physical line's trailing ``\\r``, ``\\n``, or
-        ``\\r\\n`` before matching, so a CRLF or lone-CR host still matches the
-        terminator-free canonical string (\\S2.4). A copy inside a code block is
+        The comparison strips each physical line's trailing ``\r``, ``\n``, or
+        ``\r\n`` before matching, so a CRLF or lone-CR host still matches the
+        terminator-free canonical string (\S2.4). A copy inside a code block is
         not top-level and never matches.
         """
         return any(
@@ -46,10 +47,10 @@ class MarkdownDoc:
         )
 
     def without(self, import_line: str) -> str:
-        """Return the document with every top-level *import_line* occurrence removed.
+        r"""Return the document with every top-level *import_line* occurrence removed.
 
         Removes **every** top-level match, so a file that somehow carried two
-        collapses to zero (\\S2.4 duplicate heal). Lines that are not removed are
+        collapses to zero (\S2.4 duplicate heal). Lines that are not removed are
         rejoined byte-for-byte, and an inert copy inside a code block is left
         untouched.
         """
@@ -66,8 +67,11 @@ class MarkdownDoc:
         the user's last line, and uses the document's own EOL convention for both
         the separator and the appended line -- so the tool's line matches the
         surrounding endings and stays terminator-insensitively matchable on
-        re-run (\\S2.4). Raises :class:`ValueError` when the document ends
+        re-run. Raises :class:`ValueError` when the document ends
         inside a fence that never closes, where the line would be inert.
+
+        Raises:
+            ValueError: If the document ends inside an unterminated fence.
         """
         if self._blocks.open_at_eof:
             msg = "CLAUDE.md ends inside an unclosed code fence; close it first"
@@ -79,11 +83,11 @@ class MarkdownDoc:
         return f"{text}{import_line}{eol}"
 
     def _eol(self) -> str:
-        """Return the document's line-ending convention, defaulting to ``\\n``.
+        r"""Return the document's line-ending convention, defaulting to ``\n``.
 
         Each line kept by ``splitlines(keepends=True)`` carries its own
         terminator, so the first terminated line fixes the host convention;
-        ``\\r\\n`` is tested before ``\\n`` because a CRLF line ends with both.
+        ``\r\n`` is tested before ``\n`` because a CRLF line ends with both.
         """
         for line in self._lines:
             if line.endswith("\r\n"):

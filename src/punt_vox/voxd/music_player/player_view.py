@@ -12,7 +12,7 @@ modelled invariants so an inconsistent view cannot be built:
 * **T7** a played album is catalogued -- :meth:`from_status` only names an album it
   matched in the catalog, so the view never reports an unknown album.
 
-The ``paused`` mode is the phase-3 addition: a held source that is neither torn
+The ``paused`` mode represents a held source that is neither torn
 down (``idle``) nor progressing (``playing``). The glyph the transport shows is a
 pure function of the mode (:meth:`is_active`, and the scene's own derivation).
 """

@@ -1,7 +1,7 @@
-"""``LuxTrace`` -- the one ``[lux]``-prefixed logger for the music-player lux legs.
+r"""``LuxTrace`` -- the one ``[lux]``-prefixed logger for the music-player lux legs.
 
 Every lifecycle line the lux legs emit carries a single greppable ``[lux]`` prefix,
-so one ``grep '\\[lux\\]' vox.log`` replays the whole connect / subscribe / push /
+so one ``grep '\[lux\]' vox.log`` replays the whole connect / subscribe / push /
 inbound-event / disconnect / reconnect story of voxd's lux legs in order. This class
 owns that prefix and the level convention -- INFO for a normal transition, WARNING
 for a recoverable fault, ERROR for a refusal, ``exception`` for the unexpected -- so
@@ -37,6 +37,7 @@ class LuxTrace:
     _logger: logging.Logger
 
     def __new__(cls, logger: logging.Logger) -> Self:
+        """Create a lux trace."""
         self = super().__new__(cls)
         self._logger = logger
         return self

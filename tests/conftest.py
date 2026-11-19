@@ -45,7 +45,7 @@ def tmp_output_dir(tmp_path: Path) -> Path:
 # ``find_config_dir()`` walks up from the cwd.  Run from the repo root, both
 # resolve to the developer's *real* ``.punt-labs/vox/``.  Any test that drives a
 # config-writing path without redirecting the dir -- the ``vibe`` MCP tool, the
-# ``/vibe`` CLI command -- would clobber the live config (vox-73m5: the session
+# ``/vibe`` CLI command -- would clobber the live config (: the session
 # vibe "always reverts to sad" because test fixtures wrote into it).  The
 # autouse fixture below makes every *ambient* config resolution land in a
 # per-test tmp dir, so no test can read or write the real config through the
@@ -96,7 +96,7 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     # Seed a real ``provider:`` value so surfaces that fill from state through
     # SessionSpec get a configured provider by default. Without this every CLI
     # ``vox say``, hook synthesis, panel preview, and mic:unmute test would hit
-    # the F1 refusal introduced by vox-w3f8 and exit before the assertion it
+    # the F1 refusal introduced by  and exit before the assertion it
     # was actually written for. Tests that mean to exercise F1 overwrite this
     # file explicitly; the seed keeps the rest of the suite unchanged.
     (config_dir / "vox.md").write_text("---\nprovider: elevenlabs\n---\n")

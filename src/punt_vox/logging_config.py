@@ -72,7 +72,7 @@ def configure_daemon_logging() -> None:
     write. Re-tightens the log tree first (fail-closed on a tree it cannot create);
     any directory it could not force to 0700 or file it could not force to 0600
     surfaces as one durable WARNING *after* the handlers exist, so the note lands in
-    the now-live ``vox.log`` -- a debug line emitted before ``dictConfig`` could
+    ``vox.log`` -- a debug line emitted before ``dictConfig`` could
     never land.
     """
     untightened = _tighten_daemon_tree()

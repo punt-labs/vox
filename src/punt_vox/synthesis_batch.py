@@ -36,6 +36,7 @@ class SegmentBatch:
     _defaults: SynthesisSpec
 
     def __new__(cls, segments: list[dict[str, str]], defaults: SynthesisSpec) -> Self:
+        """Create a segment batch."""
         self = super().__new__(cls)
         self._segments = segments
         self._defaults = defaults

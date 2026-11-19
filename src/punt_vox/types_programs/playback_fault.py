@@ -64,7 +64,12 @@ class PlaybackFault:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a fault from a wire object, raising on a malformed record."""
+        """Build a fault from a wire object, raising on a malformed record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(
             part_index=obj.require_int("part_index"),
             reason=obj.require_str("reason"),

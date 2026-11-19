@@ -32,7 +32,11 @@ class CallExecution:
 
     @classmethod
     async def run(cls, context: Path, script: Path | None) -> None:
-        """Run one call under the lock, behind the crash boundary."""
+        """Run one call under the lock, behind the crash boundary.
+
+        Raises:
+            typer.BadParameter: If the call configuration or script is invalid.
+        """
         client = VoxClientSync()
         # Resolved once, before the call state machine starts -- see
         # call_spec.py's module docstring for why: a call that cannot

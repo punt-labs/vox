@@ -97,7 +97,12 @@ class MpvResponse:
 
     @classmethod
     def from_object(cls, obj: JsonObject) -> Self:
-        """Build a response from a parsed reply object, raising if malformed."""
+        """Build a response from a parsed reply object, raising if malformed.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(
             request_id=obj.require_int("request_id"),
             error=obj.require_str("error"),
@@ -122,6 +127,10 @@ class MpvEvent:
         advances the loop rather than hanging the current part. A genuinely
         malformed event -- an end-file missing its ``reason`` field -- still
         raises, and the reader drops the line without resolving a bogus outcome.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
         """
         name = obj.require_str("event")
         if name != "end-file":

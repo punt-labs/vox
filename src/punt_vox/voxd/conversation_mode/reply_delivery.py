@@ -68,6 +68,7 @@ class ReplyDelivery:
         turn_timer: TurnTimer,
         chime: ChimeFn | None = None,
     ) -> Self:
+        """Create a reply delivery."""
         self = super().__new__(cls)
         self._session_attach = session_attach
         self._speak = speak

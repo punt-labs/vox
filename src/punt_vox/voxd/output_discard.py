@@ -40,6 +40,7 @@ class OutputDiscard:
     _output_path: Path
 
     def __new__(cls, output_path: Path) -> Self:
+        """Create an output discard."""
         self = super().__new__(cls)
         self._output_path = output_path
         return self
@@ -72,6 +73,7 @@ class _EscapedMessage:
     _error: BaseException
 
     def __new__(cls, error: BaseException) -> Self:
+        """Create an escaped message."""
         self = super().__new__(cls)
         self._error = error
         return self

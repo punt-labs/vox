@@ -41,6 +41,9 @@ class FileIdentity:
 
         ``None`` is the documented answer when no file is there; any other
         ``stat`` failure raises ``OSError``.
+
+        Raises:
+            OSError: If the file cannot be inspected for a reason other than absence.
         """
         try:
             return cls.of(path.stat())

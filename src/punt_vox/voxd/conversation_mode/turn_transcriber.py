@@ -45,6 +45,7 @@ class TurnTranscriber:
     _turn_timer: TurnTimer
 
     def __new__(cls, provider: STTProvider, turn_timer: TurnTimer) -> Self:
+        """Create a turn transcriber."""
         self = super().__new__(cls)
         self._provider = provider
         self._turn_timer = turn_timer

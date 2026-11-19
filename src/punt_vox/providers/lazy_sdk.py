@@ -51,6 +51,7 @@ class LazySdk[T]:
         transport: type[Exception],
         sdk: T | None = None,
     ) -> Self:
+        """Create a lazy sdk."""
         # ``sdk`` is the test seam: absent, *factory* builds the client lazily.
         self = super().__new__(cls)
         self._factory = factory
@@ -84,6 +85,15 @@ class LazySdk[T]:
         ``UnsendableHeaderError``, whose original quotes the API key. Anything
         else -- the server answered, and the provider interprets the answer --
         passes through unchanged.
+
+        Raises:
+            CaBundleError: If the CA bundle cannot be loaded or does not trust the
+                provider.
+            ProviderConfigError: If the key, request headers, proxy, or base URL are
+                invalid.
+            ProviderUnavailableError: If no API key is available.
+            ProviderTransportError: If a connection, timeout, or stream failure
+                interrupts the request.
         """
         try:
             return request(self.get())

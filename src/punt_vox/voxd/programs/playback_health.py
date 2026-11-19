@@ -31,6 +31,7 @@ class PlaybackHealth:
     _fault: PlaybackFault | None  # None means healthy -- the documented contract
 
     def __new__(cls) -> Self:
+        """Create a playback health."""
         self = super().__new__(cls)
         self._fault = None
         return self

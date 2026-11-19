@@ -48,6 +48,7 @@ class Program:
     _policy: PlaybackPolicy
 
     def __new__(cls, state: ProgramState, policy: PlaybackPolicy) -> Self:
+        """Create a program."""
         self = super().__new__(cls)
         self._state = state
         self._policy = policy
@@ -200,6 +201,9 @@ class Program:
         user-driven skip are indistinguishable, and any client drives either.
         The next-Part choice is delegated to the injected policy; the resulting
         Part is validated against the pool by the successor's S4 invariant.
+
+        Raises:
+            AssertionError: If the rotation policy returns an invalid result.
         """
         if self._state.mode not in _PLAYING_MODES:
             self._reject("rotate requires a playing mode")

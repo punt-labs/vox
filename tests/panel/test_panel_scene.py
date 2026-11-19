@@ -126,11 +126,7 @@ class TestElements:
     def test_a_fresh_repo_claims_no_provider_and_no_voice(self) -> None:
         """The panel must not assert settings the daemon does not hold.
 
-        A repo with nothing configured used to render "elevenlabs" as the
-        selected provider and the first roster entry as the selected voice,
-        neither of which was in the config. Re-picking an already-selected
-        combo entry fires no ``changed`` event, so the user could not even
-        confirm the claim into truth.
+        An unconfigured repo must not display ElevenLabs as an implicit provider.
         """
         request = _scene(provider=None, model=None).render_request()
         provider_combo = next(
@@ -144,13 +140,7 @@ class TestElements:
     def test_missing_provider_renders_the_sentinel_and_no_handlers(self) -> None:
         """No provider chosen means no model list -- and nothing to click.
 
-        The combo used to fall back to ElevenLabs' models here, so a session
-        that had picked no provider was shown a live, clickable list
-        belonging to one it never chose. Every such click was then refused
-        by ``ClickTarget.model`` (which offers no models without a
-        provider), logging a traceback and snapping the widget back. The
-        render now agrees with the click: an inert sentinel, no handlers,
-        nothing to click in the first place.
+        A provider without selectable models must not display ElevenLabs models.
         """
         request = _scene(provider=None, model=None).render_request()
         model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")

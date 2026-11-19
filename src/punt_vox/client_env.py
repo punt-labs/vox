@@ -40,6 +40,9 @@ class DaemonEnv:
 
         ``None`` is the documented "no override" contract. A value that is not
         an integer in 1-65535 raises ``ValueError`` naming it.
+
+        Raises:
+            ValueError: If VOXD_PORT is not a decimal port from 1 through 65535.
         """
         raw = os.environ.get("VOXD_PORT", "").strip()
         if not raw:

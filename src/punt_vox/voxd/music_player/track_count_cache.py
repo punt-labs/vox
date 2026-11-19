@@ -1,68 +1,10 @@
-"""``TrackCountCache`` -- the one place left that touches disk for a track count.
+"""Refresh cached track counts without blocking playback or the Lux listener.
 
-Each album's ready-Part count is a *disk read* (a stat, an open, a read, and a
-JSON parse of its manifest -- see :meth:`~punt_vox.voxd.programs.catalog.Album.
-ready_parts`), because the background fill grows the on-disk manifest long after
-an album is minted. :class:`~punt_vox.voxd.music_player.player.MusicPlayer`
-used to re-run that read, per album, inline inside every projection -- on the
-control-channel single-writer for a state-change repaint, and on the lux
-listener's event loop for a menu click or a hub handshake. Both are places a
-blocking disk read must never run: the writer serializes every playback
-mutation behind it, and the listener holds the session's lease keepalive.
-
-This cache is the fix: :meth:`_refresh` is the one place that still does the
-disk read. The real, async path always reaches it through
-:meth:`serialized_refresh`, which dispatches it off the hot path via
-``asyncio.to_thread`` AND serializes overlapping callers behind a lock. The
-one production caller today,
-:meth:`~punt_vox.voxd.music_player.player.MusicPlayer._refresh_track_counts`,
-is itself single-flighted -- but that guarantee belongs to the caller, not to
-this cache, and this class has to stay correct on its own terms regardless.
-Concretely: a timed-out :meth:`serialized_refresh` call's orphaned dispatch
-(see below) keeps running -- and keeps holding the lock -- well after its
-caller gave up, so the NEXT call from that very same single-flighted caller
-must still wait its turn behind it rather than race it; without the lock,
-each would independently read its own ``fresh`` dict and unconditionally
-overwrite the counts -- whichever finishes LAST wins, not whichever started
-most recently. Every render reads :meth:`get` instead -- an in-memory dict lookup,
-never disk.
-
-:meth:`serialized_refresh` is bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a
-genuinely stuck disk read (a hung mount, a sleeping disk) must never block its
-caller forever. Nothing here awaits the refresh inline on a connection's event
-loop today, but an unbounded wait would still leave :class:`~punt_vox.voxd.
-music_player.single_flight.SingleFlightRefresh` permanently wedged, since its
-guard only clears when the scheduled work returns -- every future
-``notify_changed`` or menu click would schedule a refresh that silently never
-runs, with no error or log to explain why. Timing out closes that: the wait
-is abandoned, the caller is answered with whatever the store already held,
-and :meth:`serialized_refresh` returns.
-
-Abandoning the wait is not abandoning the result. Cancelling the awaiting
-coroutine releases the lock at once, so the next caller is never blocked by
-one that timed out -- but it cannot stop the worker thread, which goes on
-reading. Every committed write therefore announces itself through
-:meth:`_announce_landing`, which repaints if the counts eventually land --
-otherwise the worker thread would finish, commit real counts under the
-generation guard, and nothing would ever re-render them: the caller has
-already repainted from the stale cache by then, so the live counts would sit
-in memory, correct and invisible, until some unrelated change happened to
-schedule another refresh. On an idle catalog that is never.
-``asyncio.to_thread`` dispatches to a thread pool, so the thread keeps
-running :meth:`_refresh` to completion (or forever) in the background
-whatever its caller does. That orphaned thread can still finish and try
-to write after a newer, faster refresh has already landed a better answer --
-reintroducing the exact "last to FINISH wins" race the lock exists to close,
-just narrowed to the timeout window. :class:`~punt_vox.voxd.music_player.
-count_store.CountStore` closes it, and owns that rule along with the counts
-themselves. This module's part is the generation number: each
-:meth:`serialized_refresh` call is stamped with one, bumped only on the event
-loop before dispatch (so it needs no lock of its own), and threaded
-explicitly into :meth:`_refresh` as a plain parameter captured at dispatch
-time -- never read back off :attr:`_generation` when the worker thread
-finally runs, because two overlapping dispatches share that counter and a
-slow-to-start worker could otherwise read a LATER call's bump instead of its
-own.
+Manifest reads run in a worker thread, serialized behind a lock with a bounded
+wait. A timeout releases the lock but cannot stop that thread. Each dispatch
+captures a generation number before leaving the event loop; CountStore rejects
+late results older than the last committed generation. A late landing notifies
+the originating loop so committed counts become visible without another event.
 """
 
 from __future__ import annotations
@@ -101,6 +43,7 @@ class _NoObserver:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a no observer."""
         return super().__new__(cls)
 
     def __call__(self) -> None:

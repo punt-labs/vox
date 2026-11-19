@@ -148,13 +148,9 @@ def test_model_no_arg_unconfigured_provider_lists_empty_no_substitution(
 ) -> None:
     """No session provider -- the list is empty, not the ElevenLabs enum.
 
-    Previously ``mic:model`` substituted ``"elevenlabs"`` for an unset
-    provider and reported its model enum as if it belonged to the current
-    session; that substitution is exactly what this bead deletes. Listing
-    gets an honest empty answer instead, ``current`` reports whatever the
-    session's ``model`` field holds (typically ``null``), and the caller
-    can distinguish "no provider is configured" from "the provider has no
-    user-selectable model".
+    An unconfigured session yields an empty available list while current
+    reflects its model field, distinguishing missing provider configuration from
+    a provider without selectable models.
     """
     session = _FakeSession()
     model, _, _ = _tools(session, tmp_path)
@@ -187,7 +183,7 @@ def test_model_set_refuses_when_provider_unset(tmp_path: Path) -> None:
 def test_model_shorthand_resolves_and_persists(tmp_path: Path) -> None:
     """A shorthand resolves via resolve_model and lands on both surfaces.
 
-    The cascade rule (vox-awm9) also sets voice to first-from-roster on
+    The cascade rule also sets voice to first-from-roster on
     every model set. Here the roster is ``["matilda"]``, so voice lands as
     ``matilda`` alongside the resolved model.
     """
@@ -230,7 +226,7 @@ def test_model_set_cascade_uses_empty_when_roster_is_empty(tmp_path: Path) -> No
 def test_model_set_roster_fetch_error_returns_error_envelope(tmp_path: Path) -> None:
     """A daemon fault on the cascade roster fetch aborts the write cleanly.
 
-    Same pattern as vox-w79f on the panel: the model MUST NOT persist when
+    Same pattern as  on the panel: the model MUST NOT persist when
     we cannot read the voice roster to compute the cascaded default.
     """
     from unittest.mock import MagicMock
@@ -310,7 +306,7 @@ def test_provider_no_arg_reports_null_when_none_set(tmp_path: Path) -> None:
 
 
 def test_provider_set_writes_session_and_cascades_defaults(tmp_path: Path) -> None:
-    """The cascade rule (vox-awm9): set provider populates model + voice defaults.
+    """The cascade rule: set provider populates model + voice defaults.
 
     ``openai`` first model is ``tts-1``; the fake client returns
     ``["alloy", "nova"]``, so voice cascades to ``alloy``.
@@ -359,7 +355,7 @@ def test_provider_dispatch_refreshes_the_session(tmp_path: Path) -> None:
 def test_provider_switch_cascades_across_providers(tmp_path: Path) -> None:
     """Genuine switch overwrites model + voice with the new provider's defaults.
 
-    Was: 'clears stale model' (vox-0rp9.1). Under vox-awm9 the rule is
+    Was: 'clears stale model' (.1). Under  the rule is
     'sets model to first, voice to first' -- deterministic default rather than
     a cleared placeholder.
     """
@@ -409,7 +405,7 @@ def test_provider_set_roster_fetch_error_returns_error_envelope(
 ) -> None:
     """A daemon fault on the cascade roster fetch aborts the write cleanly.
 
-    Same pattern as vox-w79f on the panel: the provider MUST NOT persist
+    Same pattern as  on the panel: the provider MUST NOT persist
     when we cannot read the voice roster to compute the cascaded default.
     """
     from unittest.mock import MagicMock

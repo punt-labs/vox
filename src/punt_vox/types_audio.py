@@ -20,8 +20,7 @@ __all__ = [
 # total size streams as a sequence of ``chunk`` frames, each at most this many
 # raw bytes; base64 inflates ~33%, so 256 KiB stays well under the client's
 # default 1 MiB receive limit with room for the JSON envelope. There is
-# deliberately no total-file ceiling on the daemon -- the old single-frame limit
-# no longer governs retrieval.
+# deliberately no total-file ceiling on the daemon.
 FETCH_CHUNK_BYTES = 256 * 1024
 
 
@@ -51,6 +50,9 @@ class AudioRequest:
         Checks format only (2 lowercase ASCII letters). Does not check
         whether the code is in SUPPORTED_LANGUAGES -- providers decide
         what they support.
+
+        Raises:
+            ValueError: If language is not a two-letter ASCII language code.
         """
         normalized = code.strip().lower()
         if len(normalized) != 2 or not normalized.isascii() or not normalized.isalpha():

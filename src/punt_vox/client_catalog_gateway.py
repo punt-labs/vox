@@ -29,12 +29,13 @@ class ClientCatalogGateway:
     _client: VoxClientSync
 
     def __new__(cls, client: VoxClientSync) -> Self:
+        """Create a client catalog gateway."""
         self = super().__new__(cls)
         self._client = client
         return self
 
     def new(self, prompts: PromptSet, name: str | None) -> str:
-        """Author one track via the ``music_new`` op; return the album id."""
+        """Create one track via the ``music_new`` op; return the album id."""
         return self._client.music_new(prompts, name)
 
     def get(self, album_id: str, dest_dir: str) -> str:

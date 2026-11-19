@@ -34,6 +34,7 @@ class RetryMachine:
     _state: ProgramState
 
     def __new__(cls, state: ProgramState) -> Self:
+        """Create a retry machine."""
         self = super().__new__(cls)
         self._state = state
         return self

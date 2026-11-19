@@ -29,6 +29,7 @@ class StreamFile:
     _target: Path
 
     def __new__(cls, target: Path) -> Self:
+        """Create a stream file."""
         self = super().__new__(cls)
         self._target = target
         return self

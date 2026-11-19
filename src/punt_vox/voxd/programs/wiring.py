@@ -52,6 +52,7 @@ class ProgramSubsystem:
     _library: MusicLibrary
 
     def __new__(cls, root: Path, producer: Producer, mpv_socket: Path) -> Self:
+        """Create a program subsystem."""
         self = super().__new__(cls)
         store = FilesystemProgramStore(root)
         self._root = root

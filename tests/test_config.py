@@ -345,8 +345,8 @@ class TestReadConfigLegacy:
     ) -> None:
         """A present-but-invalid vibe_mode warns before failing open to auto.
 
-        Silent defaulting used to mask a user's deliberate off/manual by
-        promoting garbage to the nudge-injecting mode.
+        Invalid configuration must not silently promote a deliberate off or manual
+        setting into a nudge-injecting mode.
         """
         local = tmp_path / "vox.local.md"
         _write_frontmatter(local, {"vibe_mode": "loud"})
@@ -369,9 +369,8 @@ class TestReadConfigLegacy:
     ) -> None:
         """A stale vibe_mode in the tracked vox.md never reaches the session.
 
-        Regression for vox-73m5: a committed ``vibe_mode: "manual"`` used to
-        resurrect after a git checkout. vibe_mode is ephemeral now, so the
-        durable file's copy is filtered out on read.
+        vibe_mode is ephemeral: the durable file's copy is filtered out on read so a
+        git checkout cannot restore it.
         """
         _write_frontmatter(
             tmp_path / "vox.md", {"vibe_mode": "manual", "voice": "roger"}

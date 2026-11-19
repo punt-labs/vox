@@ -91,7 +91,7 @@ _DAEMON_ERRORS: tuple[type[BaseException], ...] = (
 # The closed set of reasons ``EnableOutcome`` can carry, and where each
 # value is produced.  Same enumeration discipline as
 # :data:`~punt_vox.types_provider.ProviderStatusReason`: prose next to a
-# Literal rots the first time a new producer is added under review
+# Literal rots the first time a new producer is added
 # pressure, so the runtime frozenset below is the load-bearing check and
 # :meth:`EnableOutcome.__post_init__` refuses a value not in either.  A
 # new reason -- or a new producer of an existing reason -- must land at
@@ -143,9 +143,7 @@ class EnableOutcome:
     ``voxd_unavailable`` means the daemon could not be reached and
     the fix is to start it, whereas ``write_failed`` means the daemon
     answered fine but the local ``vox.md`` write failed and the fix
-    is a local one (permissions, disk space).  Conflating them once
-    sent a user to restart a healthy daemon -- the PR 2 misdiagnosis
-    shape.
+    is a local one (permissions, disk space).
     """
 
     reason: EnableOutcomeReason
@@ -194,6 +192,7 @@ class ProviderProposal:
         store: ConfigStore,
         client_factory: Callable[[], VoxClientSync] = VoxClientSync,
     ) -> Self:
+        """Create a provider proposal."""
         self = super().__new__(cls)
         self._store = store
         self._client_factory = client_factory
@@ -214,9 +213,7 @@ class ProviderProposal:
         the daemon answered fine, the failure is on the local disk.
         The detail carries the target path and the ``OSError`` text so
         the user can act on it (a bare "could not write" without the
-        path sends them to hunt for the file).  Reporting the two
-        failures under one name once misdirected a user to restart a
-        healthy daemon -- the PR 2 rate-limit-as-auth-failure shape.
+        path sends them to hunt for the file).
         """
         existing = self._existing_provider()
         if existing is not None:
@@ -338,6 +335,7 @@ class RepoEnablement:
         audible: AudibleNotify,
         proposal: ProviderProposal,
     ) -> Self:
+        """Create a repo enablement."""
         self = super().__new__(cls)
         self._import = import_writer
         self._marker = marker
@@ -367,6 +365,9 @@ class RepoEnablement:
         Raises ``ValueError`` when the working directory is not inside a git
         repository -- ``enable`` / ``disable`` are repo-scoped verbs (§ 2.3), so a
         non-repo invocation is a clean boundary failure, not a silent no-op.
+
+        Raises:
+            ValueError: If the current directory is not inside a git repository.
         """
         root = find_repo_root()
         if root is None:
@@ -420,6 +421,10 @@ class RepoEnablement:
         / ``no_ready_provider`` are true reports of an unusable host, not
         errors -- the rest of enable still landed and the caller sees which
         slot did not get filled.
+
+        Raises:
+            OSError: If an enablement artifact cannot be read, deposited, or registered.
+            ValueError: If an existing repo artifact is malformed or unsafe to modify.
         """
         self._guide.deposit()
         self._import.register()
@@ -437,6 +442,10 @@ class RepoEnablement:
         directory is left exactly as found -- ``disable`` never creates or removes
         it -- so it lands in Dormant when a directory was present and stays Absent
         when it was not.
+
+        Raises:
+            OSError: If the import, marker, or permission entries cannot be removed.
+            ValueError: If an existing repo artifact is malformed or unsafe to modify.
         """
         self._import.prune()
         self._marker.remove()
@@ -449,6 +458,10 @@ class RepoEnablement:
         ``CLAUDE.md``, *outside* the subtree -- followed by the subtree removal.
         Removing the subtree alone would strand a 404ing ``@``-import and violate
         the § 2.11 biconditional.
+
+        Raises:
+            OSError: If repo artifacts cannot be read, updated, or removed.
+            ValueError: If an existing repo artifact is malformed or unsafe to modify.
         """
         self.disable()
         self._remove_subtree()

@@ -33,6 +33,7 @@ class GuideCheck:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a guide check."""
         return super().__new__(cls)
 
     def run(self) -> list[CheckResult]:

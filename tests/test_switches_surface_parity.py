@@ -5,7 +5,7 @@ same ``ConfigStore.write_field`` choke-point. Driving both against one
 in-memory session + one tmp-path config dir puts the same underlying state
 behind both, and lets the two answers be compared field for field. A field
 one surface reports and the other omits is the bug this file exists to catch
--- the vox-bx7b class of parity holes.
+-- the  class of parity holes.
 
 The comparison is on the *field set and values*, never the prose: the tool
 returns JSON in its domain shape (``available`` / ``current``) and the CLI
@@ -153,7 +153,7 @@ def test_model_shorthand_resolves_identically(
 ) -> None:
     """``v3`` on both surfaces writes ``eleven_v3`` and cascades to the same voice.
 
-    Under vox-awm9 both surfaces cascade voice = first-from-roster; both
+    Under  both surfaces cascade voice = first-from-roster; both
     stub their voxd client to the same fake roster so both should return
     identical {model, voice} payloads and write identical fields on disk.
     """

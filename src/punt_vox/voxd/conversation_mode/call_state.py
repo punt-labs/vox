@@ -45,6 +45,7 @@ class CallState:
     _has_pending_addendum: bool
 
     def __new__(cls) -> Self:
+        """Create a call state."""
         self = super().__new__(cls)
         self._mode = Mode.IDLE
         self._has_pending_addendum = False
@@ -72,7 +73,11 @@ class CallState:
         self._has_pending_addendum = False
 
     def end_call(self) -> None:
-        """``EndCall``: any active mode -> idle, an explicit hangup."""
+        """``EndCall``: any active mode -> idle, an explicit hangup.
+
+        Raises:
+            IllegalTransitionError: If there is no active call to end.
+        """
         if self._mode is Mode.IDLE:
             msg = "end_call requires an active call, got idle"
             raise IllegalTransitionError(msg)

@@ -170,23 +170,12 @@ def _is_darwin() -> bool:
 
 @final
 class AudioContext:
-    """Per-platform diagnostic snapshot logged with every playback attempt.
+    """Capture platform-specific diagnostics for playback attempts.
 
-    A Linux build captures the audio-socket env vars ffplay needs to reach
-    PulseAudio/PipeWire (the v4.0.3 failure mode).  A macOS build captures
-    the facts that actually diagnose CoreAudio access -- the launchd
-    manager name, the parent pid, and the session id -- because a
-    LaunchAgent bootstrapped into a Background context loses CoreAudio
-    session membership and afplay starts hanging 15s then failing with
-    ``AudioQueueStart failed (-66681)``.  The previous macOS branch logged
-    the Linux vars, all ``<unset>``, which told the operator nothing about
-    the actual cause and let 72 failures accrue in one session before ps
-    surfaced the diagnosis.
-
-    ``launchctl managername`` shells out once and the result is cached in
-    ``_MGR_CACHE`` for the daemon's lifetime -- the manager cannot change
-    without a re-bootstrap, so re-shelling per playback would burn a
-    subprocess for no new information.
+    Linux captures the socket variables needed for PulseAudio/PipeWire.
+    macOS captures the launchd manager, parent pid, and session id: a Background
+    context lacks CoreAudio membership and can make afplay hang or fail.
+    The manager result is cached because it cannot change without a re-bootstrap.
     """
 
     __slots__ = ()
@@ -336,6 +325,7 @@ class PlaybackQueue:
     _queue: asyncio.Queue[PlaybackItem]
 
     def __new__(cls) -> Self:
+        """Create a playback queue."""
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()

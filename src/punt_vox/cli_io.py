@@ -32,6 +32,7 @@ class OutputFlags:
     _quiet_seen: bool
 
     def __new__(cls, formatter: OutputFormatter) -> Self:
+        """Route output flags through the shared formatter."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._verbose_seen = False
@@ -46,7 +47,11 @@ class OutputFlags:
         self._formatter.set_quiet(value=False)
 
     def apply(self, *, json_output: bool, verbose: bool, quiet: bool) -> None:
-        """Fold one position's flags into the shared formatter and logging."""
+        """Fold one position's flags into the shared formatter and logging.
+
+        Raises:
+            typer.BadParameter: If verbose and quiet are both requested.
+        """
         self._verbose_seen = self._verbose_seen or verbose
         self._quiet_seen = self._quiet_seen or quiet
         # The check runs against the accumulated flags, not this call's, so a
@@ -74,6 +79,7 @@ class TextInput:
     _formatter: OutputFormatter
 
     def __new__(cls, formatter: OutputFormatter) -> Self:
+        """Create a text-input resolver using the shared formatter."""
         self = super().__new__(cls)
         self._formatter = formatter
         return self
@@ -84,6 +90,11 @@ class TextInput:
         Text may come from the argument, from a ``--from`` JSON file (an array of
         strings or ``{text}`` objects), or from stdin -- when TEXT is ``-`` or
         when no argument is given and stdin is not a terminal (a pipe).
+
+        Raises:
+            typer.Exit: If no text is provided or standard input is empty.
+            typer.BadParameter: If file encoding, JSON, or segment shapes are invalid.
+            OSError: If the input file or standard input cannot be read.
         """
         if from_file is not None:
             return self._segments_from_file(from_file)

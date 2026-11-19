@@ -43,6 +43,7 @@ class PlayHandler(MessageHandler):
     _store: RecordStore
 
     def __new__(cls, *, playback: PlaybackQueue, store: RecordStore) -> Self:
+        """Create a play handler."""
         self = super().__new__(cls)
         self._playback = playback
         self._store = store

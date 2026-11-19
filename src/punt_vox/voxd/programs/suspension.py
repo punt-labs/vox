@@ -3,8 +3,7 @@
 With mpv, pause is not a teardown and resume is not a re-spawn. Pause is a single
 ``set_property pause`` on the one persistent process: mpv stops feeding the audio
 output and resumes from the exact same decoder position, so there is no underrun
-click and no wall-clock seek to reconstruct. The suspension therefore sheds the
-old resume-point machinery entirely; it holds just the authoritative paused flag
+click and no wall-clock seek to reconstruct. The suspension holds the paused flag
 and delegates the click-free IPC to the injected :class:`Player`.
 
 The flag is the one place status reads ``is_paused``. The loop reads it too, at
@@ -34,6 +33,7 @@ class PlaybackSuspension:
     _player: Player
 
     def __new__(cls, player: Player) -> Self:
+        """Create a playback suspension."""
         self = super().__new__(cls)
         self._paused = False
         self._player = player

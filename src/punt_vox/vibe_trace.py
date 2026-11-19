@@ -40,6 +40,7 @@ class VibeTraceLog:
     _sink: AtomicAppendLog
 
     def __new__(cls, path: Path) -> Self:
+        """Create a vibe trace log."""
         self = super().__new__(cls)
         self._sink = AtomicAppendLog(path)
         return self

@@ -58,6 +58,7 @@ class LaunchctlAgent:
     _IO_ERROR: ClassVar[int] = 5
 
     def __new__(cls, label: str, plist: str) -> Self:
+        """Create a launchctl agent."""
         self = super().__new__(cls)
         self._label = label
         self._plist = plist
@@ -153,6 +154,9 @@ class LaunchctlAgent:
         ``LaunchctlError`` -- the job may still be running, and the caller must
         not read that as stopped. A job not confirmed gone afterwards is only
         a warning here: ``stop`` confirms the outcome in its own settle loop.
+
+        Raises:
+            LaunchctlError: If a registered job cannot be booted out.
         """
         answer = self._boot_out()
         if not answer.holds:
@@ -167,6 +171,10 @@ class LaunchctlAgent:
         For ``uninstall``, which removes the plist next: a job still
         registered -- or a launchctl that never answered -- must fail the
         uninstall, not end in "uninstalled".
+
+        Raises:
+            LaunchctlError: If launchctl fails or cannot confirm the requested service
+                state.
         """
         answer = self._boot_out()
         if not answer.holds:
@@ -195,6 +203,10 @@ class LaunchctlAgent:
         exit-5 (stale registration) waits again and retries exactly once.
         Raises ``LaunchctlError`` if the job never clears or bootstrap keeps
         failing -- the caller surfaces that as a non-zero exit.
+
+        Raises:
+            LaunchctlError: If launchctl fails or cannot confirm the requested service
+                state.
         """
         cleared = self.wait_until_unregistered()
         if not cleared.holds:
@@ -236,6 +248,10 @@ class LaunchctlAgent:
 
         Raises ``LaunchctlError`` on failure so ``start()`` reports a single
         error type to callers.
+
+        Raises:
+            LaunchctlError: If launchctl fails or cannot confirm the requested service
+                state.
         """
         result = self._run("kickstart", "-k", self._service_target())
         if result.returncode != 0:

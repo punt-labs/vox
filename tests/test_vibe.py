@@ -49,7 +49,7 @@ class TestVibeChangeResolve:
         assert updates == {"vibe_tags": "[warm]"}
 
     def test_auto_resets_whole_cluster(self) -> None:
-        # /vibe auto: mood + tags cleared, mode set, cadence reset (vox-73m5).
+        # /vibe auto: mood + tags cleared, mode set, cadence reset.
         updates = VibeChange(mood=None, tags="", mode="auto").resolve()
         assert updates == {
             "vibe": "",

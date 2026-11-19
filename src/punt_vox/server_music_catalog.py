@@ -1,14 +1,7 @@
-"""The saved-album verbs of the ``music`` tool: ``new``, ``get``, ``remove``.
+"""Dispatch the saved-album verbs of the music tool: new, get, and remove.
 
-These three touch the catalog on disk and nothing else -- no running Program, no
-style register, no marquee -- so they share no state with the playback verbs
-they used to sit beside. Held apart on that seam: a class whose methods disagree
-about which data they operate on is two classes wearing one name (PL-CO-2), and
-the split keeps each side's module under the size threshold as verbs are added.
-
-The gateway arrives as a factory called per invocation, not a stored gateway, so
-a caller that re-points the daemon connection between calls is honoured on the
-next one rather than pinned to the connection that existed at construction.
+Catalog operations share no running-program state with playback controls.
+The gateway factory is called per invocation so endpoint changes take effect.
 """
 
 from __future__ import annotations
@@ -36,12 +29,13 @@ class CatalogVerbs:
     _gateway_factory: Callable[[], CatalogGateway]
 
     def __new__(cls, gateway_factory: Callable[[], CatalogGateway]) -> Self:
+        """Create a catalog verbs."""
         self = super().__new__(cls)
         self._gateway_factory = gateway_factory
         return self
 
     def new(self, args: MusicArgs) -> str:
-        """Author one verbatim-prompt track into a fresh catalog album."""
+        """Create one verbatim-prompt track into a fresh catalog album."""
         if args.base_prompt is None:
             return MusicFault.rejecting("music new requires base_prompt")
         try:

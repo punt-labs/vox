@@ -1,17 +1,14 @@
 """Tests for MusicPlayer: notify_changed projects fresh state and submits once.
 
-Two properties matter beyond the projection content itself. The first
-(vox-h777): an install shows and raises, a change refreshes and never installs.
-The second is this bug's own fix: no entry point -- ``notify_changed``, the
+An install shows and raises; a change refreshes and never installs.
+No entry point -- ``notify_changed``, the
 failure presenters, or ``install`` alike -- may block on disk for a track
 count. All of them read
 :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` instead,
 which is refreshed off the hot path via ``asyncio.to_thread`` and resubmits
 once the refresh lands, so a render fired the instant a state change (or a
 menu click, or a hub handshake) arrives can be a render or two behind the true
-disk count, converging shortly after (``install`` used to
-await that refresh inline, which stalled the same event loop that holds the
-hub connection's session lease and its future event dispatch).
+disk count, converging shortly after.
 """
 
 from __future__ import annotations
@@ -217,8 +214,9 @@ class TestInstallVersusRefresh:
 
 
 class TestInstallSurvivesARefreshFailure:
-    """The bug this fix closes: a failed cache refresh must never sink the
-    menu click, and a warning install() clears must not come back."""
+    """A failed cache refresh must not sink the background task or prevent a later
+    retry.
+    """
 
     async def test_install_still_shows_the_window_when_the_refresh_fails(
         self, album_of: AlbumFactory
@@ -309,8 +307,9 @@ class TestInstallSurvivesARefreshFailure:
 
 
 class TestTrackCountsNeverBlockTheHotPath:
-    """The bug this fix closes: a disk read must never run inline on a render
-    fired from the control-channel single-writer or the lux listener's loop."""
+    """Disk reads must not run inline on a render path that holds the live hub's
+    event loop.
+    """
 
     async def test_notify_changed_never_blocks_on_the_live_read(
         self, album_of: AlbumFactory
@@ -432,17 +431,9 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_an_album_added_during_an_in_flight_refresh_is_not_stuck_at_zero(
         self, album_of: AlbumFactory
     ) -> None:
-        # _schedule_track_count_refresh used to close over
-        # the ``albums`` snapshot captured at SCHEDULE time and feed it
-        # straight into the refresh itself (not just the resubmit). Sequence:
-        # notify_changed schedules a refresh over catalog {kept}; before that
-        # scheduled run executes, ``added`` joins the catalog and a second
-        # notify_changed's schedule call is dropped outright (SingleFlightRefresh
-        # is drop-on-busy while a run is in flight); the in-flight run lands and
-        # TrackCountCache._refresh replaces its whole _counts dict using only
-        # {kept}, so ``added`` is absent -- the resubmit then renders the fresh
-        # catalog {kept, added} against that cache and ``added``'s row reads 0,
-        # stuck there indefinitely, because nothing else reschedules.
+        # The catalog must be captured when the refresh runs, not when it is scheduled.
+        # SingleFlightRefresh drops concurrent requests; a stale capture would leave
+        # newly added albums at zero until another change signal.
         kept = album_of("aa11bb", name="Kept", tracks=0, on_disk=3)
         added = album_of("cc22dd", name="Added", tracks=0, on_disk=5)
         service = _FakeService(ProgramStatus.idle(), (kept,))
@@ -561,13 +552,9 @@ class TestTrackCountsNeverBlockTheHotPath:
     async def test_install_does_not_wait_on_a_slow_disk_read(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # install() used to await the refresh inline -- on
-        # the same event loop as the hub connection's handshake and dispatch,
-        # a slow (bounded 5s) disk read there stalled the click/reconnect that
-        # reached it. asyncio.wait_for with a timeout far under that 5s proves
-        # install() no longer waits: against the pre-fix code this call would
-        # itself time out, because install() awaited serialized_refresh (and
-        # therefore slow_event) before ever returning.
+        # A disk read must not stall the event loop handling hub handshakes and clicks.
+        # A timeout much shorter than the blocked refresh proves install returns without
+        # waiting for disk.
         slow_event = asyncio.Event()
         real_refresh = TrackCountCache.serialized_refresh
 

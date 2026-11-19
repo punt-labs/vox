@@ -154,6 +154,7 @@ class PollyProvider(TTSProvider):
     _voices: VoiceResolver[VoiceConfig]
 
     def __new__(cls, boto_client: PollyClientType | None = None) -> Self:
+        """Create a polly provider."""
         self = super().__new__(cls)
         if boto_client is not None:
             self._client = boto_client
@@ -170,17 +171,21 @@ class PollyProvider(TTSProvider):
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "polly"
 
     @property
     def default_voice(self) -> str:
+        """Return the provider's default voice name."""
         return "joanna"
 
     @property
     def supports_expressive_tags(self) -> bool:
+        """Return whether the selected model supports expressive tags."""
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
+        """Synthesize the request into its resolved output path."""
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
@@ -191,6 +196,9 @@ class PollyProvider(TTSProvider):
 
         Resolves the voice name to Polly parameters internally, wraps
         the text in SSML with prosody rate, and writes the MP3 output.
+
+        Raises:
+            ProviderAuthError: If AWS credentials are missing, expired, or rejected.
         """
         # Deferred so a base-only install (no botocore) keeps
         # importing polly.py cheap; matches the pattern check_health
@@ -267,6 +275,9 @@ class PollyProvider(TTSProvider):
 
         Returns the Polly voice ID (e.g. "Joanna") if the name is valid.
         If language is provided, validates that the voice supports it.
+
+        Raises:
+            ValueError: If the requested language conflicts with the voice language.
         """
         cfg = self._voices.resolve(name)
         if language is not None and not _bcp47_matches_iso(cfg.language_code, language):
@@ -326,7 +337,11 @@ class PollyProvider(TTSProvider):
         return checks
 
     def get_default_voice(self, language: str) -> str:
-        """Get the default Polly voice for a language."""
+        """Get the default Polly voice for a language.
+
+        Raises:
+            ValueError: If no default voice is available for the language.
+        """
         key = language.lower()
         voice = _DEFAULT_VOICES.get(key)
         if voice is None:

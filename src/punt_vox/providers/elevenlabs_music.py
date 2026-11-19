@@ -53,6 +53,7 @@ class ElevenLabsMusicProvider(MusicProvider):
         client: ElevenLabs | None = None,
         output_format: str = _DEFAULT_OUTPUT_FORMAT,
     ) -> Self:
+        """Create an eleven labs music provider."""
         self = super().__new__(cls)
         self._output_format = output_format
         self._client = ElevenLabsClient(api_key=api_key, sdk=client)

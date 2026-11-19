@@ -35,6 +35,7 @@ class MusicStateView:
     _mode: MusicMode
 
     def __new__(cls, program: dict[str, object], mode: MusicMode) -> Self:
+        """Create a music state view."""
         self = super().__new__(cls)
         self._program = program
         self._mode = mode

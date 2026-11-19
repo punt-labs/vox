@@ -17,4 +17,5 @@ class ReplyBegins:
     """FR-11: the reply's first complete portion is ready; start speaking it."""
 
     def apply(self, state: CallState) -> None:
+        """Apply the reply begins transition to the call state."""
         state.reply_begins()

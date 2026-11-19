@@ -57,6 +57,7 @@ class LaunchctlQuery:
     _target: str
 
     def __new__(cls, label: str, target: str) -> Self:
+        """Create a launchctl query."""
         # *label* names the job for ``list``; *target* is its
         # ``gui/<uid>/<label>`` service target for ``print``.
         self = super().__new__(cls)
@@ -74,6 +75,9 @@ class LaunchctlQuery:
         ``None`` is the documented answer when the job is not registered or is
         registered with no running process. A failed query, or a ``pid = ...``
         line that is not a number, raises ``LaunchctlError``.
+
+        Raises:
+            LaunchctlError: If the query fails or its pid field is malformed.
         """
         return self._pid_in(self._print())
 
@@ -103,7 +107,12 @@ class LaunchctlQuery:
         return self._answer(("print", self._target), within_s, self._absent)
 
     def run(self, *args: str) -> Completed:
-        """Run ``launchctl *args*``, bounded; raise if it cannot run in time."""
+        """Run ``launchctl *args*``, bounded; raise if it cannot run in time.
+
+        Raises:
+            LaunchctlError: If launchctl fails or cannot confirm the requested service
+                state.
+        """
         try:
             return self._spawn(args, self._COMMAND_TIMEOUT_S)
         except subprocess.TimeoutExpired as exc:

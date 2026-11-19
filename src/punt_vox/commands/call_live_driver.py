@@ -61,11 +61,7 @@ _MIC_GATE_MAX_HOLD_S = 20.0
 # documented fixed default instead.
 _INACTIVITY_TIMEOUT_S = 120.0
 
-# The control mailbox used to be polled once per audio chunk (every
-# _CHUNK_S=20ms in mic_audio_source.py -- 50 renames plus 50
-# raised-and-caught FileNotFoundErrors per second, in steady state, on the
-# same event loop that has to keep up with audio capture). 250ms is still
-# well inside "responsive to /call stop" while cutting that cost ~200x.
+# Keep stop responsive without filesystem work on every audio chunk.
 _CONTROL_POLL_INTERVAL_S = 0.25
 
 # The wait cue is a short, fixed-length bundled asset, not synthesized
@@ -116,6 +112,7 @@ class LiveCallDriver:
         mic_source: MicAudioSource,
         stt_provider: STTProvider,
     ) -> Self:
+        """Create a live call driver."""
         self = super().__new__(cls)
         self._mic_source = mic_source
         self._speak = wiring.speak

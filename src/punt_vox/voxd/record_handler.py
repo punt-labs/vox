@@ -43,6 +43,7 @@ class RecordHandler(MessageHandler):
     _store: RecordStore
 
     def __new__(cls, *, synthesis: SynthesisPipeline, store: RecordStore) -> Self:
+        """Create a record handler."""
         self = super().__new__(cls)
         self._synthesis = synthesis
         self._store = store

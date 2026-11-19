@@ -340,12 +340,12 @@ def test_app_no_subcommand_shows_help() -> None:
 
 
 def test_list_accepts_json_flag_after_the_subcommand() -> None:
-    """vox-cnak: --json parses AFTER the subcommand, not only before it."""
+    """: --json parses AFTER the subcommand, not only before it."""
     fmt = OutputFormatter()
     flags = OutputFlags(fmt)
     cli = MusicCli(fmt, lambda: FakeProgramGateway(), flags=flags)
     # A second command makes this a multi-command group (as `vox music` is), so
-    # the runner treats "list" as the subcommand -- where --json failed (vox-cnak).
+    # the runner treats "list" as the subcommand -- where --json failed.
     app = typer.Typer()
     app.command("list")(cli.list_programs)
     app.command("stop")(cli.stop)

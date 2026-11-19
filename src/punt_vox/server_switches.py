@@ -98,6 +98,7 @@ class ModelTool:
         config_dir_finder: Callable[[], Path | None],
         client_factory: Callable[[], VoxClientSync],
     ) -> Self:
+        """Create a model tool."""
         self = super().__new__(cls)
         self._session_provider = session_provider
         self._config = ConfigWriter(config_dir_finder)
@@ -110,7 +111,7 @@ class ModelTool:
         On set, the cascade rule fires: writes the new model AND writes voice
         = first from the current provider's roster, in one atomic write_fields
         call. Setting model always resets voice to the first of the roster --
-        deterministic default per the vox-awm9 cascade contract.
+        deterministic default under the shared cascade rule.
 
         Args:
             name: The full name (``eleven_v3``) or a shorthand (``v3``, ``flash``,
@@ -132,12 +133,7 @@ class ModelTool:
             return err
         provider = session.provider
         if not provider:
-            # ``mic:model`` used to substitute ``"elevenlabs"`` for an unset
-            # provider and then report its models as the current session's --
-            # the exact substitution this bead deletes. Listing needs no
-            # synthesis, so an empty list with ``current: null`` is the
-            # honest answer; setting is refused so no wrong-provider model
-            # writes into state.
+            # Listing needs no provider; setting requires a valid model roster.
             if name is None:
                 return json.dumps({"available": [], "current": session.model})
             return _error(str(ProviderNotConfiguredError.for_mcp()))
@@ -194,6 +190,7 @@ class ProviderTool:
         config_dir_finder: Callable[[], Path | None],
         client_factory: Callable[[], VoxClientSync],
     ) -> Self:
+        """Create a provider tool."""
         self = super().__new__(cls)
         self._session_provider = session_provider
         self._config = ConfigWriter(config_dir_finder)
@@ -281,6 +278,7 @@ class VoiceTool:
         config_dir_finder: Callable[[], Path | None],
         client_factory: Callable[[], VoxClientSync],
     ) -> Self:
+        """Create a voice tool."""
         self = super().__new__(cls)
         self._session_provider = session_provider
         self._config = ConfigWriter(config_dir_finder)
@@ -297,9 +295,7 @@ class VoiceTool:
 
         Returns:
             JSON string. No arg: ``{"provider", "current", "available",
-            "featured"}`` (the shape the retired ``mic:who`` tool produced,
-            with ``all`` renamed to ``available``; ``featured`` carries the
-            blurbs).
+            "featured"}``; ``featured`` carries the voice blurbs.
             Name given: ``{"voice": "<normalized-name>"}``. A daemon fault on
             the roster returns ``{"error": ...}``; a blank/lone-``@`` write
             returns ``{"error": "voice name is empty"}``; a filesystem or
@@ -313,10 +309,7 @@ class VoiceTool:
         if name is None:
             return self._list(session)
 
-        # Setting a voice with no provider configured lands a wrong-provider
-        # voice into vox.md the moment a caller runs mic:provider -- exactly
-        # the substitution class this bead exists to prevent. Listing does
-        # not require a provider (empty roster is fine); setting does.
+        # Voice names are provider-scoped, so setting requires a provider.
         if not session.provider:
             return _error(str(ProviderNotConfiguredError.for_mcp()))
 

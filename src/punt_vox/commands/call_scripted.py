@@ -50,6 +50,7 @@ class ScriptedTurn:
     _confidence: float
 
     def __new__(cls, text: str, confidence: float) -> Self:
+        """Create a scripted turn."""
         self = super().__new__(cls)
         self._text = text
         self._confidence = confidence
@@ -57,10 +58,12 @@ class ScriptedTurn:
 
     @property
     def text(self) -> str:
+        """Return the captured transcript text."""
         return self._text
 
     @property
     def confidence(self) -> float:
+        """Return the transcript confidence between zero and one."""
         return self._confidence
 
     @staticmethod
@@ -98,6 +101,10 @@ class ScriptedTurn:
         not a raw ``FileNotFoundError``/``JSONDecodeError``/``KeyError``
         that would otherwise land in :mod:`punt_vox.commands.call`'s generic
         crash boundary and get logged as a scary "call ended unexpectedly".
+
+        Raises:
+            typer.BadParameter: If the file cannot be read or does not contain a valid
+                script.
         """
         try:
             lines = path.read_text().splitlines()
@@ -152,6 +159,7 @@ class ScriptedSTTProvider:
     _index: int
 
     def __new__(cls, turns: list[ScriptedTurn]) -> Self:
+        """Create a scripted sttprovider."""
         self = super().__new__(cls)
         self._turns = turns
         self._index = 0
@@ -159,11 +167,13 @@ class ScriptedSTTProvider:
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "scripted"
 
     async def transcribe(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[TranscriptEvent]:
+        """Consume one audio turn and yield the next scripted transcript."""
         async for _chunk in chunks:
             pass
         turn = self._turns[self._index]
@@ -171,6 +181,7 @@ class ScriptedSTTProvider:
         yield TranscriptEvent(text=turn.text, confidence=turn.confidence, is_final=True)
 
     def check_health(self) -> list[HealthCheck]:
+        """Return no health failures for this in-process scripted provider."""
         return []
 
 
@@ -202,6 +213,7 @@ class ScriptedCallDriver:
         speak: SpeakFn,
         apply_control: ApplyControlFn,
     ) -> Self:
+        """Create a scripted call driver."""
         self = super().__new__(cls)
         self._session = session
         self._turns = turns

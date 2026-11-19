@@ -36,6 +36,7 @@ class ApiKeyEnv:
     _var: str | None
 
     def __new__(cls, provider_name: str, api_key: str | None) -> Self:
+        """Create an api key env."""
         self = super().__new__(cls)
         self._api_key = api_key or None
         self._var = _KEY_VARS.get(provider_name)

@@ -120,6 +120,10 @@ class PiCallAgent:
         which the process exists but a turn could reach it without context.
         Any failure on the way kills the process and raises
         :class:`~.call_agent_errors.CallAgentSpawnError`.
+
+        Raises:
+            CallAgentSpawnError: If the process cannot start or accept its opening
+                context.
         """
         channel = await PiRpcChannel.open(launch, cwd)
         agent = cls(channel, ToolScreen(launch.policy, cwd), turn_timer)
@@ -133,6 +137,7 @@ class PiCallAgent:
 
     @property
     def turns_handled(self) -> int:
+        """Return the number of turns handled by this call agent."""
         return self._state.turns_handled
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncGenerator[ReplyChunk]:

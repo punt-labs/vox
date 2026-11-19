@@ -53,6 +53,11 @@ class VibeNudge:
     def __new__(
         cls, threshold: int = DEFAULT_THRESHOLD, reminder: str = VIBE_NUDGE_REMINDER
     ) -> Self:
+        """Create a vibe nudge.
+
+        Raises:
+            ValueError: If threshold is less than one.
+        """
         if threshold < 1:
             msg = f"threshold must be at least 1, got {threshold}"
             raise ValueError(msg)

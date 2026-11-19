@@ -35,7 +35,11 @@ class ProcessIdentity:
 
     @classmethod
     def from_ps(cls, line: str) -> Self:
-        """Parse one ``ps -o lstart= -o command=`` line; raise if malformed."""
+        """Parse one ``ps -o lstart= -o command=`` line; raise if malformed.
+
+        Raises:
+            ValueError: If the process start time or command is missing.
+        """
         started = line[: cls._LSTART_WIDTH].strip()
         command = line[cls._LSTART_WIDTH :].strip()
         if not started or not command:

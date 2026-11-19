@@ -30,14 +30,17 @@ class ProviderRefusalError(ProviderAuthError):
     # __new__ is the constructor (PY-CC-1); BaseException's permissive __init__
     # takes the same arguments, which pyright cannot see -- as on the parent.
     def __new__(cls, provider: str, status_code: int, reason: str | None) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, provider, status_code)
         self._reason = reason
         return self
 
     @classmethod
     def from_code(cls, provider: str, status_code: int, code: str | None) -> Self:
-        """Return the refusal for the server's error *code*, kept only when it is
-        a plain identifier; *code* is ``None`` when the body carried none."""
+        """Return the refusal for the server's error *code*, kept only when it is.
+
+        a plain identifier; *code* is ``None`` when the body carried none.
+        """
         usable = code is not None and _CODE.fullmatch(code) is not None
         return cls(provider, status_code, code if usable else None)
 
@@ -57,7 +60,9 @@ class ProviderRefusalError(ProviderAuthError):
 
     @property
     def answer(self) -> str:
-        """Return the answer as a phrase: ``HTTP 403: quota_exceeded``, or
-        ``HTTP 401`` when the server gave no usable code."""
+        """Return the answer as a phrase: ``HTTP 403: quota_exceeded``, or.
+
+        ``HTTP 401`` when the server gave no usable code.
+        """
         status = f"HTTP {self.status_code}"
         return status if self._reason is None else f"{status}: {self._reason}"

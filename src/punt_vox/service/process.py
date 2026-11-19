@@ -41,6 +41,7 @@ class ProcessManager:
     _note: str  # "" unless the last kill left serve.port behind
 
     def __new__(cls) -> Self:
+        """Create a process manager."""
         self = super().__new__(cls)
         self._deadline = Deadline.never()
         self._note = ""
@@ -73,6 +74,9 @@ class ProcessManager:
         so an empty or partial file is a leftover from something else -- a
         stale hint, warned about and ignored. A read error other than
         not-found raises ``PortProbeError``.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         port_file = self._run_dir() / "serve.port"
         try:
@@ -94,6 +98,9 @@ class ProcessManager:
         Runs under the lock voxd publishes the file with (see
         :class:`StalePortFile`). Returns what it did; a lock, read or removal
         failure raises ``PortProbeError`` so the caller can report it.
+
+        Raises:
+            PortProbeError: If the port file cannot be locked, read, or removed safely.
         """
         return StalePortFile.read(self._run_dir() / "serve.port").discard(port)
 
@@ -109,6 +116,9 @@ class ProcessManager:
         Fails closed: a missing tool, a timeout, or an error exit raises
         ``PortProbeError``. Only a silent "found nothing" (exit 1, no stdout
         and no stderr) reads as an empty port.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         if platform.system() == "Darwin":
             # -w: lsof's warnings (an unreadable mount) are not errors and
@@ -136,6 +146,9 @@ class ProcessManager:
         ``ps`` exits 1 and says nothing for a pid that does not exist; any
         other failure, or a line that does not parse, raises ``PortProbeError``
         rather than reading as "gone".
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         result = self._probe(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="])
         if self._found_nothing(result):
@@ -274,6 +287,9 @@ class ProcessManager:
         MUST happen before ``kill_stale_daemon`` runs, because a
         successful kill clears ``serve.port`` -- which drops the very
         value we need for the post-kill re-check.
+
+        Raises:
+            SystemExit: If a process still owns the required port.
         """
         target_port = self.read_port_file() or DEFAULT_PORT
         self.kill_stale_daemon()

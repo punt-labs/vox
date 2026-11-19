@@ -26,6 +26,11 @@ class HexToken:
     _LABEL: ClassVar[str] = "hex token"  # the noun used in validation errors
 
     def __new__(cls, value: str) -> Self:
+        """Create a hex token.
+
+        Raises:
+            ValueError: If value is empty or contains nonhexadecimal characters.
+        """
         cleaned = value.strip()
         if not cleaned:
             msg = f"{cls._LABEL} must be non-empty"

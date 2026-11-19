@@ -518,12 +518,8 @@ def test_enable_does_not_read_its_own_environment(
 ) -> None:
     """The client process's env must not influence enable's proposal.
 
-    D1's whole amendment: doctor used to read the caller environment
-    when the daemon's is the one that matters, and the first draft of
-    enable repeated the mistake.  Here the client process exports
-    ``ELEVENLABS_API_KEY`` and ``TTS_PROVIDER=openai`` while the fake
-    daemon proposes ``polly`` -- enable must write ``polly``, never
-    the ``elevenlabs``/``openai`` a local probe would pick.
+    Doctor reads provider readiness from the daemon environment, which can
+    differ from the caller's shell environment.
     """
     monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-client-side")
     monkeypatch.setenv("TTS_PROVIDER", "openai")

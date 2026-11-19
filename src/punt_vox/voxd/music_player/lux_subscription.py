@@ -88,6 +88,7 @@ class LuxSubscription:
         # this retry loop escalate one continuous outage together.
         outage: HubOutageLog | None = None,
     ) -> Self:
+        """Create a lux subscription."""
         self = super().__new__(cls)
         self._service = service
         self._presenter = presenter

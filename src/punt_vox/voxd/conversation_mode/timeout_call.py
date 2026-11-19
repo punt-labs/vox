@@ -17,4 +17,5 @@ class TimeoutCall:
     """FR-2's automatic end: nothing was heard for the configured window."""
 
     def apply(self, state: CallState) -> None:
+        """Apply the timeout call transition to the call state."""
         state.timeout_call()

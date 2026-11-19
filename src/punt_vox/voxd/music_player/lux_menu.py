@@ -44,6 +44,7 @@ class LuxMenuRegistrar:
         # outage escalates once across both sites, not twice.
         outage: HubOutageLog | None = None,
     ) -> Self:
+        """Create a lux menu registrar."""
         self = super().__new__(cls)
         self._connect = connect
         self._outage = outage if outage is not None else HubOutageLog(logger)

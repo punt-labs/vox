@@ -17,16 +17,10 @@ unaffected and must keep deploying bare, unchanged. The hook grants no
 permissions: it never reads or writes a settings file (``vox enable`` grants
 vox's rules in the repo's own ``.claude/settings.json``).
 
-Driven as a subprocess against the real script, with a copy of the real
-``plugin/`` tree and a sandboxed ``$HOME`` — the interface is the contract,
-so this exercises the shell, not a reimplementation of it. ``jq``, ``git``,
-and the coreutils the script shells out to run from the real system ``PATH``,
-but the panel spawn is fenced: every run gets a recording
-``vox-panel`` stub first on PATH with the real binary stripped from the tail,
-an unenabled standalone git root as its cwd, and a zero-spawn assertion —
-these tests are about command deployment, and the hook's panel block used to
-resolve the enabled vox repo through pytest's nested tmp dir and start a real
-panel against the live Lux hub on every suite run.
+The subprocess uses the real plugin tree, a sandboxed HOME, real system
+utilities, and a recording vox-panel stub. An unenabled standalone git root
+and a zero-spawn assertion prevent any real panel from reaching the live Lux
+hub.
 """
 
 from __future__ import annotations
@@ -386,7 +380,7 @@ class TestHookWritesNoSettings:
         assert not (home / ".claude" / "settings.json").exists()
 
     def test_existing_settings_survive_a_retirement_run(self, tmp_path: Path) -> None:
-        # A retirement run (CLEANED non-empty) used to prune stale bare grants.
+        # Command cleanup must leave user-owned permission settings intact.
         home = tmp_path / "home"
         commands_dir = _commands_dir(home)
         commands_dir.mkdir(parents=True)
@@ -593,9 +587,8 @@ class TestStockMacBashCompatibility:
         assert "unbound variable" not in result.stderr
 
     def test_stale_grant_pruning_run_does_not_abort(self, tmp_path: Path) -> None:
-        # The branch where CLEANED is non-empty -- populated, iterated, and
-        # used to build STALE_SKILL_ARGS -- exercises every array expansion
-        # this regression touched, not just the common empty-CLEANED path.
+        # A nonempty CLEANED array exercises populated-array expansions as well as the
+        # empty-array path.
         plugin_dir = _make_prod_plugin(tmp_path)
         home = tmp_path / "home"
         commands_dir = _commands_dir(home)

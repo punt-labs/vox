@@ -107,6 +107,9 @@ vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
 dev = [
+    "pydoclint==0.12.0",
+    "markdown==3.11.3",
+    "types-markdown>=3.10,<4",
     "punt-oo-ratchet==0.1.0",
     "mypy>=1.18.1",
     "pyright>=1.1.400",
@@ -118,9 +121,53 @@ dev = [
     "cryptography>=46.0.0",
 ]
 
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocstrings[python]>=1.0.8",
+]
+
 [build-system]
 requires = ["uv_build==0.13.1"]
 build-backend = "uv_build"
+
+# The parser distributions share an import namespace; install only the fork.
+[[tool.uv.dependency-metadata]]
+name = "cyclopts"
+version = "4.8.0"
+requires-dist = [
+    "attrs>=23.1.0",
+    "docstring-parser-fork==0.0.16",
+    "rich-rst<2.0.0,>=1.3.1",
+    "rich>=13.6.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "typing-extensions>=4.8.0; python_version < '3.11'",
+    "ipdb>=0.13.9; extra == 'debug'",
+    "line-profiler>=3.5.1; extra == 'debug'",
+    "coverage[toml]>=5.1; extra == 'dev'",
+    "mkdocs>=1.4.0; extra == 'dev'",
+    "pre-commit>=2.16.0; extra == 'dev'",
+    "pydantic<3.0.0,>=2.11.2; extra == 'dev'",
+    "pytest-cov>=3.0.0; extra == 'dev'",
+    "pytest-mock>=3.7.0; extra == 'dev'",
+    "pytest>=8.2.0; extra == 'dev'",
+    "pyyaml>=6.0.1; extra == 'dev'",
+    "syrupy>=4.0.0; extra == 'dev'",
+    "toml<1.0.0,>=0.10.2; extra == 'dev'",
+    "trio>=0.10.0; extra == 'dev'",
+    "gitpython>=3.1.31; extra == 'docs'",
+    "myst-parser[linkify]<5.0.0,>=3.0.1; extra == 'docs'",
+    "sphinx-autodoc-typehints<4.0.0,>=1.25.2; extra == 'docs'",
+    "sphinx-copybutton<1.0,>=0.5; extra == 'docs'",
+    "sphinx-rtd-dark-mode<2.0.0,>=1.3.0; extra == 'docs'",
+    "sphinx-rtd-theme<4.0.0,>=3.0.0; extra == 'docs'",
+    "sphinx<8.2.0,>=7.4.7; extra == 'docs'",
+    "markdown>=3.3; extra == 'mkdocs'",
+    "mkdocs>=1.4.0; extra == 'mkdocs'",
+    "pymdown-extensions>=10.0; extra == 'mkdocs'",
+    "tomli>=2.0.0; (python_version < '3.11') and extra == 'toml'",
+    "trio>=0.10.0; extra == 'trio'",
+    "pyyaml>=6.0.1; extra == 'yaml'",
+]
 
 [tool.uv.build-backend]
 module-name = "punt_vox"
@@ -205,6 +252,16 @@ ignore = [
 "src/punt_vox/providers/espeak.py" = ["S603", "S607"]
 "src/punt_vox/providers/convert.py" = ["S603", "S607"]
 "src/punt_vox/providers/local_play.py" = ["S603", "S607"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pydoclint]
+style = "google"
+arg-type-hints-in-docstring = false
+skip-checking-short-docstrings = false
+allow-init-docstring = true
+check-style-mismatch = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

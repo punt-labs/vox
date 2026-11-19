@@ -23,6 +23,7 @@ class LogSanitizer:
     _table: dict[int, str]
 
     def __new__(cls) -> Self:
+        """Create a log sanitizer."""
         self = super().__new__(cls)
         self._table = cls._build_table()
         return self

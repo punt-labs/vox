@@ -72,6 +72,7 @@ class MusicMarquee:
     _choose: Callable[[Sequence[str]], str]
 
     def __new__(cls, chooser: Callable[[Sequence[str]], str] = random.choice) -> Self:
+        """Create a music marquee."""
         self = super().__new__(cls)
         self._choose = chooser
         return self

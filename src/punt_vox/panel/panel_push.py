@@ -79,6 +79,7 @@ class PanelPush:
     _lock: asyncio.Lock
 
     def __new__(cls) -> Self:
+        """Create a panel push."""
         self = super().__new__(cls)
         self._live = LiveScene()
         self._lock = asyncio.Lock()

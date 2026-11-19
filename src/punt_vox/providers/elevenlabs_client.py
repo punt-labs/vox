@@ -88,6 +88,7 @@ class ElevenLabsClient:
         # The test seam: absent, the real client is built lazily.
         sdk: ElevenLabs | None = None,
     ) -> Self:
+        """Create an eleven labs client."""
         self = super().__new__(cls)
         self._api_key = (
             api_key if api_key is not None else os.environ.get(_KEY_CHECK.source)
@@ -110,6 +111,17 @@ class ElevenLabsClient:
         ``ProviderAuthError``; any other answered failure becomes
         ``ProviderStatusError``, carrying the status and the server's message.
         So does an answer the SDK cannot parse into its response model.
+
+        Raises:
+            CaBundleError: If TLS certificates cannot be loaded or validated.
+            ProviderConfigError: If the API key, request headers, proxy, or base URL are
+                invalid.
+            ProviderUnavailableError: If no API key is available.
+            ProviderAuthError: If the provider rejects the credentials.
+            ProviderStatusError: If the provider returns an error or an unparseable
+                answer.
+            ProviderTransportError: If a connection, timeout, or stream failure
+                interrupts the request.
         """
         try:
             return self._sdk.call(request)
@@ -126,6 +138,18 @@ class ElevenLabsClient:
         The SDK's ``stream()`` is lazy: the request goes out, and every failure
         arrives, only as chunks are pulled -- so the whole drain runs inside the
         translation, not just the call that returns the generator.
+
+        Raises:
+            CaBundleError: If TLS certificates cannot be loaded or validated.
+            ProviderConfigError: If the API key, request headers, proxy, or base URL are
+                invalid.
+            ProviderUnavailableError: If no API key is available.
+            ProviderAuthError: If the provider rejects the credentials.
+            ProviderStatusError: If the provider returns an error or an unparseable
+                answer.
+            ProviderTransportError: If a connection, timeout, or stream failure
+                interrupts the request.
+            OSError: If the target cannot be written.
         """
         return self.call(lambda sdk: StreamFile(target).write(open_stream(sdk)))
 

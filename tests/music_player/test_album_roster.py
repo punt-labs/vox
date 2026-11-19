@@ -1,12 +1,8 @@
 """Tests for AlbumRoster: pairs the catalog with cached track counts, no disk.
 
-``from_cache`` never touches the store -- the disk read that used to happen
-inline here now lives in
-:class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` (see
-``test_track_count_cache.py``), refreshed off the hot path. This module tests
-only the pairing: cached counts land on the right album, in catalog order, and
-an album the cache has never seen reads as zero rather than raising or being
-dropped.
+from_cache never touches the store. TrackCountCache refreshes counts off the
+hot path; cached counts are paired with catalog entries in order, and unseen
+albums get zero.
 """
 
 from __future__ import annotations

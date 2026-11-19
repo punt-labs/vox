@@ -46,6 +46,7 @@ class ReplyRecovery:
     _speak: SpeakFn
 
     def __new__(cls, actor: CallActor, speak: SpeakFn) -> Self:
+        """Create a reply recovery."""
         self = super().__new__(cls)
         self._actor = actor
         self._speak = speak

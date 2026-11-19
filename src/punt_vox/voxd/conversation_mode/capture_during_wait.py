@@ -23,4 +23,5 @@ class CaptureDuringWait:
     """
 
     def apply(self, state: CallState) -> None:
+        """Apply the capture during wait transition to the call state."""
         state.capture_during_wait()

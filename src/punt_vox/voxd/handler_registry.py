@@ -54,6 +54,7 @@ class HandlerRegistry:
         programs: ProgramSubsystem,
         health: DaemonHealth,
     ) -> Self:
+        """Create a handler registry."""
         self = super().__new__(cls)
         self._synthesis = synthesis
         self._playback = playback

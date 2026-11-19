@@ -1,4 +1,4 @@
-.PHONY: help test test-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
+.PHONY: help test test-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions check-comments check-docstrings build-api-docs report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -9,11 +9,23 @@ test: ## Run tests
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m e2e
 
-lint: ## Lint and format check (Python + shell)
+lint: check-comments check-docstrings ## Lint and format check (Python + shell)
 	uv run ruff check .
 	uv run ruff format --check .
 	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
 	bash scripts/check-plugin-surface.sh
+
+check-comments: ## Reject commented-out code and tracker references in Python prose
+	uv run ruff check --select ERA001 .
+	uv run python tools/check_python_docs.py comments src tests tools scripts
+
+check-docstrings: ## Check public Python docstrings and documented argument names
+	uv run ruff check --select D,D401 --ignore D105,D107,D417 src/
+	uv run python tools/check_python_docs.py docstrings src/
+
+build-api-docs: ## Build and verify the generated Python API reference
+	uv run --group docs mkdocs build --strict
+	uv run python tools/check_python_docs.py api .tmp/api-site/objects.inv
 
 type: ## Type check with mypy and pyright
 	uv run mypy src/ tests/
@@ -31,7 +43,7 @@ OO_BASE ?=
 COUPLING_BASE ?=
 SUPPRESSION_BASE ?=
 
-check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
+check: lint type docs build-api-docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
 	uv run oo-ratchet oo src/punt_vox/ --check $(OO_BASE)

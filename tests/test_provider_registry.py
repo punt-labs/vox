@@ -89,8 +89,6 @@ class TestGet:
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
         _register_test_provider(registry)
-        # Case-insensitive resolution used to live in the ConfigStore
-        # branch that's gone; the gate must still accept a mixed-case name.
         registry.get("ElevenLabs")
 
     def test_get_raises_provider_unavailable_when_credentials_missing(
@@ -102,7 +100,7 @@ class TestGet:
         with pytest.raises(ProviderUnavailableError) as exc_info:
             registry.get("elevenlabs")
         # Full message assertion -- a substring pass on the tuple repr is
-        # exactly the failure mode vox-ll26 documented.
+        # exactly the failure mode  documented.
         assert str(exc_info.value) == (
             "provider 'elevenlabs' is configured but voxd has no "
             "ELEVENLABS_API_KEY; run `vox doctor`"
@@ -154,10 +152,7 @@ class TestGet:
     def test_get_does_not_read_a_repo_config(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The ConfigStore read used to fire from ``get`` when name was
-        # None; both are gone now. The signature no longer accepts a
-        # config_dir at all, and the happy path proves the read is
-        # absent without needing a real fixture to prove it.
+        # The registry operates independently of repo configuration.
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
         _register_test_provider(registry)

@@ -39,6 +39,7 @@ class ApiKeyRequirement:
     _env_var: str
 
     def __new__(cls, env_var: str) -> Self:
+        """Create an api key requirement."""
         self = super().__new__(cls)
         self._env_var = env_var
         return self
@@ -72,8 +73,7 @@ class AwsRequirement:
     Uses ``boto3.Session().get_credentials() is not None``, which
     consults the same chain botocore will use at synthesis --
     environment, profile, config file, instance role -- with no
-    network call. This is the deliberate replacement for
-    ``aws sts get-caller-identity``: that subprocess costs up to five
+    network call. In contrast, ``aws sts get-caller-identity`` costs up to five
     seconds, needs the ``aws`` CLI on ``PATH``, and answers a
     different question (are these credentials *valid* right now) than
     the gate asks (are there credentials for boto3 to use). Presence
@@ -89,6 +89,7 @@ class AwsRequirement:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create an aws requirement."""
         return super().__new__(cls)
 
     def satisfied(self) -> bool:
@@ -151,6 +152,11 @@ class BinaryRequirement:
     _binaries: tuple[str, ...]
 
     def __new__(cls, *binaries: str) -> Self:
+        """Create a binary requirement.
+
+        Raises:
+            ValueError: If no candidate executable names are supplied.
+        """
         if not binaries:
             msg = "BinaryRequirement needs at least one binary name"
             raise ValueError(msg)

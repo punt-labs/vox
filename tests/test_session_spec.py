@@ -397,12 +397,9 @@ def test_per_call_provider_override_drops_states_model(
 ) -> None:
     """``--provider B`` against state provider A synthesizes cleanly, no model arg.
 
-    The class of bug this covers: with state = ``A / model_valid_for_A``,
-    a per-call ``--provider B`` used to carry A's model into B's validation
-    and refuse every non-matching provider. B's default constant must apply
-    instead. Empty string (polly/say/espeak) and ``None`` (elevenlabs/openai)
-    are both correct absences at the wire boundary -- the daemon-side provider
-    constructor supplies its own default when the field is empty or missing.
+    A per-call provider override uses that provider's default model, not the
+    model configured for another provider. Empty string and None both mean the
+    daemon-side constructor supplies its own default.
     """
     state = _State(provider=state_provider, model=state_model)
 

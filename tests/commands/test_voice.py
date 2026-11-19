@@ -86,12 +86,8 @@ class TestList:
     ) -> None:
         """``vox voices`` with no provider lists an empty roster, does not refuse.
 
-        Listing is how a user discovers what to configure; refusing to list
-        because nothing is configured yet would be the worst possible moment
-        to say "configure something first". Symmetric with ``vox model``'s
-        list branch. The set path (``vox voice <name>``) still refuses --
-        writing a wrong-provider voice into ``vox.md`` is the substitution
-        this bead exists to prevent.
+        Missing provider configuration must be reported rather than substituted with
+        a different provider.
         """
         client = MagicMock()
         result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), None)

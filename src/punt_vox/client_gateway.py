@@ -35,6 +35,7 @@ class ClientProgramGateway:
     _client: VoxClientSync
 
     def __new__(cls, client: VoxClientSync) -> Self:
+        """Create a client program gateway."""
         self = super().__new__(cls)
         self._client = client
         return self

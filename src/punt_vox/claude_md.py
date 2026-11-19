@@ -54,6 +54,7 @@ class ClaudeMdImport:
     _IMPORT_LINE: ClassVar[re.Pattern[str]] = re.compile(r"@(?:[^\r\n]*\S)?")
 
     def __new__(cls, host_path: Path, import_line: str) -> Self:
+        """Create a claude md import."""
         cls._validate(import_line)
         self = super().__new__(cls)
         self._file = AtomicFile(host_path)

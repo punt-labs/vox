@@ -63,6 +63,10 @@ class ActiveProgram:
         ``ValueError`` before the path can reach ``loadfile``, mirroring the
         ``music get`` fetch path so no crafted manifest opens a file outside the
         album.
+
+        Raises:
+            ValueError: If the part is absent, not regular, a symlink, or outside its
+                album.
         """
         return ContainmentRoot(self.directory, _PART_LABEL).contained_regular_file(
             part.identity
@@ -93,6 +97,7 @@ class ActiveSelection:
     _label: str
 
     def __new__(cls, root: Path, selection: Selection, label: str) -> Self:
+        """Create an active selection."""
         self = super().__new__(cls)
         self._parts = {
             selected.playable: (root / selected.locator, selected.part.identity)
@@ -109,6 +114,10 @@ class ActiveSelection:
         a directory, an absent name, or one escaping the album directory raises
         ``ValueError`` before the path can reach ``loadfile`` -- the same refusal
         the ``music get`` fetch path applies.
+
+        Raises:
+            ValueError: If the part is absent, not regular, a symlink, or outside its
+                album.
         """
         album_dir, identity = self._parts[part]
         return ContainmentRoot(album_dir, _PART_LABEL).contained_regular_file(identity)
@@ -136,6 +145,7 @@ class ActiveContext:
     _current: ActiveSource | None
 
     def __new__(cls) -> Self:
+        """Create an active context."""
         self = super().__new__(cls)
         self._current = None
         return self
@@ -159,6 +169,9 @@ class ActiveContext:
         A selection never fills, so ``wants_generation`` is false and the
         reconciler never asks for a plan while a selection is active; this raise
         is an unreachable guard, not a control path.
+
+        Raises:
+            RuntimeError: If no program is currently active.
         """
         active = self._require()
         if not isinstance(active, ActiveProgram):
@@ -167,7 +180,12 @@ class ActiveContext:
         return active.to_plan()
 
     def locate(self, part: Part) -> Path:
-        """Return the active source's on-disk path for ``part`` (the player's seam)."""
+        """Return the active source's on-disk path for ``part`` (the player's seam).
+
+        Raises:
+            ValueError: If the part is absent, not regular, a symlink, or outside its
+                album.
+        """
         return self._require().locate(part)
 
     def name(self) -> ProgramName | None:

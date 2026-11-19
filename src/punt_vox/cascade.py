@@ -1,25 +1,9 @@
-"""Shared cascade helpers for the provider/model/voice switch rule (vox-awm9).
+"""Apply shared provider/model/voice cascade rules.
 
-Setting the TTS provider or model on any surface (MCP ``mic:*``, CLI ``vox
-*``, Lux Control Panel) writes dependent fields with deterministic first-
-from-list defaults. The rule is one line per cascade:
-
-- ``provider`` set: model = ``MODEL_TABLE.available(provider)[0]`` (empty
-  for modelless providers); voice = ``client.voices(provider)[0]``.
-- ``model`` set: voice = ``client.voices(current_provider)[0]``.
-- ``voice`` set: nothing cascades.
-
-The two computations -- "first from the list, empty otherwise" for both the
-model default and the voice default -- and the "fetch the roster, wrap a
-daemon fault as a typed sentinel" step used to live in six places (three
-surfaces times two computations). Consolidated here so every surface calls
-one function and the daemon-fault branch has one shape.
-
-Each caller still translates :class:`RosterError` into its own error
-envelope (``mic:*`` returns ``{"error": ...}``; ``CommandResult`` sets
-``error=True``; the panel sets ``PanelNotice.voxd_unavailable()``). That
-translation is per-surface protocol; the fetch and the "first or empty"
-computation are not.
+Setting a provider selects its first model and voice; setting a model selects
+the current provider's first voice. Setting a voice has no cascade. Empty
+rosters yield empty defaults. Each surface translates RosterError into its own
+error envelope; roster retrieval and default selection stay shared.
 """
 
 from __future__ import annotations
@@ -51,8 +35,7 @@ logger = logging.getLogger(__name__)
 # handled separately so the caller can render the reason; the others
 # (bare protocol errors, websocket faults, OS errors, ValueError from a
 # malformed response) log with .exception() before wrapping so a real bug
-# leaves a diagnostic trail. Matches how the retired ``mic:who`` tool split
-# the two classes.
+# leaves a diagnostic trail.
 _VOICES_FAULT_ERRORS = (VoxdProtocolError, WebSocketException, OSError, ValueError)
 
 
@@ -144,7 +127,7 @@ class Cascade:
         """Return *provider*'s voice roster, or a :class:`RosterError` on fault.
 
         Fetches ``client.voices(provider=provider)``. The provider is
-        required now: state is the sole authority on which one voxd runs,
+        required: state is the sole authority on which one voxd runs,
         so the caller must name it -- ``mic:model``, ``mic:voice``, and
         the panel each refuse when their session has no provider yet
         rather than pass ``None`` and let the daemon substitute.
