@@ -63,9 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`.oo-audit.jsonl` merges with git's union driver (PL-1183).** A new
   `.gitattributes` marks the append-only OO audit log `merge=union`, so
   merging `main` into a PR branch keeps both sides' audit lines instead of
-  stopping on a conflict the ratchet cannot parse. Over the past month this
-  conflict hit 38 of 65 `main` merges into PR branches, 19 of them on nothing
-  else.
+  stopping on a conflict the ratchet cannot parse.
 
 - **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
   (vox-f9ih, punt-kit#425). `vox install`, `vox uninstall`, and
