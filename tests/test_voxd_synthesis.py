@@ -498,8 +498,8 @@ class TestApiKeyPassthroughIntegration:
         def _cache_noop(_key: _CacheKey, _path: Path) -> None:
             return None
 
-        monkeypatch.setattr("punt_vox.voxd.synthesis.cache_get", _cache_miss)
-        monkeypatch.setattr("punt_vox.voxd.synthesis.cache_put", _cache_noop)
+        monkeypatch.setattr("punt_vox.voxd.synthesis_cache.cache_get", _cache_miss)
+        monkeypatch.setattr("punt_vox.voxd.synthesis_cache.cache_put", _cache_noop)
 
         app = build_app()
 
@@ -705,8 +705,8 @@ class TestCacheApiKeyBypass:
             assert isinstance(source, Path)
             return source
 
-        monkeypatch.setattr("punt_vox.voxd.synthesis.cache_get", spy_cache_get)
-        monkeypatch.setattr("punt_vox.voxd.synthesis.cache_put", spy_cache_put)
+        monkeypatch.setattr("punt_vox.voxd.synthesis_cache.cache_get", spy_cache_get)
+        monkeypatch.setattr("punt_vox.voxd.synthesis_cache.cache_put", spy_cache_put)
 
         calls: list[str | None] = []
 
@@ -717,7 +717,7 @@ class TestCacheApiKeyBypass:
             monkeypatch=monkeypatch,
         )
         assert resp1.get("type") == "audio"
-        assert len(get_calls) == 1
+        assert len(get_calls) == 2
         assert len(put_calls) == 1
 
         resp2 = self._run_record(
@@ -727,7 +727,7 @@ class TestCacheApiKeyBypass:
             monkeypatch=monkeypatch,
         )
         assert resp2.get("type") == "audio"
-        assert len(get_calls) == 1
+        assert len(get_calls) == 2
         assert len(put_calls) == 1
         assert len(calls) == 2
 
@@ -821,8 +821,8 @@ class TestSynthesizeFailFast:
 
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
-            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
-            patch("punt_vox.voxd.synthesis.cache_put") as mock_cache_put,
+            patch("punt_vox.voxd.synthesis_cache.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis_cache.cache_put") as mock_cache_put,
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client = MagicMock()
@@ -865,7 +865,7 @@ class TestSynthesizeFailFast:
 
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
-            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis_cache.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = failing_synth
@@ -906,7 +906,7 @@ class TestSynthesizeFailFast:
         provider.name = "elevenlabs"
         with (
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
-            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis_cache.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = slow_synth
@@ -950,7 +950,7 @@ class TestSynthesizeFailFast:
         with (
             caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
-            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis_cache.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = failing_synth
@@ -995,7 +995,7 @@ class TestSynthesizeFailFast:
         with (
             caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.output_discard"),
             patch("punt_vox.voxd.synthesis.get_provider", return_value=provider),
-            patch("punt_vox.voxd.synthesis.cache_get", return_value=None),
+            patch("punt_vox.voxd.synthesis_cache.cache_get", return_value=None),
             patch("punt_vox.voxd.temp_synthesis.TTSClient") as mock_client_cls,
         ):
             mock_client_cls.return_value.synthesize = failing_synth
@@ -1056,6 +1056,49 @@ class TestSynthesizeCacheObservability:
         ):
             outcomes = asyncio.run(_drive())
         return outcomes, synth_calls
+
+    @pytest.mark.parametrize("api_key, expected_calls", [(None, 1), ("scoped", 2)])
+    def test_concurrent_identical_requests(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        api_key: str | None,
+        expected_calls: int,
+    ) -> None:
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+        spec = _default_spec(provider="openai", api_key=api_key)
+
+        async def drive() -> list[SynthesisOutcome]:
+            pipeline = _make_pipeline()
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def synthesize() -> Path:
+                started.set()
+                await release.wait()
+                output = tmp_path / "output.mp3"
+                output.write_bytes(_get_valid_mp3_bytes())
+                return output
+
+            with (
+                patch("punt_vox.voxd.synthesis.get_provider") as provider,
+                patch(
+                    "punt_vox.voxd.synthesis.TempFileSynthesis.run",
+                    side_effect=synthesize,
+                ) as synth,
+            ):
+                first = asyncio.create_task(pipeline.synthesize_to_file("hello", spec))
+                await started.wait()
+                second = asyncio.create_task(pipeline.synthesize_to_file("hello", spec))
+                await asyncio.sleep(0)
+                release.set()
+                outcomes = await asyncio.gather(first, second)
+                assert synth.call_count == expected_calls
+                assert provider.call_count == expected_calls
+                return list(outcomes)
+
+        outcomes = asyncio.run(drive())
+        assert [outcome.cached for outcome in outcomes] == [False, api_key is None]
 
     def test_miss_then_hit_flips_cached_without_resynth(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
