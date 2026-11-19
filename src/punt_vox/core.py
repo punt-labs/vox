@@ -6,7 +6,10 @@ import logging
 import re
 import tempfile
 import warnings
+from collections.abc import Callable, Iterable
+from functools import partial
 from pathlib import Path
+from typing import Literal
 
 from punt_vox.types import (
     MergeStrategy,
@@ -174,7 +177,10 @@ class TTSClient:
 
         if merge_strategy == MergeStrategy.ONE_FILE_PER_INPUT:
             return self._synthesize_batch_separate(requests, output_dir)
-        return self._synthesize_batch_merged(requests, output_dir, pause_ms)
+        segments = (
+            (req.text, partial(self._provider.synthesize, req)) for req in requests
+        )
+        return self._merge_batch(segments, output_dir, pause_ms, kind="batch")
 
     def synthesize_pair(
         self,
@@ -224,7 +230,11 @@ class TTSClient:
 
         if merge_strategy == MergeStrategy.ONE_FILE_PER_INPUT:
             return self._pair_batch_separate(pairs, output_dir, pause_ms)
-        return self._pair_batch_merged(pairs, output_dir, pause_ms)
+        segments = (
+            (f"{pair[0].text}-{pair[1].text}", self._pair_synthesizer(pair, pause_ms))
+            for pair in pairs
+        )
+        return self._merge_batch(segments, output_dir, pause_ms, kind="pairs")
 
     # -- Private helpers --------------------------------------------------
 
@@ -240,38 +250,44 @@ class TTSClient:
             results.append(self.synthesize(req, path))
         return results
 
-    def _synthesize_batch_merged(
-        self,
-        requests: list[SynthesisRequest],
+    @staticmethod
+    def _merge_batch(
+        segments: Iterable[tuple[str, Callable[[Path], SynthesisResult]]],
         output_dir: Path,
         pause_ms: int,
+        *,
+        kind: Literal["batch", "pairs"],
     ) -> list[SynthesisResult]:
+        paired = kind == "pairs"
+        segment_prefix = "pair" if paired else "seg"
+        results: list[SynthesisResult] = []
+        texts: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            tmp_paths: list[Path] = []
-            canonical_voice = ""
-            provider_id = None
-            for i, req in enumerate(requests):
-                path = tmp_dir / f"seg_{i:04d}.mp3"
-                result = self._provider.synthesize(req, path)
-                if i == 0:
-                    canonical_voice = result.voice or ""
-                    provider_id = result.provider
-                tmp_paths.append(path)
+            paths: list[Path] = []
+            for i, (text, synthesize) in enumerate(segments):
+                path = tmp_dir / f"{segment_prefix}_{i:04d}.mp3"
+                results.append(synthesize(path))
+                texts.append(text)
+                paths.append(path)
+            text = " | ".join(texts)
+            output_path = output_dir / generate_filename(text, prefix=f"{kind}_")
+            stitch_audio(paths, output_path, pause_ms)
 
-            combined_text = " | ".join(r.text for r in requests)
-            out_path = output_dir / generate_filename(combined_text, prefix="batch_")
-            stitch_audio(tmp_paths, out_path, pause_ms)
-
+        candidates = results if paired else results[:1]
+        provider_id = next(
+            filter(None, (result.provider for result in candidates)), None
+        )
         if provider_id is None:
-            raise RuntimeError("Missing provider for merged synthesis result")
+            name = "merged pair synthesis" if paired else "merged synthesis"
+            raise RuntimeError(f"Missing provider for {name} result")
 
         return [
             SynthesisResult(
-                path=out_path,
-                text=combined_text,
+                path=output_path,
+                text=text,
                 provider=provider_id,
-                voice=canonical_voice or None,
+                voice="mixed" if paired else results[0].voice or None,
             )
         ]
 
@@ -282,55 +298,26 @@ class TTSClient:
         pause_ms: int,
     ) -> list[SynthesisResult]:
         results: list[SynthesisResult] = []
-        for req_1, req_2 in pairs:
-            combined = f"{req_1.text}_{req_2.text}"
+        for pair in pairs:
+            combined = f"{pair[0].text}_{pair[1].text}"
             out_path = output_dir / generate_filename(combined, prefix="pair_")
-            result = self.synthesize_pair(
-                req_1.text, req_1, req_2.text, req_2, out_path, pause_ms
-            )
-            results.append(result)
+            results.append(self._pair_synthesizer(pair, pause_ms)(out_path))
         return results
 
-    def _pair_batch_merged(
+    def _pair_synthesizer(
         self,
-        pairs: list[tuple[SynthesisRequest, SynthesisRequest]],
-        output_dir: Path,
+        pair: tuple[SynthesisRequest, SynthesisRequest],
         pause_ms: int,
-    ) -> list[SynthesisResult]:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            pair_paths: list[Path] = []
-            provider_id = None
-
-            for i, (req_1, req_2) in enumerate(pairs):
-                pair_path = tmp_dir / f"pair_{i:04d}.mp3"
-                pair_result = self.synthesize_pair(
-                    req_1.text,
-                    req_1,
-                    req_2.text,
-                    req_2,
-                    pair_path,
-                    pause_ms,
-                )
-                if provider_id is None:
-                    provider_id = pair_result.provider
-                pair_paths.append(pair_path)
-
-            all_texts = " | ".join(f"{r1.text}-{r2.text}" for r1, r2 in pairs)
-            out_path = output_dir / generate_filename(all_texts, prefix="pairs_")
-            stitch_audio(pair_paths, out_path, pause_ms)
-
-        if provider_id is None:
-            raise RuntimeError("Missing provider for merged pair synthesis result")
-
-        return [
-            SynthesisResult(
-                path=out_path,
-                text=all_texts,
-                provider=provider_id,
-                voice="mixed",
-            )
-        ]
+    ) -> Callable[[Path], SynthesisResult]:
+        first, second = pair
+        return partial(
+            self.synthesize_pair,
+            first.text,
+            first,
+            second.text,
+            second,
+            pause_ms=pause_ms,
+        )
 
 
 def stitch_audio(segments: list[Path], output_path: Path, pause_ms: int = 500) -> None:
