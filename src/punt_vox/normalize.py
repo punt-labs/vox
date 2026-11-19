@@ -503,24 +503,18 @@ _PRONOUNCEABLE_ACRONYMS: frozenset[str] = frozenset(
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# camelCase / PascalCase boundary: insert space before an uppercase letter
-# that follows a lowercase letter or digit, or before a run of uppercase
-# letters followed by a lowercase letter (e.g. "HTMLParser" → "HTML Parser").
-_CAMEL_BOUNDARY = re.compile(
-    r"(?<=[a-z])(?=[A-Z])"  # fooBar → foo Bar
+# Split snake_case, camelCase, and letter/digit boundaries in one pass.
+_IDENTIFIER_BOUNDARY = re.compile(
+    r"_"  # foo_bar → foo bar
+    r"|(?<=[a-z])(?=[A-Z])"  # fooBar → foo Bar
     r"|(?<=[A-Z])(?=[A-Z][a-z])"  # HTMLParser → HTML Parser
     r"|(?<=[a-zA-Z])(?=[0-9])"  # foo2bar → foo 2bar
     r"|(?<=[0-9])(?=[a-zA-Z])"  # foo2bar → foo2 bar (combined: foo 2 bar)
 )
 
-# A "programmer token" contains underscores or camelCase/digit boundaries.
-# We process these; plain English words pass through unchanged.
-_HAS_UNDERSCORE = re.compile(r"_")
-_HAS_CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]")
-
 # Tokens that look like file paths — leave these alone.
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
-_LEADING_NON_SPEECH_RE = re.compile(r"^[^\w~/.]+")
+_LEADING_NON_SPEECH_RE = re.compile(r"^(?:[-\u2212]{2,}|(?![-\u2212]\.?\d)[^\w~/.])+")
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 
 
@@ -588,13 +582,9 @@ def _normalize_token(token: str) -> str:
     if not core or _FILE_PATH_RE.match(core):
         return core + suffix
 
-    # snake_case: split on underscores, process each part
-    if _HAS_UNDERSCORE.search(core):
-        return _expand_parts(core.split("_"), suffix)
-
-    # camelCase / PascalCase: split on case boundaries
-    if _HAS_CAMEL.search(core):
-        return _expand_parts(_CAMEL_BOUNDARY.sub(" ", core).split(), suffix)
+    identifier, boundaries = _IDENTIFIER_BOUNDARY.subn(" ", core)
+    if boundaries:
+        return " ".join(map(_expand_part, identifier.split())) + suffix
 
     # Standalone abbreviation
     expanded = _expand_abbreviation(core)
@@ -611,30 +601,11 @@ def _expand_standalone_acronym(core: str) -> str:
     return core
 
 
-def _expand_parts(parts: list[str], suffix: str) -> str:
-    """Expand each identifier part, rejoin with spaces, and append *suffix*.
-
-    The shared tail of the snake_case and camelCase branches: both split an
-    identifier into parts and differ only in how they split, so the
-    expand-and-rejoin step lives here once.
-    """
-    return " ".join(_expand_part(p) for p in parts if p) + suffix
-
-
 def _expand_part(part: str) -> str:
-    """Expand a single sub-token (after snake/camel splitting).
-
-    Also applies camelCase splitting so that mixed identifiers like
-    ``get_fileName`` fully normalize to ``get file name``.
-    """
+    """Expand a single sub-token after identifier splitting."""
     expanded = _expand_abbreviation(part)
     if expanded != part:
         return expanded
-    # camelCase within a snake_case part (e.g. "fileName" from "get_fileName")
-    if _HAS_CAMEL.search(part):
-        split = _CAMEL_BOUNDARY.sub(" ", part)
-        sub_parts = split.split()
-        return " ".join(_expand_part(p) for p in sub_parts)
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
     # unless the word is pronounceable (real word or known acronym).
     if part.isupper():
@@ -665,8 +636,8 @@ def _expand_abbreviation(word: str) -> str:
 def _strip_punctuation(token: str) -> tuple[str, str]:
     """Strip leading/trailing punctuation, returning (core, suffix).
 
-    Leading punctuation is always discarded; leading ``~/._`` are kept in
-    core (file path / identifier prefixes).
+    Leading punctuation is discarded except for file path / identifier
+    prefixes (``~/._``) and a minus sign before digits or a decimal fraction.
     Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
     ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
     symbols (parentheses, brackets, slashes, etc.) are discarded since

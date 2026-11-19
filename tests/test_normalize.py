@@ -308,6 +308,22 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("-5", "-5"),
+            ("temperature (-2.5 C)", "temperature -2.5 C"),
+            ("delta [\u22123.5],", "delta \u22123.5,"),
+            ("-.5", "-.5"),
+            ("-5ms", "-5 ms"),
+            ("--5", "5"),
+            ("- --help well-known 1-5", "help well-known 1-5"),
+        ],
+    )
+    def test_only_numeric_minus_signs_survive(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             ("cafe\u0301", "cafe\u0301"),
             ("हिन्दी", "हिन्दी"),
             ("(a\u0323\u0301),", "a\u0323\u0301,"),
