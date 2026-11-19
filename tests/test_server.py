@@ -521,7 +521,7 @@ class TestWriteConfigFields:
         read_count = 0
         write_count = 0
         orig_read = Path.read_text
-        orig_write = Path.write_text
+        orig_write = Path.replace
 
         def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
             nonlocal read_count
@@ -529,14 +529,14 @@ class TestWriteConfigFields:
                 read_count += 1
             return orig_read(self, *args, **kwargs)
 
-        def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
+        def counting_write(self: Path, target: Path) -> Path:
             nonlocal write_count
-            if self == local_md:
+            if target == local_md:
                 write_count += 1
-            return orig_write(self, *args, **kwargs)
+            return orig_write(self, target)
 
         monkeypatch.setattr(Path, "read_text", counting_read)
-        monkeypatch.setattr(Path, "write_text", counting_write)
+        monkeypatch.setattr(Path, "replace", counting_write)
         # All ephemeral keys -> single file write to vox.local.md
         ConfigStore(_patch_config).write_fields({"vibe": "a", "vibe_tags": "[b]"})
         assert read_count == 1

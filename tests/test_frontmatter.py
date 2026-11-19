@@ -3,12 +3,70 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+from multiprocessing.synchronize import Event
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from punt_vox.frontmatter import Frontmatter
+from punt_vox.sibling_lock import SiblingLock
 from punt_vox.types_errors import ConfigValueError
+
+
+def _concurrent_writer(
+    path: Path, key: str, value: str, read: Event, release: Event
+) -> None:
+    original = Path.read_text
+
+    def paused_read(self: Path, *args: object, **kwargs: object) -> str:
+        text = original(self, encoding="utf-8")
+        if self == path:
+            read.set()
+            assert release.wait(10), "writer was not released"
+        return text
+
+    with patch.object(Path, "read_text", paused_read):
+        Frontmatter(path).write_field(key, value)
+
+
+def test_concurrent_writers_preserve_both_fields(tmp_path: Path) -> None:
+    path = tmp_path / "vox.md"
+    path.write_text('---\nvoice: "initial"\n---\n')
+    ctx = multiprocessing.get_context("spawn")
+    first_read, second_read = ctx.Event(), ctx.Event()
+    first_release, second_release = ctx.Event(), ctx.Event()
+    first = ctx.Process(
+        target=_concurrent_writer,
+        args=(path, "provider", "polly", first_read, first_release),
+    )
+    second = ctx.Process(
+        target=_concurrent_writer,
+        args=(path, "voice", "fin", second_read, second_release),
+    )
+    first.start()
+    try:
+        assert first_read.wait(10)
+        second.start()
+        # An unlocked writer reads the stale snapshot; a locked one waits.
+        second_read.wait(1)
+        first_release.set()
+        first.join(10)
+        assert first.exitcode == 0
+        second_release.set()
+        second.join(10)
+        assert second.exitcode == 0
+        assert Frontmatter(path).read_fields() == {"provider": "polly", "voice": "fin"}
+    finally:
+        first_release.set()
+        second_release.set()
+        for process in (first, second):
+            if process.pid is not None:
+                process.join(10)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
 
 
 def _boom(self: Path, *_args: object, **_kwargs: object) -> str:
@@ -61,6 +119,49 @@ class TestRead:
 
 
 class TestWrite:
+    def test_new_config_is_private(self, tmp_path: Path) -> None:
+        path = tmp_path / "vox.local.md"
+        Frontmatter(path).write_field("vibe", "private mood")
+        assert path.stat().st_mode & 0o777 == 0o600
+
+    def test_read_only_config_is_not_replaced(self, tmp_path: Path) -> None:
+        path = tmp_path / "vox.md"
+        original = '---\nvoice: "initial"\n---\n'
+        path.write_text(original)
+        path.chmod(0o400)
+        with pytest.raises(PermissionError):
+            Frontmatter(path).write_field("voice", "fin")
+        assert path.read_text() == original
+
+    def test_empty_updates(self, tmp_path: Path) -> None:
+        path = tmp_path / "vox.md"
+        Frontmatter(path).write_fields({})
+        assert Frontmatter(path).read_fields() == {}
+
+    def test_failed_replace_preserves_file_and_releases_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "vox.md"
+        original = '---\nvoice: "initial"\n---\n'
+        path.write_text(original)
+        with monkeypatch.context() as scoped:
+            scoped.setattr(Path, "replace", _boom)
+            with pytest.raises(PermissionError):
+                Frontmatter(path).write_field("provider", "polly")
+        assert path.read_text() == original
+        assert list(tmp_path.glob("*.tmp")) == []
+        Frontmatter(path).write_field("voice", "fin")
+        assert Frontmatter(path).read_field("voice") == "fin"
+
+    def test_lock_error_does_not_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "vox.md"
+        monkeypatch.setattr(SiblingLock, "_acquire", _boom)
+        with pytest.raises(PermissionError):
+            Frontmatter(path).write_field("provider", "polly")
+        assert not path.exists()
+
     def test_write_field_round_trips(self, tmp_path: Path) -> None:
         fm = Frontmatter(tmp_path / "vox.md")
         fm.write_field("voice", "fin")

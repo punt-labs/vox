@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vox vibe 'abc\q'` crashed with `PatternError`.
 - **Hooks no longer crash when `vox.md` is not valid UTF-8.** Vox logs a
   warning and uses defaults for the unreadable file.
+- Concurrent config writers preserve each other's field updates using an
+  inter-process sibling lock and atomic file replacement.
 - **`vox --version` and `vox --help` no longer prompt in an enabled repo
   (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
   rule, which matched every command starting with an option. The ask tier is
