@@ -2914,10 +2914,10 @@
   "src/punt_vox/usage.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.2,
+    "avg_params": 1.19,
     "max_complexity": 5.0,
-    "avg_complexity": 2.67,
-    "module_size": 166.0,
+    "avg_complexity": 2.81,
+    "module_size": 181.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

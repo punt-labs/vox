@@ -24,6 +24,7 @@ from opentelemetry.sdk.metrics.export import MetricExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from punt_observe.telemetry import EnumAttr, SchemaRegistry, TelemetryConfig
 from typer.core import TyperGroup
+from typer.exceptions import Exit
 from typer.testing import CliRunner
 
 from punt_vox import hooks, server, usage
@@ -115,6 +116,40 @@ def test_cli_error_signal(captured: InMemorySpanExporter) -> None:
         "punt.schema_version": 1,
     }
     assert not span.events
+
+
+def test_cli_help_signal(captured: InMemorySpanExporter) -> None:
+    result = CliRunner().invoke(app, ["say", "--help"])
+    assert result.exit_code == 0, result.output
+    [span] = _spans(captured, "vox.cli.command")
+    assert span.attributes is not None
+    assert span.attributes["command"] == "say"
+    assert span.attributes["outcome"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        (Exit(0), "ok"),
+        (SystemExit(0), "ok"),
+        (SystemExit(None), "ok"),
+        (Exit(2), "error"),
+        (SystemExit(1), "error"),
+        (SystemExit("private failure"), "error"),
+        (RuntimeError("private failure"), "error"),
+    ],
+)
+def test_cli_exit_outcome(
+    captured: InMemorySpanExporter, error: BaseException, outcome: str
+) -> None:
+    with pytest.raises(BaseException) as raised, usage.command_span("other"):
+        raise error
+    assert raised.value is error
+    [span] = _spans(captured, "vox.cli.command")
+    assert span.attributes is not None
+    assert span.attributes["outcome"] == outcome
+    assert not span.events
+    assert span.status.description is None
 
 
 def test_hook_signal(captured: InMemorySpanExporter, tmp_path: Path) -> None:

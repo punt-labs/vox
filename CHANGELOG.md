@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI help and successful system exits record successful usage outcomes while
+  preserving their original exit behavior.
 - Handled MCP JSON error responses now record an error outcome without changing
   tool responses or exporting error content.
 - Local `say` and `espeak` direct playback records daemon synthesis telemetry

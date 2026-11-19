@@ -13,6 +13,8 @@ from enum import StrEnum
 from importlib import import_module
 from typing import TYPE_CHECKING, Literal, Self, cast
 
+from typer.exceptions import Exit
+
 from punt_vox.types import AudioProviderId
 
 if TYPE_CHECKING:
@@ -142,9 +144,24 @@ class Usage:
         _REGISTRIES[surface] = choices
 
     @staticmethod
-    def command_span(command: str) -> AbstractContextManager[None]:
-        """Leave internal hooks to their dedicated signal."""
-        return nullcontext() if command == "hook" else _usage.span("cli", command)
+    @contextmanager
+    def command_span(command: str) -> Generator[None]:
+        """Observe CLI failures while preserving successful Click and system exits."""
+        successful_exit: Exit | SystemExit | None = None
+        with nullcontext() if command == "hook" else _usage.span("cli", command):
+            try:
+                yield
+            except (Exit, SystemExit) as exc:
+                if not Usage._successful_exit(exc):
+                    raise
+                successful_exit = exc
+        if successful_exit is not None:
+            raise successful_exit
+
+    @staticmethod
+    def _successful_exit(exc: Exit | SystemExit) -> bool:
+        code = exc.exit_code if isinstance(exc, Exit) else exc.code
+        return code in (None, 0)
 
     @staticmethod
     def _error_result(result: object) -> bool:
