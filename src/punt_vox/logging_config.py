@@ -1,257 +1,98 @@
-"""The single logging owner: one append handler over one vox.log for every process.
-
-The daemon and every client (MCP server, hook, CLI, detached playback) install
-the same :class:`AppendLogHandler` pointed at one ``vox.log``. Each process writes
-its own records there by a local ``O_APPEND`` append -- no ship transport, no
-fallback file, no daemon round-trip on a hook's logging hot path (DES-017). A
-client stamps ``client.<role>.`` onto its logger name so its lines grep apart from
-the daemon's; the multi-writer-safe :class:`AtomicAppendLog` behind the handler
-owns rotation and 0600, so the two configs can never drift into two rotation
-mechanisms racing on the file.
-
-Both entry points first tighten ``~/.punt-labs/vox`` and ``…/logs`` to 0700 via
-:class:`PrivateState`, so a client that never ran ``ensure_user_dirs`` still
-re-tightens a pre-existing loose directory. Client tightening is best-effort
-(never crash a hook); the daemon additionally fail-closes in ``main`` before this.
-
-The active level follows the ``log_level`` config key (default INFO): a client
-re-reads it each run, so ``/vox log debug`` applies immediately; the daemon reads
-it at startup, so a running daemon picks up a change on ``vox daemon restart``.
-"""
+"""Own process logging policy over punt-observe's private shared sinks."""
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import logging.config
 import sys
+from typing import TYPE_CHECKING, cast
 
-from punt_vox.append_log import AtomicAppendLog, SinkHealth
+from punt_observe.logging import AtomicAppendLog, configure_logging
+from punt_observe.logging.formatter import RedactingFormatter
+from punt_observe.logging.handler import PrivateFileHandler, RedactingStreamHandler
+
 from punt_vox.config import ConfigStore
-from punt_vox.log_append_handler import AppendLogHandler
-from punt_vox.log_format import LOG_DATE_FORMAT, LOG_FORMAT, Role
-from punt_vox.paths import log_dir as _paths_log_dir
-from punt_vox.private_state import PrivateState
+from punt_vox.logging_role import ClientRoleFilter, Role as Role
+from punt_vox.paths import log_dir
 
-__all__ = [
-    "Role",
-    "apply_log_level",
-    "configure_client_logging",
-    "configure_daemon_logging",
-    "configure_turn_timer_logging",
-    "log_health",
-    "reapply_client_log_level",
-]
+if TYPE_CHECKING:
+    from punt_observe.logging.append_log import SinkHealth
 
-logger = logging.getLogger(__name__)
-
-_LOG_DIR = _paths_log_dir()
-_LOG_FILE = _LOG_DIR / "vox.log"
-
-# The one logger vox call start's turn-by-turn latency trace uses --
-# see configure_turn_timer_logging.
 _TURN_TIMER_LOGGER_NAME = "punt_vox.voxd.conversation_mode.turn_timer"
-
-_APPEND_FACTORY = "punt_vox.log_append_handler.AppendLogHandler.for_file"
-
-# Third-party and mcp-framework loggers pinned to WARNING so vox owns the INFO
-# surface -- notably the 38x "Processing request of type CallToolRequest" noise.
-_SUPPRESSED: tuple[str, ...] = (
-    "boto3", "botocore", "urllib3", "s3transfer",
-    "httpx", "httpx2", "websockets",
-    "mcp", "mcp.server", "mcp.server.lowlevel",
+_SUPPRESSED = (
+    "boto3", "botocore", "urllib3", "s3transfer", "httpx", "httpx2",
+    "websockets", "mcp", "mcp.server", "mcp.server.lowlevel", "asyncio", "httpcore",
 )  # fmt: skip
 
 
 def configure_daemon_logging() -> None:
-    """Configure the daemon to append its records to the shared 0600 ``vox.log``.
-
-    One append handler, no stderr handler: a parallel ``StreamHandler`` would have
-    the service manager capture a second, unprotected copy of every record. The
-    ``AtomicAppendLog`` behind the handler re-tightens the file to 0600 on every
-    write. Re-tightens the log tree first (fail-closed on a tree it cannot create);
-    any directory it could not force to 0700 or file it could not force to 0600
-    surfaces as one durable WARNING *after* the handlers exist, so the note lands in
-    ``vox.log`` -- a debug line emitted before ``dictConfig`` could
-    never land.
-    """
-    untightened = _tighten_daemon_tree()
-    level = _resolve_level(verbose=False)
-    logging.config.dictConfig(_config(name_prefix="", level=level))
-    if untightened:
-        loose = "; ".join(untightened)
-        logger.warning(
-            "could not enforce private permissions on log path(s): %s", loose
-        )
+    """Configure the daemon's durable file without a service-manager copy."""
+    configure_logging("vox", "daemon", level=_resolve_level(), quiet=_SUPPRESSED)
+    root = logging.getLogger()
+    stderr = logging.getHandlerByName("stderr")
+    if stderr is not None:
+        root.removeHandler(stderr)
+        stderr.close()
+    logging.lastResort = logging.NullHandler()
 
 
 def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
-    """Configure a client to append its records to the shared ``vox.log``.
-
-    The root logger's one handler appends each record locally under the sink's
-    ``flock`` -- no socket, no daemon dependency -- and stamps ``client.<role>.``
-    onto the logger name. ``verbose`` (the CLI ``--verbose``) is a one-shot
-    ``debug``; otherwise the level follows the ``log_level`` config key.
-    """
-    _tighten_client_tree()
-    level = _resolve_level(verbose=verbose)
-    logging.config.dictConfig(_config(name_prefix=f"client.{role}.", level=level))
+    """Configure a client with its role and effective file verbosity."""
+    configure_logging(
+        "vox", role, level=_resolve_level(verbose=verbose), quiet=_SUPPRESSED
+    )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(ClientRoleFilter(role))
 
 
 def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
-    """Force ``vox call``'s turn-latency trace to DEBUG on ``vox.log``, always.
-
-    A scoped exception to "one shared handler at one shared level" (this
-    module's own docstring): every other logger's DEBUG output only reaches
-    ``vox.log`` when the process's own ``--verbose``/``log_level`` raises the
-    *shared* handler past INFO, which is right for routine debugging noise
-    but wrong for a live call's turn-by-turn latency -- Option D's per-turn
-    subprocess spawn and a long reply's real synthesis time are exactly the
-    two things worth a permanent, greppable record on *every* call, not only
-    the ones someone remembered to run with ``--verbose``.
-
-    A second :class:`AppendLogHandler` instance, bound to the same
-    ``vox.log`` through the same ``flock``-guarded :class:`AtomicAppendLog`,
-    attaches only to the turn-timer's own logger, with ``propagate`` turned
-    off -- so this logger's DEBUG records reach the file unconditionally
-    without also forcing every *other* module's DEBUG noise durable for the
-    call's duration (which raising the shared handler's level would do).
-    ``echo_to_console`` (``vox call start --trace-turns``) additionally
-    attaches a stream handler at the same level and format, so the
-    identical records also print live to the terminal -- the file is never
-    affected by this flag either way.
-    """
-    logger_ = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
-    logger_.setLevel(logging.DEBUG)
-    logger_.propagate = False
-    # Close before clearing: a second call in a long-lived process (or a
-    # test that never explicitly closes handlers) would otherwise leak
-    # each replaced handler's open resources. Idempotent -- safe to call
-    # more than once per process.
-    for handler in logger_.handlers:
-        handler.close()
-    logger_.handlers.clear()
-    logger_.addHandler(
-        AppendLogHandler.bind(
-            AtomicAppendLog(_LOG_FILE), name_prefix="client.cli.", level="DEBUG"
-        )
-    )
+    """Keep turn timings durable at DEBUG independently of normal verbosity."""
+    logger = _reset_turn_timer()
+    handlers: list[logging.Handler] = [PrivateFileHandler(log_dir() / "vox.log")]
     if echo_to_console:
-        console = logging.StreamHandler(sys.stderr)
-        console.setLevel(logging.DEBUG)
-        console.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
-        logger_.addHandler(console)
+        handlers.append(RedactingStreamHandler(sys.stderr))
+    for handler in handlers:
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(
+            RedactingFormatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                "%Y-%m-%d %H:%M:%S",
+            )
+        )
+        handler.addFilter(ClientRoleFilter("cli"))
+        logger.addHandler(handler)
+
+
+def _reset_turn_timer() -> logging.Logger:
+    """Reset the dedicated timer's handlers without leaking resources."""
+    logger = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    for handler in logger.handlers:
+        handler.close()
+    logger.handlers.clear()
+    return logger
 
 
 def log_health() -> SinkHealth:
-    """Return the unified ``vox.log`` sink's client-observable health.
-
-    Surfaced through ``mic:status`` so an operator can query whether the one log
-    every process appends to is itself writable -- the same treatment the
-    ``vibe-trace`` sink already gets.
-    """
-    return AtomicAppendLog(_LOG_FILE).health()
+    """Return the shared diagnostic file's observable sink health."""
+    return AtomicAppendLog(log_dir() / "vox.log").health()
 
 
 def reapply_client_log_level() -> None:
-    """Re-resolve ``log_level`` and apply it to the running client's handlers.
-
-    A long-lived client (the MCP server) configures logging once at startup, so
-    a later ``vox log debug`` would otherwise never take effect and ``mic:status``
-    would claim a level the process is not using. Called on the per-tool path,
-    this re-reads the effective level and sets the root logger and its handlers --
-    a cheap level flip, not a full ``dictConfig`` rebuild -- so a change takes hold
-    within a tool call or two and status reflects what the process actually does.
-    """
-    level = logging.getLevelNamesMapping().get(_resolve_level(verbose=False))
-    if level is not None:
-        apply_log_level(level)
+    """Re-read the config for a long-lived client's durable handler."""
+    apply_log_level(logging.getLevelNamesMapping()[_resolve_level()])
 
 
 def apply_log_level(numeric: int) -> None:
-    """Set the root logger and every handler to *numeric* -- the live level switch.
-
-    The one place a running process re-points its level: shared by the client's
-    ``reapply_client_log_level`` and the daemon's ``set_log_level`` wire op, so a
-    running daemon and a long-lived client flip the root logger and its handlers
-    the same way rather than duplicating the walk.
-    """
-    root = logging.getLogger()
-    root.setLevel(numeric)
-    for handler in root.handlers:
-        handler.setLevel(numeric)
+    """Change only the durable root file handler's threshold."""
+    _file_handler().setLevel(numeric)
 
 
-def _config(*, name_prefix: str, level: str) -> dict[str, object]:
-    """Return the dictConfig for one append handler on the root logger.
-
-    Shared by both entry points so the daemon and client differ only in the
-    logger-name prefix; the handler and suppression table are identical.
-    """
-    return {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "handlers": {
-            "append": {
-                "()": _APPEND_FACTORY,
-                "filename": str(_LOG_FILE),
-                "name_prefix": name_prefix,
-                "level": level,
-            },
-        },
-        "root": {"level": level, "handlers": ["append"]},
-        "loggers": _suppression_table(),
-    }
+def _file_handler() -> PrivateFileHandler:
+    """Return the named durable handler installed by shared configuration."""
+    return cast("PrivateFileHandler", logging.getHandlerByName("file"))
 
 
-def _suppression_table() -> dict[str, dict[str, str]]:
-    """Return the shared third-party + framework logger level overrides."""
-    return {name: {"level": "WARNING"} for name in _SUPPRESSED}
-
-
-def _resolve_level(*, verbose: bool) -> str:
-    """Return the active level: DEBUG when verbose or configured, else INFO."""
-    if verbose:
-        return "DEBUG"
-    return _config_level()
-
-
-def _config_level() -> str:
-    """Return the effective log level for the handler: DEBUG or INFO.
-
-    Delegates to the shared resolver -- a repo-local override, else the global
-    ``vox log`` setting, else INFO -- so a service-started daemon (which never
-    runs from a repo) reads the same value ``vox log`` wrote. Reading config
-    needs no logging configured, so this is safe to call before the handlers exist.
-    """
-    return ConfigStore.resolve_log_level().upper()
-
-
-def _tighten_daemon_tree() -> list[str]:
-    """Create the log dir tree and re-tighten vox.log + backups, collecting notes.
-
-    Fails closed on a tree it cannot create (the ``mkdir`` ``OSError`` propagates).
-    Both a *directory* it cannot force to 0700 and a *file* it cannot force to 0600
-    are *collected* -- not logged here, since logging is not configured yet -- so
-    the caller can WARN durably once the handlers exist. Directory failures come
-    through a collecting reporter on the guard; the file sweep is the sink's own
-    ``tighten_existing`` over the active log, every backup slot, and the rotate lock.
-    """
-    failures: list[str] = []
-    PrivateState(_LOG_FILE, on_failure=failures.append).ensure_private_tree()
-    failures.extend(str(path) for path in AtomicAppendLog(_LOG_FILE).tighten_existing())
-    return failures
-
-
-def _tighten_client_tree() -> None:
-    """Best-effort tighten for a client; never crash a hook.
-
-    Directory-tighten failures route to stderr (``report_to_stderr``), never to a
-    debug logger that runs before ``dictConfig`` and so could never land. The
-    append sink re-tightens the file to 0600 on every write, so a client's
-    dir-tighten is defense-in-depth -- a ``mkdir`` failure is swallowed, not raised.
-    """
-    with contextlib.suppress(OSError):
-        PrivateState(
-            _LOG_FILE, on_failure=PrivateState.report_to_stderr
-        ).ensure_private_tree()
+def _resolve_level(*, verbose: bool = False) -> str:
+    """Resolve CLI verbosity over the durable config setting."""
+    return "DEBUG" if verbose else ConfigStore.resolve_log_level().upper()

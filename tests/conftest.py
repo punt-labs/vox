@@ -150,13 +150,12 @@ def hermetic_client_log(  # pyright: ignore[reportUnusedFunction]
 
     Every process appends its records to ``log_dir() / "vox.log"`` -- resolving to
     the real ``~/.punt-labs/vox/logs``. A CLI/hook test that configures logging and
-    emits a record would otherwise write the developer's live log. Redirecting the
-    import-time ``logging_config`` paths keeps every test off the real logs dir.
+    emits a record would otherwise write the developer's live log. The hermetic
+    HOME redirects shared configuration; this redirects the timer and health.
     """
     logs = tmp_path_factory.mktemp("client-log-state") / "logs"
     logs.mkdir()
-    monkeypatch.setattr("punt_vox.logging_config._LOG_DIR", logs)
-    monkeypatch.setattr("punt_vox.logging_config._LOG_FILE", logs / "vox.log")
+    monkeypatch.setattr("punt_vox.logging_config.log_dir", lambda: logs)
     return logs
 
 

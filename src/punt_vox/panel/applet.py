@@ -11,18 +11,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 from typing import Final, Self, final
 
 import typer
 from punt_lux.applets import AppletIdentity
 from punt_lux.applets.claim import NoClaim, SessionClaim
 from punt_lux.applets.watch import NoSession, SessionWatch
-from punt_lux.log_level import level_from_env
 
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import ConfigStore
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.config import DEFAULT_CONFIG_DIR, ConfigStore, find_config_dir
+from punt_vox.logging_config import configure_client_logging
 from punt_vox.panel.leg import VoxPanelLeg
 from punt_vox.panel.program import VoxPanelProgram
 from punt_vox.panel.service import VoxPanelService
@@ -109,11 +107,7 @@ def main(
     ),
 ) -> None:
     """Run the Vox control panel applet for one session."""
-    logging.basicConfig(
-        stream=sys.stderr,
-        level=level_from_env("INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    configure_client_logging(role="worker")
     applet = (
         VoxPanelApplet.for_session(session_pid)
         if session_pid > 0

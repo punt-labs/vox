@@ -7,15 +7,16 @@ import logging
 import sys
 from pathlib import Path
 
-from punt_vox.append_log import AtomicAppendLog
-from punt_vox.log_append_handler import AppendLogHandler
+from punt_observe.logging.handler import PrivateFileHandler
+
 from punt_vox.voxd.crash_logging import CrashLogger
 
 
 def _file_logger(tmp_path: Path) -> tuple[logging.Logger, Path]:
     """Return an isolated logger appending to a private ``vox.log`` under tmp."""
     log_file = tmp_path / "vox.log"
-    handler = AppendLogHandler.bind(AtomicAppendLog(log_file), level="DEBUG")
+    handler = PrivateFileHandler(log_file)
+    handler.setLevel(logging.DEBUG)
     logger = logging.getLogger(f"punt_vox.test.crash.{tmp_path.name}")
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
