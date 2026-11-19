@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Vox now installs the dev-only `punt-oo-ratchet` package from PyPI instead
+  of embedding the OO, coupling, and suppression ratchets (PL-1160).
+
 - **Faster CLI and hook startup.** Load the live-call runtime and ElevenLabs
   SDK only when starting a call, not when running other commands or viewing help.
 
