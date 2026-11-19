@@ -630,6 +630,21 @@ class TestHandleSessionEnd:
             handle_session_end(config, Path("/fake/.punt-labs/vox"))  # must not raise
         assert any("session-end" in r.getMessage() for r in caplog.records)
 
+    @patch("punt_vox.hooks._speak_phrase")
+    def test_session_end_config_becomes_non_utf8(
+        self, _mock_speak: MagicMock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"notify": "y", "vibe_nudge_turns": "2"})
+        config = store.read()
+        path = tmp_path / "vox.local.md"
+        path.write_bytes(b"\xff")
+
+        handle_session_end(config, tmp_path)
+
+        assert "session-end: cannot reset cadence" in caplog.text
+        assert path.read_bytes() == b"\xff"
+
 
 # ---------------------------------------------------------------------------
 # Quip pool size tests

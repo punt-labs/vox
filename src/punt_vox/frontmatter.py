@@ -46,12 +46,12 @@ class Frontmatter:
 
     def read_fields(self) -> dict[str, str]:
         """Return all non-empty frontmatter fields, or ``{}`` if unreadable."""
-        block = self._block()
+        block = self._readable_block()
         return {} if block is None else block.fields()
 
     def read_field(self, field: str) -> str | None:
         """Return a single frontmatter field, or ``None`` if absent/unreadable."""
-        block = self._block()
+        block = self._readable_block()
         return None if block is None else block.field(field)
 
     def write_field(self, key: str, value: str) -> None:
@@ -75,10 +75,9 @@ class Frontmatter:
             )
             return
 
-        # Read strictly here, unlike ``_block``: a file that exists but will
-        # not open is a fault, and rewriting it whole from *updates* alone
-        # would destroy the fields this write was supposed to preserve.
-        held = FrontmatterBlock(self._path.read_text(encoding="utf-8"))
+        # Read strictly on write: rebuilding an unreadable file from just
+        # the updates would destroy the existing fields we need to preserve.
+        held = self._read_block()
         if held.accepts(updates):
             written = held.with_fields(updates)
         else:
@@ -100,19 +99,21 @@ class Frontmatter:
             logger.debug("Config: set %s = %s in %s", key, shown, self._path)
         logger.info("config: updated %d field(s) in %s", len(updates), self._path.name)
 
-    def _block(self) -> FrontmatterBlock | None:
-        """Return the file's frontmatter, or ``None`` when it cannot be read.
+    def _read_block(self) -> FrontmatterBlock:
+        """Parse the file as UTF-8, propagating I/O and decode errors."""
+        return FrontmatterBlock(self._path.read_text(encoding="utf-8"))
 
-        ``None`` is the documented contract for "there is nothing on disk to
-        read": symmetric with the write path, an absent or unreadable config
-        (permissions or IO fault) degrades to defaults rather than crashing
-        the hook subprocess (PY-EH-1).
+    def _readable_block(self) -> FrontmatterBlock | None:
+        """Return the file's frontmatter, or ``None`` if absent or unreadable.
+
+        An I/O or decode failure must degrade to defaults, not crash the hook
+        subprocess (PY-EH-1). A missing file is normal and needs no warning.
         """
-        if not self._path.exists():
-            return None
         try:
-            return FrontmatterBlock(self._path.read_text(encoding="utf-8"))
-        except OSError as exc:
+            return self._read_block()
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
                 "Config unreadable, using defaults: %s (%s)", self._path, exc
             )
