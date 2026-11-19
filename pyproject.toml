@@ -107,7 +107,7 @@ vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
 dev = [
-    "punt-oo-ratchet==0.1.0",
+    "punt-oo-ratchet>=0.1,<0.2",
     "mypy>=1.18.1",
     "pyright>=1.1.400",
     "ruff>=0.13.0",
