@@ -9,12 +9,17 @@ helpers expose, so surface tests assert against them rather than help text.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import typer
 import typer.main
 from click import Group
 from typer.core import TyperArgument, TyperGroup, TyperOption
 
 from punt_vox.__main__ import app
+
+if TYPE_CHECKING:
+    from typer._click import Command
 
 # Typer 0.27 stopped inheriting TyperGroup from click.Group; group semantics
 # now live on TyperGroup itself with its own `.commands` mapping. Accept either
@@ -44,11 +49,9 @@ def app_help_texts(built: typer.Typer) -> list[str]:
     return texts
 
 
-def command_opts(*path: str) -> set[str]:
-    """Every option string (long and short) on the app command at ``path``.
+def _command_at(*path: str) -> Command:
+    """The app command at ``path``, walking groups by name.
 
-    ``command_opts("install-desktop")`` returns the top-level command's flags;
-    ``command_opts("rec", "get")`` walks the ``rec`` group to its ``get`` verb.
     Raises ``LookupError`` if a name on the path is not a group.
     """
     command = typer.main.get_command(app)
@@ -56,6 +59,31 @@ def command_opts(*path: str) -> set[str]:
         if not isinstance(command, _GroupType):
             raise LookupError(f"{name!r}: parent is not a command group")
         command = command.commands[name]
+    return command
+
+
+def command_opts(*path: str) -> set[str]:
+    """Every option string (long and short) on the app command at ``path``.
+
+    ``command_opts("install-desktop")`` returns the top-level command's flags;
+    ``command_opts("rec", "get")`` walks the ``rec`` group to its ``get`` verb.
+    Raises ``LookupError`` if a name on the path is not a group.
+    """
+    command = _command_at(*path)
     return {
         opt for param in command.params for opt in (*param.opts, *param.secondary_opts)
     }
+
+
+def option_help(*path: str, option: str) -> str:
+    """The unwrapped help string of ``option`` on the app command at ``path``.
+
+    ``option_help("say", option="--provider")`` is the source string Rich
+    renders in ``vox say --help``, free of its 80-col soft-wrapping.
+    Raises ``LookupError`` if the command has no such option.
+    """
+    command = _command_at(*path)
+    for param in command.params:
+        if isinstance(param, TyperOption) and option in param.opts:
+            return param.help or ""
+    raise LookupError(f"{option!r}: no such option on {' '.join(path)!r}")
