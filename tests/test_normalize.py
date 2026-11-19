@@ -225,6 +225,12 @@ class TestEdgeCases:
 
 
 class TestAcronymSpacing:
+    def test_decomposed_acronym_keeps_marks_with_their_letters(self) -> None:
+        assert normalize_for_speech("CAFE\u0301") == "C A F E\u0301"
+
+    def test_pronounceable_acronym_keeps_combining_marks_without_spacing(self) -> None:
+        assert normalize_for_speech("OK\u0301") == "OK\u0301"
+
     def test_ocr_spaced(self) -> None:
         assert normalize_for_speech("OCR") == "O C R"
 
@@ -299,6 +305,23 @@ class TestAcronymSpacing:
 
 
 class TestSymbolStripping:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("cafe\u0301", "cafe\u0301"),
+            ("हिन्दी", "हिन्दी"),
+            ("(a\u0323\u0301),", "a\u0323\u0301,"),
+            ("hello\u2764\ufe0f!", "hello!"),
+            ("\u0301 hello", "hello"),
+            ("1\ufe0f\u20e3", "1"),
+            ("press 1\ufe0f\u20e3!", "press 1!"),
+            ("1\ufe0f!", "1!"),
+            ("字\U000e0100", "字"),
+        ],
+    )
+    def test_combining_marks_on_letters_survive(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+
     def test_parentheses_stripped(self) -> None:
         assert normalize_for_speech("only (10m TTL)") == "only 10 m T T L"
 
