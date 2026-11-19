@@ -43,6 +43,7 @@ class CrashLogger:
     _emergency: AtomicAppendLog | None
 
     def __new__(cls, logger: logging.Logger) -> Self:
+        """Create a crash logger."""
         self = super().__new__(cls)
         self._logger = logger
         self._emergency = None

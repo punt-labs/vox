@@ -312,11 +312,8 @@ class TestLiveCallDriverApplyControl:
 
 
 class TestLiveCallDriverControlPollInterval:
-    """The mailbox used to be checked -- one filesystem
-    rename plus a raised-and-caught ``FileNotFoundError`` in the steady
-    case -- on every captured chunk (every 20ms). It is now gated on
-    :data:`driver_module._CONTROL_POLL_INTERVAL_S`, a monotonic-time
-    interval, not a per-chunk check.
+    """Mailbox checks run on a monotonic-time interval, not on every 20-millisecond
+    audio chunk, so filesystem polling does not dominate the capture loop.
 
     ``_due_for_control_check`` is exercised directly against real
     ``time.monotonic()`` reads rather than by patching the ``time`` module

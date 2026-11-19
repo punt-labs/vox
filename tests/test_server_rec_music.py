@@ -43,7 +43,7 @@ def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
     """Reset the module session and pin config discovery to a no-op.
 
     Seeds ``_provider="elevenlabs"`` so ``rec new``'s ``SessionSpec``
-    fill (vox-w3f8) has an authoritative provider to send -- an unset
+    fill has an authoritative provider to send -- an unset
     provider is the F1 refusal now, and the tests here exercise the
     dispatch/wire shape, not the F1 branch. Tests that mean to exercise
     the unset-provider refusal reset ``_session._provider`` explicitly.

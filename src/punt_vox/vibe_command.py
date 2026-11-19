@@ -53,6 +53,7 @@ class MusicPreference:
     _trace: VibeTraceLog
 
     def __new__(cls, style: str | None = None) -> Self:
+        """Create a music preference."""
         self = super().__new__(cls)
         self._style = style
         self._trace = VibeTraceLog.default()
@@ -164,6 +165,7 @@ class VibeCommand:
         config_dir: Path | None,
         pref: MusicPreference,
     ) -> Self:
+        """Create a vibe command."""
         self = super().__new__(cls)
         self._session = session
         self._gateway = gateway

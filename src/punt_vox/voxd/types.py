@@ -12,4 +12,6 @@ __all__ = ["MessageHandler"]
 class MessageHandler(Protocol):
     """Protocol for WebSocket message handlers."""
 
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None: ...
+    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
+        """Handle a decoded message and send replies on its WebSocket."""
+        ...

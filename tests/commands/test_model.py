@@ -18,11 +18,8 @@ from punt_vox.config import ConfigStore
 def _ctx(tmp_path: Path, voices: list[str] | None = None) -> Ctx:
     """Build a Ctx with a real ConfigStore and a voxd client stub for cascade.
 
-    Seeds ``vox.md`` with ``provider: elevenlabs`` so the command has an
-    authoritative provider to resolve models against -- an unset provider
-    is the F1 refusal now (see :func:`~punt_vox.session_spec.SessionSpec`),
-    and every test that predates that rule assumed the "default to
-    elevenlabs" substitution this bead deletes.
+    The fixture seeds an authoritative provider in vox.md so model resolution
+    never depends on an implicit ElevenLabs fallback.
 
     The cascade rule fetches the current provider's voice roster on every
     model set; tests supply what that roster returns via *voices*.
@@ -52,10 +49,8 @@ class TestList:
     ) -> None:
         """No provider configured -- the list is empty, not ElevenLabs's roster.
 
-        Previously the command substituted ``"elevenlabs"`` for an unset
-        provider and reported its models as the session's current list;
-        that substitution is exactly what this bead deletes. Listing gets
-        an honest empty answer instead.
+        An unconfigured provider yields an empty model list rather than another
+        provider's roster.
         """
         # Overwrite the seeded vox.md to remove the provider entry.
         (tmp_path / "vox.md").write_text("---\n---\n")
@@ -97,7 +92,7 @@ class TestSet:
     """A name given -- resolve shorthand and write the full model name."""
 
     async def test_shorthand_resolves_and_cascades_voice(self, tmp_path: Path) -> None:
-        """The cascade rule (vox-awm9): setting model populates voice = first."""
+        """The cascade rule: setting model populates voice = first."""
         result = await model(_ctx(tmp_path, voices=["matilda", "roger"]), "v3")
         assert result.error is False
         assert result.json_data == {"model": "eleven_v3", "voice": "matilda"}

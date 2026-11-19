@@ -29,6 +29,9 @@ class RotatePolicy:
 
         Raises ``ValueError`` on an empty pool -- ``Program.rotate`` gates on a
         non-empty pool, so this only fires on misuse.
+
+        Raises:
+            ValueError: If the candidate pool is empty.
         """
         if not pool:
             msg = "cannot rotate an empty pool"

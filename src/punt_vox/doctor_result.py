@@ -145,6 +145,7 @@ class CheckResults:
     _entries: tuple[CheckResult, ...]
 
     def __new__(cls, entries: Iterable[CheckResult]) -> Self:
+        """Create a check results."""
         self = super().__new__(cls)
         self._entries = tuple(entries)
         return self

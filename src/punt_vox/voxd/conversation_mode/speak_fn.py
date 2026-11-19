@@ -21,4 +21,6 @@ class SpeakFn(Protocol):
     ``asyncio.to_thread`` (see :mod:`punt_vox.commands.call`).
     """
 
-    async def __call__(self, text: str) -> None: ...
+    async def __call__(self, text: str) -> None:
+        """Speak text without blocking the call's event loop."""
+        ...

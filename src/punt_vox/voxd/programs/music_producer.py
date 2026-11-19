@@ -63,6 +63,11 @@ class LengthPolicy:
     def __new__(
         cls, *, min_ms: int = _PLAYLIST_MIN_MS, max_ms: int = _PLAYLIST_MAX_MS
     ) -> Self:
+        """Create a length policy.
+
+        Raises:
+            ValueError: If the minimum duration is not positive or exceeds the maximum.
+        """
         if min_ms < 1:
             msg = f"min_ms must be >= 1, got {min_ms}"
             raise ValueError(msg)
@@ -98,13 +103,22 @@ class MusicProducer:
     _length: LengthPolicy
 
     def __new__(cls, provider: MusicProvider, length: LengthPolicy) -> Self:
+        """Create a music producer."""
         self = super().__new__(cls)
         self._provider = provider
         self._length = length
         return self
 
     async def produce(self, spec: PartSpec, target: Path) -> Part:
-        """Generate ``spec`` into ``target``, mapping failures to Producer errors."""
+        """Generate ``spec`` into ``target``, mapping failures to Producer errors.
+
+        Raises:
+            ProducerBadInputError: If generation fails permanently, for example on a
+                rejected prompt.
+            ProducerTransientError: If generation fails transiently, for example on a
+                timeout.
+            OSError: If the audio metadata cannot be written.
+        """
         duration_ms = self._length.sample()
         try:
             await self._provider.generate_track(spec.prompt, duration_ms, target)

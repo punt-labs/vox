@@ -41,6 +41,7 @@ class StatusProjection:
         supervisor: MpvSupervisor,
         health: PlaybackHealth,
     ) -> Self:
+        """Create a status projection."""
         self = super().__new__(cls)
         self._channel = channel
         self._supervisor = supervisor

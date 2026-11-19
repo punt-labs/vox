@@ -30,6 +30,7 @@ class VibeLabel:
     _value: str
 
     def __new__(cls, raw: str) -> Self:
+        """Create a vibe label."""
         self = super().__new__(cls)
         self._value = cls._bound(raw)
         return self

@@ -11,7 +11,7 @@ DEFAULT_RATE = 90
 
 voxd forwards an absent rate to the provider unchanged, and ElevenLabs, Polly,
 and espeak all default to 100. Emitting 90 at the wire boundary keeps every
-CLI, MCP, and hook path at the historical speed instead of silently speeding up.
+CLI, MCP, and hook path at the same 90% default speed.
 """
 
 
@@ -48,7 +48,7 @@ class SynthesisSpec:
         """Return *name* with a stray leading ``@`` sigil and whitespace stripped.
 
         Slash-command help documents the bare form (``/unmute sarah``); a caller
-        who types the old ``@sarah`` -- or whose Claude Code prompt kept an ``@``
+        who types ``@sarah`` -- or whose Claude Code prompt kept an ``@``
         from mention-autocomplete -- still resolves to ``sarah``. A lone ``@`` or
         blank input carries no voice and returns ``None``.
         """
@@ -62,6 +62,9 @@ class SynthesisSpec:
 
         Raises ``ValueError`` when stability, similarity, or style is
         outside 0.0--1.0.
+
+        Raises:
+            ValueError: If stability, similarity, or style is outside 0 through 1.
         """
         for name, value in (
             ("stability", self.stability),
@@ -78,7 +81,7 @@ class SynthesisSpec:
         Omits fields whose value is ``None`` so the client method
         receives only explicitly-set parameters.  ``rate`` is the exception:
         an unset rate is sent as :data:`DEFAULT_RATE` so the wire message
-        always carries a speed, preserving the historical 90% default.  The
+        always carries the 90% default speed. The
         ``once`` field is not a wire parameter here -- callers pass it
         separately to :meth:`VoxClientSync.synthesize`.
         """

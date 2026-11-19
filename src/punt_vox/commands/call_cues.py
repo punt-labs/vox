@@ -44,6 +44,7 @@ class DaemonCues:
     _spec: SynthesisSpec
 
     def __new__(cls, client: VoxClientSync, spec: SynthesisSpec) -> Self:
+        """Create a daemon cues."""
         self = super().__new__(cls)
         self._client = client
         self._spec = spec

@@ -45,6 +45,7 @@ class LiveScene:
     _previous: RenderRequest | None
 
     def __new__(cls) -> Self:
+        """Create a live scene."""
         self = super().__new__(cls)
         self._previous = None
         return self

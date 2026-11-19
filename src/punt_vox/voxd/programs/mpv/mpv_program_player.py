@@ -44,6 +44,7 @@ class MpvPlayHandle:
     _ended: asyncio.Future[EndFileReason]
 
     def __new__(cls, ended: asyncio.Future[EndFileReason]) -> Self:
+        """Create a mpv play handle."""
         self = super().__new__(cls)
         self._ended = ended
         return self
@@ -62,6 +63,7 @@ class MpvProgramPlayer:
     _directory: PlayerDirectory
 
     def __new__(cls, supervisor: MpvSupervisor, directory: PlayerDirectory) -> Self:
+        """Create a mpv program player."""
         self = super().__new__(cls)
         self._supervisor = supervisor
         self._directory = directory
@@ -94,6 +96,9 @@ class MpvProgramPlayer:
         the stale eof resolve the new track's future, and the loop would advance
         past a part it never heard play. mpv cannot end the new part before it
         starts, so no genuine end is missed in the window.
+
+        Raises:
+            ConnectionError: If mpv rejects the load command.
         """
         client = self._require_client()
         # ``locate`` gates the Part path through the shared containment check: an

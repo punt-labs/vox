@@ -99,17 +99,9 @@ def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
 
 
 def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
-    """Fill unset fields from the repo's ``vox.md`` through :class:`SessionSpec`.
+    """Fill unset synthesis fields from repo state through SessionSpec.
 
-    The CLI counterpart to :meth:`SessionConfig.fill_defaults` (server.py):
-    ``vox say`` used to ignore ``vox.md`` entirely, so a bare ``vox say "hi"``
-    sent no provider and let the daemon guess. Filling here makes state the
-    authority on ``vox say`` too. ``vox rec new`` fills through the same
-    :class:`SessionSpec` from its own helper in :mod:`cli_rec`, matching
-    the shape here.
-
-    An unconfigured provider is refused -- reported on stderr and exit 1 --
-    and an incompatible provider/model pair is refused the same way.
+    An unconfigured provider or incompatible provider/model pair exits with code 1.
     """
     try:
         return SessionSpec.for_repo().fill(spec)
@@ -455,6 +447,9 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
     Example: vox speak n
 
     See also: vox notify (level within 'on'), mic:speak (MCP peer).
+
+    Raises:
+        typer.Exit: If mode is not y or n.
     """
     if mode not in ("y", "n"):
         typer.echo("Error: mode must be y or n.", err=True)
@@ -483,6 +478,9 @@ def log_cmd(
     ``VOXD_HOST`` -- applies the level immediately; the daemon clamps to the INFO
     audit floor server-side, so the audit trail is never blinded. Use
     ``--verbose`` to raise a single client command instead.
+
+    Raises:
+        typer.Exit: If the level is unsupported or the daemon rejects the change.
     """
     normalized = level.lower()
     if normalized not in ("info", "debug"):
@@ -502,7 +500,7 @@ def log_cmd(
 
 
 # ---------------------------------------------------------------------------
-# model / provider / voice -- switch tools (vox-0rp9). Each takes an optional
+# model / provider / voice -- switch tools. Each takes an optional
 # positional NAME: no arg lists (marking the current selection); NAME given
 # writes to the same ConfigStore field the MCP tools write, so the CLI and
 # the mic:{model,provider,voice} tools share one write path.
@@ -647,10 +645,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
-    # Ping voxd for liveness only; the provider comes from state, not
-    # from the daemon (design §3.6 -- the daemon owns no provider of its
-    # own, and the health probe used to invent one, which was the
-    # substitution defect this bead closes).
+    # Probe liveness only; provider selection comes from repo state.
     daemon_status = "not running"
     try:
         VoxClientSync().health()
@@ -731,7 +726,11 @@ def _desktop_registration() -> str:
 
 @app.command()
 def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Check system health for vox."""
+    """Check system health for vox.
+
+    Raises:
+        typer.Exit: If any diagnostic check fails.
+    """
     from punt_vox.doctor import DoctorCheck
     from punt_vox.doctor_result import CheckResults
 
@@ -816,7 +815,11 @@ def uninstall() -> None:
 
 @cache_app.command("status")
 def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Show the daemon cache's entry count, size, and path (honors VOXD_HOST)."""
+    """Show the daemon cache's entry count, size, and path (honors VOXD_HOST).
+
+    Raises:
+        typer.Exit: If the daemon cannot report cache status.
+    """
     try:
         info = VoxClientSync().cache_status()
     except (VoxdConnectionError, VoxdProtocolError) as exc:
@@ -834,7 +837,11 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 @cache_app.command("clear")
 def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Delete all cached MP3 files on the daemon host."""
+    """Delete all cached MP3 files on the daemon host.
+
+    Raises:
+        typer.Exit: If the daemon cannot clear the cache.
+    """
     try:
         count = VoxClientSync().cache_clear()
     except (VoxdConnectionError, VoxdProtocolError) as exc:

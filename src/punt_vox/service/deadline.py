@@ -54,6 +54,9 @@ class Deadline:
 
         Raises ``PortProbeError`` naming *what* when nothing is left, so a step
         that cannot start in time fails closed instead of running unbounded.
+
+        Raises:
+            PortProbeError: If the probe deadline has expired.
         """
         left = self.remaining()
         if left <= 0.0:

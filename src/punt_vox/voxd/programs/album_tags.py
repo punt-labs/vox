@@ -130,7 +130,12 @@ class AlbumTags:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build tags from a wire object, raising on a missing style or vibe."""
+        """Build tags from a wire object, raising on a missing style or vibe.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(
             style=obj.require_str("style"),
             vibe=obj.require_str("vibe"),

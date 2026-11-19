@@ -1,20 +1,11 @@
 """Owns one :class:`~.call_state.CallState` and applies commands to it.
 
-Today, :class:`~.call_session.CallSession` is the sole driver of state
+:class:`~.call_session.CallSession` is the sole driver of state
 transitions -- it processes captured chunks through one sequential
 ``async for`` loop with no concurrent detector task racing it (there is no
-barge-in detector task yet; see that class's own ``barge_in`` docstring), so
+barge-in detector task; see that class's ``barge_in`` docstring), so
 :meth:`CallActor.apply` is always called from that single already-serialized
-path. ``docs/conversation-mode-call-state.tex`` section 8 anticipates a
-future where turn detection, barge-in detection, and sentence-streamed
-synthesis are three independent, genuinely concurrent producers that could
-all want to change :class:`CallState` at once -- at that point (a future
-barge-in detector is the first candidate) this class gets a real
-queue-backed serialization point, wired to every producer that then exists.
-Building that queue now, with nothing enqueuing into it, would be exactly
-the "create now, wire later" dead code this project's own refactoring
-protocol forbids (PY-RF-2) -- it is added when the second concurrent
-producer actually exists to prove the ordering it protects.
+path. No queue is needed because there are no concurrent producers.
 """
 
 from __future__ import annotations
@@ -50,6 +41,7 @@ class CallActor:
     _observers: list[TransitionObserver]
 
     def __new__(cls) -> Self:
+        """Create a call actor."""
         self = super().__new__(cls)
         self._state = CallState()
         self._observers = []

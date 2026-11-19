@@ -46,6 +46,7 @@ class SignalEscalation:
     _wait: Waiter
 
     def __new__(cls, pid: int, send: Sender, wait: Waiter) -> Self:
+        """Create a signal escalation."""
         # *send* and *wait* are the handle's own: they reach only the pinned
         # process, never a bare, reusable pid.
         self = super().__new__(cls)

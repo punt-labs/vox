@@ -42,6 +42,7 @@ class LogLevelHandler:
     _apply: Callable[[int], None]
 
     def __new__(cls, apply: Callable[[int], None]) -> Self:
+        """Create a log level handler."""
         self = super().__new__(cls)
         self._apply = apply
         return self

@@ -49,6 +49,7 @@ class Album:
     def __new__(
         cls, manifest: AlbumManifest, locator: str, store: ProgramStore
     ) -> Self:
+        """Create an album."""
         self = super().__new__(cls)
         self._manifest = manifest
         self._locator = locator
@@ -108,6 +109,7 @@ class Catalog:
     _changes: ChangeSignal | None  # fires on add/remove; None until wired
 
     def __new__(cls, albums: tuple[Album, ...]) -> Self:
+        """Create a catalog."""
         self = super().__new__(cls)
         self._by_id = {album.id: album for album in albums}
         self._reservations = NameReservations(self.taken_names)

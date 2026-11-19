@@ -42,6 +42,7 @@ class ElevenLabsAnswer:
     _body: ErrorBody
 
     def __new__(cls, status: int | None, body: object) -> Self:
+        """Create an eleven labs answer."""
         self = super().__new__(cls)
         self._status = status
         self._body = ErrorBody(body)
@@ -54,8 +55,10 @@ class ElevenLabsAnswer:
         return ProviderStatusError(_PROVIDER, self._status, self._detail)
 
     def off_schema(self) -> ProviderStatusError:
-        """Return the vox error for a body that decoded but fails the response
-        model; the body is not echoed."""
+        """Return the vox error for a body that decoded but fails the response.
+
+        model; the body is not echoed.
+        """
         return ProviderStatusError(
             _PROVIDER, self._status, "response did not match the expected schema"
         )

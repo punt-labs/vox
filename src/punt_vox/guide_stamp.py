@@ -1,24 +1,7 @@
-"""Content-hash stamp for the deposited vox agent guide.
+"""Stamp deposited agent guides with the packaged asset's SHA-256 digest.
 
-The deposited guide -- the per-repo ``.punt-labs/vox/CLAUDE.md`` written by
-:class:`~punt_vox.deposited_files.DepositedGuide` -- is a copy of the packaged
-asset ``src/punt_vox/assets/agent-guide.md``.
-Nothing on disk previously told a reader which version of the packaged asset the
-deposited copy was written from, so the deposited copy could rot silently every
-time the packaged asset changed without ``enable`` being re-run. Agents then
-acted on documentation for tools that no longer existed.
-
-:class:`GuideStamp` closes that gap. A stamp is the hex SHA-256 digest of the
-packaged asset bytes, embedded as an HTML comment at the tail of the deposited
-file -- invisible to a Markdown reader, greppable in a plain-text tool. The
-deposit path calls :meth:`stamped` to append the current digest; a health check
-calls :meth:`verify` to compare the embedded digest against a fresh hash of the
-packaged asset. Divergence surfaces as a concrete verdict instead of as broken
-agent behaviour weeks later.
-
-A content hash is preferred over a version string because the packaged asset
-can and does change *within* a release; a string that only bumps on release
-would go stale mid-cycle in exactly the way this guards against.
+Health checks compare the embedded stamp with the packaged bytes so stale guides
+are visible even within one release.
 """
 
 from __future__ import annotations
@@ -70,6 +53,7 @@ class GuideStamp:
     )
 
     def __new__(cls, packaged: Path) -> Self:
+        """Create a guide stamp."""
         self = super().__new__(cls)
         self._packaged = packaged
         return self
@@ -125,6 +109,9 @@ class GuideStamp:
         asset raises its ``OSError`` here rather than hiding behind an
         ``ABSENT_STAMP`` verdict whose remedy (``vox enable``) would fail on the
         same broken install.
+
+        Raises:
+            OSError: If the packaged guide cannot be read or hashed.
         """
         packaged_digest = self.packaged_hash()
         stamped_digest = self.read(deposited)

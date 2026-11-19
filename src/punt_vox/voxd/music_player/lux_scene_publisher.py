@@ -58,6 +58,7 @@ class LuxScenePublisher:
     _live: LiveScene
 
     def __new__(cls, connect: Callable[[], LuxClient]) -> Self:
+        """Create a lux scene publisher."""
         self = super().__new__(cls)
         self._connect = connect
         self._client = None

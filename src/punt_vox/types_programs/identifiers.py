@@ -32,6 +32,11 @@ class Reason:
     _text: str
 
     def __new__(cls, text: str) -> Self:
+        """Create a reason.
+
+        Raises:
+            ValueError: If text is blank.
+        """
         if not text.strip():
             msg = "reason must be non-empty"
             raise ValueError(msg)
@@ -74,6 +79,11 @@ class ProgramName:
     _value: str
 
     def __new__(cls, value: str) -> Self:
+        """Create a program name.
+
+        Raises:
+            ValueError: If the name is blank, a dot component, or contains a separator.
+        """
         if not value.strip():
             msg = "program name must be non-empty"
             raise ValueError(msg)
@@ -121,6 +131,11 @@ class PartRef:
     _index: int
 
     def __new__(cls, fmt: Format, index: int) -> Self:
+        """Create a part ref.
+
+        Raises:
+            ValueError: If index is less than one.
+        """
         if index < 1:
             msg = f"part reference index must be >= 1, got {index}"
             raise ValueError(msg)
@@ -131,7 +146,12 @@ class PartRef:
 
     @classmethod
     def parse(cls, token: str) -> Self:
-        """Parse a ``format:index`` surface token such as ``playlist:2``."""
+        """Parse a ``format:index`` surface token such as ``playlist:2``.
+
+        Raises:
+            ValueError: If the reference has no separator or has an invalid name or
+                index.
+        """
         head, sep, tail = token.partition(":")
         if not sep:
             msg = f"malformed part reference (want 'format:index'): {token!r}"

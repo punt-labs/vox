@@ -57,6 +57,7 @@ class CallRunner:
         control: CallControl,
         apply_control: ApplyControlFn,
     ) -> Self:
+        """Create a call runner."""
         self = super().__new__(cls)
         self._speak = speak
         self._chime = chime
@@ -67,7 +68,11 @@ class CallRunner:
     async def run(
         self, context: Path, script: Path | None, *, repo_root: Path
     ) -> CallOutcome:
-        """Run the call opened with the snapshot at *context*; return its outcome."""
+        """Run the call opened with the snapshot at *context*; return its outcome.
+
+        Raises:
+            typer.BadParameter: If the call configuration or script is invalid.
+        """
         try:
             host = await CallAgentHost.open(
                 context, cwd=Path.cwd(), repo_root=repo_root, stdin=sys.stdin

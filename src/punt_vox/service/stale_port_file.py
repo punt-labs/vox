@@ -41,6 +41,7 @@ class StalePortFile:
     _port: int | None  # the port it named; None: no file, or it did not parse
 
     def __new__(cls, path: Path, seen: FileIdentity | None, port: int | None) -> Self:
+        """Create a stale port file."""
         self = super().__new__(cls)
         self._path = path
         self._seen = seen
@@ -58,6 +59,9 @@ class StalePortFile:
         taken, so a host with no run directory gets none created. A lock that
         cannot be taken raises ``PortProbeError`` saying "cannot lock"; any
         read failure but "absent", "cannot read".
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         if cls._identity_of(path) is None:
             return cls(path, None, None)
@@ -100,6 +104,9 @@ class StalePortFile:
         file published since the read. Returns what it did. With no file there
         it returns ``ABSENT`` before taking the lock. A lock, stat or removal
         failure raises ``PortProbeError`` so the caller can report it.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
         """
         if self._identity_of(self._path) is None:
             return PortFileCleanup.ABSENT

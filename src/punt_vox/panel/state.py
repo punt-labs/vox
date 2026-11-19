@@ -107,24 +107,11 @@ class PanelState:
         model: str | None,
         voice: str | None,
     ) -> Self:
-        """Return a copy with ``provider`` + cascaded ``model``/``voice``/``roster``.
+        """Return a copy with the supplied provider, model, voice, and roster.
 
-        The cascade is computed by the caller (``VoxPanelService`` in
-        production) so this method is a pure setter -- it stores what it
-        is handed, including when *provider* equals the one already held.
-        A same-value guard used to return ``self`` there, which quietly
-        threw away the roster, model, and voice the caller had just
-        fetched: a caller re-asserting a provider alongside a refreshed
-        roster would have been answered with the stale one and no error.
-        Deciding a re-publish is a no-op belongs to the caller that knows
-        whether anything else moved, not to a setter looking at one field.
-
-        Model names and voice names are provider-scoped, so the caller
-        must supply defaults valid for *provider* (typically the first
-        model from ``MODEL_TABLE.available(provider)`` and the first
-        voice from ``roster``). ``model=None`` means "no model on this
-        provider" (Polly/say/espeak); ``voice=None`` means "roster was
-        empty" (an edge the caller normally guards against).
+        Store all fields even when the provider is unchanged: a refreshed roster can
+        accompany the same provider. Model and voice names must be valid for that
+        provider; None means no model or no available voice.
         """
         return replace(self, provider=provider, model=model, roster=roster, voice=voice)
 

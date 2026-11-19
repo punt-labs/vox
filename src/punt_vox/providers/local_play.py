@@ -28,6 +28,7 @@ class SayDirectPlayer(DirectPlayProvider):
     _voices: VoiceResolver[SayVoiceConfig]
 
     def __new__(cls, *, voices: VoiceResolver[SayVoiceConfig]) -> Self:
+        """Create a say direct player."""
         self = super().__new__(cls)
         self._voices = voices
         return self
@@ -89,6 +90,7 @@ class EspeakDirectPlayer(DirectPlayProvider):
     _voices: VoiceResolver[EspeakVoiceConfig]
 
     def __new__(cls, *, binary: str, voices: VoiceResolver[EspeakVoiceConfig]) -> Self:
+        """Create an espeak direct player."""
         self = super().__new__(cls)
         self._binary = binary
         self._voices = voices

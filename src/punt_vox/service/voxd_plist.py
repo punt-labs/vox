@@ -86,6 +86,7 @@ class VoxdPlist:
         path: Path,
         exec_args_fn: Callable[[], list[str]],
     ) -> Self:
+        """Create a voxd plist."""
         self = super().__new__(cls)
         self._label = label
         self._path = path
@@ -162,7 +163,7 @@ class VoxdPlist:
         )
 
     def write(self) -> None:
-        """Author the plist on disk with 0644 permissions.
+        """Create the plist on disk with 0644 permissions.
 
         The encoding is explicit because the XML declares ``UTF-8``, while
         ``write_text`` would otherwise use the process locale: under a
@@ -179,6 +180,9 @@ class VoxdPlist:
 
         ``""`` when the plist is absent or sets none. A plist that cannot be
         read or parsed raises ``BackendCommandError``.
+
+        Raises:
+            BackendCommandError: If the installed plist cannot be read or parsed.
         """
         try:
             return self._bind_in(plistlib.loads(self._path.read_bytes()))

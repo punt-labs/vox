@@ -1,6 +1,6 @@
 """The background fill -- one cancellable single-flight generation task.
 
-``Filler`` ports the machinery of the old ``PoolFiller`` unchanged: exactly one
+Exactly one
 generation is ever in flight (a single-flight lock), the in-flight generation is
 awaited through ``asyncio.shield`` so a cancel (off / retarget) stops *this* await
 without cascading into the uncancellable provider call, and an abandoned
@@ -130,6 +130,7 @@ class Filler:
         channel: ControlChannel,
         sleeper: Sleeper,
     ) -> Self:
+        """Create a filler."""
         self = super().__new__(cls)
         self._producer = producer
         self._recorder = FillRecorder(channel)

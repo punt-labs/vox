@@ -68,6 +68,7 @@ class ControlChannel:
     _mode_log: ModeTransitionLog
 
     def __new__(cls, source: PlaybackSource) -> Self:
+        """Create a control channel."""
         self = super().__new__(cls)
         self._source = source
         self._queue = asyncio.Queue()

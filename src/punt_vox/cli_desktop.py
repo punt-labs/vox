@@ -1,7 +1,7 @@
 """The ``vox desktop`` CLI verbs -- install and uninstall the MCP registration.
 
 Nested subcommand group matching ``vox daemon`` (single-verb subcommand names,
-cli.md §Subcommand naming; ``install-desktop`` was retired for this form).
+cli.md §Subcommand naming).
 :class:`DesktopCli` is a humble object: each verb parses ``--json`` /
 ``--verbose`` / ``--quiet``, resolves the Claude Desktop config path via
 :meth:`DesktopInstaller.config_path`, drives :class:`DesktopInstaller` for the
@@ -77,6 +77,7 @@ class DesktopCli:
     _OUTPUT_DIR_MODE: ClassVar[int] = 0o777
 
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
+        """Create a desktop cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._flags = flags

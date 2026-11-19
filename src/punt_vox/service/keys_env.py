@@ -24,6 +24,7 @@ class KeysEnvWriter:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a keys env writer."""
         return super().__new__(cls)
 
     def write(self, env: Mapping[str, str], keys_path: Path) -> KeysEnvReport:

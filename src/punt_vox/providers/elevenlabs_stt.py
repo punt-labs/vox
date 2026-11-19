@@ -79,6 +79,7 @@ class ElevenLabsSTTProvider:
         # The test seam: absent, the real SDK client is built on first use.
         client: ElevenLabs | None = None,
     ) -> Self:
+        """Create an eleven labs sttprovider."""
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = ElevenLabsClient(sdk=client)
@@ -86,6 +87,7 @@ class ElevenLabsSTTProvider:
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "elevenlabs"
 
     async def transcribe(

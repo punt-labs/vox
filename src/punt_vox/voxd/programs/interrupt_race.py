@@ -34,6 +34,7 @@ class InterruptRace:
     _interrupt: asyncio.Event
 
     def __new__(cls, interrupt: asyncio.Event) -> Self:
+        """Create an interrupt race."""
         self = super().__new__(cls)
         self._interrupt = interrupt
         return self

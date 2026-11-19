@@ -72,7 +72,12 @@ class PartEntry:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build an entry from a wire object, raising on a malformed record."""
+        """Build an entry from a wire object, raising on a malformed record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(
             index=obj.require_int("index"),
             file=obj.require_str("file"),
@@ -111,6 +116,7 @@ class AlbumManifest:
         fingerprint: PromptFingerprint,
         parts: tuple[PartEntry, ...],
     ) -> Self:
+        """Create an album manifest."""
         self = super().__new__(cls)
         self._id = album_id
         self._format = fmt
@@ -165,6 +171,9 @@ class AlbumManifest:
         Matches on the intrinsic manifest index, never list position:
         with a gap from a permanent fill failure (ready indices 1, 2, 4),
         ``playlist:4`` finds the index-4 Part, not the fourth pool slot.
+
+        Raises:
+            ValueError: If the requested part does not exist in the manifest.
         """
         ready = self.ready_parts()
         for part in ready:
@@ -203,7 +212,11 @@ class AlbumManifest:
 
     @classmethod
     def from_json(cls, text: str) -> Self:
-        """Parse a manifest from JSON, raising ``ValueError`` on a bad record."""
+        """Parse a manifest from JSON, raising ``ValueError`` on a bad record.
+
+        Raises:
+            ValueError: If the JSON or any required manifest field is invalid.
+        """
         return cls.from_wire(JsonObject.parse(text, "manifest"))
 
     @classmethod
@@ -214,6 +227,10 @@ class AlbumManifest:
         ``prompt_fingerprint`` and raises on a missing or malformed field. The
         scan boundary peeks ``opt_str("id")`` to skip idless legacy dirs *before*
         this full parse, so an idless record never reaches here.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
         """
         return cls(
             album_id=AlbumId(obj.require_str("id")),

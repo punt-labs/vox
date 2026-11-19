@@ -57,7 +57,7 @@ class AppendLogHandler(logging.Handler):
     def for_file(
         cls, *, filename: str, name_prefix: str = "", level: str = "INFO"
     ) -> Self:
-        """dictConfig ``()`` factory: bind a handler to an ``AtomicAppendLog``."""
+        """DictConfig ``()`` factory: bind a handler to an ``AtomicAppendLog``."""
         return cls.bind(
             AtomicAppendLog(Path(filename)), name_prefix=name_prefix, level=level
         )

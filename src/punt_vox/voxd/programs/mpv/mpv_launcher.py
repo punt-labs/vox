@@ -46,6 +46,7 @@ class MpvLauncher:
     _sleeper: Sleeper
 
     def __new__(cls, socket: Path, sleeper: Sleeper) -> Self:
+        """Create a mpv launcher."""
         self = super().__new__(cls)
         self._socket = socket
         self._sleeper = sleeper

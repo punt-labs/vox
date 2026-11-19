@@ -24,6 +24,7 @@ class UsageParser:
     def __new__(
         cls, command: Command, context: Context, json_option: Parameter
     ) -> Self:
+        """Create a usage parser."""
         self = super().__new__(cls)
         self._command = command
         self._context = context
@@ -31,6 +32,7 @@ class UsageParser:
         return self
 
     def parse(self, args: list[str]) -> tuple[bool, list[str]]:
+        """Return JSON-output intent and arguments, tolerating malformed flags."""
         parser = self._command.make_parser(self._context)
         self._json_option.add_to_parser(parser, self._context)
         pending = args.copy()

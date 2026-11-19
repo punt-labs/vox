@@ -5,7 +5,7 @@ message, hand the work to the :class:`ProgramService` (which POSTs one serialize
 :class:`ControlSignal` -- the handler never touches the Program), and reply. Only
 the parse-and-dispatch step differs per command, so it is the one abstract hook;
 the request-id plumbing, the applied ack, and the boundary error reply live here
-once (DRY, replacing the copy-pasted try/except of the old music handlers).
+once.
 
 The boundary catches every *expected* domain failure and replies through
 :class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` (a bad
@@ -43,6 +43,7 @@ class ProgramCommandHandler(ABC):
     """The reply ``type`` (and inbound message type) this handler answers."""
 
     def __new__(cls, service: ProgramService) -> Self:
+        """Create a program command handler."""
         self = super().__new__(cls)
         self._service = service
         return self

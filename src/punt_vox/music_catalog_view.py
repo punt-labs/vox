@@ -1,15 +1,7 @@
-"""``SavedAlbums`` -- the saved crate as every music surface reports it.
+"""Project saved albums consistently for CLI and MCP music surfaces.
 
-Three verbs show the crate: ``list`` announces it, and a bare ``play`` with no
-history appends it to the reject so the caller has something to pick -- on both
-the ``music`` MCP tool and the ``vox music`` CLI. Each used to build its own
-lines and its own wire records, which is how the CLI's ``list`` came to omit the
-``format`` field the tool reported. The projection lives here once instead, so
-an album cannot read one way on one surface and another way on the next.
-
-Held beside :class:`~punt_vox.music_state_view.MusicStateView`, its counterpart
-for the running Program: what is *saved* and what is *playing* are the two
-things a music surface reports, and each is projected in exactly one place.
+List and empty-history play responses share this projection, including format.
+Running-program state is projected by MusicStateView.
 """
 
 from __future__ import annotations
@@ -33,6 +25,7 @@ class SavedAlbums:
     _marker: str
 
     def __new__(cls, summaries: Iterable[ProgramSummary], marker: str = "") -> Self:
+        """Create a saved albums."""
         self = super().__new__(cls)
         self._summaries = tuple(summaries)
         self._marker = marker

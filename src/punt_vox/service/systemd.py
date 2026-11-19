@@ -63,6 +63,7 @@ class PrivilegedRun:
     _has_tty: TerminalCheck
 
     def __new__(cls, run: CommandRunner, has_tty: TerminalCheck) -> Self:
+        """Create a privileged run."""
         self = super().__new__(cls)
         self._run = run
         self._has_tty = has_tty
@@ -165,6 +166,7 @@ class SystemdBackend:
         voxd_exec_args_fn: Callable[[], list[str]],
         privileged: PrivilegedRun,
     ) -> Self:
+        """Create a systemd backend."""
         self = super().__new__(cls)
         self._unit = SystemdUnit(_SYSTEMD_UNIT, voxd_exec_args_fn)
         self._privileged = privileged
@@ -219,7 +221,12 @@ class SystemdBackend:
         return state in self._LIVE_STATES
 
     def main_pid(self) -> int | None:
-        """Return systemd's ``MainPID``; ``None`` when it reports 0 (none)."""
+        """Return systemd's ``MainPID``; ``None`` when it reports 0 (none).
+
+        Raises:
+            BackendCommandError: If the service backend command or its response is
+                invalid.
+        """
         raw = self._systemctl("show", "-p", "MainPID", "--value", "voxd", check=True)
         try:
             pid = int(raw)
@@ -246,6 +253,10 @@ class SystemdBackend:
         """Install the unit, enable it, and (re)start voxd.  Sudo runs 4 times.
 
         Raises ``BackendCommandError`` naming the step that failed.
+
+        Raises:
+            BackendCommandError: If the service backend command or its response is
+                invalid.
         """
         logger.warning(_SUDO_NOTICE)
         tmp_unit = _paths_user_state_dir() / "voxd.service.tmp"

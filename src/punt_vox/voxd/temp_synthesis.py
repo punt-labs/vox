@@ -44,6 +44,7 @@ class TempFileSynthesis:
         spec: SynthesisSpec,
         chars_in: int,
     ) -> Self:
+        """Create a temp file synthesis."""
         self = super().__new__(cls)
         self._client = TTSClient(provider)
         self._request = request
@@ -72,7 +73,8 @@ class TempFileSynthesis:
         return output_path
 
     def _require_nonempty(self, output_path: Path) -> None:
-        """Reject a missing or empty synthesis output; caching it would poison
+        """Reject a missing or empty synthesis output; caching it would poison.
+
         every identical request, so it fails fast. The caller removes the file
         and logs the exception (traceback + fields) -- no separate log here.
         """

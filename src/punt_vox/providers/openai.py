@@ -87,6 +87,7 @@ class OpenAIProvider(TTSProvider):
         # The test seam: absent, the real SDK client is built on first use.
         client: openai.OpenAI | None = None,
     ) -> Self:
+        """Create an open aiprovider."""
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._api_key = os.environ.get(_KEY_CHECK.source)
@@ -97,17 +98,21 @@ class OpenAIProvider(TTSProvider):
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "openai"
 
     @property
     def default_voice(self) -> str:
+        """Return the provider's default voice name."""
         return "nova"
 
     @property
     def supports_expressive_tags(self) -> bool:
+        """Return whether the selected model supports expressive tags."""
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
+        """Synthesize the request into its resolved output path."""
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 

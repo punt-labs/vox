@@ -141,15 +141,9 @@ class TestVoxOn:
         assert state["speak"] == "n"
 
 
-# ---------------------------------------------------------------------------
-# nOff state -- the retired VoxOff partitions, re-framed as state-model
-# invariants after tool-enable-disable.md §2.3 retired "n" as a notify input.
-# The user-facing "turn off" flow is now ``mic:enablement action="disable"``,
-# which is a repo file operation and does not mutate session state; nOff
-# itself is reachable only via the SessionConfig default and config-file
-# load, so these tests assert the state model represents nOff coherently
-# with every (speak, voice) frame the retired transition used to preserve.
-# ---------------------------------------------------------------------------
+# Disabling enablement changes repo files, not session state. The nOff state remains
+# reachable through defaults and config loading and must coexist with every speak/voice
+# combination.
 
 
 class TestNotifyOffState:
@@ -485,11 +479,9 @@ class TestInvariantPreservation:
 class TestRejectedInputs:
     """Additional rejected partition for the speak tool.
 
-    Notify's own rejected-inputs partition moved to
-    :class:`test_server.TestNotifySchemaRejectsOff`: the notify tool's
-    ``mode`` is now ``Literal["y", "c"]``, so FastMCP rejects any other
-    input at the schema level before dispatch -- a stronger contract than
-    the retired ``return _error(...)`` guard used to enforce.
+    Notify accepts only y or c in its Literal schema, so FastMCP rejects other
+    values before dispatch. The schema rejection is covered by
+    TestNotifySchemaRejectsOff.
     """
 
     def test_speak_invalid_mode(self) -> None:

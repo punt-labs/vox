@@ -76,6 +76,7 @@ class ProviderRegistry:
         cls,
         credentials: ProviderCredentials | None = None,
     ) -> Self:
+        """Create a provider registry."""
         # Deferred import to keep credentials -> types_provider_errors ->
         # types_errors dependency chain out of this module's header, which
         # is a load-bearing entry point re-exported from ``punt_vox`` top-level.
@@ -110,6 +111,9 @@ class ProviderRegistry:
         has opened around this call -- :class:`ApiKeyRequirement`
         reads ``os.environ`` and a caller supplying ``api_key=``
         deserves to be allowed through.
+
+        Raises:
+            UnknownProviderError: If the resolved provider name is not registered.
         """
         # Deferred so this module's header stays importable without the
         # types_provider_errors -> types_errors chain (matches the

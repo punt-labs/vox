@@ -23,5 +23,9 @@ class GuardViolationError(ValueError):
 
     @staticmethod
     def reject(message: str) -> NoReturn:
-        """Raise a guard violation -- a violated Z precondition (guard)."""
+        """Raise a guard violation -- a violated Z precondition (guard).
+
+        Raises:
+            GuardViolationError: Always, with the guard's rejection reason.
+        """
         raise GuardViolationError(message)

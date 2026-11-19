@@ -283,7 +283,7 @@ class TestOpenAIProviderSynthesize:
         ``audio.speech.create`` call. Without this translation the
         exception would fall through to ``speech_handlers``' broad
         ``except Exception`` and get laundered to ``"operation failed"``,
-        which is the exact defect vox-w3f8 exists to close.
+        which is the exact defect  exists to close.
         """
         import openai
 

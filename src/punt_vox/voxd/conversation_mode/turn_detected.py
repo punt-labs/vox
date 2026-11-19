@@ -24,4 +24,5 @@ class TurnDetected:
     """
 
     def apply(self, state: CallState) -> None:
+        """Apply the turn detected transition to the call state."""
         state.turn_detected()

@@ -69,9 +69,8 @@ class TestHealthPayloadFull:
     def test_no_provider_on_authenticated_payload(self) -> None:
         """D4: the daemon reports no provider of its own.
 
-        The old auto-detect probe was the same substitution defect this
-        bead closes in a third place; per-provider readiness moved to
-        the ``provider_status`` op (design §3.6, delivered by PR 3).
+        The daemon owns no provider of its own. Per-provider readiness is reported
+        through provider_status, not health.
         """
         health = _make_health()
         payload = health.full_payload()

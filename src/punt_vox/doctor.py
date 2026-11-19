@@ -73,6 +73,7 @@ class DoctorCheck:
     _client: VoxClientSync | None
 
     def __new__(cls, client: VoxClientSync | None = None) -> Self:
+        """Create a doctor check."""
         self = super().__new__(cls)
         self._client = client
         return self

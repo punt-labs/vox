@@ -62,6 +62,7 @@ class CatalogCli:
         gateway_factory: Callable[[], CatalogGateway] | None = None,
         flags: OutputFlags | None = None,
     ) -> Self:
+        """Create a catalog cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway

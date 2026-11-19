@@ -30,6 +30,7 @@ class FetchAssembly:
     _buffer: bytearray
 
     def __new__(cls, declared: int, chunks: int, digest: str) -> Self:
+        """Create a fetch assembly."""
         self = super().__new__(cls)
         self._declared = declared
         self._chunks = chunks
@@ -39,7 +40,11 @@ class FetchAssembly:
 
     @classmethod
     def begin(cls, frame: dict[str, Any]) -> Self:  # a decoded wire frame
-        """Return the assembly a ``fetch_begin`` frame announces."""
+        """Return the assembly a ``fetch_begin`` frame announces.
+
+        Raises:
+            VoxdProtocolError: If the opening frame or its metadata is invalid.
+        """
         if frame.get("type") != "fetch_begin":
             got = frame.get("type")
             raise VoxdProtocolError(f"expected 'fetch_begin', got {got!r}")
@@ -56,7 +61,12 @@ class FetchAssembly:
         return self._chunks
 
     def append(self, frame: dict[str, Any], seq: int) -> None:  # a decoded frame
-        """Check chunk *seq*'s order and append its decoded bytes."""
+        """Check chunk *seq*'s order and append its decoded bytes.
+
+        Raises:
+            VoxdProtocolError: If the chunk frame, sequence number, or encoded data is
+                invalid.
+        """
         if frame.get("type") != "chunk" or frame.get("seq") != seq:
             raise VoxdProtocolError(
                 f"expected chunk seq {seq}, got "
@@ -69,7 +79,11 @@ class FetchAssembly:
         self._buffer.extend(data)
 
     def finish(self, frame: dict[str, Any]) -> bytes:  # a decoded wire frame
-        """Return the file once ``fetch_end`` arrives and the stream checks out."""
+        """Return the file once ``fetch_end`` arrives and the stream checks out.
+
+        Raises:
+            VoxdProtocolError: If the terminal frame, byte count, or digest is invalid.
+        """
         if frame.get("type") != "fetch_end":
             raise VoxdProtocolError(f"expected 'fetch_end', got {frame.get('type')!r}")
         got = len(self._buffer)

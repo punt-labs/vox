@@ -45,13 +45,8 @@ def test_current_detector_reflects_the_actor_s_mode() -> None:
 
 
 class TestCommandApplyProtocolConformance:
-    """Exercise ``BargeIn``, ``CaptureDuringWait``, and ``TimeoutCall``
-    through :meth:`CallActor.apply` against a real :class:`CallState` --
-    every other :class:`~.call_command.CallCommand` implementation
-    (``StartCall``, ``EndCall``, ``TurnDetected``, ``ReplyBegins``,
-    ``ReplyEnds``) is already exercised this way above; these three were
-    previously only reached indirectly, through ``CallState``'s own method
-    tests.
+    """The operation is tested directly as well as through CallState, so the
+    actor's dispatch boundary is covered.
     """
 
     def test_barge_in_applied_directly_moves_speaking_to_listening(self) -> None:

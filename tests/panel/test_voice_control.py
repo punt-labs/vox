@@ -46,10 +46,7 @@ class TestToDict:
     def test_an_empty_roster_renders_both_halves_inert(self) -> None:
         """Nothing to pick and nothing to preview means nothing to click.
 
-        A session whose provider offers no roster used to get a combo with
-        an empty item list carrying a live ``changed`` handler, beside a ▶
-        button that published a preview of a voice the panel did not hold.
-        Both looked functional; neither did anything a user could see.
+        A provider without a voice roster must not offer another provider's voices.
         """
         control = VoiceControl(roster=(), current=None)
         combo, button = _children(control.to_dict())

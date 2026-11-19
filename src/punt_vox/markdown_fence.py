@@ -22,12 +22,12 @@ class Fence:
 
     @classmethod
     def parse(cls, line: str) -> Fence | None:
-        """Return the fence *line* delimits, or ``None`` when it is not a delimiter.
+        r"""Return the fence *line* delimits, or ``None`` when it is not a delimiter.
 
         ``None`` is the documented "not a fence line" contract (an absence, like
         ``dict.get``), not a failure. A delimiter is a run of three or more of
         one marker after at most three leading spaces; a tab or four or more
-        leading spaces makes the line inert indented code (\\S2.4). A backtick
+        leading spaces makes the line inert indented code (\S2.4). A backtick
         fence's info string cannot hold a backtick (CommonMark), so a line such
         as ```` ```x``` ```` is an inline code span, not a fence.
         """
@@ -70,6 +70,7 @@ class CodeBlockMap:
     _top_level: tuple[bool, ...]
 
     def __new__(cls, lines: tuple[str, ...]) -> Self:
+        """Create a code block map."""
         self = super().__new__(cls)
         code: set[int] = set()
         opener: Fence | None = None

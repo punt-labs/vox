@@ -45,6 +45,7 @@ class MusicNewHandler:
     _library: MusicLibrary
 
     def __new__(cls, library: MusicLibrary) -> Self:
+        """Create a music new handler."""
         self = super().__new__(cls)
         self._library = library
         return self
@@ -87,6 +88,7 @@ class MusicManifestHandler:
     _library: MusicLibrary
 
     def __new__(cls, library: MusicLibrary) -> Self:
+        """Create a music manifest handler."""
         self = super().__new__(cls)
         self._library = library
         return self
@@ -126,6 +128,7 @@ class MusicRemoveHandler:
     def __new__(
         cls, library: MusicLibrary, blocked: Callable[[], frozenset[str]]
     ) -> Self:
+        """Create a music remove handler."""
         self = super().__new__(cls)
         self._library = library
         self._blocked = blocked

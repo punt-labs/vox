@@ -55,6 +55,7 @@ class PanelMenuEntry:
         guard: PanelGuard,
         logger: logging.Logger,
     ) -> Self:
+        """Create a panel menu entry."""
         self = super().__new__(cls)
         self._service = service
         self._rest_factory = rest_factory

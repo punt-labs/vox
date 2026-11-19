@@ -156,6 +156,7 @@ class _FaultChain:
     _links: tuple[BaseException, ...]
 
     def __new__(cls, exc: BaseException) -> Self:
+        """Create a fault chain."""
         self = super().__new__(cls)
         links: list[BaseException] = []
         seen: set[int] = set()
@@ -178,7 +179,8 @@ class _FaultChain:
 
     @property
     def trust_default(self) -> TrustDefault:
-        """Return the anchors the failing client falls back to with neither
+        """Return the anchors the failing client falls back to with neither.
+
         ``SSL_CERT_FILE`` nor ``SSL_CERT_DIR`` set.
 
         An httpx2 link means the OpenAI SDK's client, which trusts the system

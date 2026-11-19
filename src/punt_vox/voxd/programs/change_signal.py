@@ -28,6 +28,7 @@ class ChangeSignal:
     _listeners: list[ChangeListener]
 
     def __new__(cls) -> Self:
+        """Create a change signal."""
         self = super().__new__(cls)
         self._listeners = []
         return self

@@ -34,6 +34,7 @@ class AlbumBinder:
     _store: ProgramStore
 
     def __new__(cls, catalog: Catalog, store: ProgramStore) -> Self:
+        """Create an album binder."""
         self = super().__new__(cls)
         self._catalog = catalog
         self._store = store

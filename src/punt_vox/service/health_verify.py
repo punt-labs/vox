@@ -62,6 +62,7 @@ class HealthVerifier:
     _probe: DaemonProbe
 
     def __new__(cls, backend: InstallableBackend, probe: DaemonProbe) -> Self:
+        """Create a health verifier."""
         # *backend* reports whether the unit runs and names the unit file the
         # failure message points at; *probe* targets the daemon the backend
         # runs (its installed bind, the service port, the run-file token).
@@ -92,6 +93,10 @@ class HealthVerifier:
         or a daemon that died on startup -- the silent-down failure mode.
         Raise ``ServiceHealthError``, chained to the last health failure, so
         the caller can surface a non-zero exit (or degrade gracefully).
+
+        Raises:
+            ServiceHealthError: If the service is inactive or its health endpoint is
+                unavailable.
         """
         # Each is-active query gets only what is left of the wait, so a slow
         # systemctl/launchctl cannot carry install past its bound.

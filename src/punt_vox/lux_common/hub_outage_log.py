@@ -42,6 +42,7 @@ class HubOutageLog:
     __slots__ = ("_last_logged_at", "_lock", "_logger", "_started_at")
 
     def __new__(cls, logger: logging.Logger) -> Self:
+        """Create a hub outage log."""
         self = super().__new__(cls)
         self._logger = logger
         self._started_at = None

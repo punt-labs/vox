@@ -31,6 +31,7 @@ class StateInvariants:
     _s: ProgramState
 
     def __new__(cls, state: ProgramState) -> Self:
+        """Create a state invariants."""
         self = super().__new__(cls)
         self._s = state
         return self

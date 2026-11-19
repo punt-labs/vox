@@ -38,6 +38,7 @@ class SecretPathDeniedError(CallAgentEndedError):
 
     @property
     def ending_phrase(self) -> str:
+        """Return the spoken explanation for ending a call on a secret-path denial."""
         return (
             "I can't open that file -- it may hold secrets, and anything I "
             "read on a call is spoken aloud. Ending the call now."

@@ -216,8 +216,7 @@ class TestCheckDaemonHealth:
         assert len(results) == 1
         assert results[0].passed is True
         assert "8421" in results[0].message
-        # ``provider`` is deliberately absent from the health line (design
-        # §3.6 / D4); per-provider readiness moves to PR 3's status block.
+        # The daemon has no provider of its own; readiness is reported separately.
         assert "provider:" not in results[0].message
 
     def test_daemon_running_version_mismatch(self) -> None:

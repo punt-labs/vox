@@ -30,8 +30,7 @@ class ProviderNotConfiguredError(ValueError):
 
     Only state can name a provider -- voxd owns no session and no repo
     context, so the daemon cannot supply one. Every synthesis surface refuses
-    on this before building a wire message, replacing the daemon-side
-    substitution that produced the reported wrong-provider log line.
+    on this before building a wire message so the daemon never guesses a provider.
 
     The error owns its own actionable message (PY-CC-5), split by which
     verb the caller can actually run -- a CLI process cannot run an MCP
@@ -84,6 +83,7 @@ class ModelNotAvailableError(ValueError):
     _available: tuple[str, ...]
 
     def __new__(cls, model: str, provider: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, model, provider, available)
         self._model = model
         self._provider = provider

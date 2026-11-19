@@ -33,6 +33,7 @@ class PiTurnReply:
     _verdict: PiTurnVerdict
 
     def __new__(cls) -> Self:
+        """Create a pi turn reply."""
         self = super().__new__(cls)
         self._verdict = PiTurnVerdict()
         return self

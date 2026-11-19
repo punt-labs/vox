@@ -74,6 +74,11 @@ class SayProvider(TTSProvider):
     _voices: VoiceResolver[SayVoiceConfig]
 
     def __new__(cls) -> Self:
+        """Create a say provider.
+
+        Raises:
+            ValueError: If macOS or its say executable is unavailable.
+        """
         if platform.system() != "Darwin":
             msg = (
                 "SayProvider requires macOS. "
@@ -95,6 +100,7 @@ class SayProvider(TTSProvider):
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "say"
 
     @property
@@ -120,9 +126,11 @@ class SayProvider(TTSProvider):
 
     @property
     def supports_expressive_tags(self) -> bool:
+        """Return whether the selected model supports expressive tags."""
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
+        """Synthesize the request into its resolved output path."""
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
@@ -186,7 +194,11 @@ class SayProvider(TTSProvider):
         )
 
     def resolve_voice(self, name: str, language: str | None = None) -> str:
-        """Validate and resolve a voice name to its canonical form."""
+        """Validate and resolve a voice name to its canonical form.
+
+        Raises:
+            ValueError: If the requested language conflicts with the voice language.
+        """
         cfg = self._voices.resolve(name)
         if language is not None:
             voice_lang = _locale_to_iso(cfg.locale)
@@ -241,7 +253,11 @@ class SayProvider(TTSProvider):
         return checks
 
     def get_default_voice(self, language: str) -> str:
-        """Get the default macOS voice for a language."""
+        """Get the default macOS voice for a language.
+
+        Raises:
+            ValueError: If no default voice is available for the language.
+        """
         key = language.lower()
         voice = _DEFAULT_VOICES.get(key)
         if voice is None:

@@ -29,6 +29,7 @@ class ChimeResolver:
     _CHIME_MAP: ClassVar[dict[str, str]] = _CHIME_MAP
 
     def __new__(cls) -> Self:
+        """Create a chime resolver."""
         return super().__new__(cls)
 
     def resolve(self, signal: str) -> Path | None:

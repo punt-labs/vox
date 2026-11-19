@@ -509,9 +509,8 @@ class TestAudioContext:
     ) -> None:
         """The macOS branch must NOT include the Linux audio-backend keys.
 
-        Recording XDG_RUNTIME_DIR/PULSE_SERVER/DBUS_SESSION_BUS_ADDRESS on
-        macOS produced 72 useless log lines before this bead -- the whole
-        point of the replacement is that those keys are gone.
+        macOS diagnostics omit Linux-only XDG_RUNTIME_DIR, PULSE_SERVER, and
+        DBUS_SESSION_BUS_ADDRESS keys to keep the log relevant.
         """
         from punt_vox.voxd.playback import AudioContext
 

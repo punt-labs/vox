@@ -303,10 +303,8 @@ class TestApplyEvent:
         service.prefetch()
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert changed is ControlPush.NONE
-        # The preview spec now fills provider from state through SessionSpec,
-        # so the wire message carries the configured provider alongside the
-        # candidate voice -- previously the preview sent no provider at all
-        # and let the daemon guess.
+        # The preview fills provider from SessionSpec so the wire names the provider
+        # alongside the candidate voice.
         expected = (
             "This is my voice.",
             SynthesisSpec(voice="roger", provider="elevenlabs"),
@@ -376,7 +374,7 @@ class TestApplyEvent:
         ] == ["punt_vox.panel.service"]
 
     def test_provider_writes_the_name_and_cascades_model_and_voice(self) -> None:
-        """Cascade rule (vox-s5uv): provider + first-model + first-voice, atomic."""
+        """Cascade rule: provider + first-model + first-voice, atomic."""
         service = VoxPanelService(
             _FakeDaemonClient(voices_by_provider={"openai": ["alloy", "nova"]}),
             (store := _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))),
@@ -394,7 +392,7 @@ class TestApplyEvent:
         assert scene.voice == "alloy"
 
     def test_provider_refetches_roster_and_updates_scene(self) -> None:
-        """A provider switch pulls the new roster into the panel scene (vox-w79f)."""
+        """A provider switch pulls the new roster into the panel scene."""
         client = _FakeDaemonClient(
             voices_by_provider={
                 "elevenlabs": ["benno", "aria"],
@@ -415,9 +413,9 @@ class TestApplyEvent:
         assert "espeak" in client.roster_reads_by_provider
 
     def test_provider_cascades_voice_to_first_regardless_of_prior_voice(self) -> None:
-        """Cascade rule (vox-s5uv): voice always becomes ``roster[0]``.
+        """Cascade rule: voice always becomes ``roster[0]``.
 
-        Supersedes the vox-w79f 'clear when absent from roster' behavior with a
+        Supersedes the  'clear when absent from roster' behavior with a
         stronger invariant: the new provider's first voice is written every
         time, so a stale voice can never leak past a switch.
         """
@@ -512,12 +510,8 @@ class TestApplyEvent:
     def test_provider_roster_wire_rejection_surfaces_reason_verbatim(self) -> None:
         """A daemon-sent rejection during a roster fetch shows voxd's reason.
 
-        A long-lived panel talking to a fresh strict daemon (or any wire
-        skew) triggers a typed ``VoxdRejectionError`` on the roster call.
-        Previously the panel logged this as generic ``voxd_unavailable``,
-        hiding WHY the roster went missing behind a "daemon is down" line.
-        The rejection now becomes ``PanelNotice.voxd_rejected(...)`` so the
-        operator sees the daemon's message.
+        The panel distinguishes a daemon refusal from a transport failure so a
+        healthy daemon is not misreported as unavailable.
         """
         detail = "Unknown provider 'openai'. Available: elevenlabs, say"
 
@@ -963,7 +957,7 @@ class TestInstallScene:
 
 
 class TestCorrectScene:
-    """vox-h777 regression: a failure snap-back must reassert the control field.
+    """regression: a failure snap-back must reassert the control field.
 
     ``push_scene`` (the diff-based refresh) computes its patch against the
     last render this session successfully pushed -- which, after any of

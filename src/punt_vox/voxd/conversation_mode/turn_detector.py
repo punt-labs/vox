@@ -66,6 +66,7 @@ class TurnDetector:
         min_speech_s: float = 0.3,
         audible_multiplier: float = 2.0,
     ) -> Self:
+        """Create a turn detector."""
         self = super().__new__(cls)
         self._silence_gap_s = silence_gap_s
         self._min_speech_s = min_speech_s
@@ -81,6 +82,9 @@ class TurnDetector:
         Uses the median RMS level, not the mean, so one transient (a chair
         creak, a keyboard clack) during calibration does not skew the floor
         the way an outlier-sensitive mean would.
+
+        Raises:
+            ValueError: If no calibration audio chunks are supplied.
         """
         if not chunks:
             msg = "calibrate requires at least one chunk"

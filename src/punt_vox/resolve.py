@@ -29,7 +29,7 @@ def split_leading_expressive_tags(text: str) -> tuple[str, str]:
     a tag, returns ``("", text)``.
 
     Used by :func:`apply_vibe` to detect and preserve leading tags
-    when composing vibe text. Normalization is now handled entirely
+    when composing vibe text. Normalization is handled
     inside ``voxd._apply_vibe_for_synthesis``, which uses
     ``VIBE_TAG_RE`` to split tags at any position — not just leading.
     """
