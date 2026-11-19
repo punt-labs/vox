@@ -65,7 +65,7 @@ dependencies = [
     "openai>=1.0.0",
     "pydub>=0.25.0",
     "audioop-lts>=0.2.1",
-    "typer>=0.24.1",
+    "typer>=0.27.2",
     "websockets>=15.0",
     # voxd hosts the lux music-player app and the vox-panel applet: the public
     # LuxClient facade is a hard runtime dependency — identity/lease

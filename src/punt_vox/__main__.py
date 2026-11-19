@@ -19,6 +19,7 @@ from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_daemon import build_daemon_app
 from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
+from punt_vox.cli_group import VoxGroup
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
@@ -47,12 +48,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(
-    name="vox",
-    help="Text-to-speech CLI.",
-    no_args_is_help=True,
-    context_settings={"help_option_names": ["-h", "--help"]},
-)
+app = VoxGroup.app()
 app.add_typer(hook_app, name="hook", hidden=True)
 
 # ---------------------------------------------------------------------------
