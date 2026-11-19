@@ -8,6 +8,7 @@ once per segment, before ``SynthesisRequest`` construction.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # ---------------------------------------------------------------------------
 # Abbreviation dictionary — whole-word expansions
@@ -519,6 +520,7 @@ _HAS_CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]"
 
 # Tokens that look like file paths — leave these alone.
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
+_LEADING_NON_SPEECH_RE = re.compile(r"^[^\w~/.]+")
 
 
 # ---------------------------------------------------------------------------
@@ -587,12 +589,8 @@ def _normalize_token(token: str) -> str:
     # Strip non-speech symbols; only prosody punctuation survives in suffix
     core, suffix = _strip_punctuation(token)
 
-    if not core:
-        # Token was only non-speech symbols — drop it
-        return suffix if suffix else ""
-
     # File paths: keep core as-is but still strip non-speech wrapping
-    if _FILE_PATH_RE.match(core):
+    if not core or _FILE_PATH_RE.match(core):
         return core + suffix
 
     # snake_case: split on underscores, process each part
@@ -644,25 +642,24 @@ def _expand_part(part: str) -> str:
         return " ".join(_expand_part(p) for p in sub_parts)
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
     # unless the word is pronounceable (real word or known acronym).
-    if part.isupper() and len(part) > 1:
+    if part.isupper():
         return _space_acronym(part)
-    return part.lower() if part[0].isupper() and not part.isupper() else part
+    return part.lower() if part[0].isupper() else part
 
 
 def _space_acronym(part: str) -> str:
     """Space out ALL_CAPS tokens so TTS engines spell them letter-by-letter.
 
     Returns the input unchanged if it contains digits, is in the
-    pronounceable-acronyms allowlist, is a single character, or is
-    longer than 5 characters.
+    pronounceable-acronyms allowlist, or has fewer than 2 or more than 5
+    letters. Combining marks stay with their letters.
     """
-    if len(part) < 2 or len(part) > 5:
+    if not part.isupper() or part in _PRONOUNCEABLE_ACRONYMS:
         return part
-    if not part.isalpha() or not part.isupper():
-        return part
-    if part in _PRONOUNCEABLE_ACRONYMS:
-        return part
-    return " ".join(part)
+    letters = "".join(ch for ch in part if not unicodedata.category(ch).startswith("M"))
+    if 2 <= len(letters) <= 5 and letters.isalpha() and part[0].isalpha():
+        return re.sub(r"(?<=.)(?=\w)", " ", part)
+    return part
 
 
 def _expand_abbreviation(word: str) -> str:
@@ -681,27 +678,24 @@ def _strip_punctuation(token: str) -> tuple[str, str]:
     TTS engines either mispronounce them or produce artifacts.
     Trailing underscores are discarded -- they are separators, not speech.
     """
-    start, end = 0, len(token)
-    while start < end and not token[start].isalnum() and token[start] not in "~/._":
-        start += 1
-    rel_end, raw_suffix = _trailing_symbol_bounds(token[start:])
+    core, raw_suffix = _split_trailing_symbols(_LEADING_NON_SPEECH_RE.sub("", token))
     # Only keep prosody-affecting suffix characters; drop the rest
     suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-    return token[start : start + rel_end], suffix
+    return core, suffix
 
 
-def _trailing_symbol_bounds(core_candidate: str) -> tuple[int, str]:
-    """Return (core_end, raw_suffix), excluding trailing punctuation and underscores."""
+def _split_trailing_symbols(core_candidate: str) -> tuple[str, str]:
+    """Split off trailing symbols, keeping marks attached to letters or numbers."""
     suffix_start = len(core_candidate)
-    while suffix_start > 0:
-        ch = core_candidate[suffix_start - 1]
-        if ch.isalnum() or ch == "_":
+    for index in range(suffix_start - 1, -1, -1):
+        ch = core_candidate[index]
+        if ch.isalnum():
             break
-        suffix_start -= 1
-    core_end = suffix_start
-    while core_end > 0 and core_candidate[core_end - 1] == "_":
-        core_end -= 1
-    return core_end, core_candidate[suffix_start:]
+        if not unicodedata.category(ch).startswith("M"):
+            suffix_start = index
+            if ch == "_":
+                break
+    return core_candidate[:suffix_start].rstrip("_"), core_candidate[suffix_start:]
 
 
 # Punctuation that affects TTS prosody (pauses, intonation) — keep these.
