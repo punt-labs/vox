@@ -118,12 +118,29 @@ class TestWithFields:
             updated.text == '---\nnotify: "c"\nvoice: "charlie"\n---\n' + _BODY_FIELDS
         )
 
+    def test_raw_crlf_block_preserves_its_separators_and_body(self) -> None:
+        body = '# Notes\r\nvoice: "body"\r\n'
+        block = FrontmatterBlock('---\r\nvoice:\r\n  "fin"\r\n---\r\n' + body)
+        assert block.fields() == {"voice": "fin"}
+        assert block.field("voice") == "fin"
+        updated = block.with_fields({"voice": "charlie", "notify": "c"})
+        assert (
+            updated.text == '---\r\nvoice: "charlie"\r\nnotify: "c"\r\n---\r\n' + body
+        )
+
     def test_leaves_the_original_untouched(self) -> None:
         """Immutable: the edit is a new block, so a failure partway through a
         batch cannot leave a half-applied one behind."""
         held = FrontmatterBlock(_FENCED)
         held.with_fields({"voice": "roger"})
         assert held.field("voice") == "charlie"
+
+    @pytest.mark.parametrize("value", [r"abc\1", r"abc\q", r"C:\new", r"\g<0>", "a\\b"])
+    def test_replaces_a_field_with_its_value_taken_literally(self, value: str) -> None:
+        """A backslash is text, not a regex group reference or escape."""
+        updated = FrontmatterBlock(_FENCED).with_fields({"voice": value})
+        assert updated.field("voice") == value
+        assert updated.text == _FENCED.replace('"charlie"', f'"{value}"')
 
 
 class TestValidateValue:

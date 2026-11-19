@@ -12,15 +12,25 @@ if TYPE_CHECKING:
 
 __all__ = ["FrontmatterBlock"]
 
-_FIELD_VALUE = r':[^\S\r\n]*"?([^"\r\n]*)"?[^\S\r\n]*$'
-_FIELD_RE = re.compile(rf"^([\w-]+){_FIELD_VALUE}", re.MULTILINE)
+_LINE_END = r"(?=\r?$)"
+_INLINE_SPACE = r"[^\S\r\n]*"
+# Only an indented line can continue a legacy value; its grammar stays the same.
+_VALUE_CONTINUATION = rf"(?:\r?\n{_INLINE_SPACE})*\r?\n[ \t]{_INLINE_SPACE}(?=\S)"
+_FIELD_VALUE = (
+    rf":{_INLINE_SPACE}(?:{_VALUE_CONTINUATION})?"
+    rf'"?([^"\r\n]*)"?{_INLINE_SPACE}{_LINE_END}'
+)
+_FIELD_RE = re.compile(rf"^([\w.-]+){_FIELD_VALUE}", re.MULTILINE)
 # A fence is a `---` line; it only opens a block on the file's very first line,
 # and only then does a later one close it. Without the opening anchor a
 # markdown horizontal rule buried in prose reads as a closing fence, and an
 # inserted field lands above that rule instead of in the frontmatter.
 _FENCED_HEADER_RE = re.compile(
-    r"\A---[ \t]*\n.*?(?P<closing>^---[ \t]*$)", re.MULTILINE | re.DOTALL
+    r"\A---[ \t]*(?=\r?\n).*?(?P<separator>\r?\n)---[ \t]*(?=\r?$)",
+    re.MULTILINE | re.DOTALL,
 )
+# Each character that ends a quoted value early, and how a rejection names it.
+_UNQUOTABLE = (("\n", "newlines"), ("\r", "newlines"), ('"', "double-quotes"))
 
 
 @final
@@ -45,7 +55,7 @@ class FrontmatterBlock:
         # Without a fence pair, preserve legacy reads and in-place edits.
         # Otherwise, the tail owns the newline before the closing fence.
         fences = _FENCED_HEADER_RE.match(text)
-        boundary = len(text) if fences is None else fences.start("closing") - 1
+        boundary = len(text) if fences is None else fences.start("separator")
         self._parts = text[:boundary], text[boundary:]
         return self
 
@@ -66,12 +76,10 @@ class FrontmatterBlock:
         type, not a bare ``ValueError``, because a caller answering this has
         a real value it cannot store, not a malformed request to discard.
         """
-        if "\n" in value or "\r" in value:
-            msg = f"config values must not contain newlines, got: {value!r}"
-            raise ConfigValueError(msg)
-        if '"' in value:
-            msg = f"config values must not contain double-quotes, got: {value!r}"
-            raise ConfigValueError(msg)
+        for char, kind in _UNQUOTABLE:
+            if char in value:
+                msg = f"config values must not contain {kind}, got: {value!r}"
+                raise ConfigValueError(msg)
 
     @property
     def text(self) -> str:
@@ -91,7 +99,7 @@ class FrontmatterBlock:
         caller reads it as "unset" and falls back to its own default.
         """
         header, _ = self._parts
-        return self._parse(header).get(name)
+        return self._parse(header, self._field_re(name)).get(name)
 
     def accepts(self, keys: Iterable[str]) -> bool:
         """Return whether every key in *keys* has somewhere to go in this block.
@@ -112,25 +120,29 @@ class FrontmatterBlock:
         header, tail = self._parts
         for key, value in updates.items():
             line = f'{key}: "{value}"'
-            field_re = self._field_re(key)
-            if field_re.search(header):
-                header = field_re.sub(line, header)
-            elif tail:
-                header += f"\n{line}"
-            else:
-                msg = f"no closing fence to insert {line!r} above"
-                raise ValueError(msg)
+            # A replacement template expands backslashes; doubled, they stay text.
+            template = line.replace("\\", r"\\")
+            header, replaced = self._field_re(key).subn(template, header)
+            if not replaced:
+                header += self._insertion(line)
         return type(self)(header + tail)
 
+    def _insertion(self, line: str) -> str:
+        _, tail = self._parts
+        if not tail:
+            msg = f"no closing fence to insert {line!r} above"
+            raise ValueError(msg)
+        return tail[: tail.index("\n") + 1] + line
+
     @staticmethod
-    def _parse(header: str) -> dict[str, str]:
+    def _parse(header: str, pattern: re.Pattern[str] = _FIELD_RE) -> dict[str, str]:
         return {
             match.group(1): value
-            for match in _FIELD_RE.finditer(header)
+            for match in pattern.finditer(header)
             if (value := match.group(2).strip())
         }
 
     @staticmethod
     def _field_re(key: str) -> re.Pattern[str]:
         """Return the pattern matching *key*'s whole line, quoted or bare."""
-        return re.compile(rf"^{re.escape(key)}{_FIELD_VALUE}", re.MULTILINE)
+        return re.compile(rf"^({re.escape(key)}){_FIELD_VALUE}", re.MULTILINE)
