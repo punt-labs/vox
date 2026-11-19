@@ -178,17 +178,9 @@ class EspeakProvider(TTSProvider):
             wav_path = Path(tmp.name)
 
         try:
+            options = [self._binary, "-v", voice_cfg.name, "-s", str(wpm)]
             subprocess.run(
-                [
-                    self._binary,
-                    "-v",
-                    voice_cfg.name,
-                    "-s",
-                    str(wpm),
-                    "-w",
-                    str(wav_path),
-                    text,
-                ],
+                [*options, "-w", str(wav_path), "--", text],
                 check=True,
                 timeout=60,
             )
