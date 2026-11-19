@@ -18,6 +18,16 @@ def test_lock_path_is_the_hidden_sibling(tmp_path: Path) -> None:
     assert SiblingLock(host).path == tmp_path / ".CLAUDE.md.punt-import.lock"
 
 
+def test_explicit_lock_path_creates_only_the_local_lock(tmp_path: Path) -> None:
+    host = tmp_path / "config" / "vox.md"
+    local = tmp_path / "local" / "vox.md.lock"
+    lock = SiblingLock(host, lock_path=local)
+    with lock.held():
+        assert lock.path == local
+        assert local.is_file()
+        assert not host.parent.exists()
+
+
 def test_held_creates_the_lock_and_flocks_it_exclusively(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

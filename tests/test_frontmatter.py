@@ -31,9 +31,16 @@ def _concurrent_writer(
         Frontmatter(path).write_field(key, value)
 
 
-def test_concurrent_writers_preserve_both_fields(tmp_path: Path) -> None:
-    path = tmp_path / "vox.md"
+@pytest.mark.parametrize("symlinked", [False, True])
+def test_concurrent_writers_preserve_both_fields(
+    tmp_path: Path, symlinked: bool
+) -> None:
+    path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+    path.parent.mkdir(parents=True)
     path.write_text('---\nvoice: "initial"\n---\n')
+    second_path = tmp_path / "alias.md" if symlinked else path
+    if symlinked:
+        second_path.symlink_to(path)
     ctx = multiprocessing.get_context("spawn")
     first_read, second_read = ctx.Event(), ctx.Event()
     first_release, second_release = ctx.Event(), ctx.Event()
@@ -43,7 +50,7 @@ def test_concurrent_writers_preserve_both_fields(tmp_path: Path) -> None:
     )
     second = ctx.Process(
         target=_concurrent_writer,
-        args=(path, "voice", "fin", second_read, second_release),
+        args=(second_path, "voice", "fin", second_read, second_release),
     )
     first.start()
     try:
@@ -119,12 +126,7 @@ class TestRead:
 
 
 class TestWrite:
-    def test_new_config_is_private(self, tmp_path: Path) -> None:
-        path = tmp_path / "vox.local.md"
-        Frontmatter(path).write_field("vibe", "private mood")
-        assert path.stat().st_mode & 0o777 == 0o600
-
-    def test_read_only_config_is_not_replaced(self, tmp_path: Path) -> None:
+    def test_read_only_config_fails_the_write(self, tmp_path: Path) -> None:
         path = tmp_path / "vox.md"
         original = '---\nvoice: "initial"\n---\n'
         path.write_text(original)
@@ -138,20 +140,73 @@ class TestWrite:
         Frontmatter(path).write_fields({})
         assert Frontmatter(path).read_fields() == {}
 
-    def test_failed_replace_preserves_file_and_releases_lock(
+    def test_failed_write_releases_lock(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         path = tmp_path / "vox.md"
         original = '---\nvoice: "initial"\n---\n'
         path.write_text(original)
         with monkeypatch.context() as scoped:
-            scoped.setattr(Path, "replace", _boom)
+            scoped.setattr(Path, "write_text", _boom)
             with pytest.raises(PermissionError):
                 Frontmatter(path).write_field("provider", "polly")
         assert path.read_text() == original
-        assert list(tmp_path.glob("*.tmp")) == []
         Frontmatter(path).write_field("voice", "fin")
         assert Frontmatter(path).read_field("voice") == "fin"
+
+    @pytest.mark.parametrize("filename", ["vox.md", "vox.local.md"])
+    def test_config_lock_is_in_the_local_zone(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        directory = tmp_path / ".punt-labs" / "vox"
+        Frontmatter(directory / filename).write_field("voice", "fin")
+        assert list(directory.iterdir()) == [directory / filename]
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / f"{filename}.lock"
+        assert lock.is_file()
+
+    def test_global_config_lock_is_in_home_local_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        Frontmatter(path).write_field("voice", "fin")
+        assert (tmp_path / ".punt-labs/local/vox/vox.md.lock").is_file()
+
+    def test_custom_configs_use_distinct_home_locks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+        first = Frontmatter(tmp_path / "one" / "vox.md")
+        second = Frontmatter(tmp_path / "two" / "vox.md")
+        first.write_field("voice", "fin")
+        second.write_field("voice", "roger")
+        locks = tmp_path / "home/.punt-labs/vox/run/config-locks"
+        assert len(list(locks.iterdir())) == 2
+        assert list(first.path.parent.iterdir()) == [first.path]
+        assert list(second.path.parent.iterdir()) == [second.path]
+
+    def test_writable_file_in_read_only_directory(self, tmp_path: Path) -> None:
+        directory = tmp_path / "config"
+        directory.mkdir()
+        path = directory / "vox.md"
+        path.write_text('---\nvoice: "initial"\n---\n')
+        inode = path.stat().st_ino
+        directory.chmod(0o555)
+        try:
+            Frontmatter(path).write_field("voice", "fin")
+            assert path.stat().st_ino == inode
+            assert Frontmatter(path).read_field("voice") == "fin"
+        finally:
+            directory.chmod(0o755)
+
+    def test_new_config_honors_normal_creation_permissions(
+        self, tmp_path: Path
+    ) -> None:
+        control = tmp_path / "control"
+        control.write_text("")
+        path = tmp_path / "vox.md"
+        Frontmatter(path).write_field("voice", "fin")
+        assert path.stat().st_mode == control.stat().st_mode
 
     def test_lock_error_does_not_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

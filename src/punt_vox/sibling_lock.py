@@ -42,15 +42,17 @@ class SiblingLock:
     _ACQUIRE_ATTEMPTS = 50
     _ACQUIRE_INTERVAL_S = 0.1
 
-    def __new__(cls, host_path: Path) -> Self:
+    def __new__(cls, host_path: Path, *, lock_path: Path | None = None) -> Self:
         self = super().__new__(cls)
         self._host = host_path
-        self._path = host_path.parent / f".{host_path.name}.punt-import.lock"
+        self._path = (
+            lock_path or host_path.parent / f".{host_path.name}.punt-import.lock"
+        )
         return self
 
     @property
     def path(self) -> Path:
-        """Return the sibling lock file path."""
+        """Return the lock file path (a host sibling unless explicitly supplied)."""
         return self._path
 
     # Never followed, never truncated, private: a root process taking the
@@ -61,7 +63,7 @@ class SiblingLock:
     def held(self, *, dir_fd: int | None = None) -> Generator[None]:
         """Hold the exclusive lock for the duration of the ``with`` block.
 
-        With *dir_fd* (a descriptor for the host's directory), the lock opens
+        With *dir_fd* (a descriptor for the lock's directory), the lock opens
         relative to it, so a rename of that directory cannot move the lock.
         A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
         untouched, as is whatever it points at.

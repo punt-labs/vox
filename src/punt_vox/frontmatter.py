@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Self, final
 
-from punt_vox.atomic_file import AtomicFile
 from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.sibling_lock import SiblingLock
 
@@ -69,22 +69,31 @@ class Frontmatter:
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
-        with SiblingLock(self._path.resolve()).held():
+        with self._lock().held():
             self._write_fields(updates)
 
+    def _lock(self) -> SiblingLock:
+        """Share a local-state lock across every spelling of the config path."""
+        target = self._path.resolve()
+        directory = target.parent
+        if directory.name == "vox" and directory.parent.name == ".punt-labs":
+            lock_path = directory.parent / "local" / "vox" / f"{target.name}.lock"
+        else:
+            digest = hashlib.sha256(str(target).encode()).hexdigest()
+            lock_path = (
+                Path.home() / ".punt-labs" / "vox" / "run" / "config-locks" / digest
+            )
+        return SiblingLock(target, lock_path=lock_path)
+
     def _write_fields(self, updates: dict[str, str]) -> None:
-        """Read and atomically replace the config while holding its sibling lock."""
+        """Read and write the config while holding its local-state lock."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         if not self._path.exists():
-            AtomicFile(self._path).replace(
-                FrontmatterBlock.rendered(updates).text, mode=0o600
+            self._path.write_text(
+                FrontmatterBlock.rendered(updates).text, encoding="utf-8"
             )
             return
-
-        # Fail on read-only files before atomic rename can bypass write permissions.
-        with self._path.open("a", encoding="utf-8"):
-            pass
 
         # Read strictly on write: rebuilding an unreadable file from just
         # the updates would destroy the existing fields we need to preserve.
@@ -95,7 +104,7 @@ class Frontmatter:
             logger.warning("Malformed config (no closing ---): %s", self._path)
             written = FrontmatterBlock.rendered(updates)
 
-        AtomicFile(self._path).replace(written.text)
+        self._path.write_text(written.text, encoding="utf-8")
         self._log_write(updates)
 
     def _log_write(self, updates: dict[str, str]) -> None:
