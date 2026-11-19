@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
 from typer._click.exceptions import BadOptionUsage, UsageError
 from typer.core import TyperOption
@@ -13,13 +12,23 @@ if TYPE_CHECKING:
 
 
 @final
-@dataclass(frozen=True)
 class UsageParser:
     """Recover from malformed flag assignments only after the parser rejects them."""
+
+    __slots__ = ("_command", "_context", "_json_option")
 
     _command: Command
     _context: Context
     _json_option: Parameter
+
+    def __new__(
+        cls, command: Command, context: Context, json_option: Parameter
+    ) -> Self:
+        self = super().__new__(cls)
+        self._command = command
+        self._context = context
+        self._json_option = json_option
+        return self
 
     def parse(self, args: list[str]) -> tuple[bool, list[str]]:
         parser = self._command.make_parser(self._context)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import is_dataclass
 from unittest.mock import Mock
 
 import pytest
@@ -53,3 +54,8 @@ def test_parse_output_intent(
     original = args.copy()
     assert parser.parse(args) == (requested, rest)
     assert args == original
+
+
+def test_parser_is_a_slotted_behavioral_class(parser: UsageParser) -> None:
+    assert not is_dataclass(parser)
+    assert not hasattr(parser, "__dict__")
