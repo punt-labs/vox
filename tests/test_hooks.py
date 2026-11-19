@@ -131,7 +131,7 @@ class TestHandleStop:
 
 
 # ---------------------------------------------------------------------------
-# vibe authoritative-over-hooks boundary tests (regression: vox-73m5)
+# vibe authoritative-over-hooks boundary tests
 # ---------------------------------------------------------------------------
 
 
@@ -971,7 +971,7 @@ class TestConfigAbsentIsQuiet:
 
 
 # ---------------------------------------------------------------------------
-# _chime_via_voxd — spawn failure carries exception detail (vox-wqft)
+# _chime_via_voxd — spawn failure carries exception detail
 # ---------------------------------------------------------------------------
 
 

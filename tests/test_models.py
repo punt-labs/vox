@@ -161,9 +161,7 @@ def test_ad_hoc_model_table_composes_from_provider_models() -> None:
     assert table.resolve("m", "custom") == "m1"
 
 
-# ---------------------------------------------------------------------------
-# ModelTable.validate (the pair-check every callsite used to inline)
-# ---------------------------------------------------------------------------
+# ModelTable.validate checks provider/model pairs for both public surfaces.
 
 
 def test_validate_accepts_a_name_on_the_provider_list() -> None:

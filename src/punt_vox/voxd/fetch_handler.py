@@ -7,7 +7,7 @@ which streams ``fetch_begin`` -> ``chunk``* -> ``fetch_end`` (or an ``error``
 terminal on a mid-stream fault). A recording is addressed by a bare ``ref``; a
 music part by a catalog ``album`` id plus a bare ``part`` name, resolved inside the
 catalog-resolved album directory. A hostile ref/part is refused before the first
-byte and audit-logged; the old single-frame size ceiling is gone.
+byte and audit-logged.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ class FetchHandler(MessageHandler):
     _music: MusicLibrary
 
     def __new__(cls, *, store: RecordStore, music: MusicLibrary) -> Self:
+        """Create a fetch handler."""
         self = super().__new__(cls)
         self._store = store
         self._music = music

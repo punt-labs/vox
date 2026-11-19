@@ -3,7 +3,7 @@
 Every assertion is on the FULL rendered message (never a substring),
 because ``BaseException.__init__`` reinstates ``args`` after ``__new__``
 and a substring match will pass against the tuple repr. That is exactly
-how the earlier ``VoiceNotFoundError`` defect (bead vox-ll26) survived
+how the earlier ``VoiceNotFoundError`` defect (bead ) survived
 review, so this suite is deliberately strict.
 """
 

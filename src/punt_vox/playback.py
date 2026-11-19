@@ -40,6 +40,9 @@ def resolve_player() -> list[str]:
 
     Tries afplay (macOS native), then ffplay (cross-platform via ffmpeg).
     Raises FileNotFoundError if neither is available.
+
+    Raises:
+        FileNotFoundError: If no supported audio player is installed.
     """
     if shutil.which("afplay"):
         return ["afplay"]

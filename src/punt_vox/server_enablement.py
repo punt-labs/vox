@@ -3,8 +3,7 @@
 ``tool-enable-disable.md`` § 2.14: the Claude Code surface writes the *same*
 ``.punt-labs/vox/enabled`` marker the ``vox enable`` CLI writes -- one source of
 truth, two doors. The tool takes an ``action`` constrained to ``enable`` /
-``disable`` (never an ``enabled: bool`` -- that is the retired ``y|n`` vocabulary
-wearing a type). Enablement is repo file operations, not daemon-owned audio
+``disable``. Enablement is repo file operations, not daemon-owned audio
 state, so this tool acts directly on :class:`~punt_vox.enablement.RepoEnablement`
 rather than routing through ``voxd``.
 """
@@ -38,6 +37,7 @@ class EnablementTool:
     def __new__(
         cls, source: Callable[[], RepoEnablement] = RepoEnablement.for_cwd
     ) -> Self:
+        """Create an enablement tool."""
         self = super().__new__(cls)
         self._source = source
         return self

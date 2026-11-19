@@ -101,6 +101,11 @@ class EspeakProvider(TTSProvider):
     _voices: VoiceResolver[EspeakVoiceConfig]
 
     def __new__(cls) -> Self:
+        """Create an espeak provider.
+
+        Raises:
+            ValueError: If no supported espeak executable is installed.
+        """
         binary = _find_espeak_binary()
         if binary is None:
             msg = (
@@ -121,6 +126,7 @@ class EspeakProvider(TTSProvider):
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "espeak"
 
     @property
@@ -144,9 +150,11 @@ class EspeakProvider(TTSProvider):
 
     @property
     def supports_expressive_tags(self) -> bool:
+        """Return whether the selected model supports expressive tags."""
         return False
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
+        """Synthesize the request into its resolved output path."""
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 
@@ -208,7 +216,11 @@ class EspeakProvider(TTSProvider):
         )
 
     def resolve_voice(self, name: str, language: str | None = None) -> str:
-        """Validate and resolve a voice name to its canonical form."""
+        """Validate and resolve a voice name to its canonical form.
+
+        Raises:
+            ValueError: If the requested language conflicts with the voice language.
+        """
         cfg = self._voices.resolve(name)
         if language is not None and cfg.language != language:
             msg = (
@@ -258,7 +270,11 @@ class EspeakProvider(TTSProvider):
         return checks
 
     def get_default_voice(self, language: str) -> str:
-        """Get the default espeak-ng voice for a language."""
+        """Get the default espeak-ng voice for a language.
+
+        Raises:
+            ValueError: If no default voice is available for the language.
+        """
         key = language.lower()
         voice = _DEFAULT_VOICES.get(key)
         if voice is None:

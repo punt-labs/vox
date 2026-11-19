@@ -540,5 +540,5 @@ def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 @hook_app.command("_chime", hidden=True)
 def chime_cmd(signal: str) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Internal: play a chime (used by fire-and-forget detached process)."""
+    """Play a chime in a detached process."""
     _chime_via_voxd(signal)

@@ -33,6 +33,7 @@ class RecListHandler:
     _store: RecordStore
 
     def __new__(cls, store: RecordStore) -> Self:
+        """Create a rec list handler."""
         self = super().__new__(cls)
         self._store = store
         return self
@@ -70,6 +71,7 @@ class RecRemoveHandler:
     _store: RecordStore
 
     def __new__(cls, store: RecordStore) -> Self:
+        """Create a rec remove handler."""
         self = super().__new__(cls)
         self._store = store
         return self

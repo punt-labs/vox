@@ -35,6 +35,7 @@ class ToolOwnedFile:
     _base: Path
 
     def __new__(cls, path: Path, base: Path) -> Self:
+        """Create a tool owned file."""
         self = super().__new__(cls)
         self._path = path
         self._base = base

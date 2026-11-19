@@ -74,6 +74,7 @@ class StopVerb:
     _off_port: str
 
     def __new__(cls, system: LifecycleSystem, deadline_s: float) -> Self:
+        """Create a stop verb."""
         self = super().__new__(cls)
         self._system = system
         self._deadline_s = deadline_s

@@ -39,6 +39,7 @@ class WireReply:
     _request_id: str
 
     def __new__(cls, websocket: WebSocket, request_id: str) -> Self:
+        """Create a wire reply."""
         self = super().__new__(cls)
         self._websocket = websocket
         self._request_id = request_id

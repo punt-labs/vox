@@ -46,6 +46,10 @@ class ProviderModels:
         Raises ``ValueError`` when the provider has no user-selectable model or
         when *name* is neither a shorthand nor a full name. The caller weaves
         the provider into the message; this raises a bare reason.
+
+        Raises:
+            ValueError: If the model is unknown or the provider has no selectable
+                models.
         """
         if not self.full:
             msg = "provider has no user-selectable model"
@@ -79,6 +83,7 @@ class ModelTable:
     _table: dict[str, ProviderModels]
 
     def __new__(cls, table: dict[str, ProviderModels]) -> Self:
+        """Create a model table."""
         self = super().__new__(cls)
         self._table = dict(table)
         return self
@@ -103,14 +108,10 @@ class ModelTable:
         return self.for_provider(provider).full
 
     def validate(self, name: str, provider: str) -> None:
-        """Raise :class:`ModelNotAvailableError` when *name* is not on *provider*.
+        """Validate that the provider offers the named model.
 
-        The pair check that used to live inline in every caller. Ownership
-        belongs here because the list of accepted names lives here too --
-        splitting the "get list" and "check membership" across two modules
-        is the PY-OO-5 shape (state and its behavior in one class). Silent
-        on success so callers can trust the un-validated name they already
-        hold.
+        Raises:
+            ModelNotAvailableError: The provider does not offer the model.
         """
         available = self.available(provider)
         if not available or name not in available:
@@ -122,6 +123,10 @@ class ModelTable:
         Wraps :meth:`ProviderModels.resolve` so *provider* appears in the
         error message -- the caller sees ``provider 'openai' has no ...``
         rather than a bare ``no user-selectable model``.
+
+        Raises:
+            ValueError: If the model is unknown or the provider has no selectable
+                models.
         """
         try:
             return self.for_provider(provider).resolve(name)

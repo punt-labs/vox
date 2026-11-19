@@ -67,6 +67,7 @@ class MusicLibrary:
     def __new__(
         cls, catalog: Catalog, store: ProgramStore, root: Path, producer: Producer
     ) -> Self:
+        """Create a music library."""
         self = super().__new__(cls)
         self._catalog = catalog
         self._store = store
@@ -83,6 +84,9 @@ class MusicLibrary:
         this *before* acking, so a malformed or duplicate request never receives a
         ``generating`` ack it will only fail after. The returned reservation holds
         the name until its context exits (see :meth:`produce`).
+
+        Raises:
+            ValueError: If the requested album name is blank.
         """
         clean = prompt.strip()
         if not clean:
@@ -98,6 +102,10 @@ class MusicLibrary:
         validated and held by :meth:`reserve`; the caller owns releasing the
         reservation (its context manager) on every path, so a rejection here
         (``MusicNewBadPrompt``) frees the name and leaves the Catalog unchanged.
+
+        Raises:
+            ValueError: If generation is rejected or the album destination collides.
+            OSError: If the album or its audio cannot be written.
         """
         draft = ManifestDraft(
             album_id=self._catalog.mint_id(),
@@ -110,13 +118,17 @@ class MusicLibrary:
         return draft.album_id
 
     async def new(self, prompt: str, name: str | None) -> AlbumId:
-        """Author one track into a fresh album in one call: reserve, generate, file.
+        """Create one track into a fresh album in one call: reserve, generate, file.
 
         A convenience over :meth:`reserve` + :meth:`produce` for callers that do
         not interpose work -- a wire ``generating`` ack -- between reserving the
         name and generating. Rejection semantics are identical: an empty prompt, a
         duplicate curated name, or a generation rejection raises ``ValueError`` and
         leaves the Catalog unchanged, and the held name is always released.
+
+        Raises:
+            ValueError: If the prompt, reserved name, or generation request is rejected.
+            OSError: If the album or its audio cannot be written.
         """
         with self.reserve(prompt, name) as reservation:
             return await self.produce(reservation)
@@ -126,6 +138,10 @@ class MusicLibrary:
 
         The id is a catalog key, never a path; the per-part containment (a corrupt
         manifest entry can never stat outside the album dir) lives on ``AlbumContents``.
+
+        Raises:
+            ValueError: If the album is missing or a part path is unsafe.
+            OSError: If the manifest or part files cannot be read.
         """
         album = self._require(album_id)
         root = ContainmentRoot(self._root / album.locator, _PART_LABEL)
@@ -136,6 +152,10 @@ class MusicLibrary:
 
         Validates ``part_name`` inside the catalog-resolved album dir, requiring a
         non-symlink regular file (design F2, ``contained_regular_file``).
+
+        Raises:
+            ValueError: If the album or part is missing, or the path is unsafe.
+            OSError: If the part cannot be inspected.
         """
         album = self._require(album_id)
         album_dir = self._root / album.locator
@@ -147,6 +167,9 @@ class MusicLibrary:
         ``MusicRemove``: refused (``ValueError``) when the album's locator is in
         ``blocked`` (the active pool/selection, D-2); otherwise its directory and
         every part are removed and the catalog forgets it.
+
+        Raises:
+            ValueError: If the album is protected from deletion.
         """
         album = self._require(album_id)
         if album.locator in blocked:

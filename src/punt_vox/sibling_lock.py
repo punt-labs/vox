@@ -46,6 +46,7 @@ class SiblingLock:
     def __new__(
         cls, host_path: Path, *, lock_path: Path | None = None, mode: int = 0o600
     ) -> Self:
+        """Create a sibling lock."""
         self = super().__new__(cls)
         self._host = host_path
         self._mode = mode
@@ -74,6 +75,9 @@ class SiblingLock:
 
         Writable descriptors support exclusive locks on NFS. Readable shared
         locks fall back to read-only descriptors when write access is denied.
+
+        Raises:
+            OSError: If the lock cannot be opened or acquired safely.
         """
         if dir_fd is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)

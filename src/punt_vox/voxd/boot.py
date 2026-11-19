@@ -38,6 +38,7 @@ class DaemonBoot:
     _port: int
 
     def __new__(cls, host: str, port: int) -> Self:
+        """Create a daemon boot."""
         self = super().__new__(cls)
         self._host = host
         self._port = port

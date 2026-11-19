@@ -70,7 +70,7 @@ async def test_voice_schema_name_is_optional_string_with_no_enum() -> None:
 
 @pytest.mark.asyncio
 async def test_unmute_schema_does_not_expose_provider_or_model() -> None:
-    """Unit B stripped mic:unmute's provider/model overloads (vox-0rp9.4).
+    """Unit B stripped mic:unmute's provider/model overloads (.4).
 
     The dedicated mic:model/mic:provider tools own those writes now; a
     regression that reintroduces the overload params on unmute re-opens the

@@ -56,6 +56,7 @@ class ValuePolicy:
     _rule: str
 
     def __new__(cls, allowed: Callable[[str], bool], rule: str) -> Self:
+        """Create a value policy."""
         self = super().__new__(cls)
         self._allowed = allowed
         self._rule = rule

@@ -84,6 +84,7 @@ class CallAgentHost:
         call_id: str,
         turn_timer: TurnTimer,
     ) -> Self:
+        """Create a call agent host."""
         self = super().__new__(cls)
         self._agent = agent
         self._store = store

@@ -61,6 +61,9 @@ class PidfdProcess:
 
         Raises ``OSError`` (``ENOSYS``) when the kernel or the interpreter has
         no pidfd support, so the caller can fall back to the start-time handle.
+
+        Raises:
+            OSError: If the operating system cannot open a process handle.
         """
         if sys.platform != "linux":
             raise OSError(errno.ENOSYS, "pidfd_open needs Linux")
@@ -226,6 +229,7 @@ class DaemonProcess:
     _identity: IdentityReader
 
     def __new__(cls, clock: Clock, identity: IdentityReader) -> Self:
+        """Create a daemon process."""
         self = super().__new__(cls)
         self._clock = clock
         self._identity = identity
@@ -237,7 +241,11 @@ class DaemonProcess:
         return cls(SystemClock(), identity)
 
     def open(self, pid: int) -> ProcessHandle | None:
-        """Return a handle on *pid*; ``None`` when it is gone or is not voxd."""
+        """Return a handle on *pid*; ``None`` when it is gone or is not voxd.
+
+        Raises:
+            PortProbeError: If process or port ownership cannot be determined safely.
+        """
         if sys.platform == "linux":
             try:
                 return PidfdProcess.open(pid, self._identity)

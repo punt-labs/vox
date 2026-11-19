@@ -34,6 +34,11 @@ class VoxdBind:
     _address: ipaddress.IPv4Address | ipaddress.IPv6Address
 
     def __new__(cls, raw: str) -> Self:
+        """Create a voxd bind.
+
+        Raises:
+            PortProbeError: If raw is neither blank nor a valid IP address.
+        """
         self = super().__new__(cls)
         bind = raw.strip() or "127.0.0.1"
         try:

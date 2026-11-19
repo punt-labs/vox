@@ -43,6 +43,7 @@ class VoiceResolver[V]:
         ttl_seconds: int = 0,
         cooldown_seconds: int = 60,
     ) -> Self:
+        """Create a voice resolver."""
         self = super().__new__(cls)
         self._loader = loader
         self._default_key = default_key
@@ -58,6 +59,9 @@ class VoiceResolver[V]:
 
         strict=True (default): raise VoiceNotFoundError on miss.
         strict=False: log a warning, return the default voice.
+
+        Raises:
+            VoiceNotFoundError: If no voice matches the requested name or ID.
         """
         key = name.lower()
 

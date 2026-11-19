@@ -22,6 +22,7 @@ class ModelCommand:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a model command."""
         return super().__new__(cls)
 
     async def __call__(self, ctx: Ctx, name: str | None = None) -> CommandResult:
@@ -34,7 +35,7 @@ class ModelCommand:
         Name given: resolve ElevenLabs shorthand (``v3`` -> ``eleven_v3``,
         etc.) and write the full name to ``.punt-labs/vox/vox.md``. Unknown
         or modelless-provider names return an error result; the CLI adapter
-        exits with code 1. The cascade rule (vox-awm9) also fires: setting
+        exits with code 1. The cascade rule also fires: setting
         model writes voice = first from the current provider's roster in
         the same atomic ``write_fields`` call. A daemon fault on the roster
         fetch aborts the write and returns an error result.
@@ -42,12 +43,7 @@ class ModelCommand:
         cfg = ctx.store.read()
         provider = cfg.provider
         if not provider:
-            # ``vox model`` used to substitute ``"elevenlabs"`` for an unset
-            # provider and quietly resolve model names against it -- the CLI
-            # twin of the same substitution ``server_switches.py`` used to
-            # carry. Listing gets an honest empty answer; resolving a name
-            # against no provider is refused so a wrong-provider model
-            # never lands in ``vox.md``.
+            # Listing needs no provider; setting requires a valid model roster.
             if name is None:
                 listing: SwitchList = SwitchList(names=(), current=cfg.model)
                 return CommandResult(

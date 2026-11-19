@@ -1,11 +1,4 @@
-"""``vox call``'s Typer option aliases -- extracted so ``call.py`` stays under
-the module-size threshold as the CLI's own surface (``--context`` for the
-call agent's opening snapshot, ``--script`` for the dev/test path,
-``--trace-turns`` for the turn-timer trace) has grown. Pure declarative
-``Annotated`` aliases, no logic; mirrors how the option aliases for other
-multi-verb CLIs in this package (``cli_rec.py``) sit alongside their own
-commands rather than in a shared module.
-"""
+"""Declare Typer option aliases for the call command group."""
 
 from __future__ import annotations
 

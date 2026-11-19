@@ -1,6 +1,6 @@
 """Tests for punt_vox.voxd.record_store -- containment + atomic placement.
 
-The containment tests are the vox-zu39 (P1) security assertions: a wire client
+The containment tests are the  (P1) security assertions: a wire client
 supplies at most a bare name, and no name -- absolute, separated, traversing,
 empty, or NUL-bearing -- can cause a write outside the daemon-owned root.
 """
@@ -41,7 +41,7 @@ _HOSTILE_NAMES = [
 
 
 class TestContainment:
-    """No client-supplied name escapes the recordings root (vox-zu39, P1)."""
+    """No client-supplied name escapes the recordings root (, P1)."""
 
     def test_wire_absolute_path_rejected(self, store: RecordStore) -> None:
         with pytest.raises(ValueError, match="absolute"):

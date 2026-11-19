@@ -53,6 +53,7 @@ class ProviderUnavailableError(ValueError):
     _detail: str
 
     def __new__(cls, provider: str, detail: str) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, provider, detail)
         self._provider_name = provider
         self._detail = detail
@@ -96,6 +97,7 @@ class ProviderAuthError(ValueError):
     _status_code: int | None
 
     def __new__(cls, provider: str, status_code: int | None = None) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, provider, status_code)
         self._provider_name = provider
         self._status_code = status_code
@@ -153,6 +155,7 @@ class UnknownProviderError(ValueError):
     _available: tuple[str, ...]
 
     def __new__(cls, provider: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, provider, available)
         self._provider_name = provider
         # Tuple-copy so a caller mutating the original list after

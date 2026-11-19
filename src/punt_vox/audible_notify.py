@@ -1,19 +1,7 @@
-"""Establish an audible notify level as part of the ``enable`` transition.
+"""Establish audible notifications when enabling a repo.
 
-In the enablement model, silence is ``disable`` (no marker, hook gate closed),
-not ``notify=n``. So an *enabled* repo must be audible: both ``vox notify
-normal`` and ``vox notify continuous`` are audible levels, and ``enable`` is the
-replacement for the retired ``/vox y`` (voice on). A fresh repo has no ``notify``
-field, and :class:`~punt_vox.config.VoxConfig` defaults an absent-or-invalid
-value to the silent ``"n"`` -- a leftover of the old model where ``n`` was a
-level. Without this step, ``enable`` would pass the marker gate yet leave every
-notify-gated hook skipping, so a freshly-enabled repo would be audibly identical
-to a disabled one.
-
-:class:`AudibleNotify` writes the audible default through the config layer,
-never a raw ``vox.md`` write, and preserves a level the user already chose: a
-re-run of ``enable`` (the upgrade path) over a ``continuous`` repo leaves it
-continuous.
+Enablement opens the hook gate, so absent or silent notify values become normal
+notifications. Preserve an existing normal or continuous selection.
 """
 
 from __future__ import annotations
@@ -31,8 +19,7 @@ __all__ = ["AudibleNotify"]
 # these are preserved on enable; an absent field or the silent "n" becomes "y".
 _AUDIBLE_LEVELS: frozenset[str] = frozenset({"y", "c"})
 
-# The audible default enable establishes -- normal notifications, the retired
-# ``/vox y`` behavior (task completion + permission prompts).
+# Enable defaults to task-completion and permission-prompt notifications.
 _DEFAULT_LEVEL = "y"
 
 
@@ -45,6 +32,7 @@ class AudibleNotify:
     _store: ConfigStore
 
     def __new__(cls, config_dir: Path) -> Self:
+        """Create an audible notify."""
         self = super().__new__(cls)
         self._store = ConfigStore(config_dir)
         return self

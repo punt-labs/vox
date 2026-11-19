@@ -3,7 +3,7 @@
 Each handler holds its cache operation as an injected collaborator, so a test
 drives it with a lambda that returns a canned ``CacheInfo`` / count or raises an
 ``OSError`` -- no daemon, no real cache directory. A fake WebSocket captures the
-reply frames. The regression guard for vox-suvs lives at the CLI layer
+reply frames. Cache routing is covered at the CLI layer
 (``tests/test_cli.py``); here we prove the wire contract: the reply mirrors the
 cache functions' return shapes, and a filesystem fault is an id-stamped
 operational fault (ERROR "operation failed"), never a silent success or a raise

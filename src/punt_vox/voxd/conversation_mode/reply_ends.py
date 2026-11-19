@@ -17,4 +17,5 @@ class ReplyEnds:
     """The reply finished without interruption; signal ready-to-listen (NFR-6)."""
 
     def apply(self, state: CallState) -> None:
+        """Apply the reply ends transition to the call state."""
         state.reply_ends()

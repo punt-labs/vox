@@ -37,7 +37,11 @@ class RadioSpec:
         return RadioControl(spec=self, current=current)
 
     def code_for_index(self, index: int) -> str:
-        """Return the code a clicked ``index`` selects, or raise if out of range."""
+        """Return the code a clicked ``index`` selects, or raise if out of range.
+
+        Raises:
+            ValueError: If index is outside the available choices.
+        """
         if not 0 <= index < len(self.codes):
             msg = f"{self.element_id}: index {index} out of range for {self.codes!r}"
             raise ValueError(msg)

@@ -66,12 +66,12 @@ def _parse_xdg_user_dir(key: str) -> Path | None:
 
 
 def _resolve_music_dir() -> Path:
-    """Resolve the platform-standard music directory.
+    r"""Resolve the platform-standard music directory.
 
     Linux:   $XDG_MUSIC_DIR from ~/.config/user-dirs.dirs,
              fallback ~/Music
     macOS:   ~/Music
-    Windows: %USERPROFILE%\\Music
+    Windows: %USERPROFILE%\Music
     """
     if sys.platform == "linux":
         xdg = _parse_xdg_user_dir("XDG_MUSIC_DIR")

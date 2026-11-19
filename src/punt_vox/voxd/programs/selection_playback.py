@@ -33,6 +33,7 @@ class SelectionPlayback:
     _position: int | None
 
     def __new__(cls, selection: Selection, policy: PlaybackPolicy) -> Self:
+        """Create a selection playback."""
         self = super().__new__(cls)
         self._selection = selection
         self._policy = policy
@@ -74,6 +75,9 @@ class SelectionPlayback:
         replays its sole member. An empty selection is a caught boundary -- the
         cursor holds ``None`` and rotate is a no-op, never a crash (mirrors the
         empty-pool guard).
+
+        Raises:
+            AssertionError: If the rotation policy returns an invalid result.
         """
         pool = self._selection.playable_pool()
         if not pool:

@@ -42,13 +42,18 @@ class PiRpcRecord:
     _fields: dict[str, object]
 
     def __new__(cls, fields: dict[str, object]) -> Self:
+        """Create a pi rpc record."""
         self = super().__new__(cls)
         self._fields = fields
         return self
 
     @classmethod
     def parse(cls, line: bytes) -> Self:
-        """Parse one stdout line, raising :class:`MalformedRecordError` if it is not."""
+        """Parse one stdout line, raising :class:`MalformedRecordError` if it is not.
+
+        Raises:
+            MalformedRecordError: If the record is not valid JSON or is not an object.
+        """
         try:
             decoded: object = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -61,6 +66,7 @@ class PiRpcRecord:
 
     @property
     def kind(self) -> str:
+        """Return the RPC record type, or an empty string if absent or invalid."""
         kind = self._fields.get("type")
         return kind if isinstance(kind, str) else ""
 
@@ -135,6 +141,7 @@ class PiRpcRecord:
 
     @property
     def tool_name(self) -> str:
+        """Return the tool name, or an empty string when no name is present."""
         return self._text(self._fields.get("toolName"))
 
     @property

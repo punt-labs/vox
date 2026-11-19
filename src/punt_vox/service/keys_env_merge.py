@@ -43,6 +43,7 @@ class KeysEnvMerge:
     _notices: list[KeyNotice]
 
     def __new__(cls, stored: Mapping[str, str], env: Mapping[str, str]) -> Self:
+        """Create a keys env merge."""
         self = super().__new__(cls)
         self._merged = {key: value for key, value in stored.items() if value}
         self._notices = []

@@ -69,6 +69,7 @@ class MusicPlayer:
     _latest_notice: PlaybackNotice
 
     def __new__(cls, service: PlayerService, publisher: ScenePublisher) -> Self:
+        """Create a music player."""
         self = super().__new__(cls)
         self._service = service
         self._publisher = publisher
@@ -94,19 +95,10 @@ class MusicPlayer:
         return AlbumListScene.FRAME_ID
 
     async def install(self) -> None:
-        """Project the scene from cached track counts and install it at once.
+        """Install a scene projected from cached counts and schedule a refresh.
 
-        Differs from :meth:`notify_changed` in intent, not content: a menu
-        click or fresh hub connection means "show this", so it installs
-        (the whole scene) rather than merely refreshing. Async only for
-        :class:`~punt_vox.voxd.music_player.presenter_ports.ScenePresenter`;
-        nothing here awaits -- this runs on the event loop that holds the hub
-        connection's session lease, so it must never await the bounded-but-up-
-        to-5s :meth:`~punt_vox.voxd.music_player.track_count_cache.
-        TrackCountCache.serialized_refresh` before showing anything, as it
-        used to. Instead it installs from whatever :attr:`_cache` already
-        holds and hands the live refresh to :meth:`_schedule_track_count_
-        refresh`, the same background path :meth:`notify_changed` uses.
+        Do not await disk refresh on the hub listener's event loop: doing so could
+        starve its lease keepalive. The background refresh repaints when counts land.
         """
         albums = self._service.catalog_albums()
         notice = PlaybackNotice.silent()

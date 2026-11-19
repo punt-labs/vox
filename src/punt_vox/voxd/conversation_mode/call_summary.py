@@ -66,6 +66,11 @@ class CallSummaryStore:
     _keep: int
 
     def __new__(cls, root: Path, *, keep: int = KEEP_SUMMARIES) -> Self:
+        """Create a call summary store.
+
+        Raises:
+            ValueError: If keep is less than one.
+        """
         if keep < 1:
             msg = f"must keep at least one summary, not {keep}"
             raise ValueError(msg)
@@ -85,6 +90,7 @@ class CallSummaryStore:
         return f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
 
     def path_for(self, call_id: str) -> Path:
+        """Return the summary path for the supplied call identifier."""
         return self._root / f"{call_id}{_SUFFIX}"
 
     def write(self, call_id: str, body: str) -> Path:

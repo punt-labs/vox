@@ -19,6 +19,7 @@ class OutputFormatter:
     _quiet: bool
 
     def __new__(cls, *, json_output: bool = False, quiet: bool = False) -> Self:
+        """Create an output formatter."""
         self = super().__new__(cls)
         self._json = json_output
         self._quiet = quiet

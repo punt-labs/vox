@@ -51,6 +51,7 @@ class ChimeDedup:
     _seen: dict[str, float]
 
     def __new__(cls, window: float = _DEDUP_WINDOW_SECONDS) -> Self:
+        """Create a chime dedup."""
         self = super().__new__(cls)
         self._window = window
         self._seen = {}
@@ -104,9 +105,8 @@ class OnceDedup:
     same broadcast text, and the user should hear the announcement
     exactly once. External tools shelling out use ``vox say``.
 
-    Unlike the legacy always-on ``AudioDedup``, this class is only
-    invoked when the caller explicitly opts in. Requests without an
-    ``once`` parameter play every time, even if identical to a recent
+    This class is invoked only when the caller explicitly opts in. Requests
+    without an ``once`` parameter play every time, even if identical to a recent
     one. This preserves the property that ``vox say "hello"`` twice
     in quick succession on the CLI produces two audible plays.
 
@@ -130,6 +130,7 @@ class OnceDedup:
     _seen: dict[str, tuple[float, float]]
 
     def __new__(cls) -> Self:
+        """Create an once dedup."""
         self = super().__new__(cls)
         # key -> (inserted_monotonic, inserted_wall_clock)
         self._seen = {}

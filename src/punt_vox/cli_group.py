@@ -48,7 +48,11 @@ class VoxGroup(TyperGroup):
     def resolve_command(
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, Command | None, list[str]]:
-        """Reject an empty group before Typer renders its implicit help."""
+        """Reject an empty group before Typer renders its implicit help.
+
+        Raises:
+            UsageError: If JSON output is requested without a subcommand.
+        """
         name, command, rest = super().resolve_command(ctx, args)
         if (
             self._json_requested

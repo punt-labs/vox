@@ -96,6 +96,7 @@ class ProgramState:
         attempts: int,
         last_error: Reason | None,
     ) -> Self:
+        """Create a program state."""
         self = super().__new__(cls)
         self._format = fmt
         self._pool = pool
@@ -132,6 +133,9 @@ class ProgramState:
 
         The Z precondition ``#diskPool <= poolSize`` is enforced by S1 in the
         constructor, which raises ``ValueError`` on an over-full disk pool.
+
+        Raises:
+            ValueError: If the saved pool exceeds the maximum pool size.
         """
         return cls(
             fmt=fmt,

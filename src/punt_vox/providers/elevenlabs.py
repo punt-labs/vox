@@ -80,6 +80,7 @@ class ElevenLabsProvider(TTSProvider):
         # The test seam: absent, the real SDK client is built on first use.
         client: ElevenLabs | None = None,
     ) -> Self:
+        """Create an eleven labs provider."""
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = ElevenLabsClient(sdk=client)
@@ -93,10 +94,12 @@ class ElevenLabsProvider(TTSProvider):
 
     @property
     def name(self) -> str:
+        """Return the provider identifier."""
         return "elevenlabs"
 
     @property
     def default_voice(self) -> str:
+        """Return the provider's default voice name."""
         return "matilda"
 
     # Models that interpret bracket-style expressive tags natively.
@@ -110,6 +113,7 @@ class ElevenLabsProvider(TTSProvider):
 
     @property
     def supports_expressive_tags(self) -> bool:
+        """Return whether the selected model supports expressive tags."""
         return self._model in self._EXPRESSIVE_MODELS
 
     @classmethod
@@ -128,6 +132,7 @@ class ElevenLabsProvider(TTSProvider):
         return effective in cls._EXPRESSIVE_MODELS
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:
+        """Synthesize the request into its resolved output path."""
         output_path = OutputResolver.resolve(request)
         return self.synthesize(request, output_path)
 

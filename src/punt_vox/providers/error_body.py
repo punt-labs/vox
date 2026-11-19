@@ -28,6 +28,7 @@ class ErrorBody:
     _detail: object
 
     def __new__(cls, body: object) -> Self:
+        """Create an error body."""
         self = super().__new__(cls)
         match body:
             case {"detail": object() as detail}:

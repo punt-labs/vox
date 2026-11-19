@@ -51,6 +51,9 @@ class PromptSet:
         fail ``.get`` with an ``AttributeError``. The parameter is ``object`` so
         this owns the type check at the wire boundary rather than trusting the
         caller's ``json.loads`` result.
+
+        Raises:
+            ValueError: If the payload is not a mapping or the base prompt is not text.
         """
         if not isinstance(msg, Mapping):
             detail = "pool must be a JSON object with base_prompt and variations"
@@ -102,6 +105,10 @@ class PromptSet:
         Raise ``ValueError`` on any shape the agent got wrong -- an empty base, a
         wrong variation count, or a blank variation -- so the tool surfaces a
         clear message rather than silently generating a degenerate pool.
+
+        Raises:
+            ValueError: If the base or variants are empty, or the variant count is
+                wrong.
         """
         clean_base = base.strip()
         if not clean_base:
@@ -124,6 +131,9 @@ class PromptSet:
         :meth:`fallback` because ``new`` sends the prompt **untouched** -- no
         ``". instrumental, loopable."`` decoration -- while still being the same
         :class:`PromptSet` shape ``on`` produces, so both verbs author one object.
+
+        Raises:
+            ValueError: If prompt is blank.
         """
         clean = prompt.strip()
         if not clean:

@@ -38,6 +38,7 @@ class NameReservations:
     _taken: Callable[[], Container[str]]
 
     def __new__(cls, taken: Callable[[], Container[str]]) -> Self:
+        """Create a name reservations."""
         self = super().__new__(cls)
         self._held = set()
         self._taken = taken
@@ -50,6 +51,9 @@ class NameReservations:
         overlapping same-name ``new`` calls cannot both pass this duplicate check
         while neither is yet catalogued. Raises ``ValueError`` when the curated
         name is already catalogued or held by another in-flight ``new``.
+
+        Raises:
+            ValueError: If the requested name is already taken or reserved.
         """
         name = tags.name
         if name is not None and (name in self._taken() or name in self._held):
@@ -92,6 +96,7 @@ class AlbumReservation:
     def __new__(
         cls, prompt: str, tags: AlbumTags, release: Callable[[str | None], None]
     ) -> Self:
+        """Create an album reservation."""
         self = super().__new__(cls)
         self._prompt = prompt
         self._tags = tags

@@ -70,6 +70,9 @@ def estimate_speech_duration_s(text: str, *, wpm: int = _DEFAULT_WPM) -> float:
     zero divides by zero, and a negative one is not a speaking pace at all;
     both are validated here rather than producing zero or silently wrong
     output (PY-EH-1).
+
+    Raises:
+        ValueError: If wpm is not positive.
     """
     if wpm <= 0:
         msg = f"wpm must be positive, got {wpm}"

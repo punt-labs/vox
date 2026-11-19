@@ -2,8 +2,8 @@
 
 Two stacked slots, always both present: the **album name** (prominent, a markdown
 heading) and the **position line** (the ``N of M`` slot in the pool). There is no
-song-title line: the per-track title carried the generation prompt, not a song
-name, so it read as a wall of text next to the position and told the user nothing
+song-title line: the per-track title carries the generation prompt, not a song
+name, so it would read as a wall of text next to the position
 -- the album name above already names what is playing. There is no progress bar
 either: a live one would force voxd to push mpv's ``time-pos`` on a constant timer
 for a sliver of information, so the block carries only what is static per track.
@@ -64,6 +64,7 @@ class MarkdownText:
     _text: str
 
     def __new__(cls, raw: str) -> Self:
+        """Create a markdown text."""
         self = super().__new__(cls)
         self._text = cls._escaped(raw)
         return self

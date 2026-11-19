@@ -55,6 +55,7 @@ class ProviderStatusHandler:
     _credentials: ProviderCredentials
 
     def __new__(cls, credentials: ProviderCredentials | None = None) -> Self:
+        """Create a provider status handler."""
         self = super().__new__(cls)
         self._credentials = (
             credentials if credentials is not None else ProviderCredentials()

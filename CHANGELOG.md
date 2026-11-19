@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Google-style public Python API documentation, comment and docstring lint
+  gates, and a generated API reference verified during local checks and CI.
+  Audited, documentation-only OO baseline migration updates module-size counts
+  without changing executable code or any other OO metric.
+
 ### Fixed
 
 - **Unreadable `vox say --from` inputs report a usage error.** Directory paths

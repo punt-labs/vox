@@ -31,6 +31,7 @@ class ModeTransitionLog:
     _previous: str | None
 
     def __new__(cls, source: PlaybackSource) -> Self:
+        """Create a mode transition log."""
         self = super().__new__(cls)
         self._previous = cls._label(source)
         return self

@@ -17,6 +17,7 @@ class SegmentFile:
     _path: Path
 
     def __new__(cls, path: Path) -> Self:
+        """Create a reader for a JSON segments file."""
         self = super().__new__(cls)
         self._path = path
         return self

@@ -201,7 +201,7 @@ class TestElevenLabsProviderSynthesize:
         the key was PRESENT but rejected. Without this translation the
         SDK's ``ApiError`` falls through to speech_handlers' broad
         ``except Exception`` and gets laundered to ``"operation
-        failed"`` -- the exact defect vox-w3f8 exists to close.
+        failed"`` -- the exact defect  exists to close.
         """
         from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 
@@ -230,16 +230,9 @@ class TestElevenLabsProviderSynthesize:
     ) -> None:
         """A rate-limit or upstream 500 is NOT an auth problem.
 
-        It leaves as a ProviderStatusError -- not a ValueError, so it stays on
-        the fault path the SDK's ApiError took. The auth translation is
-        401-only. A 429/500/400 is a genuine SDK or
-        upstream fault and belongs on the fault() path (rendered as
-        ``"operation failed"`` to the client with the detail in the
-        log) -- not on the reject() path with a caller-facing message.
-        Widening the translation would misclassify vendor errors as
-        credential problems, which sends the operator setting keys
-        they already had (the same mistake AwsRequirement's swallowed
-        exception used to make).
+        Only authentication refusals belong on the reject path. Other answered SDK
+        failures remain ProviderStatusError faults, logged with detail rather than
+        presented as credential problems.
         """
         from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
 

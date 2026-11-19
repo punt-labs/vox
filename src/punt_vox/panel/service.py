@@ -82,6 +82,7 @@ class VoxPanelService:
     )
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
+        """Create a vox panel service."""
         self = super().__new__(cls)
         self._client = client
         self._store = store

@@ -47,6 +47,7 @@ class VoicePreview:
     def __new__(
         cls, client: PanelDaemonClient, store: SettingsStore, logger: logging.Logger
     ) -> Self:
+        """Create a voice preview."""
         self = super().__new__(cls)
         self._client = client
         self._store = store

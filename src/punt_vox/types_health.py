@@ -20,8 +20,7 @@ class HealthStatus:
     diagnostic the daemon reports, relativized so it carries no host path.
 
     Deliberately absent: ``provider``. The daemon has no provider of its
-    own; per-provider readiness moves to the ``provider_status`` op
-    (design §3.6, delivered by PR 3). Absent fields on the wire fall
+    own; per-provider readiness is exposed by ``provider_status``. Absent fields fall
     back to benign defaults rather than raising: a health read is
     best-effort observability, and every consumer already treats a
     missing field as "not reported".

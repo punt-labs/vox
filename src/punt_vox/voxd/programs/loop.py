@@ -75,6 +75,7 @@ class ProgramLoop:
         health: PlaybackHealth,
         suspension: PlaybackSuspension,
     ) -> Self:
+        """Create a program loop."""
         self = super().__new__(cls)
         self._channel = channel
         self._player = player

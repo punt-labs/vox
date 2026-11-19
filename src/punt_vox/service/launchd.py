@@ -41,6 +41,7 @@ class LaunchdBackend:
     _agent: LaunchctlAgent
 
     def __new__(cls, voxd_exec_args_fn: Callable[[], list[str]]) -> Self:
+        """Create a launchd backend."""
         self = super().__new__(cls)
         self._plist = VoxdPlist(_LABEL, _LAUNCHD_PLIST, voxd_exec_args_fn)
         self._agent = LaunchctlAgent(_LABEL, str(_LAUNCHD_PLIST))
@@ -88,17 +89,29 @@ class LaunchdBackend:
         """Boot the job out; raise ``BackendCommandError`` if that fails.
 
         A job not yet confirmed gone is left to ``stop``'s settle loop.
+
+        Raises:
+            BackendCommandError: If the service cannot be booted out.
         """
         self._drive("bootout", self._agent.bootout)
 
     def request_start(self) -> None:
-        """Bootstrap and kickstart the job; raise ``BackendCommandError``."""
+        """Bootstrap and kickstart the job; raise ``BackendCommandError``.
+
+        Raises:
+            BackendCommandError: If the service cannot be bootstrapped or started.
+        """
         self._drive("bootstrap", self._agent.start)
 
     # -- install / uninstall ----------------------------------------------
 
     def install(self, user: str) -> None:
-        """Write the plist and bring the job up.  No sudo required."""
+        """Write the plist and bring the job up.  No sudo required.
+
+        Raises:
+            BackendCommandError: If the service backend command or its response is
+                invalid.
+        """
         del user  # a LaunchAgent always runs as the logged-in session user
         try:
             self._plist.write()

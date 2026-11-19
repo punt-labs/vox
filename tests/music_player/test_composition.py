@@ -337,11 +337,9 @@ async def test_run_installs_the_initial_scene_then_patches_it_on_change(
 async def test_a_change_that_alters_nothing_costs_nothing_on_the_wire(
     album_of: AlbumFactory,
 ) -> None:
-    # The change signal fires on every generated part and every catalog touch, and
-    # many of those alter nothing the widget shows. Each used to be a full tree
-    # re-install; now it is zero bytes. on_disk=0 matches the track-count
-    # cache's own pre-refresh default, so install()'s background correction
-    # refresh has nothing to correct here.
+    # Change signals may leave the visible scene unchanged, in which case nothing should
+    # be sent. on_disk=0 matches the cache's pre-refresh default, so the background
+    # refresh has nothing to correct.
     service = _FakeService(
         ProgramStatus.idle(), (album_of("aa11bb", name="Mix", on_disk=0),)
     )

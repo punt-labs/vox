@@ -60,6 +60,7 @@ class OrphanReaper:
     _socket: Path
 
     def __new__(cls, socket_path: Path) -> Self:
+        """Create an orphan reaper."""
         self = super().__new__(cls)
         self._socket = socket_path
         return self

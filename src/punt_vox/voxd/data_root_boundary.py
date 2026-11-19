@@ -40,6 +40,7 @@ class DataRootRelative:
     _path: Path
 
     def __new__(cls, label: str, path: Path) -> Self:
+        """Create a data root relative."""
         self = super().__new__(cls)
         self._label = label
         self._path = path

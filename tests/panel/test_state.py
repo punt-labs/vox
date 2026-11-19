@@ -99,10 +99,8 @@ class TestRead:
     def test_roster_fetch_skipped_when_provider_unset(self) -> None:
         """An unset provider yields an empty roster; no daemon fetch is made.
 
-        State is the sole authority on which provider voxd runs, so an unset
-        ``cfg.provider`` cannot ask the daemon which one to fetch a roster
-        for -- the roster is empty until a provider is chosen. Previously
-        this deferred to the daemon's guessed default.
+        An unset provider yields an empty roster until a provider is chosen; the
+        daemon is not asked to guess a provider.
         """
         client = _FakeClient(["aria"])
         state = PanelState.read(client, _FakeStore(_config()))
@@ -112,13 +110,9 @@ class TestRead:
     def test_whitespace_provider_is_normalised_to_none(self) -> None:
         """A hand-edited ``provider: "   "`` becomes ``None`` on the panel state.
 
-        Without normalisation the truthy whitespace string would satisfy
-        the ``if provider:`` guard in ``PanelState.read``, bypass
-        ``SessionSpec`` entirely, and reach the daemon on the roster wire
-        as ``client.voices("   ")`` -- the daemon-side guessing this bead
-        exists to remove. The strip at the boundary means downstream sites
-        trust one invariant: ``state.provider`` is either a non-empty
-        stripped string or ``None``.
+        Stripping at the boundary ensures state.provider is either a nonempty
+        stripped string or None, so whitespace cannot bypass SessionSpec or reach
+        the voice-roster request.
         """
         client = _FakeClient(["aria"])
         state = PanelState.read(client, _FakeStore(_config(provider="   ")))
@@ -222,11 +216,9 @@ class TestWithField:
     def test_with_provider_stores_new_args_for_the_provider_already_held(self) -> None:
         """Re-asserting the held provider still stores the args handed with it.
 
-        A same-value guard used to short-circuit to ``self`` here, silently
-        discarding a roster, model, and voice the caller had just fetched
-        and answering with the stale ones instead. Whether a re-publish is
-        a no-op is the caller's call -- it knows whether anything else
-        moved; a setter looking at one field does not.
+        A provider setter must preserve a freshly fetched roster, model, and voice
+        even when the provider name is unchanged. Only the caller can decide whether
+        the complete update is a no-op.
         """
         before = PanelState(
             notify="y",

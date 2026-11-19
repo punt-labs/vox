@@ -51,7 +51,9 @@ class AudioProviderId(StrEnum):
 class AudioProvider(Protocol):
     """Provider that synthesizes audio from text."""
 
-    def generate_audio(self, request: AudioRequest) -> AudioResult: ...
+    def generate_audio(self, request: AudioRequest) -> AudioResult:
+        """Synthesize the request into its resolved output path."""
+        ...
 
 
 # ISO 639-1 codes for common language-learning languages.
@@ -107,8 +109,10 @@ class HealthCheck:
 
 
 class MergeStrategy(Enum):
-    """Controls whether batch operations produce one file per input or one
-    merged file for the entire batch."""
+    """Controls whether batch operations produce one file per input or one.
+
+    merged file for the entire batch.
+    """
 
     ONE_FILE_PER_INPUT = "separate"
     ONE_FILE_PER_BATCH = "single"

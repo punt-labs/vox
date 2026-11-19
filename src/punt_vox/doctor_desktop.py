@@ -32,6 +32,7 @@ class DesktopCheck:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a desktop check."""
         return super().__new__(cls)
 
     def run(self) -> list[CheckResult]:

@@ -90,6 +90,7 @@ class ClientRecordGateway:
     _client: VoxClientSync
 
     def __new__(cls, client: VoxClientSync) -> Self:
+        """Create a client record gateway."""
         self = super().__new__(cls)
         self._client = client
         return self
@@ -180,6 +181,7 @@ class RecCli:
         gateway_factory: Callable[[], RecordGateway] | None = None,
         flags: OutputFlags | None = None,
     ) -> Self:
+        """Create a rec cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
@@ -342,18 +344,9 @@ class RecCli:
         return spec
 
     def _fill_from_state(self, spec: SynthesisSpec) -> SynthesisSpec:
-        """Fill unset fields from ``vox.md`` through :class:`SessionSpec`.
+        """Fill unset synthesis fields from repo state through SessionSpec.
 
-        The recording surface twin of :func:`punt_vox.__main__._fill_from_state`.
-        ``vox rec new`` used to build a ``SynthesisSpec`` directly, leaving
-        the wire ``provider`` empty when ``--provider`` was absent and letting
-        the daemon guess -- the very substitution this bead exists to prevent
-        (design §3.7's five-surface enumeration). Routing through
-        :class:`SessionSpec` makes state the sole authority on provider and
-        model for recordings too. An unconfigured provider is the F1
-        refusal; a hand-edited provider/model pair is F7. Both exit 1
-        cleanly through :meth:`_fail`, matching the CLI's other
-        gateway-error path.
+        An unconfigured provider or incompatible model exits with code 1.
         """
         try:
             return SessionSpec.for_repo().fill(spec)

@@ -42,6 +42,7 @@ class SystemdUnit:
     _exec_args_fn: Callable[[], list[str]]
 
     def __new__(cls, path: Path, exec_args_fn: Callable[[], list[str]]) -> Self:
+        """Create a systemd unit."""
         self = super().__new__(cls)
         self._path = path
         self._exec_args_fn = exec_args_fn
@@ -147,6 +148,10 @@ class SystemdUnit:
         ``""`` when the unit is absent or sets none. The unit is installed mode
         644, so this reads it without sudo. ``%%`` is undone because the unit
         escapes ``%`` that way.
+
+        Raises:
+            BackendCommandError: If the service backend command or its response is
+                invalid.
         """
         try:
             text = self._path.read_text(encoding="utf-8")

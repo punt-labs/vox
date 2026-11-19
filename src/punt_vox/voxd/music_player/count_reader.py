@@ -1,15 +1,7 @@
-"""``CountReader`` -- how a ready-track count comes off disk.
+"""Read ready-track counts from album manifests on disk.
 
-The third of the three jobs :class:`~punt_vox.voxd.music_player.
-track_count_cache.TrackCountCache` used to do alone: *when* to read (the
-cache: a dispatch, a lock, a deadline), *whether* to keep the answer
-(:class:`~punt_vox.voxd.music_player.count_store.CountStore`: generation
-ordering), and -- here -- the read itself.
-
-Worth its own name because it is the only blocking call in the whole path.
-Everything around it exists to keep it off an event loop and off the
-control-channel writer; keeping it in one obvious place is what makes that
-claim checkable rather than something a reader has to take on trust.
+TrackCountCache schedules this blocking work off event loops; CountStore decides
+whether its generation may be committed.
 """
 
 from __future__ import annotations
@@ -35,6 +27,7 @@ class CountReader:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a count reader."""
         return super().__new__(cls)
 
     def read(self, albums: tuple[Album, ...]) -> dict[AlbumId, int]:

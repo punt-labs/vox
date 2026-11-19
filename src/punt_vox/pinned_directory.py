@@ -42,6 +42,7 @@ class PinnedDirectory:
     _NEW_FILE_MODE = 0o644
 
     def __new__(cls, fd: int, path: Path) -> Self:
+        """Create a pinned directory."""
         self = super().__new__(cls)
         self._fd = fd
         self._path = path
@@ -75,6 +76,11 @@ class PinnedDirectory:
 
         Raise ``ValueError`` when the member is a symlink or not a regular file;
         a non-UTF-8 file raises ``UnicodeDecodeError``.
+
+        Raises:
+            ValueError: If the member is a symlink or is not a regular file.
+            UnicodeDecodeError: If the member is not valid UTF-8.
+            OSError: If the member cannot be opened or read.
         """
         try:
             fd = os.open(name, self._READ_FLAGS, dir_fd=self._fd)
@@ -93,6 +99,10 @@ class PinnedDirectory:
         The temp file is created inside the pinned directory and renamed over
         *name* relative to the same descriptor, so both land in it. A new file
         gets :data:`_NEW_FILE_MODE`.
+
+        Raises:
+            ValueError: If an existing member is a symlink or is not a regular file.
+            OSError: If the replacement cannot be written or installed.
         """
         mode = self._existing_mode(name)
         temp = f".{name}.{secrets.token_hex(8)}.tmp"

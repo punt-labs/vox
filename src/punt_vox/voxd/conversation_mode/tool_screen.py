@@ -48,6 +48,7 @@ class ToolScreen:
     _started: dict[str, tuple[str, dict[str, object]]]
 
     def __new__(cls, policy: SecretPathPolicy, cwd: Path) -> Self:
+        """Create a tool screen."""
         self = super().__new__(cls)
         self._policy = policy
         self._cwd = cwd

@@ -94,6 +94,7 @@ class LoggingTurnTimer:
     """Mirrors :attr:`_turn_started_at` for the step-to-step delta."""
 
     def __new__(cls) -> Self:
+        """Create a logging turn timer."""
         self = super().__new__(cls)
         now = time.monotonic()
         self._turn_started_at = now
@@ -101,7 +102,8 @@ class LoggingTurnTimer:
         return self
 
     def mark(self, stage: TurnStage, *, detail: str | None = None) -> None:
-        """Log *stage* at DEBUG: elapsed since the previous mark, elapsed
+        """Log *stage* at DEBUG: elapsed since the previous mark, elapsed.
+
         since this turn's `speech_first_detected`, and *detail* if given.
 
         ``speech_first_detected`` resets both clocks to zero for the new

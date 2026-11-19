@@ -37,6 +37,7 @@ class _CallSpecResolver:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a call spec resolver."""
         return super().__new__(cls)
 
     def __call__(self) -> SynthesisSpec:

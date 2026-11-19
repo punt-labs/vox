@@ -32,6 +32,7 @@ class NudgeHook:
     _nudge: VibeNudge
 
     def __new__(cls, config_dir: Path, nudge: VibeNudge | None = None) -> Self:
+        """Create a nudge hook."""
         self = super().__new__(cls)
         self._config_dir = config_dir
         self._nudge = nudge if nudge is not None else VibeNudge()

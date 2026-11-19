@@ -43,6 +43,7 @@ class DaemonLifecycle:
     _system: LifecycleSystem
 
     def __new__(cls, system: LifecycleSystem) -> Self:
+        """Create a daemon lifecycle."""
         self = super().__new__(cls)
         self._system = system
         return self

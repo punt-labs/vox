@@ -22,6 +22,7 @@ class SystemClock:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a system clock."""
         return super().__new__(cls)
 
     def monotonic(self) -> float:
@@ -54,6 +55,7 @@ class Poll:
     _interval: float
 
     def __new__(cls, clock: Clock, interval: float = INTERVAL_S) -> Self:
+        """Create a poll."""
         self = super().__new__(cls)
         self._clock = clock
         self._interval = interval

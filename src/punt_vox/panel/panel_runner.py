@@ -58,6 +58,7 @@ class PanelRunner:
         guard: PanelGuard,
         logger: logging.Logger,
     ) -> Self:
+        """Create a panel runner."""
         self = super().__new__(cls)
         self._service = service
         self._rest_factory = rest_factory

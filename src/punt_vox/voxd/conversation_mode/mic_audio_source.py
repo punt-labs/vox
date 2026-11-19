@@ -118,6 +118,7 @@ class MicAudioSource:
         chunk_s: float = _CHUNK_S,
         input_stream_factory: InputStreamFactory | None = None,
     ) -> Self:
+        """Create a mic audio source."""
         self = super().__new__(cls)
         self._sample_rate_hz = sample_rate_hz
         self._chunk_s = chunk_s
@@ -130,7 +131,8 @@ class MicAudioSource:
         return self
 
     def set_listening(self, *, listening: bool) -> None:
-        """Gate capture at the source: a caller sets this ``False`` while it
+        """Gate capture at the source: a caller sets this ``False`` while it.
+
         does not want captured audio queued at all (most importantly, while
         the call's own reply is likely still playing through the speakers).
 
@@ -231,7 +233,8 @@ class MicAudioSource:
         return drained
 
     async def capture_seconds(self, duration_s: float) -> list[AudioChunk]:
-        """Capture *duration_s* of ambient audio, for
+        """Capture *duration_s* of ambient audio, for.
+
         :meth:`~.turn_detector.TurnDetector.calibrate`.
 
         FR-1's "a few seconds of 'say something'" calibration step: opens

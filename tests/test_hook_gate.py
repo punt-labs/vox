@@ -500,12 +500,9 @@ class TestPanelSpawn:
         `cwd`; under `set -e` that killed the hook before its command
         deployment ever ran.
 
-        An unresolvable cwd falls back to `$PWD`, so the subprocess runs from
-        an unenabled scratch directory (outside the repo tree, which pytest's
-        `tmp_path` is not) with a recording vox-panel stub first on PATH:
-        inheriting pytest's cwd here used to resolve the fallback to the real,
-        enabled vox repo and start a REAL panel against the live Lux hub on
-        every suite run.
+        An unresolvable cwd falls back to $PWD. The subprocess therefore runs
+        outside the enabled repo tree, with a recording vox-panel stub first on
+        PATH, so it cannot start a real panel against the live hub.
         """
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -584,11 +581,9 @@ class TestPanelSpawn:
         marker of its own, since a marker at `.` would end the walk on its
         first step and hide the defect.
 
-        That directory lives under `isolated_root`, not `tmp_path`: the
-        unresolvable relative cwd falls back to `$PWD`, and `tmp_path` nests
-        under the enabled vox repo (TMPDIR pins it there), so `git -C` from
-        it used to resolve straight to the real repo root and start a REAL
-        panel against the live Lux hub.
+        The directory lives under isolated_root, outside the enabled repo tree. With
+        TMPDIR inside the repo, tmp_path would let git resolve the real root and
+        start a real panel against the live hub.
         """
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -654,11 +649,8 @@ class TestPanelSpawn:
     def test_unwritable_home_costs_the_log_not_the_hook(self, tmp_path: Path) -> None:
         """A log path that cannot be created must not abort session startup.
 
-        The `>>` redirects onto the panel log are unguarded, and a failed
-        redirect on a synchronous command aborts under `set -e`. So an
-        unwritable `$HOME` -- where the log directory cannot be created --
-        used to kill the hook on the very line that explains why the panel is
-        missing, taking command deployment and the spawn down with it.
+        An unwritable HOME must not abort command deployment or panel spawning: a
+        failed synchronous log redirect otherwise exits under set -e.
         """
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
@@ -677,12 +669,9 @@ class TestPanelSpawn:
 class TestManifestRefusal:
     """``session-start.sh`` refuses to guess dev-vs-prod it cannot read.
 
-    The manifest decides the retired-command cleanup and the command
-    deployment. An absent or unreadable one used to fall through to
-    *prod*, the more invasive branch, on the strength of a file the hook never
-    managed to read -- so a wrong ``PLUGIN_ROOT`` deployed commands instead of
-    reporting the problem. These tests pin the third
-    state: report it, touch nothing, exit 0.
+    The manifest decides command cleanup and deployment. If it cannot be read,
+    the hook must report the problem, touch nothing, and exit zero rather than
+    assume a production plugin.
     """
 
     @staticmethod

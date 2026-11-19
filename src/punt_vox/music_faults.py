@@ -38,6 +38,7 @@ class MusicFault:
     _message: str
 
     def __new__(cls, message: str) -> Self:
+        """Create a music fault."""
         self = super().__new__(cls)
         self._message = message
         return self

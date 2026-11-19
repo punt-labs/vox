@@ -98,6 +98,7 @@ class MpvSupervisor:
     _reaped: bool
 
     def __new__(cls, socket: Path, sleeper: Sleeper) -> Self:
+        """Create a mpv supervisor."""
         self = super().__new__(cls)
         self._sleeper = sleeper
         self._launcher = MpvLauncher(socket, sleeper)

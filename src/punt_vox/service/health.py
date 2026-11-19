@@ -73,6 +73,7 @@ class HealthTarget:
     _port: int
 
     def __new__(cls, bind: str) -> Self:
+        """Create a health target."""
         self = super().__new__(cls)
         # A name is refused here too (PortProbeError): a unit written before
         # install validated the bind can still carry one.
@@ -82,10 +83,12 @@ class HealthTarget:
 
     @property
     def host(self) -> str:
+        """Return the daemon host to probe."""
         return self._host
 
     @property
     def port(self) -> int:
+        """Return the daemon port to probe."""
         return self._port
 
     def client(self) -> VoxClientSync:
@@ -93,6 +96,9 @@ class HealthTarget:
 
         Raises ``DaemonNotUpError`` when ``serve.token`` is absent: voxd writes
         it on startup, so the caller treats that as "not up yet" and polls.
+
+        Raises:
+            DaemonNotUpError: If the daemon has not published its authentication token.
         """
         token = RunFiles.token()
         if token is None:

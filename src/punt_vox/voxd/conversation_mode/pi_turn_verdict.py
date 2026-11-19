@@ -45,6 +45,7 @@ class PiTurnVerdict:
     _unkept: int
 
     def __new__(cls) -> Self:
+        """Create a pi turn verdict."""
         self = super().__new__(cls)
         self._failure = ""
         self._aborted = False

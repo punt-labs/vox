@@ -215,8 +215,7 @@ class TestSayCommand:
         """--api-key value is forwarded to client.synthesize(api_key=...).
 
         Per-call key isolation — the user provides a billing-attribution
-        key on this single call. Regression guard for vox-a3e: verifies
-        the CLI surface that was missing prior to this commit.
+        key on this single call.
         """
         from punt_vox.client import SynthesizeResult
 
@@ -327,11 +326,9 @@ class TestSayCommand:
     ) -> None:
         """Vibe tags must reach voxd with brackets intact.
 
-        Regression: the CLI previously called normalize_for_speech before
-        sending text to voxd. normalize_for_speech strips brackets but
-        leaves the words, so ``[alert] [serious]`` became ``alert serious``
-        and voxd's VIBE_TAG_RE could no longer match. The fix is to let
-        voxd handle normalization via _apply_vibe_for_synthesis.
+        The daemon owns normalization. Stripping brackets in the CLI would leave
+        alert and serious as plain words, preventing the daemon from recognizing
+        vibe tags.
         """
         from punt_vox.client import SynthesizeResult
 
@@ -1076,7 +1073,7 @@ class TestLogCommand:
 
 
 class TestVoiceCommand:
-    """Tests for the extended ``vox voice`` switch command (vox-0rp9.3).
+    """Tests for the extended ``vox voice`` switch command (.3).
 
     No arg lists the roster (folding in the retired ``vox voices``); a name
     writes to the same ``voice`` field the MCP tool writes, so both surfaces
@@ -1200,7 +1197,7 @@ class TestVoiceCommand:
 
 
 class TestVoicesCommandRetired:
-    """The retired ``vox voices`` command must be absent (vox-0rp9.3)."""
+    """The retired ``vox voices`` command must be absent (.3)."""
 
     def test_voices_command_is_absent(self) -> None:
         runner = CliRunner()
@@ -1523,10 +1520,8 @@ class TestDoctorCommand:
     def test_mismatched_versions_warns_without_failing(self, tmp_path: Path) -> None:
         """Running daemon older than installed wheel: warning, exit code 0.
 
-        This is the vox-nmb regression guard. A stale voxd survived
-        v4.2.0 release-day smoke tests because doctor only checked
-        reachability, not version alignment. Doctor now warns but does
-        not fail — the daemon is still functional, just out of date.
+        Doctor checks version alignment as well as reachability. A stale but
+        functional daemon produces a warning without failing the command.
         """
         result = self._run_doctor(
             tmp_path,
@@ -1635,7 +1630,7 @@ class TestDoctorCommand:
         assert "\u26a0" not in result.output
 
     # ------------------------------------------------------------------
-    # status_kind field (vox-kl7)
+    # status_kind field
     # ------------------------------------------------------------------
 
     def test_json_status_kind_pass_warn_fail(self, tmp_path: Path) -> None:
@@ -2341,12 +2336,8 @@ class TestGlobalFlags:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
-        # Provider comes from state now (design §3.6); the daemon health
-        # probe used to invent one, which was the substitution defect
-        # this bead closes. The client is stubbed only to confirm the
-        # daemon is running; the ``--json`` payload's ``provider`` field
-        # reads from the local ``vox.md`` -- which is empty in this
-        # runner, so it renders as ``"unknown"``.
+        # Status reads provider from local vox.md, not daemon health. This runner has no
+        # provider configured, so the JSON field is unknown.
         mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
@@ -2503,7 +2494,7 @@ class TestDaemonStatusCommand:
         assert payload["pid"] == 100
         assert world.tokens_to == [frozenset({100})]
 
-    # -- vox-4p5p: a configured (possibly remote) daemon goes through the client
+    # -- : a configured (possibly remote) daemon goes through the client
 
     @patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host")
     @patch(f"{_CLI_DAEMON}.VoxClientSync")
@@ -2686,11 +2677,9 @@ class TestDaemonStatusCommand:
 class TestCacheCommands:
     """``vox cache status`` / ``clear`` must operate on the DAEMON's cache.
 
-    Regression guard for vox-suvs: both commands read/cleared the client's
-    local CACHE_DIR, so against a remote daemon (``VOXD_HOST`` set) they
-    touched the wrong machine -- ``clear`` silently no-oped and ``status``
-    reported the client's numbers. The fix routes both through
-    ``VoxClientSync``, which honors ``VOXD_HOST`` / ``VOXD_PORT`` /
+    Both commands route through ``VoxClientSync`` so a remote daemon's
+    cache is read or cleared instead of the caller's local cache. The
+    client honors ``VOXD_HOST`` / ``VOXD_PORT`` /
     ``VOXD_TOKEN`` like ``vox status`` and ``vox voices``.
     """
 

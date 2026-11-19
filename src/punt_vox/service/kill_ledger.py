@@ -121,6 +121,7 @@ class KillLedger:
     )
 
     def __new__(cls) -> Self:
+        """Create a kill ledger."""
         self = super().__new__(cls)
         self._entries = {}
         return self

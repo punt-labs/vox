@@ -44,7 +44,7 @@ class SinkHealth(TypedDict):
     """The sink's client-observable status: a relative name and a verdict.
 
     ``name`` is relativized (``logs/vox.log``), never a host prefix; ``status``
-    is ``"healthy"`` when the sink can append now, else ``"degraded"`` (a7dd).
+    is ``"healthy"`` when the sink can append, else ``"degraded"``.
     """
 
     name: str
@@ -82,6 +82,7 @@ class AtomicAppendLog:
         max_bytes: int = _MAX_BYTES,
         backup_count: int = _BACKUP_COUNT,
     ) -> Self:
+        """Create an atomic append log."""
         self = super().__new__(cls)
         self._path = path
         self._lock_path = path.with_name(path.name + _LOCK_SUFFIX)
@@ -104,7 +105,7 @@ class AtomicAppendLog:
         through ``mic:status`` so a broken sink is queryable, never buried in a
         second daemon log. The path crosses relativized (``logs/vox.log``) with
         the bare name as the fail-closed fallback, so no absolute prefix (home +
-        username) reaches a client (the a7dd chroot); ``status`` is the verdict.
+        username) reaches a client; ``status`` is the verdict.
         """
         rel = relativize_to_data_root(self._path)
         name = str(rel.path) if rel is not None else self._path.name
@@ -260,7 +261,7 @@ class AtomicAppendLog:
     def tighten_existing(self) -> tuple[Path, ...]:
         """Force the active file, every backup, and the lock to 0600; return failures.
 
-        A startup sweep: a file left 0644 by an earlier, laxer run is re-tightened,
+        A startup sweep: a file with 0644 permissions is tightened,
         and every path it could not force to 0600 is returned so a caller (the
         daemon config) can WARN about it durably once its handlers exist. Never
         raises -- a vanished slot is benign; a symlink or a genuine ``chmod`` refusal

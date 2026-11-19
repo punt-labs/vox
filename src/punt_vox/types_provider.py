@@ -37,10 +37,7 @@ __all__ = [
 
 
 # The closed set of reasons a ``ProviderReadiness`` can carry, and where
-# each value comes from.  This is the enumeration lesson from PR 1 and
-# PR 2: a boundary that looks complete because everything it names is
-# correct is still defective when it never states which values it must
-# handle.  Each reason is produced by one or more code paths named
+# each value comes from. Each reason is produced by one or more code paths named
 # below; the paired :data:`PROVIDER_STATUS_REASONS` frozenset is the
 # runtime mirror, and :meth:`ProviderReadiness.__post_init__` refuses a
 # value not in either.  A new reason -- or a new producer of an
@@ -135,6 +132,10 @@ class ProviderReadiness:
         truncated or wrong-typed frame surfaces as one
         :class:`ValueError` with the offending field name, never as a
         ``KeyError`` far from the wire boundary.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
         """
         return cls(
             name=obj.require_str("name"),
@@ -179,6 +180,7 @@ class ProviderStatusPayload:
         providers: tuple[ProviderReadiness, ...],
         preferred: str | None,
     ) -> Self:
+        """Create a provider status payload."""
         self = super().__new__(cls)
         self._providers = providers
         self._preferred = preferred
@@ -203,7 +205,12 @@ class ProviderStatusPayload:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Rebuild the payload from a ``provider_status`` reply frame."""
+        """Rebuild the payload from a ``provider_status`` reply frame.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         rows = tuple(
             ProviderReadiness.from_wire(JsonObject.coerce(row, "provider_status.row"))
             for row in obj.require_list("providers")

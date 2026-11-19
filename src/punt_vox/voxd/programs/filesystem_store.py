@@ -50,6 +50,7 @@ class FilesystemPartStore:
     _manifest: AlbumManifest
 
     def __new__(cls, directory: Path, manifest: AlbumManifest) -> Self:
+        """Create a filesystem part store."""
         self = super().__new__(cls)
         self._directory = directory
         self._manifest = manifest
@@ -99,6 +100,7 @@ class FilesystemProgramStore:
     _root: Path
 
     def __new__(cls, root: Path) -> Self:
+        """Create a filesystem program store."""
         self = super().__new__(cls)
         self._root = root
         return self
@@ -117,6 +119,9 @@ class FilesystemProgramStore:
         A missing root is an empty catalog; a root that exists but cannot be read
         raises, so an access fault surfaces at startup rather than masquerading as
         an empty music library.
+
+        Raises:
+            OSError: If the store exists but cannot be enumerated.
         """
         if not PathStatus.of(self._root).is_directory:
             return ()
@@ -134,8 +139,12 @@ class FilesystemProgramStore:
         manifest that exists but cannot be stat'd raises the underlying ``OSError``,
         so an access fault surfaces as a server-side fault rather than a false
         "no saved album". A symlinked manifest still classifies as a regular file
-        (the follow matches the old ``is_file``) and is refused later by the
+        when following links and is refused later by the
         ``O_NOFOLLOW`` read.
+
+        Raises:
+            LookupError: If the album has no regular manifest file.
+            OSError: If the manifest cannot be inspected or read safely.
         """
         path = self._contained_dir(directory)
         manifest_path = path / _MANIFEST_NAME

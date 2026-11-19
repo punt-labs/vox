@@ -1443,10 +1443,8 @@ class TestVoxClientHealth:
         assert result.uptime_seconds == 42.5
         assert result.port == 8421
         assert result.pid == 4242
-        # ``provider`` is not on the wire (design §3.6 / D4): the daemon
-        # has no provider of its own; per-provider readiness moved to the
-        # ``provider_status`` op delivered by PR 3. An older-daemon
-        # payload that still carries the key is silently ignored.
+        # The daemon has no provider of its own. Health ignores any extra provider
+        # field; per-provider readiness belongs to provider_status.
         assert not hasattr(result, "provider")
         assert result.daemon_version == "5.0.0"
 

@@ -32,6 +32,7 @@ class BackgroundTasks:
     _tasks: list[asyncio.Task[None]]
 
     def __new__(cls) -> Self:
+        """Create a background tasks."""
         self = super().__new__(cls)
         self._tasks = []
         return self
@@ -65,9 +66,6 @@ class BackgroundTasks:
         task.cancel()
         # ``asyncio.wait`` returns when the task settles WITHOUT re-raising what
         # it settled with, so the outcome can be inspected rather than caught.
-        # Awaiting the task directly would raise -- CancelledError for the
-        # ordinary case, and anything else the task had already failed with --
-        # which is what forced the old blanket ``suppress(Exception)`` here.
         await asyncio.wait({task})
         if task.cancelled():
             return

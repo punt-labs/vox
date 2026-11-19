@@ -49,14 +49,7 @@ _REQUEST_KEY = ApiKeyCheck("the request's api_key")
 
 @dataclass(frozen=True, slots=True)
 class _SpeechRequest:
-    """One synthesize/record request: the parsed wire fields plus its reply channel.
-
-    Both handlers previously carried an identical copy of the ``SynthesisSpec``
-    parsing and the id-stamped reply plumbing. Bundling text, spec, request id,
-    and the socket here lets a handler thread one ``req`` through its steps
-    instead of four loose primitives, and gives both handlers one parser and one
-    reply path.
-    """
+    """Bundle parsed synthesis fields and their id-stamped reply channel."""
 
     text: str
     spec: SynthesisSpec
@@ -71,6 +64,9 @@ class _SpeechRequest:
         numeric field accepts a JSON number (via the parse helpers); empty text
         and an ``api_key`` no HTTP header may carry are rejected here, so both
         handlers share one validation point.
+
+        Raises:
+            ValueError: If the message contains no speech text.
         """
         text = parse_required_str(msg, "text")
         if not text:
@@ -80,7 +76,7 @@ class _SpeechRequest:
         # surface (MCP, hook, CLI, panel, record) fills it from state via
         # :class:`SessionSpec` before crossing the wire. A hand-rolled
         # client that omits it gets an id-stamped rejection here rather
-        # than a daemon-side guess -- the substitution this bead closes.
+        # than a daemon-side guess .
         spec = SynthesisSpec(
             voice=parse_optional_str(msg, "voice"),
             provider=parse_required_str(msg, "provider"),
@@ -189,6 +185,7 @@ class SynthesizeHandler(MessageHandler):
         playback: PlaybackQueue,
         once_dedup: OnceDedup,
     ) -> Self:
+        """Create a synthesize handler."""
         self = super().__new__(cls)
         self._synthesis = synthesis
         self._playback = playback

@@ -75,6 +75,7 @@ class MpvClient:
         writer: asyncio.StreamWriter,
         on_crash: Callable[[], None],
     ) -> Self:
+        """Create a mpv client."""
         self = super().__new__(cls)
         self._reader = reader
         self._writer = writer
@@ -114,6 +115,11 @@ class MpvClient:
         a crash mid-flight surfaces as :class:`ConnectionError` when the reader
         fails the pending future. Either way the caller decides -- the loop backs
         off, the supervisor restarts.
+
+        Raises:
+            TimeoutError: If mpv does not answer within the command deadline.
+            ConnectionError: If mpv disconnects while the command is pending.
+            OSError: If the command cannot be written to the IPC socket.
         """
         request_id = self._next_id
         self._next_id += 1
@@ -132,6 +138,9 @@ class MpvClient:
         The response, if any, is ignored (no future registered). A single
         ``write`` keeps the frame atomic; a closed transport raises, which the
         caller (the player) suppresses because recovery honours the flag.
+
+        Raises:
+            OSError: If the command cannot be written to the IPC socket.
         """
         request_id = self._next_id
         self._next_id += 1

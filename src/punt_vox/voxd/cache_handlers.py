@@ -3,8 +3,7 @@
 Both route the daemon's *own* MP3 quip cache -- the directory the daemon reads
 and writes during synthesis -- to a wire client, so ``vox cache status`` and
 ``vox cache clear`` operate on the daemon's cache rather than the caller's local
-one (the vox-suvs bug: a remote daemon left the real cache untouched while the
-client reported/cleared its own directory). Each handler holds its cache
+one. Each handler holds its cache
 operation as an injected collaborator and replies through :class:`WireReply`, so
 a filesystem fault -- a denied unlink, a stat error mid-scan -- is an
 audit-logged operational fault (ERROR "operation failed"), never a silent no-op
@@ -37,6 +36,7 @@ class CacheStatusHandler:
     _status: Callable[[], CacheInfo]
 
     def __new__(cls, status: Callable[[], CacheInfo]) -> Self:
+        """Create a cache status handler."""
         self = super().__new__(cls)
         self._status = status
         return self
@@ -77,6 +77,7 @@ class CacheClearHandler:
     _clear: Callable[[], int]
 
     def __new__(cls, clear: Callable[[], int]) -> Self:
+        """Create a cache clear handler."""
         self = super().__new__(cls)
         self._clear = clear
         return self

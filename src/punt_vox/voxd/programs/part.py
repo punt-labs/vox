@@ -1,7 +1,7 @@
-"""The Part value object, its lifecycle status, and the failed-Part map.
+r"""The Part value object, its lifecycle status, and the failed-Part map.
 
 Realises the Z ``[PART]`` basic type together with the ``PartStatus`` free type
-and the ``failedParts : PART \\pfun REASON`` finite map. The resolved surface
+and the ``failedParts : PART \pfun REASON`` finite map. The resolved surface
 reference behind ``playlist:2`` lives in ``identifiers`` as
 :class:`PartRef`.
 """
@@ -48,6 +48,11 @@ class Part:
     _index: int
 
     def __new__(cls, identity: str, index: int) -> Self:
+        """Create a part.
+
+        Raises:
+            ValueError: If identity is empty or index is less than one.
+        """
         if not identity:
             msg = "part identity must be non-empty"
             raise ValueError(msg)
@@ -93,13 +98,14 @@ class FrozenParts:
     _by_part: dict[Part, Reason]
 
     def __new__(cls, mapping: Mapping[Part, Reason] | None = None) -> Self:
+        """Create a frozen parts."""
         self = super().__new__(cls)
         self._by_part = {} if mapping is None else dict(mapping)
         return self
 
     @classmethod
     def empty(cls) -> Self:
-        """Return the empty failed-Part map (the Z ``\\emptyset``)."""
+        r"""Return the empty failed-Part map (the Z ``\emptyset``)."""
         return cls()
 
     def with_failure(self, part: Part, reason: Reason) -> FrozenParts:

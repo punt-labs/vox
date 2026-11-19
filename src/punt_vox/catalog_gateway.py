@@ -23,7 +23,7 @@ class CatalogGateway(Protocol):
     """The catalog-authoring operations ``music new``/``get``/``remove`` issue."""
 
     def new(self, prompts: PromptSet, name: str | None) -> str:
-        """Author one track from *prompts* into a fresh album; return its id.
+        """Create one track from *prompts* into a fresh album; return its id.
 
         *prompts* is the one-track :class:`PromptSet` both surfaces build via
         :meth:`PromptSet.single`, so the daemon receives the authored-input object

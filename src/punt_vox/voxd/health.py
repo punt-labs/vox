@@ -36,6 +36,7 @@ class DaemonHealth:
         get_client_count: Callable[[], int],
         port: int,
     ) -> Self:
+        """Create a daemon health."""
         self = super().__new__(cls)
         self._playback = playback
         self._get_client_count = get_client_count
@@ -82,20 +83,11 @@ class DaemonHealth:
         }
 
     def full_payload(self) -> dict[str, object]:
-        """Return the full diagnostic health payload for authenticated callers.
+        """Return authenticated daemon diagnostics without host paths.
 
-        Used only by the token-gated WebSocket health handler. ``provider`` is
-        deliberately absent (design D4): the daemon has no provider of its
-        own to report, and reporting the old auto-detect probe's answer here
-        would be the same substitution defect this bead closes, in a third
-        place. Per-provider readiness moves to the ``provider_status`` op
-        (§3.6, delivered by PR 3). The old host-fact diagnostics
-        ``audio_env`` and ``player_binary`` are dropped (D2): out of jail,
-        no relative form. ``last_playback`` is relativized by
-        :meth:`PlaybackResult.to_health_dict`, so no absolute prefix crosses
-        even here. ``pid`` (used by ``vox daemon restart``) and
-        ``daemon_version`` (used by ``vox doctor``) are neither a host map
-        nor forbidden over the token.
+        Provider readiness is exposed separately through provider_status. Playback
+        paths are relativized. The pid supports service lifecycle operations;
+        daemon_version supports installation checks.
         """
         payload = self.minimal_payload()
         if result := self._playback.last_result:

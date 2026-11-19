@@ -44,6 +44,7 @@ class PrivateState:
     def __new__(
         cls, path: Path, *, on_failure: Callable[[str], None] | None = None
     ) -> Self:
+        """Create a private state."""
         self = super().__new__(cls)
         self._path = path
         # None selects the default logging reporter; a caller that must never

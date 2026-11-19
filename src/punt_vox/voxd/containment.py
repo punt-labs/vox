@@ -8,7 +8,7 @@ a contained :class:`~pathlib.Path`: it validates the name through the shared
 separator-bearing, traversing, empty, NUL-bearing, or non-printable) *before*
 touching the filesystem, then resolves the candidate under its root and verifies
 ``is_relative_to`` *after* ``.resolve()`` so no symlink or normalization can
-escape. This is the vox-zu39 (P1) security primitive shared by recording naming,
+escape. This is the  (P1) security primitive shared by recording naming,
 play/fetch references, and music-part fetch, so the containment invariant is
 enforced in exactly one place and unit-testable without a socket.
 """
@@ -39,6 +39,7 @@ class ContainmentRoot:
     _label: str
 
     def __new__(cls, root: Path, label: str) -> Self:
+        """Create a containment root."""
         self = super().__new__(cls)
         self._root = root
         self._label = label
@@ -60,6 +61,9 @@ class ContainmentRoot:
         This *follows* symlinks (``.resolve()``), so it is the reference for a
         read/write that must reach the file a name points at. To act on the entry
         itself without following it out of the store, use :meth:`contained_child`.
+
+        Raises:
+            ValueError: If the resolved path escapes the containment root.
         """
         safe = BareName(name, self._label).value
         resolved = (self._root / safe).resolve()
@@ -90,6 +94,9 @@ class ContainmentRoot:
         followed to whatever it targets -- the no-symlink read invariant a
         fetch/measure shares, so an entry is served for itself and never a link's
         target. Any other stat ``OSError`` (a permission/device fault) propagates.
+
+        Raises:
+            ValueError: If the path is outside the root or is not a regular file.
         """
         child = self.contained_child(name)
         if not PathStatus.of(child, follow_symlinks=False).is_regular_file:

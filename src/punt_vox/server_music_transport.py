@@ -44,6 +44,7 @@ class TransportVerbs:
     def __new__(
         cls, gateway_factory: Callable[[], ProgramGateway], marquee: MusicMarquee
     ) -> Self:
+        """Create a transport verbs."""
         self = super().__new__(cls)
         self._gateway_factory = gateway_factory
         self._marquee = marquee

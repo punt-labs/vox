@@ -55,7 +55,7 @@ class TestSet:
     async def test_writes_valid_provider_and_cascades_defaults(
         self, tmp_path: Path
     ) -> None:
-        """The cascade rule (vox-awm9): setting provider populates model + voice.
+        """The cascade rule: setting provider populates model + voice.
 
         openai's first model is ``tts-1``; the fake roster's first voice is
         ``alloy``. Both land in state and in the result payload.
@@ -100,7 +100,7 @@ class TestSet:
     ) -> None:
         """A genuine switch replaces model + voice with the new provider's defaults.
 
-        Was: 'clears stale model' (vox-0rp9.1). Under vox-awm9 the rule
+        Was: 'clears stale model' (.1). Under  the rule
         replaces both fields with deterministic first-from-list defaults.
         """
         (tmp_path / "vox.md").write_text(
@@ -129,7 +129,7 @@ class TestSet:
     async def test_roster_fetch_error_aborts_the_write(self, tmp_path: Path) -> None:
         """A daemon fault on the cascade roster fetch returns an error envelope.
 
-        Same rule as vox-w79f on the panel: the provider MUST NOT persist
+        Same rule as  on the panel: the provider MUST NOT persist
         when we cannot read the voice roster to compute the cascaded default.
         """
         from punt_vox.client_errors import VoxdConnectionError

@@ -13,7 +13,7 @@ from punt_vox.voxd.dedup import ChimeDedup, DedupHit, OnceDedup
 class TestOnceDedup:
     """Unit tests for the OnceDedup class.
 
-    Closes vox-0e9. The class deduplicates speech requests when the
+    The class deduplicates speech requests when the
     caller passes a TTL window. Identical text spoken with different
     voices, providers, or models all collapse --- the dedup key is
     md5(text) only. Returns DedupHit on a hit so callers can render
@@ -72,7 +72,7 @@ class TestOnceDedup:
         """Two callers with the same text collapse regardless of voice.
 
         OnceDedup keys on md5(text) only. The voice/provider/model are
-        not part of the key per the vox-0e9 spec --- biff wall fan-out
+        not part of the key --- biff wall fan-out
         across N sessions may use different voice settings but the
         user heard the SAME message and shouldn't hear it again.
         """

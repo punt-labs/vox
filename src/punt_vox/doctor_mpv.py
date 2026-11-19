@@ -55,6 +55,7 @@ class MpvCheck:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a mpv check."""
         return super().__new__(cls)
 
     def run(self) -> CheckResult:
