@@ -67,34 +67,34 @@ class TestCacheKey:
         # "ab" + "c" vs "a" + "bc" must differ
         assert CacheKey("ab", "c", "p").filename != CacheKey("a", "bc", "p").filename
 
-    def test_backward_compat_with_pre_v421_cache(self) -> None:
-        # Load-bearing backward-compat invariant: any change to
-        # ``CacheKey.filename`` that breaks the on-disk filename for anonymous
-        # calls orphans every cache entry written by an earlier vox
-        # version. The digest must be **byte-identical** to the
-        # pre-v4.2.1 format, which was
-        # ``md5(f"{text}\\0{voice}\\0{provider}".encode())``.
-        #
-        # This test also proves that the api_key parameter has been removed from
-        # the cache key computation, and the anonymous filename for an
-        # ordinary (text, voice, provider) call is exactly what the
-        # pre-PR code produced. Per-call api_key scopes do not reach
-        # cache.py at all — the bypass happens in voxd._synthesize_to_file.
+    def test_legacy_cache_is_not_served(self, tmp_path: Path) -> None:
         text, voice, provider = "hello", "matilda", "elevenlabs"
         payload = f"{text}\0{voice}\0{provider}".encode()
         legacy_digest = hashlib.md5(
             payload,
             usedforsecurity=False,
         ).hexdigest()
-        assert CacheKey(text, voice, provider).filename == f"{legacy_digest}.mp3"
-        # And for the None-voice / None-provider case the historical
-        # format substituted empty strings — same invariant applies.
+        _fake_mp3(tmp_path / f"{legacy_digest}.mp3")
+        with patch("punt_vox.cache.CACHE_DIR", tmp_path):
+            assert cache_get(CacheKey(text, voice, provider)) is None
         text2 = "greetings"
         legacy_digest_2 = hashlib.md5(
             f"{text2}\0\0".encode(),
             usedforsecurity=False,
         ).hexdigest()
-        assert CacheKey(text2, None, None).filename == f"{legacy_digest_2}.mp3"
+        assert CacheKey(text2, None, None).filename != f"{legacy_digest_2}.mp3"
+
+    def test_embedded_separator_is_unambiguous(self) -> None:
+        assert (
+            CacheKey("a\0b", "c", "p").filename != CacheKey("a", "b\0c", "p").filename
+        )
+
+    def test_unset_settings_differ_from_zero_and_false(self) -> None:
+        key = CacheKey("hello", None, None)
+        assert key.filename != CacheKey("hello", None, None, stability=0.0).filename
+        assert (
+            key.filename != CacheKey("hello", None, None, speaker_boost=False).filename
+        )
 
     def test_path_in(self, tmp_path: Path) -> None:
         key = CacheKey("hello", "matilda", "elevenlabs")

@@ -1,40 +1,29 @@
 """MP3 cache for quip phrases.
 
-Caches synthesized audio files by (text, voice, provider) tuple so that
-repeated hook invocations with the same quip phrase skip the TTS API
-entirely.  Content-addressed by hash.
+Caches synthesized audio by text, voice, provider, and audio-affecting settings
+so repeated requests skip the TTS API. The versioned payload prevents serving
+legacy entries whose keys omitted settings.
 
-This module serves the **anonymous** cache only — calls that use the
-ambient provider credential from ``keys.env``. A per-call provider
-credential override (single-user multi-key billing isolation) skips the
-cache lookup and store — no ``cache_get``/``cache_put`` — at the voxd call
-site (``SynthesisPipeline.synthesize_to_file`` in
-``src/punt_vox/voxd/synthesis.py``). A ``CacheKey`` may still be built, but
-its parts are (text, voice, provider) only, so no credential material ever
-enters a digest this module computes. CodeQL's
-``py/weak-sensitive-data-hashing`` rule (correctly) flags any regular
-cryptographic hash — MD5, SHA-1, SHA-256, and friends — as inappropriate
-for hashing password-class input, and the only lint-clean alternatives are
-password KDFs (Argon2, scrypt, bcrypt, PBKDF2 with high iteration counts)
-whose per-call cost is unacceptable for a cache filename computation.
+This is the anonymous cache, using ambient provider credentials from keys.env.
+Per-call credential overrides bypass lookup and store in
+SynthesisPipeline.synthesize_to_file for billing isolation: cached bytes from
+another billing scope must not satisfy a per-call credential request.
 
-Skipping the cache also closes a correctness hazard: a per-call billing scope
-that accepts cached bytes from another scope violates the whole point of
-the isolation. Scripts that want cache hits for repeated quips should use
-``keys.env`` (the anonymous path); scripts that want billing attribution
-should accept that every call re-synthesizes.
-
-No dependencies on other vox modules — this is a standalone cache layer.
+Credentials never enter CacheKey or its MD5 filename digest. CodeQL's
+py/weak-sensitive-data-hashing rule flags regular hashes, including SHA-256,
+for password-class inputs; password KDFs are inappropriate for cache filenames.
+MD5 is used only for content addressing, not security.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from punt_vox.paths import user_state_dir
@@ -47,27 +36,29 @@ MAX_ENTRIES = 500
 
 @dataclass(frozen=True, slots=True)
 class CacheKey:
-    """Content-addressed identity for a cached synthesis.
+    """Content-addressed identity for an anonymous synthesis.
 
-    The (text, voice, provider) triple uniquely identifies an anonymous
-    synthesis request. The MD5 digest is byte-identical to pre-v4.2.1
-    format so existing on-disk cache entries remain reachable after
-    upgrade.
+    Includes text, voice, provider, and all audio-affecting settings, never
+    credentials. The payload is versioned so legacy entries are not served.
     """
 
     text: str
     voice: str | None
     provider: str | None
+    rate: int | None = None
+    model: str | None = None
+    language: str | None = None
+    stability: float | None = None
+    similarity: float | None = None
+    style: float | None = None
+    speaker_boost: bool | None = None
 
     @property
     def filename(self) -> str:
         """On-disk filename: 32-char MD5 hex + .mp3."""
-        payload = f"{self.text}\0{self.voice or ''}\0{self.provider or ''}".encode()
-        # MD5 is deliberate here: the input contains no sensitive material
-        # (text/voice/provider are non-secret), and the digest must stay
-        # byte-identical to pre-v4.2.1 so existing on-disk cache entries
-        # remain reachable after upgrade. Per-call credential overrides
-        # never reach this class — see the module docstring.
+        payload = json.dumps(
+            {"version": 2, **asdict(self)}, sort_keys=True, separators=(",", ":")
+        ).encode()
         digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
         return f"{digest}.mp3"
 
