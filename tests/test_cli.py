@@ -67,7 +67,11 @@ from punt_vox.__main__ import app
 try:
     app()
 finally:
-    for name in ("punt_vox.commands.call_runner", "elevenlabs"):
+    for name in (
+        "punt_vox.commands.call_execution",
+        "punt_vox.commands.call_runner",
+        "elevenlabs",
+    ):
         if name in sys.modules:
             raise SystemExit(f"unexpected startup import: {name}")
 """,

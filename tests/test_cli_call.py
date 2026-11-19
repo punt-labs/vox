@@ -25,6 +25,7 @@ import typer.core
 from conversation_mode._pi_rpc_fakes import FakePiProcess, PiReply, SpawnRecorder
 from typer.testing import CliRunner
 
+from punt_vox.commands import call_execution
 from punt_vox.commands.call import CallCli
 from punt_vox.commands.call_scripted import ScriptedTurn
 from punt_vox.session_spec import SessionSpec
@@ -129,9 +130,7 @@ class _RecordingClient:
 
 
 def _client(client: object) -> AbstractContextManager[object]:
-    from punt_vox.commands import call as call_module
-
-    return patch.object(call_module, "VoxClientSync", return_value=client)
+    return patch.object(call_execution, "VoxClientSync", return_value=client)
 
 
 def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
@@ -178,25 +177,25 @@ def test_the_verbs_are_start_and_stop() -> None:
 
 
 async def test_apply_control_stops_on_a_stop_request(tmp_path: Path) -> None:
-    from punt_vox.commands import call as call_module
-
     control = CallControl(tmp_path / "call.control")
     control.request_stop()
 
     async def speak(text: str) -> None:
         del text
 
-    assert await call_module.CallCli._apply_control(control, MagicMock(), speak)
+    assert await call_execution.CallExecution._apply_control(
+        control, MagicMock(), speak
+    )
 
 
 async def test_apply_control_continues_with_no_request(tmp_path: Path) -> None:
-    from punt_vox.commands import call as call_module
-
     async def speak(text: str) -> None:
         del text
 
     control = CallControl(tmp_path / "call.control")
-    assert not await call_module.CallCli._apply_control(control, MagicMock(), speak)
+    assert not await call_execution.CallExecution._apply_control(
+        control, MagicMock(), speak
+    )
 
 
 def _start_command() -> typer.core.TyperCommand:
@@ -283,21 +282,43 @@ def test_start_without_trace_turns_does_not_echo_the_turn_timer_to_console(
     mock_configure.assert_called_once_with(echo_to_console=False)
 
 
+def test_start_runs_the_call_and_prints_its_summary(tmp_path: Path) -> None:
+    script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
+    run = call_execution.CallExecution.run
+
+    async def run_with_fakes(context: Path, script: Path | None) -> None:
+        process = FakePiProcess.answering("Ready.", "It sums.", "## Decisions\n- x")
+        with _client(_RecordingClient()), _call_env(tmp_path, process):
+            await run(context, script)
+
+    with patch.object(call_execution.CallExecution, "run", new=run_with_fakes):
+        result = runner.invoke(
+            CallCli.build_app(),
+            [
+                "start",
+                "--context",
+                str(_context_file(tmp_path)),
+                "--script",
+                str(script),
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip().splitlines()[-1].startswith("call summary: ")
+
+
 async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
     tmp_path: Path,
 ) -> None:
     """Regression: a bare ``client.synthesize(text)`` sends no provider on the
     wire, and voxd's ``speech_handlers.py`` rejects with ``Unknown provider
     ''`` -- ``parse_required_str`` requires one and does not guess. Every
-    ``speak()`` call inside ``_run`` must pass a :class:`SynthesisSpec` whose
-    ``provider`` survived ``SessionSpec.for_repo().fill()`` resolution, not
-    just call ``speak()`` at all.
+    ``speak()`` call inside ``CallExecution.run`` must pass a :class:`SynthesisSpec`
+    whose ``provider`` survived ``SessionSpec.for_repo().fill()`` resolution,
+    not just call ``speak()`` at all.
     """
-    from punt_vox.commands import call as call_module
-
     client = _RecordingClient()
     with _client(client), _call_env(tmp_path, FakePiProcess.answering("Ready.")):
-        await call_module.CallCli()._run(
+        await call_execution.CallExecution.run(
             _context_file(tmp_path), _script_file(tmp_path, [])
         )
 
@@ -311,13 +332,11 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
     tmp_path: Path,
 ) -> None:
     """End-to-end through the CLI orchestration: real detector, fake speech I/O."""
-    from punt_vox.commands import call as call_module
-
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     client = _RecordingClient()
     process = FakePiProcess.answering("Ready.", "It returns the sum.", "## Decisions")
     with _client(client), _call_env(tmp_path, process):
-        await call_module.CallCli()._run(_context_file(tmp_path), script)
+        await call_execution.CallExecution.run(_context_file(tmp_path), script)
 
     assert "It returns the sum." in client.spoken
     assert CallLock(tmp_path / "call.lock").read() is None  # released after hangup
@@ -326,11 +345,9 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
 async def test_run_call_opens_the_agent_with_the_context_snapshot(
     tmp_path: Path,
 ) -> None:
-    from punt_vox.commands import call as call_module
-
     process = FakePiProcess.answering("Ready.")
     with _client(_RecordingClient()), _call_env(tmp_path, process):
-        await call_module.CallCli()._run(
+        await call_execution.CallExecution.run(
             _context_file(tmp_path, "Topic: retention of call summaries"),
             _script_file(tmp_path, []),
         )
@@ -341,12 +358,10 @@ async def test_run_call_opens_the_agent_with_the_context_snapshot(
 async def test_a_clean_call_ends_by_printing_where_its_summary_is(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from punt_vox.commands import call as call_module
-
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     process = FakePiProcess.answering("Ready.", "It sums.", "## Decisions Made\n- x")
     with _client(_RecordingClient()), _call_env(tmp_path, process):
-        await call_module.CallCli()._run(_context_file(tmp_path), script)
+        await call_execution.CallExecution.run(_context_file(tmp_path), script)
 
     line = capsys.readouterr().out.strip().splitlines()[-1]
     assert line.startswith("call summary: ")
@@ -422,8 +437,6 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
     tmp_path: Path,
 ) -> None:
     """Default (no ``--script``) drives mic capture + ElevenLabs STT, both faked."""
-    from punt_vox.commands import call as call_module
-
     calibration = ScriptedTurn.silence_chunks(10)
     live_chunks = ScriptedTurn(text="ignored", confidence=1.0).synthetic_chunks()
     mic_source = _FakeLiveMicSource(calibration, live_chunks)
@@ -432,7 +445,7 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
     process = FakePiProcess.answering("Ready.", "It returns the sum.", "## Decisions")
 
     with _client(client), _call_env(tmp_path, process), _live_audio(mic_source, stt):
-        await call_module.CallCli()._run(_context_file(tmp_path), None)
+        await call_execution.CallExecution.run(_context_file(tmp_path), None)
 
     assert "It returns the sum." in client.spoken
     assert CallLock(tmp_path / "call.lock").read() is None  # released after hangup
@@ -455,8 +468,6 @@ async def test_run_call_live_path_times_out_after_inactivity(
     tmp_path: Path,
 ) -> None:
     """FR-2's bounded-inactivity end must actually be wired into the live loop."""
-    from punt_vox.commands import call as call_module
-
     calibration = ScriptedTurn.silence_chunks(10)
     # Plain silence, never enough to close a turn -- nothing here should
     # ever speak a reply or reset the inactivity clock via a mode change
@@ -472,7 +483,7 @@ async def test_run_call_live_path_times_out_after_inactivity(
         _live_audio(mic_source, stt),
         patch("punt_vox.commands.call_live_driver._INACTIVITY_TIMEOUT_S", 0.0),
     ):
-        await call_module.CallCli()._run(_context_file(tmp_path), None)
+        await call_execution.CallExecution.run(_context_file(tmp_path), None)
 
     # The loop ended itself via the FR-2 timeout, not by exhausting the
     # chunk generator with a turn still pending -- "Listening." is the only
@@ -504,12 +515,10 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The one mechanism that turns a mid-call crash into audible feedback:
-    ``commands/call.py``'s outer ``except Exception`` handler must speak a
+    ``commands/call_execution.py``'s outer ``except Exception`` handler must speak a
     human-facing summary, log via ``logger.exception``, release the lock in
     ``finally``, and still re-raise so the process exits non-zero.
     """
-    from punt_vox.commands import call as call_module
-
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     client = _ClientFailingOnErrorSummary()
     process = FakePiProcess.answering("Ready.")
@@ -517,10 +526,10 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
         _client(client),
         _call_env(tmp_path, process),
         patch(_PROCESS_CHUNK, side_effect=OSError("mic device busy")),
-        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call_execution"),
         pytest.raises(OSError, match="mic device busy"),
     ):
-        await call_module.CallCli()._run(_context_file(tmp_path), script)
+        await call_execution.CallExecution.run(_context_file(tmp_path), script)
 
     # The fault struck inside the drive loop, after the agent was spawned;
     # the agent was abandoned with the call, never left running.
@@ -546,18 +555,16 @@ async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original
     secondary daemon-RPC failure, is what the human's terminal and the
     process's exit code must show.
     """
-    from punt_vox.commands import call as call_module
-
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     process = FakePiProcess.answering("Ready.")
     with (
         _client(_ClientFailingOnErrorSummary()),
         _call_env(tmp_path, process),
         patch(_PROCESS_CHUNK, side_effect=OSError("mic device busy")),
-        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call_execution"),
         pytest.raises(OSError, match="mic device busy"),
     ):
-        await call_module.CallCli()._run(_context_file(tmp_path), script)
+        await call_execution.CallExecution.run(_context_file(tmp_path), script)
 
     assert process.returncode is not None  # spawned, then abandoned by the crash
 
@@ -572,8 +579,6 @@ async def test_a_crash_mid_call_kills_the_agent_and_writes_no_summary(
     tmp_path: Path,
 ) -> None:
     """An abnormal end abandons the agent: no summary turn, no orphan process."""
-    from punt_vox.commands import call as call_module
-
     script = _script_file(tmp_path, [{"text": "hi", "confidence": 0.95}])
     process = FakePiProcess.answering("Ready.", "reply")
     with (
@@ -585,7 +590,7 @@ async def test_a_crash_mid_call_kills_the_agent_and_writes_no_summary(
         ),
         pytest.raises(RuntimeError, match="STT provider crashed"),
     ):
-        await call_module.CallCli()._run(_context_file(tmp_path), script)
+        await call_execution.CallExecution.run(_context_file(tmp_path), script)
 
     assert process.returncode is not None
     assert not (tmp_path / "calls").exists()
@@ -597,17 +602,15 @@ async def test_an_empty_snapshot_is_a_clean_usage_error_not_a_crash(
 ) -> None:
     """A bad snapshot is an expected, actionable usage error -- it must reach
     typer's clean CLI handling, not be logged as "call ended unexpectedly"."""
-    from punt_vox.commands import call as call_module
-
     client = _RecordingClient()
     recorder: SpawnRecorder
     with (
         _client(client),
         _call_env(tmp_path, FakePiProcess([])) as recorder,
-        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call_execution"),
         pytest.raises(typer.BadParameter, match="empty"),
     ):
-        await call_module.CallCli()._run(
+        await call_execution.CallExecution.run(
             _context_file(tmp_path, context_text), _script_file(tmp_path, [])
         )
 
@@ -620,16 +623,14 @@ async def test_an_empty_snapshot_is_a_clean_usage_error_not_a_crash(
 async def test_an_agent_that_will_not_start_is_a_clean_usage_error(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from punt_vox.commands import call as call_module
-
     client = _RecordingClient()
     with (
         _client(client),
         _call_env(tmp_path, FakePiProcess([PiReply(error="401 invalid api key")])),
-        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call_execution"),
         pytest.raises(typer.BadParameter, match="invalid api key"),
     ):
-        await call_module.CallCli()._run(
+        await call_execution.CallExecution.run(
             _context_file(tmp_path), _script_file(tmp_path, [])
         )
 
