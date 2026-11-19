@@ -238,11 +238,11 @@ def test_unsafe_verbs_ask_but_read_only_flags_do_not(tmp_path: Path) -> None:
         "disable",
         "daemon",
         "desktop",
-        "register-guidance",
     ):
         assert f"Bash(vox {verb}:*)" in ask
     assert "Bash(vox music:*)" not in ask
     assert "Bash(vox rec:*)" not in ask
+    assert "Bash(vox register-guidance:*)" not in ask
     assert _default_reg(tmp_path).rules == VOX_RULES
 
 

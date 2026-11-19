@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
+  (vox-f9ih, punt-kit#425). `vox install`, `vox uninstall`, and
+  `install.sh` no longer write `~/.punt-labs/vox/CLAUDE.md` or an
+  `@~/.punt-labs/vox/CLAUDE.md` line in `~/.claude/CLAUDE.md`. The agent
+  guide is per repo: `vox enable` deposits `.punt-labs/vox/CLAUDE.md`, the
+  enabled marker, and the `@.punt-labs/vox/CLAUDE.md` import. A stale
+  user-scope import line and `~/.punt-labs/vox/CLAUDE.md` file from an older
+  install are left alone; delete both by hand. The packaged guide asset is renamed `agent-guide.md`.
+
 - Vox now installs the dev-only `punt-oo-ratchet` package from PyPI instead
   of embedding the OO, coupling, and suppression ratchets (PL-1160).
 
@@ -49,9 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`vox enable` allows each surface broadly with exact `ask` carve-outs
   (PL-1033, punt-kit#471).** It adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*`
   and `Skill(vox:*)` to `permissions.allow`, and `ask` rules for `install`,
-  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp`,
-  `register-guidance` (its `--remove` drops the Claude guidance) and any
-  global option before the verb (`Bash(vox -*)`), which prompt even though
+  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, and `mcp`,
+  which prompt even though
   the broad allow matches. New safe commands, MCP tools and skills work with
   no rule update. `vox disable` removes both sets; the bare `Skill(<cmd>)`
   rules an earlier `vox enable` wrote stay until you delete them (no cleanup
@@ -70,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notes, and `.beads/.gitignore` ignores the Linear sync lock and the pull
   clock. The deposited tracker guide (`.punt-labs/punt/CLAUDE.md`) and the
   `CLAUDE.md` Issue-tracking section already point at Linear.
+
+### Removed
+
+- The hidden `vox register-guidance` command and the user-scope guidance
+  module (`guidance.py`).
 
 ## [5.0.7] - 2026-11-06
 
