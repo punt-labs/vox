@@ -94,6 +94,62 @@ class TestTextInputFromFile:
     """TextInput parses a --from JSON segments file."""
 
     @pytest.mark.parametrize("flags", [[], ["--json"]])
+    @pytest.mark.parametrize(
+        "kind", ["directory", "permission", "missing", "read_error"]
+    )
+    def test_os_error_is_usage_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        flags: list[str],
+        kind: str,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        path = Path("input.json")
+        if kind == "directory":
+            path.mkdir()
+            message = "Invalid value: Cannot read --from file: Is a directory."
+        elif kind == "missing":
+            message = f"Invalid value for '--from': Path '{path}' does not exist."
+        else:
+            path.write_text('["hello"]', encoding="utf-8")
+            error = (
+                PermissionError(13, "Permission denied")
+                if kind == "permission"
+                else OSError(5, "Input/output error")
+            )
+
+            read_text = Path.read_text
+
+            def fail_read(
+                target: Path,
+                encoding: str | None = None,
+                errors: str | None = None,
+                newline: str | None = None,
+            ) -> str:
+                if target == path:
+                    raise error
+                return read_text(
+                    target, encoding=encoding, errors=errors, newline=newline
+                )
+
+            monkeypatch.setattr(Path, "read_text", fail_read)
+            message = f"Invalid value: Cannot read --from file: {error.strerror}."
+        result = CliRunner().invoke(
+            app,
+            [*flags, "say", "--from", str(path)],
+            terminal_width=240,
+        )
+        assert result.exit_code == 2
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert message in unstyle(result.stderr)
+            assert "Traceback" not in result.stderr
+
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
     def test_non_utf8_is_usage_error(self, tmp_path: Path, flags: list[str]) -> None:
         path = tmp_path / "bad.txt"
         path.write_bytes(b"hi \xff\xfe\n")

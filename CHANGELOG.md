@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Unreadable `vox say --from` inputs report a usage error.** Directory paths
+  and file read failures now exit with code 2 instead of a traceback, with a
+  JSON error under `--json`.
+
 - **Non-UTF-8 `vox say --from` files report a usage error.** Invalid encoding
   now exits with code 2 instead of a traceback, with a JSON error under `--json`.
 
