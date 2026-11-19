@@ -47,10 +47,8 @@ class OutputFlags:
 
     def apply(self, *, json_output: bool, verbose: bool, quiet: bool) -> None:
         """Fold one position's flags into the shared formatter and logging."""
-        if verbose:
-            self._verbose_seen = True
-        if quiet:
-            self._quiet_seen = True
+        self._verbose_seen = self._verbose_seen or verbose
+        self._quiet_seen = self._quiet_seen or quiet
         # The check runs against the accumulated flags, not this call's, so a
         # split like ``vox --verbose status --quiet`` -- verbose on the callback,
         # quiet on the command -- cannot slip past by landing one flag per side.
@@ -119,24 +117,33 @@ class TextInput:
         return data
 
     @staticmethod
-    def _segments_from_file(from_file: Path) -> list[str]:
-        """Parse a JSON segments file into a list of text strings."""
+    def _read_json(from_file: Path) -> object:
+        """Read UTF-8 JSON, translating malformed input into CLI usage errors."""
         try:
-            raw = json.loads(from_file.read_text(encoding="utf-8"))
+            return json.loads(from_file.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as exc:
+            raise typer.BadParameter("--from file must contain valid UTF-8.") from exc
         except json.JSONDecodeError as exc:
             raise typer.BadParameter("--from file must contain valid JSON.") from exc
 
+    @classmethod
+    def _segments_from_file(cls, from_file: Path) -> list[str]:
+        """Parse a JSON segments file into a list of text strings."""
+        raw = cls._read_json(from_file)
         if not isinstance(raw, list):
             raise typer.BadParameter("--from file must contain a JSON array.")
+        items = cast("list[object]", raw)
+        return [
+            text for i, item in enumerate(items) if (text := cls._segment_text(i, item))
+        ]
 
-        segments: list[str] = []
-        for i, item in enumerate(cast("list[object]", raw)):
-            match item:
-                case (str() as seg_text) | {"text": str() as seg_text}:
-                    if seg_text:
-                        segments.append(seg_text)
-                case _:
-                    raise typer.BadParameter(
-                        f"Element {i} must be a string or an object with string text."
-                    )
-        return segments
+    @staticmethod
+    def _segment_text(index: int, item: object) -> str:
+        """Resolve a segment string or object, preserving its index on error."""
+        match item:
+            case (str() as text) | {"text": str() as text}:
+                return text
+            case _:
+                raise typer.BadParameter(
+                    f"Element {index} must be a string or an object with string text."
+                )

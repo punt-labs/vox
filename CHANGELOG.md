@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Non-UTF-8 `vox say --from` files report a usage error.** Invalid encoding
+  now exits with code 2 instead of a traceback, with a JSON error under `--json`.
+
 - **`--json` reports CLI usage and unknown-command errors on stdout.**
   Invalid arguments and unknown commands now return a JSON error object
   instead of empty stdout, retaining exit code 2 and unchanged non-JSON output.
