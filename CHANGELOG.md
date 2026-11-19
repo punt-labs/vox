@@ -64,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.gitattributes` marks the append-only OO audit log `merge=union`, so
   merging `main` into a PR branch keeps both sides' audit lines instead of
   stopping on a conflict the ratchet cannot parse. Over the past month this
-  conflict hit 37 of 64 `main` merges into PR branches, 18 of them on nothing
+  conflict hit 38 of 65 `main` merges into PR branches, 19 of them on nothing
   else.
 
 - **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
