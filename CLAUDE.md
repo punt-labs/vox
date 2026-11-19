@@ -172,7 +172,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 | Layer | Marker | Runs in CI | What it covers |
 |-------|--------|------------|----------------|
 | Unit (default) | *(none)* | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
-| Ratchet gates | `make check-oo check-coupling check-suppressions` | yes | PyPI `punt-oo-ratchet==0.3.0`; implementation tests live in `python-oo-ratchet` |
+| Ratchet gates | `make check-oo check-coupling check-suppressions` | yes | PyPI `punt-oo-ratchet==0.3.1`; implementation tests live in `python-oo-ratchet` |
 | Shell/install subprocess | `subprocess` | yes, as a second `pytest` step | `plugin/hooks/*.sh`, `install.sh`, `scripts/check-plugin-surface.sh` spawned as real processes |
 | Provider integration | `integration` | no (reserved, no tests yet — 5 providers, no credentials-in-CI plan) | Real provider synthesis end-to-end |
 | Shell scripts (static) | `make lint` (shellcheck) | yes | plugin/hooks/*.sh, scripts/*.sh, install.sh |
