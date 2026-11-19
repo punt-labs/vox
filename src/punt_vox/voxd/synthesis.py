@@ -248,14 +248,15 @@ class SynthesisPipeline:
             text, spec.vibe_tags, provider_name, model
         )
 
-        request = self._build_audio_request(normalized, spec)
-
         def _factory() -> TTSProvider:
             return get_provider(provider_name, model=model)
 
         start = time.monotonic()
         try:
-            rc = await self._run_direct_play(spec, _factory, request)
+            with usage.span("daemon", provider_name, text=text, cached=False):
+                rc = await self._run_direct_play(
+                    spec, _factory, self._build_audio_request(normalized, spec)
+                )
         except Exception as exc:
             # provider_name is a raw client field -- %r so an embedded newline
             # cannot forge a second log line at this sink.

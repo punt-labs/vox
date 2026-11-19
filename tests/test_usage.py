@@ -171,6 +171,31 @@ async def test_mcp_signal(captured: InMemorySpanExporter, failed: bool) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["say", "espeak"])
+@pytest.mark.parametrize("text", ["", "private local speech"])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_direct_speech_signal(
+    captured: InMemorySpanExporter, provider: str, text: str, failed: bool
+) -> None:
+    pipeline = SynthesisPipeline(playback_mutex=asyncio.Lock())
+    error = OSError("private direct playback failure")
+    operation = AsyncMock(return_value=0, side_effect=error if failed else None)
+    with patch.object(SynthesisPipeline, "_run_direct_play", operation):
+        result = await pipeline.try_direct_play(
+            text, SynthesisSpec(provider=provider), record_result=MagicMock()
+        )
+    assert result is error if failed else result == 0
+    [span] = _spans(captured, "vox.daemon.synthesize")
+    assert span.attributes is not None
+    assert span.attributes["provider"] == provider
+    assert span.attributes["cached"] is False
+    assert span.attributes["outcome"] == ("error" if failed else "ok")
+    assert span.attributes["text_length"] == usage._usage._open().length(text)
+    assert not span.events
+    assert span.status.description is None
+
+
+@pytest.mark.asyncio
 async def test_synthesis_signals(
     captured: InMemorySpanExporter, tmp_path: Path
 ) -> None:

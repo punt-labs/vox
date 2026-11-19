@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Local `say` and `espeak` direct playback records daemon synthesis telemetry
+  with the provider, derived text length, and uncached status.
 - Turn-timer logging setup fails open so an unusable private log path does not
   prevent call startup, including with `--trace-turns`.
 - Live diagnostic level changes restore root DEBUG admission; failed client
