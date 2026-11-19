@@ -9,6 +9,11 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 
+[[manifest.dependency-metadata]]
+name = "cyclopts"
+version = "4.8.0"
+requires-dist = ["attrs>=23.1.0", "docstring-parser-fork==0.0.16", "rich-rst>=1.3.1,<2.0.0", "rich>=13.6.0", "tomli>=2.0.0 ; python_full_version < '3.11'", "typing-extensions>=4.8.0 ; python_full_version < '3.11'", "ipdb>=0.13.9 ; extra == 'debug'", "line-profiler>=3.5.1 ; extra == 'debug'", "coverage[toml]>=5.1 ; extra == 'dev'", "mkdocs>=1.4.0 ; extra == 'dev'", "pre-commit>=2.16.0 ; extra == 'dev'", "pydantic>=2.11.2,<3.0.0 ; extra == 'dev'", "pytest-cov>=3.0.0 ; extra == 'dev'", "pytest-mock>=3.7.0 ; extra == 'dev'", "pytest>=8.2.0 ; extra == 'dev'", "pyyaml>=6.0.1 ; extra == 'dev'", "syrupy>=4.0.0 ; extra == 'dev'", "toml>=0.10.2,<1.0.0 ; extra == 'dev'", "trio>=0.10.0 ; extra == 'dev'", "gitpython>=3.1.31 ; extra == 'docs'", "myst-parser[linkify]>=3.0.1,<5.0.0 ; extra == 'docs'", "sphinx-autodoc-typehints>=1.25.2,<4.0.0 ; extra == 'docs'", "sphinx-copybutton>=0.5,<1.0 ; extra == 'docs'", "sphinx-rtd-dark-mode>=1.3.0,<2.0.0 ; extra == 'docs'", "sphinx-rtd-theme>=3.0.0,<4.0.0 ; extra == 'docs'", "sphinx>=7.4.7,<8.2.0 ; extra == 'docs'", "markdown>=3.3 ; extra == 'mkdocs'", "mkdocs>=1.4.0 ; extra == 'mkdocs'", "pymdown-extensions>=10.0 ; extra == 'mkdocs'", "tomli>=2.0.0 ; python_full_version < '3.11' and extra == 'toml'", "trio>=0.10.0 ; extra == 'trio'", "pyyaml>=6.0.1 ; extra == 'yaml'"]
+
 [[package]]
 name = "aiofile"
 version = "3.9.0"
@@ -545,7 +550,7 @@ version = "4.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
-    { name = "docstring-parser" },
+    { name = "docstring-parser-fork" },
     { name = "rich" },
     { name = "rich-rst" },
 ]
@@ -561,15 +566,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/76/49/900383b471c645a3c397f47b3211d1fcecb3a540c98f683494cdf86b33de/dnspython-2.9.2.tar.gz", hash = "sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9", size = 455484, upload-time = "2026-11-03T23:56:53.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/0c/5346358b3a20275d256978c35203ddc2c8617f78c1b23795b79ba22ced6d/dnspython-2.9.2-py3-none-any.whl", hash = "sha256:af15f7d385a6ae2fb35a796fde2138004c8c42c7389090e2addc83e3b3340fd8", size = 360455, upload-time = "2026-11-03T23:56:52.088Z" },
-]
-
-[[package]]
-name = "docstring-parser"
-version = "0.17.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
 ]
 
 [[package]]
@@ -1608,7 +1604,6 @@ call = [
 [package.dev-dependencies]
 dev = [
     { name = "cryptography" },
-    { name = "docstring-parser-fork" },
     { name = "markdown" },
     { name = "mypy" },
     { name = "punt-oo-ratchet" },
@@ -1652,7 +1647,6 @@ provides-extras = ["call"]
 [package.metadata.requires-dev]
 dev = [
     { name = "cryptography", specifier = ">=46.0.0" },
-    { name = "docstring-parser-fork", specifier = "==0.0.16" },
     { name = "markdown", specifier = "==3.11.3" },
     { name = "mypy", specifier = ">=1.18.1" },
     { name = "punt-oo-ratchet", specifier = "==0.1.0" },
