@@ -473,6 +473,19 @@ class TestConfigStoreRead:
         assert cfg.vibe_mode == "auto"
         assert cfg.voice is None
 
+    def test_read_non_utf8_durable_uses_defaults_and_preserves_local_state(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        path = tmp_path / "vox.md"
+        path.write_bytes(b'---\nnotify: "y"\n---\n\xff\n')
+        _write_frontmatter(tmp_path / "vox.local.md", {"vibe": "happy"})
+
+        cfg = ConfigStore(tmp_path).read()
+
+        assert cfg.notify == "n"
+        assert cfg.vibe == "happy"
+        assert f"Config unreadable, using defaults: {path}" in caplog.text
+
     def test_read_field_durable(self, tmp_path: Path) -> None:
         _write_frontmatter(tmp_path / "vox.md", {"voice": "fin"})
         assert ConfigStore(tmp_path).read_field("voice") == "fin"
@@ -487,6 +500,16 @@ class TestConfigStoreRead:
 
 class TestConfigStoreWrite:
     """ConfigStore.write_field() and ConfigStore.write_fields()."""
+
+    def test_write_non_utf8_durable_refuses_to_overwrite(self, tmp_path: Path) -> None:
+        path = tmp_path / "vox.md"
+        original = b'---\nnotify: "y"\n---\n\xff\n'
+        path.write_bytes(original)
+
+        with pytest.raises(UnicodeDecodeError):
+            ConfigStore(tmp_path).write_field("notify", "n")
+
+        assert path.read_bytes() == original
 
     def test_write_field_durable(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)

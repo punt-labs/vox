@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(bash:*)",
-      "Bash(bd:*)",
       "Bash(cat:*)",
       "Bash(chmod +x:*)",
       "Bash(claude mcp:*)",
@@ -120,7 +119,9 @@
       "Skill(z-spec:cleanup)",
       "Write",
       "Edit",
-      "Read"
+      "Read",
+      "Bash(biff:*)",
+      "Skill(biff:*)"
     ],
     "deny": [
       "Bash(curl:*)",
@@ -142,6 +143,18 @@
       "Bash(wget:*)",
       "Edit(.env)",
       "Edit(.envrc)"
+    ],
+    "ask": [
+      "Bash(biff install:*)",
+      "Bash(biff uninstall:*)",
+      "Bash(biff install-statusline:*)",
+      "Bash(biff uninstall-statusline:*)",
+      "Bash(biff enable:*)",
+      "Bash(biff disable:*)",
+      "Bash(biff serve:*)",
+      "Bash(biff mcp:*)",
+      "Bash(biff hook:*)",
+      "Bash(biff -*)"
     ]
   }
 }

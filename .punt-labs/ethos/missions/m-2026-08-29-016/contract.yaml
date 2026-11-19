@@ -24,7 +24,7 @@ success_criteria:
     - 'Seed push (criterion f): parameterize the agent system prompt / conversation seed size and run at least 3 sizes (roughly 1KB, 10KB, 50KB of realistic session-context text) recording per-size: session-start latency, first-response latency, and a brief qualitative note on response quality/degradation. Record where (if anywhere) EL rejects or truncates the seed.'
     - 'Live mode (criteria d, e — harness only, not the live run): provide a live-mic entry point that the operator can run from a terminal (real microphone + speaker audio) for barge-in-during-tool-call and turn-taking tests. Instrument it to log a timestamped event trace (turn boundaries, tool call start/end, interruption events, conversation state before/after barge-in) so the live session with the operator produces machine evidence, not just impressions. Document exact run instructions in the spike README. The live run itself happens after this mission closes, driven by the leader with the operator — do not attempt to test barge-in without a human.'
     - 'Report: write spikes/vox-bst7-el-convai/REPORT.md containing the measured p50/p95/max latency tables, the seed-size findings, environment notes (network, EL model/agent config used), and an explicit verdict line for each of the two kill criteria from DES-069: "p95 tool round-trip < 1.5s: PASS/FAIL (measured X)" and "barge-in mid-tool-call preserves state: PENDING LIVE TEST" with the event-trace instructions for filling it in.'
-    - 'Secrets: read the ElevenLabs API key from the environment (it is provided by the repo .envrc). Fail fast with a clear one-line error if it is absent. Never print, log, or write the key. Conv AI usage costs real credits: keep automated runs to the minimum that yields >=20 tool invocations and 3 seed sizes; do not loop unbounded.'
+    - 'Secrets: [redacted-secret] the ElevenLabs API key from the environment (it is provided by the repo .envrc). Fail fast with a clear one-line error if it is absent. Never print, log, or write the key. Conv AI usage costs real credits: keep automated runs to the minimum that yields >=20 tool invocations and 3 seed sizes; do not loop unbounded.'
     - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
     - Do not open a PR, create branches, or push. Work on the existing branch spike/vox-bst7-el-convai in the worktree named in context. Submit your result via `ethos mission result` when the harness runs end-to-end in automated mode and REPORT.md carries real measured numbers, citing the metrics JSON path and REPORT.md.
 budget:
@@ -53,7 +53,7 @@ context: |
     inline deps.
 
     Working directory: the dedicated worktree at
-    /home/jdoe/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
+    ~[redacted-user]/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
     on branch spike/vox-bst7-el-convai (branched from origin/main today).
     Do not touch the main checkout at ~/Coding/punt-labs/vox -- another
     agent is active there.

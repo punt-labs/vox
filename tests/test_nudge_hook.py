@@ -85,3 +85,16 @@ class TestNudgeHook:
         ):
             assert NudgeHook(tmp_path).run(config) is None
         assert any("vibe-nudge" in r.getMessage() for r in caplog.records)
+
+    def test_non_utf8_local_config_stays_silent_and_is_not_overwritten(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        path = tmp_path / "vox.local.md"
+        original = b'---\nvibe_mode: "off"\n---\n\xff\n'
+        path.write_bytes(original)
+
+        config = ConfigStore(tmp_path).read()
+        assert config.vibe_mode == "auto"
+        assert NudgeHook(tmp_path).run(config) is None
+        assert "vibe-nudge: cannot persist cadence" in caplog.text
+        assert path.read_bytes() == original

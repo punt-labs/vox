@@ -79,7 +79,8 @@ class ClaudeMdImport:
 
         Idempotent by exact match net of terminator, top-level only: a line
         already present is a no-op, so re-running ``enable`` never duplicates it
-        (``AppendImport`` 0->1->1).
+        (``AppendImport`` 0->1->1). Raises :class:`ValueError` instead of
+        appending an inert line after a fence that never closes.
         """
         with self._lock.held():
             doc = MarkdownDoc(self._file.read())

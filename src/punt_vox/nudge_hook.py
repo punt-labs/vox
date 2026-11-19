@@ -70,7 +70,7 @@ class NudgeHook:
             ConfigStore(self._config_dir).write_field(
                 "vibe_nudge_turns", str(next_turns)
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
                 "vibe-nudge: cannot persist cadence in %s: %s", self._config_dir, exc
             )

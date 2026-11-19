@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--json` reports CLI usage and unknown-command errors on stdout.**
+  Invalid arguments and unknown commands now return a JSON error object
+  instead of empty stdout, retaining exit code 2 and unchanged non-JSON output.
+
+- **Speech settings no longer reuse stale cached audio.** Cache identity now
+  includes rate, model, language, and all voice settings. Entries written with
+  the incomplete legacy key are not reused.
+
+- **A config value with a backslash is stored as written.** Updating a field
+  already in `vox.md` or `vox.local.md` passed the value to `re.sub` as a
+  replacement template, so `vox vibe 'abc\1'` stored `abcold`,
+  `vox vibe 'C:\new'` wrote a raw newline into the file, and
+  `vox vibe 'abc\q'` crashed with `PatternError`.
+- **Hooks no longer crash when `vox.md` is not valid UTF-8.** Vox logs a
+  warning and uses defaults for the unreadable file.
+- Concurrent config writers preserve each other's field updates (PL-1152) using an
+  inter-process lock in machine-local state, preserving in-place file writes.
+- **`vox --version` and `vox --help` no longer prompt in an enabled repo
+  (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
+  rule, which matched every command starting with an option. The ask tier is
+  now one rule per unsafe verb. `vox enable` and `vox disable` both remove
+  the old rule from a repo an earlier version enabled.
+- **An unclosed code fence in `CLAUDE.md` runs to the end of the file
+  (PL-1087).** Claude Code's Markdown lexer treats a fence that never closes
+  as code through EOF, so an `@`-import after it never loads. `vox enable`
+  now refuses, before writing any settings rule, instead of appending an
+  inert import; an import before the open fence is unaffected. A
+  triple-backtick inline span such as ```` ```x``` ```` is not a fence.
+
 ### Changed
 
 - **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
@@ -17,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enabled marker, and the `@.punt-labs/vox/CLAUDE.md` import. A stale
   user-scope import line and `~/.punt-labs/vox/CLAUDE.md` file from an older
   install are left alone; delete both by hand. The packaged guide asset is renamed `agent-guide.md`.
+
+- **Faster CLI and hook startup.** Load the live-call runtime and ElevenLabs
+  SDK only when starting a call, not when running other commands or viewing help.
+
+- **`vox enable` allows each surface broadly with exact `ask` carve-outs
+  (PL-1033, punt-kit#471).** It adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*`
+  and `Skill(vox:*)` to `permissions.allow`, and `ask` rules for `install`,
+  `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, and `mcp`,
+  which prompt even though
+  the broad allow matches. New safe commands, MCP tools and skills work with
+  no rule update. `vox disable` removes both sets; the bare `Skill(<cmd>)`
+  rules an earlier `vox enable` wrote stay until you delete them (no cleanup
+  code, punt-kit#396). `scripts/check-skill-permissions.sh` is removed: with
+  `Skill(vox:*)` there is no per-command list to keep in sync. `vox enable`
+  prints the allowed rules and the rules that still prompt on separate lines
+  (`allowed` and `ask` in `--json`).
+
 - **Linear is the tracker of record for vox; beads is a scoped local
   mirror.** The 78 active beads are pushed to Linear (`PL-781`–`PL-858`,
   team Punt Labs) each carrying the `repo:vox` label and a type label;

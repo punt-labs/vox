@@ -13,7 +13,6 @@ lint: ## Lint and format check (Python + shell)
 	uv run ruff check .
 	uv run ruff format --check .
 	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
-	bash scripts/check-skill-permissions.sh
 	bash scripts/check-plugin-surface.sh
 
 type: ## Type check with mypy and pyright

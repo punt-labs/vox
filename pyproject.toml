@@ -65,7 +65,7 @@ dependencies = [
     "openai>=1.0.0",
     "pydub>=0.25.0",
     "audioop-lts>=0.2.1",
-    "typer>=0.24.1",
+    "typer>=0.27.2",
     "websockets>=15.0",
     # voxd hosts the lux music-player app and the vox-panel applet: the public
     # LuxClient facade is a hard runtime dependency — identity/lease
@@ -127,6 +127,9 @@ module-name = "punt_vox"
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+# .claude/rules/*.md carry fenced Python examples (some intentionally
+# non-conforming); ruff must not try to parse them as source.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = [
@@ -224,6 +227,7 @@ line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.13"
+platform = "linux"
 mypy_path = "typings"
 strict = true
 warn_return_any = true

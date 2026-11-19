@@ -33,6 +33,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |
     Round 2 of the vox-rmyx security fix, re-scoped from mission
     m-2026-10-22-002 (closed escalated) because the fix needs

@@ -25,6 +25,9 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: |-
     vox-h777: two defects in the vox Lux music widget (docs/architecture.tex four-surface model; punt_lux SceneOperations at ../lux/src/punt_lux/operations/scenes.py).
 

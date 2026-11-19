@@ -172,41 +172,43 @@ class SynthesisPipeline:
         text: str,
         spec: SynthesisSpec,
     ) -> SynthesisOutcome:
-        """Run TTS synthesis and return the output path plus cache status.
+        """Synthesize to a file, raising on failure; report cache reuse separately.
 
-        Handles API key injection, provider construction, and caching, and
-        raises on failure. ``cached=True`` marks an on-disk cache hit (no
-        TTS call); ``cached=False`` marks fresh audio -- the observability
-        signal forwarded to callers. A per-call ``api_key`` bypasses the
-        cache on lookup and store (billing isolation); the anonymous path
-        uses the MD5-keyed cache. See ``punt_vox.cache``.
+        Handles API key injection, provider construction, and caching. Per-call
+        credentials bypass lookup and store for billing isolation.
         """
         provider_name = spec.provider or ""
         model = spec.model
         api_key = spec.api_key
 
-        # apply_vibe_for_synthesis takes RAW text: it normalizes the body
-        # after splitting off bracket tags that normalization would eat.
+        # Normalize around bracket tags so expressive instructions survive.
         normalized = self.apply_vibe_for_synthesis(
             text, spec.vibe_tags, provider_name, model
         )
 
-        # Cache lookup on the anonymous path only; per-call api_key scopes
-        # bypass it (billing isolation + CodeQL sensitive-hash avoidance).
-        key = CacheKey(normalized, spec.voice or "", provider_name)
+        # Anonymous cache only; credentials are deliberately excluded from identity.
+        key = CacheKey(
+            normalized,
+            spec.voice or "",
+            provider_name,
+            rate=spec.rate,
+            model=spec.model,
+            language=spec.language,
+            stability=spec.stability,
+            similarity=spec.similarity,
+            style=spec.style,
+            speaker_boost=spec.speaker_boost,
+        )
         if api_key is None:
             cached = cache_get(key)
             if cached is not None:
-                # "served from cache", not "synthesized" -- no synthesis work ran,
-                # so an operator can tell cache reuse from real synthesis.
+                # Distinguish cache reuse from actual synthesis work.
                 logger.info(
                     "served %d chars from cache (%s)",
                     len(text),
                     provider_name or "system",
                 )
                 return SynthesisOutcome(path=cached, cached=True)
-        # Per-call api_key scopes skip the lookup; the MISS log below records
-        # the bypass ("not cached (per-call api_key)") so no separate log here.
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
@@ -217,9 +219,7 @@ class SynthesisPipeline:
                     provider, request, spec, len(text)
                 ).run()
 
-                # Anonymous path only; log the real cache_put path, never a
-                # CACHE_DIR snapshot and never file= when the bytes weren't cached
-                # (per-call api_key scopes and refused writes both yield None).
+                # Report caching only when the anonymous write succeeds.
                 cached_path = cache_put(key, output_path) if api_key is None else None
                 logger.info(
                     "synthesized %d chars with %s%s",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
-from _cli_introspect import command_opts
+from _cli_introspect import command_opts, option_help
 from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
@@ -39,6 +41,49 @@ if TYPE_CHECKING:
 _CLI = "punt_vox.__main__"
 _CLI_DAEMON = "punt_vox.cli_daemon"
 _CLI_DESKTOP = "punt_vox.cli_desktop"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--help"],
+        ["hook", "user-prompt-submit"],
+        ["call", "--help"],
+        ["call", "start", "--help"],
+    ],
+)
+def test_cli_does_not_import_live_call_stack(args: list[str], tmp_path: Path) -> None:
+    config_dir = tmp_path / ".punt-labs" / "vox"
+    config_dir.mkdir(parents=True)
+    (config_dir / "vox.md").write_text('---\nnotify: "y"\n---\n', encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from punt_vox.__main__ import app
+
+try:
+    app()
+finally:
+    for name in (
+        "punt_vox.commands.call_execution",
+        "punt_vox.commands.call_runner",
+        "elevenlabs",
+    ):
+        if name in sys.modules:
+            raise SystemExit(f"unexpected startup import: {name}")
+""",
+            *args,
+        ],
+        input=json.dumps({"cwd": str(tmp_path)}),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1289,6 +1334,15 @@ class TestMainGroup:
         # 80-col width, so substring matches on the rendered output are
         # width-dependent and fail on Linux CI.)
         assert app.info.name == "vox"
+
+    @pytest.mark.parametrize("command", ["say", "voice"])
+    def test_provider_help_names_vox_md_default(self, command: str) -> None:
+        # The default provider is the repo's vox.md; there is no auto-detect
+        # fallback (docs/provider-authority.md), so help must not promise one.
+        text = option_help(command, option="--provider")
+        assert "auto-detect" not in text
+        assert "vox.md" in text
+        assert "vox provider <name>" in text
 
     def test_say_help(self) -> None:
         # ``say`` exposes a --voice option. Assert it against the registered

@@ -96,11 +96,13 @@ class EnablementCli:
 
         enablement = self._transition(_do_enable)
         outcome = outcome_holder["value"]
+        rules = enablement.permission_rules
         payload: dict[str, object] = {
             "enabled": True,
             "repo": str(enablement.root),
             "marker": str(enablement.marker_path),
-            "allowed": list(enablement.allow_rules),
+            "allowed": list(rules.get("allow", ())),
+            "ask": list(rules.get("ask", ())),
             "provider_proposal": {
                 "reason": outcome.reason,
                 "provider_written": outcome.provider_written,
@@ -109,7 +111,8 @@ class EnablementCli:
         }
         headline = (
             f"vox enabled in {enablement.root}\n"
-            f"allowed in .claude/settings.json: {', '.join(enablement.allow_rules)}"
+            f"allowed in .claude/settings.json: {', '.join(rules.get('allow', ()))}\n"
+            f"still prompts: {', '.join(rules.get('ask', ()))}"
         )
         # The outcome sentence is appended so a plain-text reader sees the
         # daemon-proposal result without decoding the JSON envelope (the
@@ -137,15 +140,16 @@ class EnablementCli:
         )
         enablement = self._transition(transition)
         verb = "purged" if purge else "disabled"
+        removed = [r for tier in enablement.permission_rules.values() for r in tier]
         self._formatter.emit(
             {
                 "enabled": False,
                 "purged": purge,
                 "repo": str(enablement.root),
-                "removed": list(enablement.allow_rules),
+                "removed": removed,
             },
             f"vox {verb} in {enablement.root}\n"
-            f"removed from .claude/settings.json: {', '.join(enablement.allow_rules)}",
+            f"removed from .claude/settings.json: {', '.join(removed)}",
         )
 
     def notify(

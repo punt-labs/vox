@@ -53,6 +53,16 @@ def tmp_output_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def hermetic_home(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Keep home-relative state and inherited subprocess HOME inside this test."""
+    home = tmp_path_factory.mktemp("vox-home")
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
 def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

@@ -153,21 +153,24 @@ def test_indented_line_is_not_matched_or_pruned(tmp_path: Path) -> None:
     assert host.read_text(encoding="utf-8") == f"{indented}{_REPO}\n"
 
 
-def test_dangling_opener_above_the_import_does_not_hide_it(tmp_path: Path) -> None:
-    # The unterminated-trailing-opener guard: a stray fence in the user's prose
-    # above a column-0 import must NOT swallow it. The naive odd-count rule would
-    # misclassify the import as fenced -- register would append a duplicate and
-    # prune could not remove it (a 404ing @-import that loads every session).
+def test_import_after_a_dangling_opener_is_inert(tmp_path: Path) -> None:
+    # Claude Code's lexer runs an unclosed fence to EOF, so this import loads
+    # nothing: it is not registered, and prune leaves the user's text alone.
     host = tmp_path / "CLAUDE.md"
-    host.write_text(f"# rules\n\n```text\ndangling\n{_REPO}\n", encoding="utf-8")
+    text = f"# rules\n\n```text\ndangling\n{_REPO}\n"
+    host.write_text(text, encoding="utf-8")
     writer = _writer(tmp_path)
-    # The import below the dangling opener is still seen ...
-    assert writer.is_registered() is True
-    # ... so a second register is a no-op (no duplicate) ...
-    assert writer.register() is False
-    # ... and prune removes it, leaving the dangling fence and its content.
-    assert writer.prune() is True
-    assert host.read_text(encoding="utf-8") == "# rules\n\n```text\ndangling\n"
+    assert writer.is_registered() is False
+    assert writer.prune() is False
+    assert host.read_text(encoding="utf-8") == text
+
+
+def test_register_refuses_to_append_into_an_open_fence(tmp_path: Path) -> None:
+    host = tmp_path / "CLAUDE.md"
+    host.write_text("```text\ndangling\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="unclosed code fence"):
+        _writer(tmp_path).register()
+    assert host.read_text(encoding="utf-8") == "```text\ndangling\n"
 
 
 # ---------------------------------------------------------------------------

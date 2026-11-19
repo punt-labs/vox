@@ -104,6 +104,7 @@ def test_enable_registers_settings(tmp_path: Path) -> None:
     settings = tmp_path / ".claude" / "settings.json"
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert "Bash(vox:*)" in data["permissions"]["allow"]
+    assert "Bash(vox enable:*)" in data["permissions"]["ask"]
 
 
 def test_enable_is_idempotent_no_second_import(tmp_path: Path) -> None:
@@ -331,6 +332,18 @@ def test_enable_with_missing_guide_asset_names_the_reinstall_and_writes_no_marke
         RepoEnablement.for_repo(tmp_path).enable()
     assert not _marker_present(tmp_path)
     assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_enable_refuses_an_unclosed_fence_before_granting(tmp_path: Path) -> None:
+    host = tmp_path / "CLAUDE.md"
+    host.write_text("```text\nnever closed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unclosed code fence"):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not _marker_present(tmp_path)
+    assert host.read_text(encoding="utf-8") == "```text\nnever closed\n"
 
 
 # ---------------------------------------------------------------------------

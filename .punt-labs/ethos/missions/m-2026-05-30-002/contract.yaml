@@ -20,4 +20,7 @@ budget:
     rounds: 2
     reflection_after_each: true
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Hooks speak parent folder name ''punt-labs'' not the repo the user is in. Defect 1: hook scripts derive repo via ''git rev-parse --git-common-dir'' in the hook process pwd then pass as config_dir to voxd; fallback ''vox hook'' uses find_config_dir() Path.cwd() walk-up (dirs.py:16-27). Demonstrated cwd=vox->vox, cwd=parent->punt-labs. Defect 2: gate checks config.md (dead since 7e151b1) so migrated repos hooks exit silently. Claude pipes payload.cwd but scripts discard it. Ratified: name from payload.cwd, no walk-up past repo git root, daemon+fallback agree, gate fixed. Design only.'

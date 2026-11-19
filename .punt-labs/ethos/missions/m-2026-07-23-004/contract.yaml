@@ -29,4 +29,7 @@ budget:
     rounds: 2
     reflection_after_each: false
 current_round: 1
+round_decisions:
+    version: 1
+    entries: []
 context: 'Bead vox-jei3. The ratified design docs/rec-music-cli.md unifies vox''s rec and music CLI stores and, per operator ruling, replaces the 700 KB single-frame fetch with a chunked transfer so get works for any-size files. Two stateful concerns need the formal-modeling gate satisfied before implementation: (1) music new/remove mutate a Catalog the current audio-programs model abstracts away (finding #7) — the model must make the Catalog explicit while keeping the Program/Radio on a resolved pool, and must derive "cannot remove a playing album" from a global invariant; (2) the chunked get transport must guarantee ordered, complete, atomic delivery (no partial file on a mid-stream fault). Your specs are the model the implementation''s tests will assert by name; the design doc''s §"Audio-programs Z-model delta" and §"Chunked transfer" give the exact deltas. This is the design phase — implementation waits on a fuzz-clean model.'

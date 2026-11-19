@@ -25,7 +25,7 @@ results:
           status: pass
         - name: HealthTarget extracted to service/health.py; old definition deleted, no shim (PL-PP-1)
           status: pass
-        - name: new mirrored test file tests/test_service_health.py — 18 tests (construction, host/port/token resolution, wildcard/whitespace boundary, run-file-absent token=None)
+        - name: new mirrored test file tests/test_service_health.py — 18 tests (construction, host/port/token resolution, wildcard/whitespace boundary, run-file-absent token=[redacted-secret])
           status: pass
         - name: 67 service tests pass (health + installer + process); behavior preserved
           status: pass

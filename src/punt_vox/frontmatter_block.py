@@ -12,13 +12,25 @@ if TYPE_CHECKING:
 
 __all__ = ["FrontmatterBlock"]
 
-_FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_LINE_END = r"(?=\r?$)"
+_INLINE_SPACE = r"[^\S\r\n]*"
+# Only an indented line can continue a legacy value; its grammar stays the same.
+_VALUE_CONTINUATION = rf"(?:\r?\n{_INLINE_SPACE})*\r?\n[ \t]{_INLINE_SPACE}(?=\S)"
+_FIELD_VALUE = (
+    rf":{_INLINE_SPACE}(?:{_VALUE_CONTINUATION})?"
+    rf'"?([^"\r\n]*)"?{_INLINE_SPACE}{_LINE_END}'
+)
+_FIELD_RE = re.compile(rf"^([\w.-]+){_FIELD_VALUE}", re.MULTILINE)
 # A fence is a `---` line; it only opens a block on the file's very first line,
 # and only then does a later one close it. Without the opening anchor a
 # markdown horizontal rule buried in prose reads as a closing fence, and an
 # inserted field lands above that rule instead of in the frontmatter.
-_OPENING_FENCE_RE = re.compile(r"\A---[ \t]*\n")
-_FENCE_LINE_RE = re.compile(r"\n---[ \t]*$", re.MULTILINE)
+_FENCED_HEADER_RE = re.compile(
+    r"\A---[ \t]*(?=\r?\n).*?(?P<separator>\r?\n)---[ \t]*(?=\r?$)",
+    re.MULTILINE | re.DOTALL,
+)
+# Each character that ends a quoted value early, and how a rejection names it.
+_UNQUOTABLE = (("\n", "newlines"), ("\r", "newlines"), ('"', "double-quotes"))
 
 
 @final
@@ -34,13 +46,17 @@ class FrontmatterBlock:
     and neither has to know the other's job.
     """
 
-    __slots__ = ("_text",)
+    __slots__ = ("_parts",)
 
-    _text: str
+    _parts: tuple[str, str]
 
     def __new__(cls, text: str) -> Self:
         self = super().__new__(cls)
-        self._text = text
+        # Without a fence pair, preserve legacy reads and in-place edits.
+        # Otherwise, the tail owns the newline before the closing fence.
+        fences = _FENCED_HEADER_RE.match(text)
+        boundary = len(text) if fences is None else fences.start("separator")
+        self._parts = text[:boundary], text[boundary:]
         return self
 
     @classmethod
@@ -60,26 +76,20 @@ class FrontmatterBlock:
         type, not a bare ``ValueError``, because a caller answering this has
         a real value it cannot store, not a malformed request to discard.
         """
-        if "\n" in value or "\r" in value:
-            msg = f"config values must not contain newlines, got: {value!r}"
-            raise ConfigValueError(msg)
-        if '"' in value:
-            msg = f"config values must not contain double-quotes, got: {value!r}"
-            raise ConfigValueError(msg)
+        for char, kind in _UNQUOTABLE:
+            if char in value:
+                msg = f"config values must not contain {kind}, got: {value!r}"
+                raise ConfigValueError(msg)
 
     @property
     def text(self) -> str:
         """Return the block's whole text, ready to write."""
-        return self._text
+        return "".join(self._parts)
 
     def fields(self) -> dict[str, str]:
         """Return every non-empty frontmatter field."""
-        found: dict[str, str] = {}
-        for match in _FIELD_RE.finditer(self._text):
-            val = match.group(2).strip()
-            if val:
-                found[match.group(1)] = val
-        return found
+        header, _ = self._parts
+        return self._parse(header)
 
     def field(self, name: str) -> str | None:
         """Return one frontmatter field, or ``None`` when it is absent or empty.
@@ -88,10 +98,8 @@ class FrontmatterBlock:
         field the user never set has no value to answer with, and every
         caller reads it as "unset" and falls back to its own default.
         """
-        match = self._field_re(name).search(self._text)
-        if match and match.group(1).strip():
-            return match.group(1).strip()
-        return None
+        header, _ = self._parts
+        return self._parse(header, self._field_re(name)).get(name)
 
     def accepts(self, keys: Iterable[str]) -> bool:
         """Return whether every key in *keys* has somewhere to go in this block.
@@ -101,52 +109,40 @@ class FrontmatterBlock:
         frontmatter this can edit, and the caller rebuilds it whole rather
         than appending fields below prose where no reader would find them.
         """
-        if self._closing_fence(self._text) is not None:
-            return True
-        return all(self._field_re(key).search(self._text) for key in keys)
+        header, tail = self._parts
+        return bool(tail) or all(self._field_re(key).search(header) for key in keys)
 
     def with_fields(self, updates: dict[str, str]) -> Self:
         """Return a block with *updates* applied, each replaced or inserted.
 
         Assumes :meth:`accepts` already said yes for these keys.
         """
-        text = self._text
+        header, tail = self._parts
         for key, value in updates.items():
             line = f'{key}: "{value}"'
-            field_re = self._field_re(key)
-            # Each insert shifts the fence, so it is found afresh per key.
-            if field_re.search(text):
-                text = field_re.sub(line, text)
-            else:
-                text = self._inserted(text, line)
-        return type(self)(text)
+            # A replacement template expands backslashes; doubled, they stay text.
+            template = line.replace("\\", r"\\")
+            header, replaced = self._field_re(key).subn(template, header)
+            if not replaced:
+                header += self._insertion(line)
+        return type(self)(header + tail)
 
-    @classmethod
-    def _inserted(cls, text: str, line: str) -> str:
-        """Return *text* with *line* written above its closing fence."""
-        fence = cls._closing_fence(text)
-        if fence is None:
+    def _insertion(self, line: str) -> str:
+        _, tail = self._parts
+        if not tail:
             msg = f"no closing fence to insert {line!r} above"
             raise ValueError(msg)
-        cut = fence.start() + 1  # just past the newline that opens the fence line
-        return f"{text[:cut]}{line}\n{text[cut:]}"
+        return tail[: tail.index("\n") + 1] + line
 
     @staticmethod
-    def _closing_fence(text: str) -> re.Match[str] | None:
-        """Return the fence closing *text*'s frontmatter, if it has one.
-
-        ``None`` is the documented contract for "this is not a fenced block":
-        a fence closes only what an opening fence on the first line began, so
-        a ``---`` horizontal rule sitting in prose answers nothing. The search
-        starts on the opening fence's own newline, so an empty block --
-        ``---\\n---\\n`` -- still finds its closing line.
-        """
-        opening = _OPENING_FENCE_RE.match(text)
-        if opening is None:
-            return None
-        return _FENCE_LINE_RE.search(text, opening.end() - 1)
+    def _parse(header: str, pattern: re.Pattern[str] = _FIELD_RE) -> dict[str, str]:
+        return {
+            match.group(1): value
+            for match in pattern.finditer(header)
+            if (value := match.group(2).strip())
+        }
 
     @staticmethod
     def _field_re(key: str) -> re.Pattern[str]:
         """Return the pattern matching *key*'s whole line, quoted or bare."""
-        return re.compile(rf"^{re.escape(key)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
+        return re.compile(rf"^({re.escape(key)}){_FIELD_VALUE}", re.MULTILINE)

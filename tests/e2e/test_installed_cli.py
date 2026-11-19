@@ -24,6 +24,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 _TIMEOUT = 60.0
+_DEFAULT_BINARY = Path.home() / ".local" / "bin" / "vox"
 
 _REQUIRED_COMMANDS = ("version", "status", "doctor", "say", "mcp")
 
@@ -36,7 +37,7 @@ def _vox() -> Path:
     on a workstation that has not run ``make install`` yet.
     """
     override = os.environ.get("VOX_E2E_BINARY")
-    candidate = Path(override) if override else Path.home() / ".local" / "bin" / "vox"
+    candidate = Path(override) if override else _DEFAULT_BINARY
     if not candidate.is_file():
         pytest.skip(
             f"installed vox not found at {candidate}; run `make install` "

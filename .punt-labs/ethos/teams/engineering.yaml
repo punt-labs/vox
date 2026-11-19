@@ -11,7 +11,7 @@ members:
     role: python-specialist
   - identity: gvr
     role: python-language-design
-  # Go
+  # Systems / daemon review (Pike)
   - identity: bwk
     role: go-specialist
   # OO patterns / refactoring
@@ -39,8 +39,6 @@ members:
   # UX / info design
   - identity: edt
     role: ux-designer
-  - identity: dna
-    role: ux-cognitive
   # Product
   - identity: mcg
     role: product-strategy
@@ -84,22 +82,6 @@ collaborations:
   - from: ux-designer
     to: coo
     type: reports_to
-  - from: ux-cognitive
-    to: coo
-    type: reports_to
   - from: product-strategy
     to: coo
     type: reports_to
-  # Domain pairings
-  - from: python-language-design
-    to: python-specialist
-    type: collaborates_with
-  - from: cli-minimalist
-    to: cli-specialist
-    type: collaborates_with
-  - from: ux-cognitive
-    to: ux-designer
-    type: collaborates_with
-  - from: b-specialist
-    to: z-specialist
-    type: collaborates_with

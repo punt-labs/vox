@@ -2,10 +2,11 @@
 
 ``tool-enable-disable.md`` § 2.8 lets ``enable`` touch one file outside vox's own
 subtree -- ``<repo>/.claude/settings.json`` -- and only additively. The
-deterministic entry set (``_VOX_RULES``) is vox's identity in that file:
-``Bash(vox:*)`` for a ``--no-plugin`` agent driving the ``vox`` CLI, plus the
-plugin's MCP tool wildcard and a ``Skill()`` rule per shipped command, so an
-enabled repo never prompts for vox's own tools. Nothing is granted outside the
+deterministic entry set (:data:`punt_vox.permission_rules.VOX_RULES`) is vox's
+identity in that file:
+a broad ``permissions.allow`` rule per surface (CLI, MCP, skills) plus exact
+``permissions.ask`` carve-outs for the unsafe verbs, so an enabled repo never
+prompts for vox's safe tools. Nothing is granted outside the
 repo, and the ``vox-dev`` rules are left to maintainers to add by hand.
 :class:`SettingsRegistration` adds the missing members with the
 order-preserving merge of [permissions.md § 6] and removes them by exact
@@ -24,65 +25,54 @@ import pwd
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.permission_rules import VOX_RULES
 from punt_vox.pinned_directory import PinnedDirectory
 from punt_vox.settings_document import SettingsDocument
 from punt_vox.sibling_lock import SiblingLock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 __all__ = ["SettingsRegistration"]
 
-# Skill names must match plugin/commands/*.md (namespaced-only commands as
-# vox:<name>); scripts/check-skill-permissions.sh enforces the parity.
-_VOX_RULES: tuple[str, ...] = (
-    "Bash(vox:*)",
-    "mcp__plugin_vox_mic__*",
-    "Skill(call)",
-    "Skill(music)",
-    "Skill(mute)",
-    "Skill(unmute)",
-    "Skill(vibe)",
-    "Skill(vox)",
-    "Skill(vox:model)",
-    "Skill(vox:provider)",
-    "Skill(vox:recap)",
-    "Skill(vox:voice)",
-)
+# Rules an earlier vox granted and no longer does, stripped by every rewrite so
+# enable and disable both retire them: ``Bash(vox -*)`` made ``vox --version``
+# prompt (punt-kit DES-039).
+_LEGACY_RULES: dict[str, tuple[str, ...]] = {"ask": ("Bash(vox -*)",)}
 
 
 @final
 class SettingsRegistration:
     """Register or deregister a deterministic permission-entry set in a settings file.
 
-    Bind the settings path and the entry set at construction. :meth:`register`
-    appends the missing entries to ``permissions.allow`` preserving order;
+    Bind the settings path and the rule tiers at construction. :meth:`register`
+    appends the missing entries to each ``permissions.<tier>`` preserving order;
     :meth:`deregister` removes every exact match. Both take the sibling lock for
     the whole read-modify-write, so a parallel ``enable`` never loses an update.
     """
 
-    __slots__ = ("_entries", "_lock", "_path")
+    __slots__ = ("_lock", "_path", "_rules")
 
     _path: Path
     _lock: SiblingLock
-    _entries: tuple[str, ...]
+    _rules: Mapping[str, tuple[str, ...]]
 
     def __new__(
-        cls, settings_path: Path, entries: tuple[str, ...] = _VOX_RULES
+        cls, settings_path: Path, rules: Mapping[str, tuple[str, ...]] = VOX_RULES
     ) -> Self:
         self = super().__new__(cls)
         self._path = settings_path
         self._lock = SiblingLock(settings_path)
-        self._entries = entries
+        self._rules = rules
         return self
 
     @property
-    def entries(self) -> tuple[str, ...]:
-        """Return the deterministic entry set this instance owns."""
-        return self._entries
+    def rules(self) -> Mapping[str, tuple[str, ...]]:
+        """Return the rules this instance owns, keyed by ``permissions`` tier."""
+        return self._rules
 
     def register(self) -> bool:
-        """Add each entry to ``permissions.allow`` if absent. Return whether changed.
+        """Add each owned rule to its tier if absent. Return whether changed.
 
         Order-preserving and idempotent: an entry already present is skipped, so a
         re-run of ``enable`` adds nothing and rewrites nothing.
@@ -90,23 +80,28 @@ class SettingsRegistration:
         return self._rewrite(self._with_entries)
 
     def deregister(self) -> bool:
-        """Remove every owned entry from ``permissions.allow``. Return whether changed.
+        """Remove every owned rule from its tier. Return whether changed.
 
         Exact value-match removal -- the identity is the entry set itself, so no tag
         schema is needed. Unrelated entries are left untouched.
         """
         return self._rewrite(self._without_entries)
 
-    def _with_entries(self, allow: list[str]) -> list[str]:
-        """Return *allow* with each missing owned entry appended in order."""
-        return allow + [entry for entry in self._entries if entry not in allow]
+    @staticmethod
+    def _with_entries(current: list[str], owned: tuple[str, ...]) -> list[str]:
+        """Return *current* with each missing owned rule appended in order."""
+        return current + [entry for entry in owned if entry not in current]
 
-    def _without_entries(self, allow: list[str]) -> list[str]:
-        """Return *allow* without any owned entry."""
-        return [entry for entry in allow if entry not in self._entries]
+    @staticmethod
+    def _without_entries(current: list[str], owned: tuple[str, ...]) -> list[str]:
+        """Return *current* without any owned rule."""
+        return [entry for entry in current if entry not in owned]
 
-    def _rewrite(self, edit: Callable[[list[str]], list[str]]) -> bool:
-        """Apply *edit* to ``permissions.allow`` under the lock. Return whether changed.
+    def _rewrite(self, edit: Callable[[list[str], tuple[str, ...]], list[str]]) -> bool:
+        """Apply *edit* to each owned tier under the lock. Return whether changed.
+
+        A tier whose edit changes nothing is left as it was, so removing rules
+        never creates an absent tier.
 
         Every lookup after the open goes through the pinned ``.claude/``
         descriptor: the lock, the read, and the atomic replace all land in the
@@ -118,13 +113,19 @@ class SettingsRegistration:
             self._lock.held(dir_fd=directory.fd),
         ):
             document = self._load(directory)
-            allow = document.allow
-            updated = edit(allow)
-            if updated == allow:
-                return False
-            document.set_allow(updated)
-            directory.replace_text(self._path.name, document.dumps())
-            return True
+            changed = False
+            for tier in dict.fromkeys((*self._rules, *_LEGACY_RULES)):
+                current = document.rules(tier)
+                updated = self._without_entries(
+                    edit(current, self._rules.get(tier, ())),
+                    _LEGACY_RULES.get(tier, ()),
+                )
+                if updated != current:
+                    document.set_rules(tier, updated)
+                    changed = True
+            if changed:
+                directory.replace_text(self._path.name, document.dumps())
+            return changed
 
     def _refuse_home_repo(self) -> None:
         """Raise ``ValueError`` when the repo is the home directory.
