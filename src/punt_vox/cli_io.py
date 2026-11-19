@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Self
+from typing import Self, cast
 
 import typer
 
@@ -130,17 +130,13 @@ class TextInput:
             raise typer.BadParameter("--from file must contain a JSON array.")
 
         segments: list[str] = []
-        for i, item in enumerate(raw):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-            seg_text: str
-            if isinstance(item, str):
-                seg_text = item
-            elif isinstance(item, dict):
-                seg_text = str(item.get("text") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-            else:
-                raise typer.BadParameter(
-                    f"Element {i} must be a string or {{voice, text}} object."
-                )
-
-            if seg_text:
-                segments.append(seg_text)
+        for i, item in enumerate(cast("list[object]", raw)):
+            match item:
+                case (str() as seg_text) | {"text": str() as seg_text}:
+                    if seg_text:
+                        segments.append(seg_text)
+                case _:
+                    raise typer.BadParameter(
+                        f"Element {i} must be a string or an object with string text."
+                    )
         return segments
