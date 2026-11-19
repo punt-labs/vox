@@ -8,9 +8,12 @@ observes exactly which steps ran.
 
 The invariant under test (install-cli-only.md): ``--no-plugin`` and
 ``VOX_NO_PLUGIN=1`` skip ONLY the marketplace-register + plugin-install steps
-(the ``claude plugin ...`` calls); the binary install, daemon, and the
-user-scope guide import (``vox register-guidance``) always run. An unknown flag
-exits 2; the default (no flag) installs the plugin.
+(the ``claude plugin ...`` calls); the binary install and daemon always run. An
+unknown flag exits 2; the default (no flag) installs the plugin.
+
+vox's agent guide is repo-scoped: only ``vox enable`` deposits it. The
+installer, in every mode, never touches the user's ``~/.claude/CLAUDE.md`` or
+a user-scope ``~/.punt-labs/vox/CLAUDE.md``.
 """
 
 from __future__ import annotations
@@ -78,10 +81,15 @@ class InstallRun:
     stdout: str
     stderr: str
     log: str
+    home: Path
 
     def ran(self, fragment: str) -> bool:
         """Return whether any stub logged an argv line containing ``fragment``."""
         return fragment in self.log
+
+    def wrote_home_file(self, relative: str) -> bool:
+        """Return whether the run left a file at ``relative`` under its HOME."""
+        return (self.home / relative).exists()
 
 
 class InstallSandbox:
@@ -148,7 +156,7 @@ class InstallSandbox:
             check=False,
         )
         log = self._log.read_text(encoding="utf-8") if self._log.exists() else ""
-        return InstallRun(proc.returncode, proc.stdout, proc.stderr, log)
+        return InstallRun(proc.returncode, proc.stdout, proc.stderr, log, self._work)
 
 
 @pytest.fixture
@@ -165,12 +173,9 @@ class TestPluginInstallDefault:
         assert result.ran("claude plugin install vox@punt-labs")
         assert result.ran("claude plugin marketplace")
 
-    def test_default_still_installs_cli_and_guide(
-        self, sandbox: InstallSandbox
-    ) -> None:
+    def test_default_still_installs_cli(self, sandbox: InstallSandbox) -> None:
         result = sandbox.run()
         assert result.ran("uv tool install")
-        assert result.ran("vox register-guidance")
 
 
 class TestNoPluginFlag:
@@ -182,15 +187,11 @@ class TestNoPluginFlag:
         assert not result.ran("claude plugin install")
         assert not result.ran("claude plugin marketplace")
 
-    def test_flag_still_installs_cli_daemon_and_guide(
-        self, sandbox: InstallSandbox
-    ) -> None:
-        # The whole point: a --no-plugin box still gets a working CLI and its
-        # ~/.punt-labs/vox/CLAUDE.md @-import (register-guidance).
+    def test_flag_still_installs_cli_and_daemon(self, sandbox: InstallSandbox) -> None:
+        # The whole point: a --no-plugin box still gets a working CLI and daemon.
         result = sandbox.run("--no-plugin")
         assert result.ran("uv tool install")
         assert result.ran("vox daemon install")
-        assert result.ran("vox register-guidance")
 
     def test_flag_message_is_cli_only(self, sandbox: InstallSandbox) -> None:
         result = sandbox.run("--no-plugin")
@@ -206,13 +207,64 @@ class TestNoPluginEnv:
         assert result.returncode == 0, result.stderr
         assert not result.ran("claude plugin install")
         assert result.ran("uv tool install")
-        assert result.ran("vox register-guidance")
 
     def test_env_non_one_value_is_ignored(self, sandbox: InstallSandbox) -> None:
         # Any value other than exactly "1" installs the plugin (default path).
         result = sandbox.run(no_plugin_env="true")
         assert result.returncode == 0, result.stderr
         assert result.ran("claude plugin install vox@punt-labs")
+
+
+# Every install mode: (positional args, VOX_NO_PLUGIN value).
+_INSTALL_MODES = pytest.mark.parametrize(
+    ("args", "no_plugin_env"),
+    [((), None), (("--no-plugin",), None), ((), "1")],
+    ids=["plugin", "no-plugin-flag", "no-plugin-env"],
+)
+
+
+class TestNoUserScopeGuide:
+    """The installer never registers a user-scope guide, in any mode.
+
+    The agent guide is deposited per repo by ``vox enable``; a user-scope
+    ``@``-import would load vox guidance into every session, enabled or not.
+    """
+
+    @_INSTALL_MODES
+    def test_never_invokes_register_guidance(
+        self,
+        sandbox: InstallSandbox,
+        args: tuple[str, ...],
+        no_plugin_env: str | None,  # None leaves VOX_NO_PLUGIN unset
+    ) -> None:
+        result = sandbox.run(*args, no_plugin_env=no_plugin_env)
+        assert result.returncode == 0, result.stderr
+        assert not result.ran("register-guidance")
+
+    @_INSTALL_MODES
+    def test_never_writes_user_claude_md(
+        self,
+        sandbox: InstallSandbox,
+        args: tuple[str, ...],
+        no_plugin_env: str | None,  # None leaves VOX_NO_PLUGIN unset
+    ) -> None:
+        result = sandbox.run(*args, no_plugin_env=no_plugin_env)
+        assert not result.wrote_home_file(".claude/CLAUDE.md")
+
+    @_INSTALL_MODES
+    def test_never_writes_user_scope_vox_guide(
+        self,
+        sandbox: InstallSandbox,
+        args: tuple[str, ...],
+        no_plugin_env: str | None,  # None leaves VOX_NO_PLUGIN unset
+    ) -> None:
+        result = sandbox.run(*args, no_plugin_env=no_plugin_env)
+        assert not result.wrote_home_file(".punt-labs/vox/CLAUDE.md")
+
+    def test_installer_text_never_names_register_guidance(self) -> None:
+        # The stubbed vox cannot write files, so pin the script text too: a
+        # reintroduced call would be caught even where the stub hides its effect.
+        assert "register-guidance" not in _INSTALL_SH.read_text(encoding="utf-8")
 
 
 class TestMpvVersionGate:

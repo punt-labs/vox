@@ -32,7 +32,7 @@ Ask for a spoken summary of what just happened:
 
 ### CLI-Only Install (No Claude Code Plugin)
 
-This installs the `vox` command without the Claude Code plugin, for use with another coding assistant (Codex, Cursor), a plain terminal, or a Claude Code setup where plugins are blocked. The command, the audio daemon, its directories and sample content, and the `~/.punt-labs/vox/CLAUDE.md` guide still install; only the marketplace and plugin steps are skipped. Turn a repository on with `vox enable`.
+This installs the `vox` command without the Claude Code plugin, for use with another coding assistant (Codex, Cursor), a plain terminal, or a Claude Code setup where plugins are blocked. The command, the audio daemon, its directories and sample content still install; only the marketplace and plugin steps are skipped. Turn a repository on with `vox enable`.
 
 Pass the flag:
 
@@ -255,8 +255,8 @@ vox also works as a standalone TTS tool, without Claude Code.
 
 | Command | What it does |
 |---------|--------------|
-| `vox install` | Install the Claude Code plugin and the daemon service, and register the usage guide |
-| `vox uninstall` | Remove the Claude Code plugin and the usage guide |
+| `vox install` | Install the Claude Code plugin and the daemon service |
+| `vox uninstall` | Remove the Claude Code plugin |
 | `vox doctor` | Check the setup |
 | `vox version` | Print the version |
 | `vox daemon install` | Register `voxd` as a service, seed `keys.env`, and start it |
@@ -474,7 +474,7 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) belong in `~
 `vox enable` adds these rules to the repository's `.claude/settings.json`, so Claude Code does not ask before using vox's own tools in that repository:
 
 - **Allowed:** `Bash(vox:*)`, `mcp__plugin_vox_mic__*`, and `Skill(vox:*)`.
-- **Still asks first:** the `vox` subcommands `install`, `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, `mcp`, and `register-guidance`. A `vox` command that starts with an option, such as `vox --version`, does not ask.
+- **Still asks first:** the `vox` subcommands `install`, `uninstall`, `enable`, `disable`, `daemon`, `desktop`, `cache`, and `mcp`. A `vox` command that starts with an option, such as `vox --version`, does not ask.
 
 `vox disable` removes exactly those rules. Both commands also remove `Bash(vox -*)`, which earlier versions added. Neither command changes anything outside the repository. Rules that older versions of vox added to `~/.claude/settings.json` stay until you delete them.
 
@@ -515,7 +515,7 @@ This registers `voxd` as a service, creates `keys.env`, and starts the daemon. O
 | Purpose | Path |
 |---------|------|
 | Config (API keys) | `~/.punt-labs/vox/keys.env` |
-| Agent usage guide | `~/.punt-labs/vox/CLAUDE.md` |
+| Agent usage guide (per enabled repo) | `.punt-labs/vox/CLAUDE.md` |
 | Logs | `~/.punt-labs/vox/logs/vox.log` |
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
@@ -527,7 +527,7 @@ Per-repository settings live in `.punt-labs/vox/` in each repository, in two fil
 
 ### Agent Usage Guide
 
-`vox install` writes a guide for the coding agent to `~/.punt-labs/vox/CLAUDE.md`. It explains how to use the `mic` MCP tools and the vox slash commands. The installer adds the line `@~/.punt-labs/vox/CLAUDE.md` to `~/.claude/CLAUDE.md`, so Claude Code loads the guide in every project. Each install rewrites the guide; the import line is added only once. `vox uninstall` deletes the guide and removes the import line.
+`vox enable` is the only guide writer. It deposits `.punt-labs/vox/CLAUDE.md` in the repo and adds `@.punt-labs/vox/CLAUDE.md` to the repo's `CLAUDE.md`, so the guide loads only in enabled projects. `vox install`, `vox uninstall`, and `install.sh` touch no `CLAUDE.md`. A stale `@~/.punt-labs/vox/CLAUDE.md` import in `~/.claude/CLAUDE.md` and the old `~/.punt-labs/vox/CLAUDE.md` guide are left alone; delete both by hand.
 
 ## Ways to Use vox
 
