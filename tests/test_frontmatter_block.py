@@ -8,6 +8,7 @@ from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.types_errors import ConfigValueError
 
 _FENCED = '---\nvoice: "charlie"\nnotify: ""\n---\n'
+_BODY_FIELDS = '\n# Notes\n\nnotify: "y"\nvoice: "fin"\n'
 # Frontmatter followed by prose that carries a markdown horizontal rule --
 # the shape a deposited guide takes once a user writes notes under it.
 _FENCED_WITH_PROSE = f"{_FENCED}\n# Notes\n\nabove the rule\n\n---\n\nbelow it\n"
@@ -37,6 +38,27 @@ class TestFields:
 
     def test_an_absent_field_is_unset(self) -> None:
         assert FrontmatterBlock(_FENCED).field("provider") is None
+
+    def test_body_fields_do_not_override_frontmatter(self) -> None:
+        block = FrontmatterBlock('---\nnotify: "n"\n---\n' + _BODY_FIELDS)
+        assert block.fields() == {"notify": "n"}
+        assert block.field("notify") == "n"
+
+    def test_field_ignores_body_only_key_after_an_empty_block(self) -> None:
+        assert FrontmatterBlock("---\n---\n" + _BODY_FIELDS).field("voice") is None
+
+    def test_field_agrees_with_bulk_read_for_duplicate_keys(self) -> None:
+        block = FrontmatterBlock('---\nnotify: "n"\nnotify: "y"\nnotify: ""\n---')
+        assert block.field("notify") == block.fields()["notify"] == "y"
+
+    def test_empty_bare_field_does_not_consume_the_following_field(self) -> None:
+        block = FrontmatterBlock("---\nvoice:\nnotify: c\n---\n")
+        assert block.field("notify") == "c"
+        assert block.fields() == {"notify": "c"}
+        assert block.with_fields({"voice": "fin"}).fields() == {
+            "notify": "c",
+            "voice": "fin",
+        }
 
 
 class TestAccepts:
@@ -88,6 +110,23 @@ class TestWithFields:
         updated = FrontmatterBlock(_FENCED_WITH_PROSE).with_fields({"voice": "roger"})
         assert updated.field("voice") == "roger"
         assert updated.text.endswith("\nbelow it\n")
+
+    def test_only_edits_fields_above_the_closing_fence(self) -> None:
+        block = FrontmatterBlock('---\nnotify: "n"\n---\n' + _BODY_FIELDS)
+        updated = block.with_fields({"notify": "c", "voice": "charlie"})
+        assert (
+            updated.text == '---\nnotify: "c"\nvoice: "charlie"\n---\n' + _BODY_FIELDS
+        )
+
+    def test_raw_crlf_block_preserves_its_separators_and_body(self) -> None:
+        body = '# Notes\r\nvoice: "body"\r\n'
+        block = FrontmatterBlock('---\r\nvoice:\r\n  "fin"\r\n---\r\n' + body)
+        assert block.fields() == {"voice": "fin"}
+        assert block.field("voice") == "fin"
+        updated = block.with_fields({"voice": "charlie", "notify": "c"})
+        assert (
+            updated.text == '---\r\nvoice: "charlie"\r\nnotify: "c"\r\n---\r\n' + body
+        )
 
     def test_leaves_the_original_untouched(self) -> None:
         """Immutable: the edit is a new block, so a failure partway through a

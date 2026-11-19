@@ -66,6 +66,58 @@ class TestWrite:
         fm.write_field("voice", "fin")
         assert fm.read_field("voice") == "fin"
 
+    @pytest.mark.parametrize("key", ["sample-rate", "sample.rate"])
+    def test_custom_field_round_trips(self, tmp_path: Path, key: str) -> None:
+        fm = Frontmatter(tmp_path / "vox.md")
+        fm.write_field(key, "16000")
+        assert fm.read_field(key) == "16000"
+        assert fm.read_fields() == {key: "16000"}
+
+    def test_unfenced_field_with_nonbreaking_spaces_edits_in_place(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "vox.md"
+        tail = '\nnotify: "c"\n\n# Notes\n'
+        path.write_text('voice:\u00a0"fin"\u00a0' + tail, encoding="utf-8")
+        fm = Frontmatter(path)
+        assert fm.read_field("voice") == "fin"
+        fm.write_field("voice", "charlie")
+        assert path.read_text(encoding="utf-8") == 'voice: "charlie"' + tail
+
+    def test_crlf_file_reads_and_edits_only_its_header(self, tmp_path: Path) -> None:
+        path = tmp_path / "vox.md"
+        body = '# Notes\nvoice: "body"\n'
+        text = '---\nvoice: "fin"\n---\n' + body
+        path.write_bytes(text.replace("\n", "\r\n").encode())
+        fm = Frontmatter(path)
+        assert fm.read_field("voice") == "fin"
+        assert fm.read_fields() == {"voice": "fin"}
+        fm.write_field("voice", "charlie")
+        assert path.read_text(encoding="utf-8") == '---\nvoice: "charlie"\n---\n' + body
+
+    @pytest.mark.parametrize("fenced", [False, True])
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("fin", "fin"),
+            ('"fin"', "fin"),
+            ("'Ready: now'", "'Ready: now'"),
+            ("\u00a0fin", "fin"),
+        ],
+    )
+    def test_single_indented_scalar_edits_in_place(
+        self, tmp_path: Path, fenced: bool, value: str, expected: str
+    ) -> None:
+        path = tmp_path / "vox.md"
+        opening = "---\n" if fenced else ""
+        tail = 'notify: "c"\n' + ("---\n" if fenced else "") + "# Notes\n"
+        path.write_text(f"{opening}voice:\n  {value}\n{tail}", encoding="utf-8")
+        fm = Frontmatter(path)
+        assert fm.read_field("voice") == expected
+        assert fm.read_fields() == {"voice": expected, "notify": "c"}
+        fm.write_field("voice", "charlie")
+        assert path.read_text(encoding="utf-8") == f'{opening}voice: "charlie"\n{tail}'
+
     def test_write_creates_parent_dir(self, tmp_path: Path) -> None:
         fm = Frontmatter(tmp_path / "a" / "b" / "vox.md")
         fm.write_field("voice", "fin")
