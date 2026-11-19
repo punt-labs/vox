@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from click import unstyle
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
@@ -104,7 +105,7 @@ class TestTextInputFromFile:
             assert result.stderr == ""
         else:
             assert result.stdout == ""
-            assert message in result.stderr
+            assert message in unstyle(result.stderr)
             assert "Traceback" not in result.stderr
 
     def test_string_array(self, tmp_path: Path) -> None:
