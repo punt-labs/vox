@@ -12,7 +12,8 @@ if TYPE_CHECKING:
 
 __all__ = ["FrontmatterBlock"]
 
-_FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
+_FIELD_VALUE = r':[^\S\r\n]*"?([^"\r\n]*)"?[^\S\r\n]*$'
+_FIELD_RE = re.compile(rf"^([\w-]+){_FIELD_VALUE}", re.MULTILINE)
 # A fence is a `---` line; it only opens a block on the file's very first line,
 # and only then does a later one close it. Without the opening anchor a
 # markdown horizontal rule buried in prose reads as a closing fence, and an
@@ -123,14 +124,13 @@ class FrontmatterBlock:
 
     @staticmethod
     def _parse(header: str) -> dict[str, str]:
-        found: dict[str, str] = {}
-        for match in _FIELD_RE.finditer(header):
-            val = match.group(2).strip()
-            if val:
-                found[match.group(1)] = val
-        return found
+        return {
+            match.group(1): value
+            for match in _FIELD_RE.finditer(header)
+            if (value := match.group(2).strip())
+        }
 
     @staticmethod
     def _field_re(key: str) -> re.Pattern[str]:
         """Return the pattern matching *key*'s whole line, quoted or bare."""
-        return re.compile(rf"^{re.escape(key)}:\s*\"?([^\"\n]*)\"?\s*$", re.MULTILINE)
+        return re.compile(rf"^{re.escape(key)}{_FIELD_VALUE}", re.MULTILINE)

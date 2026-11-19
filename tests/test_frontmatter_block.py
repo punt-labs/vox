@@ -51,6 +51,15 @@ class TestFields:
         block = FrontmatterBlock('---\nnotify: "n"\nnotify: "y"\nnotify: ""\n---')
         assert block.field("notify") == block.fields()["notify"] == "y"
 
+    def test_empty_bare_field_does_not_consume_the_following_field(self) -> None:
+        block = FrontmatterBlock("---\nvoice:\nnotify: c\n---\n")
+        assert block.field("notify") == "c"
+        assert block.fields() == {"notify": "c"}
+        assert block.with_fields({"voice": "fin"}).fields() == {
+            "notify": "c",
+            "voice": "fin",
+        }
+
 
 class TestAccepts:
     def test_a_fenced_block_takes_anything(self) -> None:
