@@ -12,8 +12,11 @@ from pydub import AudioSegment
 from punt_vox.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.types import (
+    AudioProviderId,
     MergeStrategy,
     SynthesisRequest,
+    SynthesisResult,
+    generate_filename,
 )
 
 
@@ -137,20 +140,26 @@ class TestTTSClientSynthesizeBatch:
         assert len(results) == 1
         assert results[0].path.exists()
 
-    def test_batch_merged_text_contains_all(
+    def test_batch_merged_result_metadata(
         self, tts_client: TTSClient, tmp_output_dir: Path
     ) -> None:
         requests = [
             SynthesisRequest(text="hello", voice="joanna"),
-            SynthesisRequest(text="world", voice="joanna"),
+            SynthesisRequest(text="world", voice="hans"),
         ]
 
         results = tts_client.synthesize_batch(
             requests, tmp_output_dir, MergeStrategy.ONE_FILE_PER_BATCH
         )
 
-        assert "hello" in results[0].text
-        assert "world" in results[0].text
+        assert results == [
+            SynthesisResult(
+                path=tmp_output_dir / generate_filename("hello | world", "batch_"),
+                text="hello | world",
+                provider=AudioProviderId.polly,
+                voice="Joanna",
+            )
+        ]
 
 
 class TestTTSClientSynthesizePair:
@@ -240,7 +249,15 @@ class TestTTSClientSynthesizePairBatch:
             pairs, tmp_output_dir, MergeStrategy.ONE_FILE_PER_BATCH, 500
         )
 
-        assert len(results) == 1
+        text = "strong-stark | house-Haus"
+        assert results == [
+            SynthesisResult(
+                path=tmp_output_dir / generate_filename(text, "pairs_"),
+                text=text,
+                provider=AudioProviderId.polly,
+                voice="mixed",
+            )
+        ]
         assert results[0].path.exists()
 
 
