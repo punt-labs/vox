@@ -415,7 +415,7 @@ def _reset_nudge_cadence(config_dir: Path) -> None:
     """Reset the nudge cadence counter, warning instead of raising on failure."""
     try:
         ConfigStore(config_dir).write_field("vibe_nudge_turns", "0")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning("session-end: cannot reset cadence in %s: %s", config_dir, exc)
 
 
