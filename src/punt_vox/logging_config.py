@@ -55,19 +55,24 @@ def _filter_client_records(role: Role) -> None:
 def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
     """Keep turn timings durable at DEBUG independently of normal verbosity."""
     logger = _reset_turn_timer()
-    handlers: list[logging.Handler] = [PrivateFileHandler(log_dir() / "vox.log")]
-    if echo_to_console:
-        handlers.append(RedactingStreamHandler(sys.stderr))
-    for handler in handlers:
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(
-            RedactingFormatter(
-                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                "%Y-%m-%d %H:%M:%S",
+    with suppress(OSError):
+        if log_health()["status"] != "healthy":
+            raise OSError
+        handlers: list[logging.Handler] = [PrivateFileHandler(log_dir() / "vox.log")]
+        if echo_to_console:
+            handlers.append(RedactingStreamHandler(sys.stderr))
+        for handler in handlers:
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(
+                RedactingFormatter(
+                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                    "%Y-%m-%d %H:%M:%S",
+                )
             )
-        )
-        handler.addFilter(ClientRoleFilter("cli"))
-        logger.addHandler(handler)
+            handler.addFilter(ClientRoleFilter("cli"))
+            logger.addHandler(handler)
+        return
+    _disable_client_file_logging()
 
 
 def _reset_turn_timer() -> logging.Logger:
@@ -77,7 +82,7 @@ def _reset_turn_timer() -> logging.Logger:
     logger.propagate = False
     for handler in logger.handlers:
         handler.close()
-    logger.handlers.clear()
+    logger.handlers[:] = [logging.NullHandler()]
     return logger
 
 

@@ -150,6 +150,49 @@ def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
         logging_config.configure_daemon_logging()
 
 
+@pytest.mark.parametrize("echo", [False, True])
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_call_proceeds_when_turn_timer_sink_fails(
+    tmp_path: Path, echo: bool, error: OSError, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from punt_vox.commands.call import CallCli
+
+    logging_config.configure_client_logging(role="cli")
+    logging_config.configure_turn_timer_logging(echo_to_console=True)
+    context = tmp_path / "context.md"
+    context.write_text("Call context")
+    with (
+        patch.object(logging_config, "PrivateFileHandler", side_effect=error),
+        patch("punt_vox.commands.call.asyncio.run") as run,
+    ):
+        CallCli().start(context, trace_turns=echo)
+    coroutine = run.call_args.args[0]
+    coroutine.close()
+    run.assert_called_once()
+    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+    timer.error("secret timer record")
+    logging.getLogger("punt_vox.test").error("secret root record")
+    assert all(isinstance(h, logging.NullHandler) for h in timer.handlers)
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
+    )
+
+
+def test_turn_timer_unusable_path_is_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("blocked")
+    monkeypatch.setattr(logging_config, "log_dir", lambda: blocked)
+    logging_config.configure_turn_timer_logging(echo_to_console=True)
+    logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME).error("private record")
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
+    )
+
+
 @pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])
 @pytest.mark.parametrize(
     "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
