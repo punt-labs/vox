@@ -154,20 +154,12 @@ class SayProvider(TTSProvider):
             aiff_path = Path(tmp.name)
 
         try:
+            options = ["say", "-v", voice_cfg.name, "-r", str(wpm)]
             subprocess.run(
-                [
-                    "say",
-                    "-v",
-                    voice_cfg.name,
-                    "-r",
-                    str(wpm),
-                    "-o",
-                    str(aiff_path),
-                    text,
-                ],
+                [*options, "-o", str(aiff_path)],
                 check=True,
                 timeout=60,
-                stdin=subprocess.DEVNULL,
+                input=text.encode(),
                 start_new_session=True,
             )
             logger.info(
