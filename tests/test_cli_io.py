@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
+from punt_vox.__main__ import app
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.output_formatter import OutputFormatter
 
@@ -90,10 +92,41 @@ class TestTextInputResolve:
 class TestTextInputFromFile:
     """TextInput parses a --from JSON segments file."""
 
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
+    def test_non_utf8_is_usage_error(self, tmp_path: Path, flags: list[str]) -> None:
+        path = tmp_path / "bad.txt"
+        path.write_bytes(b"hi \xff\xfe\n")
+        result = CliRunner().invoke(app, [*flags, "say", "--from", str(path)])
+        assert result.exit_code == 2
+        message = "Invalid value: --from file must contain valid UTF-8."
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert message in result.stderr
+            assert "Traceback" not in result.stderr
+
     def test_string_array(self, tmp_path: Path) -> None:
         path = tmp_path / "segs.json"
         path.write_text(json.dumps(["one", "two"]), encoding="utf-8")
         assert TextInput(OutputFormatter()).resolve(None, path) == ["one", "two"]
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ([], []),
+            (["", {"text": ""}, {}], []),
+            (["héllo", {"text": "世界"}, {"text": 42}], ["héllo", "世界", "42"]),
+            ([{"text": False}, {"text": None}, "last"], ["last"]),
+        ],
+    )
+    def test_segment_values(
+        self, tmp_path: Path, raw: list[object], expected: list[str]
+    ) -> None:
+        path = tmp_path / "segs.json"
+        path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        assert TextInput(OutputFormatter()).resolve(None, path) == expected
 
     def test_object_array_reads_text_field(self, tmp_path: Path) -> None:
         path = tmp_path / "segs.json"
