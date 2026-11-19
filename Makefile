@@ -14,6 +14,7 @@ lint: check-comments check-docstrings ## Lint and format check (Python + shell)
 	uv run ruff format --check .
 	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
 	bash scripts/check-plugin-surface.sh
+	uv run python scripts/check-logging-sources.py
 
 check-comments: ## Reject commented-out code and tracker references in Python prose
 	uv run ruff check --select ERA001 .

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import typer
 
+from punt_vox import usage
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore, VoxConfig
@@ -73,6 +74,10 @@ def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedF
 
         configure_client_logging(role="hook")
 
+
+usage.register(
+    "hook", lambda: (info.name or "other" for info in hook_app.registered_commands)
+)
 
 # Shared helpers
 
@@ -466,10 +471,11 @@ def stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if config_dir is None:
         logger.debug("hook stop: no vox config for cwd; staying silent")
         return
-    config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
-    result = handle_stop(payload, config, config_dir)
-    if result is not None:
-        _emit(result)
+    with usage.span("hook", "stop"):
+        config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
+        result = handle_stop(payload, config, config_dir)
+        if result is not None:
+            _emit(result)
 
 
 @hook_app.command("vibe-nudge")
@@ -479,9 +485,10 @@ def vibe_nudge_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if resolved is None:
         return
     config, config_dir = resolved
-    result = handle_vibe_nudge(config, config_dir)
-    if result is not None:
-        _emit(result)
+    with usage.span("hook", "vibe-nudge"):
+        result = handle_vibe_nudge(config, config_dir)
+        if result is not None:
+            _emit(result)
 
 
 @hook_app.command("notification")
@@ -492,8 +499,9 @@ def notification_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if config_dir is None:
         logger.debug("hook notification: no vox config for cwd; staying silent")
         return
-    config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
-    handle_notification(payload, config)
+    with usage.span("hook", "notification"):
+        config = _with_repo_name(ConfigStore(config_dir).read(), payload.cwd)
+        handle_notification(payload, config)
 
 
 @hook_app.command("pre-compact")
@@ -501,7 +509,8 @@ def pre_compact_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """PreCompact hook: playful 'be right back' message."""
     resolved = _resolve_continuous_config()
     if resolved is not None:
-        handle_pre_compact(resolved[0])
+        with usage.span("hook", "pre-compact"):
+            handle_pre_compact(resolved[0])
 
 
 @hook_app.command("user-prompt-submit")
@@ -509,7 +518,8 @@ def user_prompt_submit_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """UserPromptSubmit hook: acknowledgment in continuous mode."""
     resolved = _resolve_continuous_config()
     if resolved is not None:
-        handle_user_prompt_submit(resolved[0])
+        with usage.span("hook", "user-prompt-submit"):
+            handle_user_prompt_submit(resolved[0])
 
 
 @hook_app.command("subagent-start")
@@ -517,7 +527,8 @@ def subagent_start_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStart hook: announce subagent spawn."""
     resolved = _resolve_continuous_config()
     if resolved is not None:
-        handle_subagent_start(resolved[0])
+        with usage.span("hook", "subagent-start"):
+            handle_subagent_start(resolved[0])
 
 
 @hook_app.command("subagent-stop")
@@ -525,7 +536,8 @@ def subagent_stop_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     """SubagentStop hook: announce subagent completion."""
     resolved = _resolve_continuous_config()
     if resolved is not None:
-        handle_subagent_stop(resolved[0])
+        with usage.span("hook", "subagent-stop"):
+            handle_subagent_stop(resolved[0])
 
 
 @hook_app.command("session-end")
@@ -535,10 +547,12 @@ def session_end_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
     if resolved is None:
         return
     config, config_dir = resolved
-    handle_session_end(config, config_dir)
+    with usage.span("hook", "session-end"):
+        handle_session_end(config, config_dir)
 
 
 @hook_app.command("_chime", hidden=True)
 def chime_cmd(signal: str) -> None:  # pyright: ignore[reportUnusedFunction]
     """Play a chime in a detached process."""
-    _chime_via_voxd(signal)
+    with usage.span("hook", "_chime"):
+        _chime_via_voxd(signal)

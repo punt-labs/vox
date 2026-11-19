@@ -7,7 +7,7 @@ import sys
 import traceback
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.append_log import AtomicAppendLog
+from punt_observe.logging import AtomicAppendLog
 
 if TYPE_CHECKING:
     import asyncio

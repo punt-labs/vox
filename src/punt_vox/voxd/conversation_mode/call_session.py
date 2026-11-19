@@ -269,7 +269,7 @@ class CallSession:
         the explanation cannot be spoken: a dead TTS path must not leave the
         call listening against a provider that will fail every turn.
         """
-        logger.exception("STT cannot continue -- ending the call")
+        logger.error("STT cannot continue -- ending the call", exc_info=cause)
         try:
             await self._speak(PermanentSttFailure.of(cause).ending)
         except Exception:

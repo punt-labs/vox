@@ -154,5 +154,5 @@ class PanelGuard:
 
     def _note(self, exc: VoxdProtocolError, what: str) -> None:
         """Log voxd's refusal of *what* loud, and carry its reason into the scene."""
-        self._logger.exception("vox-panel: voxd refused %s", what)
+        self._logger.error("vox-panel: voxd refused %s", what, exc_info=exc)
         self._service.note_rejection(str(exc))

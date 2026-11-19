@@ -1,384 +1,325 @@
-"""Tests for the unified logging owner (src/punt_vox/logging_config.py)."""
+"""Exercise vox policy through the shared logging configuration."""
 
 from __future__ import annotations
 
 import logging
-import os
-from contextlib import ExitStack
+import multiprocessing
+from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from punt_observe import logging as shared_logging
+from punt_observe.logging import AtomicAppendLog, LoggingSetupError
+from punt_observe.logging.handler import PrivateFileHandler
 
 from punt_vox import logging_config, paths
 from punt_vox.config import ConfigStore
-from punt_vox.log_append_handler import AppendLogHandler
-from punt_vox.voxd.audit_log_level import AuditFloorLevel
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from multiprocessing.synchronize import Barrier
 
 
-def _redirect_log_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
-    """Redirect the log tree to tmp and restore the root logger afterward."""
-    log_dir = tmp_path / "logs"
-    monkeypatch.setattr(logging_config, "_LOG_DIR", log_dir)
-    monkeypatch.setattr(logging_config, "_LOG_FILE", log_dir / "vox.log")
-    # Point the state root at tmp so the sink's health relativizes in-jail
-    # (``logs/vox.log``) instead of falling back to the bare name out of jail.
-    monkeypatch.setattr(paths, "user_state_dir", lambda: tmp_path)
-    # Default: level resolves to the quiet INFO. Individual tests override.
-    _pin_level(monkeypatch, "info")
+@pytest.fixture(autouse=True)
+def isolated_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Restore process logging and pin the ordinary config level."""
     root = logging.getLogger()
-    saved_handlers = root.handlers[:]
-    saved_level = root.level
-    yield
-    for handler in root.handlers[:]:
-        handler.close()
-    root.handlers[:] = saved_handlers
-    root.setLevel(saved_level)
-
-
-def _pin_level(monkeypatch: pytest.MonkeyPatch, level: str) -> None:
-    """Pin the resolved log level so a test's env/config can't leak in.
-
-    ``resolve_log_level`` is a classmethod, so the replacement must be one too --
-    a zero-arg lambda takes ``cls`` as its first positional and raises on an
-    instance-bound call.
-    """
+    handlers, level, fallback = root.handlers[:], root.level, logging.lastResort
     monkeypatch.setattr(
-        ConfigStore, "resolve_log_level", classmethod(lambda _cls: level)
+        ConfigStore, "resolve_log_level", classmethod(lambda cls: "info")
+    )
+    monkeypatch.setattr(logging_config, "log_dir", paths.log_dir)
+    yield
+    for handler in root.handlers:
+        handler.close()
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    logging.lastResort = fallback
+    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+    for handler in timer.handlers:
+        handler.close()
+    timer.handlers.clear()
+    timer.propagate = True
+
+
+@pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])
+def test_client_role_and_private_record(role: logging_config.Role) -> None:
+    with patch.object(
+        logging_config, "configure_logging", wraps=shared_logging.configure_logging
+    ) as configure:
+        logging_config.configure_client_logging(role=role)
+    configure.assert_called_once_with(
+        "vox", role, level="INFO", quiet=logging_config._SUPPRESSED
+    )
+    logging.getLogger("punt_vox.test").info("on-disk marker")
+    path = paths.log_dir() / "vox.log"
+    assert path == Path.home() / ".punt-labs/vox/logs/vox.log"
+    assert f"client.{role}.punt_vox.test: on-disk marker" in path.read_text()
+    assert path.stat().st_mode & 0o777 == 0o600
+    for directory in (path.parent, path.parent.parent):
+        assert directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_daemon_has_no_stderr() -> None:
+    with patch.object(
+        logging_config, "configure_logging", wraps=shared_logging.configure_logging
+    ) as configure:
+        logging_config.configure_daemon_logging()
+    configure.assert_called_once_with(
+        "vox", "daemon", level="INFO", quiet=logging_config._SUPPRESSED
+    )
+    assert all(isinstance(h, PrivateFileHandler) for h in logging.getLogger().handlers)
+    logging.getLogger("punt_vox.test").warning("daemon marker")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "punt_vox.test: daemon marker" in contents
+    assert "client." not in contents
+    assert isinstance(logging.lastResort, logging.NullHandler)
+
+
+def test_level_switch_changes_file_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    logging_config.configure_client_logging(role="mcp")
+    root = logging.getLogger()
+    stderr = next(h for h in root.handlers if isinstance(h, logging.StreamHandler))
+    logger = logging.getLogger("punt_vox.test")
+    logger.debug("hidden marker")
+    root.setLevel(logging.INFO)
+    monkeypatch.setattr(
+        ConfigStore, "resolve_log_level", classmethod(lambda cls: "debug")
+    )
+    logging_config.reapply_client_log_level()
+    logger.debug("visible marker")
+    assert stderr.level == logging.WARNING
+    assert root.level == logging.DEBUG
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "hidden marker" not in contents
+    assert "visible marker" in contents
+    logging_config.apply_log_level(logging.INFO)
+    assert (
+        next(h for h in root.handlers if isinstance(h, PrivateFileHandler)).level
+        == logging.INFO
     )
 
 
-def _append_handlers(root: logging.Logger) -> list[AppendLogHandler]:
-    return [h for h in root.handlers if isinstance(h, AppendLogHandler)]
+def test_live_daemon_level_switch_writes_debug() -> None:
+    logging_config.configure_daemon_logging()
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    logger = logging.getLogger("punt_vox.live_daemon")
+    logger.debug("hidden daemon debug")
+    logging_config.apply_log_level(logging.DEBUG)
+    logger.debug("visible daemon debug")
+    logging_config.apply_log_level(logging.INFO)
+    logger.debug("hidden again daemon debug")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "visible daemon debug" in contents
+    assert "hidden daemon debug" not in contents
+    assert "hidden again daemon debug" not in contents
+    assert all(isinstance(h, PrivateFileHandler) for h in root.handlers)
 
 
-def _no_stream_handler(root: logging.Logger) -> bool:
-    """Return whether no bare stderr StreamHandler is installed (DES-046)."""
-    return not any(
-        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
-        for h in root.handlers
+def test_verbose_overrides_config() -> None:
+    logging_config.configure_client_logging(role="cli", verbose=True)
+    logging.getLogger("punt_vox.test").debug("verbose marker")
+    assert "verbose marker" in (paths.log_dir() / "vox.log").read_text()
+
+
+@pytest.mark.parametrize("echo", [False, True])
+def test_turn_timer_always_debug(
+    echo: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logging_config.configure_client_logging(role="cli")
+    logging_config.configure_turn_timer_logging(echo_to_console=echo)
+    logging_config.configure_turn_timer_logging(echo_to_console=echo)
+    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+    timer.debug("turn marker")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert contents.count("turn marker") == 1
+    assert "client.cli." in contents
+    assert ("turn marker" in capsys.readouterr().err) is echo
+
+
+def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
+    path = paths.log_dir() / "vox.log"
+    path.parent.mkdir(parents=True)
+    target = tmp_path / "redirected.log"
+    target.touch()
+    path.symlink_to(target)
+    with pytest.raises(LoggingSetupError):
+        logging_config.configure_daemon_logging()
+
+
+@pytest.mark.parametrize("echo", [False, True])
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_call_proceeds_when_turn_timer_sink_fails(
+    tmp_path: Path, echo: bool, error: OSError, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from punt_vox.commands.call import CallCli
+
+    logging_config.configure_client_logging(role="cli")
+    logging_config.configure_turn_timer_logging(echo_to_console=True)
+    context = tmp_path / "context.md"
+    context.write_text("Call context")
+    with (
+        patch.object(logging_config, "PrivateFileHandler", side_effect=error),
+        patch("punt_vox.commands.call.asyncio.run") as run,
+    ):
+        CallCli().start(context, trace_turns=echo)
+    coroutine = run.call_args.args[0]
+    coroutine.close()
+    run.assert_called_once()
+    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+    timer.error("secret timer record")
+    logging.getLogger("punt_vox.test").info("root record after timer failure")
+    assert (
+        "root record after timer failure" in (paths.log_dir() / "vox.log").read_text()
+    )
+    assert all(isinstance(h, logging.NullHandler) for h in timer.handlers)
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
     )
 
 
-class TestConfigureDaemonLogging:
-    """The daemon appends to one private vox.log -- no stderr handler."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> Iterator[None]:
-        yield from _redirect_log_tree(tmp_path, monkeypatch)
-
-    def test_installs_one_append_handler_no_stderr(self, tmp_path: Path) -> None:
-        logging_config.configure_daemon_logging()
-        root = logging.getLogger()
-        assert len(_append_handlers(root)) == 1
-        assert _no_stream_handler(root)  # no stderr double-write (DES-046)
-
-    def test_daemon_record_lands_in_vox_log_without_client_prefix(
-        self, tmp_path: Path
-    ) -> None:
-        logging_config.configure_daemon_logging()
-        logging.getLogger("punt_vox.voxd.router").info("daemon up")
-        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
-        assert "punt_vox.voxd.router: daemon up" in contents
-        assert "client." not in contents  # the daemon carries no client prefix
-
-    def test_untightenable_file_warned_durably_in_vox_log(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A file it cannot force to 0600 becomes one WARNING in the live vox.log.
-
-        The note is emitted after ``dictConfig``, so it lands in the now-open log
-        (a debug line before configuration could never land) and never re-enters
-        logging via the sink's per-write tighten.
-        """
-        log = tmp_path / "logs" / "vox.log"
-        log.parent.mkdir(parents=True)
-        log.write_text("existing\n")
-
-        def _deny_fchmod(_fd: int, _mode: int) -> None:
-            raise PermissionError("cannot fchmod")
-
-        monkeypatch.setattr(os, "fchmod", _deny_fchmod)
-        logging_config.configure_daemon_logging()
-        logging.getLogger("punt_vox.voxd").info("up")
-        contents = log.read_text(encoding="utf-8")
-        assert "could not enforce private permissions on log path(s)" in contents
-
-    def test_untightenable_dir_warned_durably_in_vox_log(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A logs DIR it cannot force to 0700 also lands in the durable WARNING.
-
-        The dir-tighten runs before dictConfig, so its failure is collected (not
-        debug-logged where it could never land) and folded into the same
-        post-dictConfig WARNING as the file sweep.
-        """
-        (tmp_path / "logs").mkdir()
-        real_chmod = Path.chmod
-
-        def _deny_dir_chmod(
-            self: Path, mode: int, *args: object, **kwargs: object
-        ) -> None:
-            if self.is_dir():
-                raise PermissionError("cannot chmod dir")
-            real_chmod(self, mode, *args, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(Path, "chmod", _deny_dir_chmod)
-        logging_config.configure_daemon_logging()
-        logging.getLogger("punt_vox.voxd").info("up")
-        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
-        assert "could not enforce private permissions on log path(s)" in contents
-        assert "0o700" in contents  # the directory failure is named
-
-    def test_symlink_log_path_refused_at_write_time(self, tmp_path: Path) -> None:
-        """A symlinked vox.log is refused at write (O_NOFOLLOW) and reads unhealthy.
-
-        The append sink never follows the link: the write goes to stderr, the
-        target is untouched, and ``log_health`` reports ``degraded`` so a
-        symlink-redirect attempt is queryable instead of falsely reporting healthy.
-        """
-        target = tmp_path / "target.txt"
-        target.write_text("do not write here\n")
-        log = tmp_path / "logs" / "vox.log"
-        log.parent.mkdir(parents=True)
-        log.symlink_to(target)
-        logging_config.configure_daemon_logging()
-        assert logging_config.log_health()["status"] == "degraded"  # symlink != healthy
-        logging.getLogger("punt_vox.voxd").info("blocked")
-        assert target.read_text() == "do not write here\n"  # link never followed
-
-
-class TestConfigureClientLogging:
-    """A client appends to the shared vox.log, stamped with its role."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> Iterator[None]:
-        yield from _redirect_log_tree(tmp_path, monkeypatch)
-
-    def test_installs_one_append_handler_no_stderr(self) -> None:
-        logging_config.configure_client_logging(role="cli")
-        root = logging.getLogger()
-        assert len(_append_handlers(root)) == 1
-        assert _no_stream_handler(root)
-
-    def test_skip_hook_line_lands_in_vox_log_no_fallback(self, tmp_path: Path) -> None:
-        """A hook that does no daemon work still lands its line in vox.log.
-
-        No daemon is reachable in this test, yet the record appends locally -- and
-        no ``vox-fallback.log`` is ever created.
-        """
-        logging_config.configure_client_logging(role="hook")
-        logging.getLogger("punt_vox.hooks").info("stop hook skipped")
-        vox_log = tmp_path / "logs" / "vox.log"
-        assert "client.hook.punt_vox.hooks: stop hook skipped" in vox_log.read_text(
-            encoding="utf-8"
-        )
-        assert not (tmp_path / "logs" / "vox-fallback.log").exists()
-
-    def test_verbose_raises_root_to_debug(self) -> None:
-        logging_config.configure_client_logging(role="cli", verbose=True)
-        assert logging.getLogger().level == logging.DEBUG
-
-    def test_default_level_is_info(self) -> None:
-        logging_config.configure_client_logging(role="cli")
-        assert logging.getLogger().level == logging.INFO
-
-    def test_reapply_picks_up_a_level_change(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A long-lived client re-reads the level and flips root + handler live."""
-        _pin_level(monkeypatch, "info")
-        logging_config.configure_client_logging(role="mcp")
-        root = logging.getLogger()
-        assert root.level == logging.INFO
-
-        _pin_level(monkeypatch, "debug")  # e.g. `vox log debug` on another process
-        logging_config.reapply_client_log_level()
-
-        assert root.level == logging.DEBUG
-        assert all(h.level == logging.DEBUG for h in root.handlers)
-
-    def test_config_log_level_debug_applies(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A resolved ``debug`` level raises the client root to DEBUG."""
-        _pin_level(monkeypatch, "debug")
-        logging_config.configure_client_logging(role="mcp")
-        assert logging.getLogger().level == logging.DEBUG
-
-    def test_client_config_tightens_loose_log_dir(self, tmp_path: Path) -> None:
-        """A pre-existing 0755 logs/ is re-tightened to 0700 on configure."""
-        log_dir = tmp_path / "logs"
-        log_dir.mkdir()
-        log_dir.chmod(0o755)
-        logging_config.configure_client_logging(role="hook")
-        assert (log_dir.stat().st_mode & 0o077) == 0
-
-    def test_client_config_survives_untightenable_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A dir the client cannot chmod never crashes configure -- best effort."""
-        log_dir = tmp_path / "logs"
-        log_dir.mkdir()
-
-        def _deny(_self: object, _mode: int) -> None:
-            raise PermissionError("cannot chmod")
-
-        monkeypatch.setattr("punt_vox.private_state.Path.chmod", _deny)
-        logging_config.configure_client_logging(role="hook")  # no exception
-
-    def test_mcp_framework_logger_suppressed(self) -> None:
-        """The mcp framework request logger is pinned to WARNING (no INFO noise)."""
-        logging_config.configure_client_logging(role="mcp")
-        assert logging.getLogger("mcp.server.lowlevel").level == logging.WARNING
-        assert logging.getLogger("mcp").level == logging.WARNING
-
-    def test_httpx_loggers_suppressed(self) -> None:
-        """Both httpx and httpx2 (openai>=3) are pinned to WARNING."""
-        logging_config.configure_client_logging(role="mcp")
-        assert logging.getLogger("httpx").level == logging.WARNING
-        assert logging.getLogger("httpx2").level == logging.WARNING
-
-
-class TestConfigureTurnTimerLogging:
-    """vox call's turn-latency trace: always to vox.log, optionally to console too."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> Iterator[None]:
-        yield from _redirect_log_tree(tmp_path, monkeypatch)
-        # configure_turn_timer_logging mutates a specific named logger, not
-        # just root -- the shared fixture above only saves/restores root, so
-        # this logger needs its own save/restore or state leaks across tests.
-
-    @pytest.fixture(autouse=True)
-    def _isolate_turn_timer_logger(self) -> Iterator[None]:
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        saved_handlers = target.handlers[:]
-        saved_level = target.level
-        saved_propagate = target.propagate
-        yield
-        for handler in target.handlers[:]:
-            handler.close()
-        target.handlers[:] = saved_handlers
-        target.setLevel(saved_level)
-        target.propagate = saved_propagate
-
-    def test_debug_reaches_vox_log_without_verbose(self, tmp_path: Path) -> None:
-        """The whole point: unconditional, not gated by echo_to_console."""
-        logging_config.configure_turn_timer_logging(echo_to_console=False)
-        logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME).debug(
-            "turn_ended (+1.20s step, +3.45s turn)"
-        )
-        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
-        assert "turn_ended (+1.20s step, +3.45s turn)" in contents
-
-    def test_echo_to_console_false_attaches_no_stream_handler(self) -> None:
-        logging_config.configure_turn_timer_logging(echo_to_console=False)
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        assert not any(
-            isinstance(h, logging.StreamHandler) and not isinstance(h, AppendLogHandler)
-            for h in target.handlers
-        )
-
-    def test_echo_to_console_true_attaches_a_stream_handler(self) -> None:
-        logging_config.configure_turn_timer_logging(echo_to_console=True)
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        assert any(
-            isinstance(h, logging.StreamHandler) and not isinstance(h, AppendLogHandler)
-            for h in target.handlers
-        )
-
-    def test_does_not_propagate_to_root(self) -> None:
-        """Other modules' DEBUG noise must not become durable for the call's
-        duration just because this logger was forced to DEBUG."""
-        logging_config.configure_turn_timer_logging(echo_to_console=False)
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        assert target.propagate is False
-
-    def test_repeated_calls_do_not_accumulate_handlers(self) -> None:
-        logging_config.configure_turn_timer_logging(echo_to_console=True)
-        logging_config.configure_turn_timer_logging(echo_to_console=True)
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        assert len(target.handlers) == 2  # one append + one console, not four
-
-    def test_repeated_calls_close_the_prior_handlers(self) -> None:
-        """A second call must not leak the first call's handler resources --
-        each replaced handler is closed before the logger drops its
-        reference, not just cleared from the handler list."""
-        logging_config.configure_turn_timer_logging(echo_to_console=True)
-        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-        first_handlers = target.handlers[:]
-
-        with ExitStack() as stack:
-            spies = [
-                stack.enter_context(patch.object(handler, "close", wraps=handler.close))
-                for handler in first_handlers
-            ]
-            logging_config.configure_turn_timer_logging(echo_to_console=True)
-            for spy in spies:
-                spy.assert_called_once()
-
-
-class TestLogHealth:
-    """The unified sink's writability is client-observable (like vibe-trace)."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> Iterator[None]:
-        yield from _redirect_log_tree(tmp_path, monkeypatch)
-
-    def test_reports_relative_name_and_verdict(self, tmp_path: Path) -> None:
-        _ = tmp_path  # in-jail via the autouse fixture's state-root patch
-        health = logging_config.log_health()
-        assert health["name"] == "logs/vox.log"  # relative, no absolute prefix
-        assert not health["name"].startswith("/")
-        assert health["status"] == "healthy"
-
-
-class TestApplyLogLevel:
-    """apply_log_level re-points the root logger + handlers to a concrete level."""
-
-    def test_notset_clamped_level_still_emits_info(self) -> None:
-        """A `notset` request, clamped to DEBUG, leaves a NAMED logger emitting INFO+.
-
-        ``apply_log_level`` targets the root logger; a child logger defers to it,
-        so after applying the ``AuditFloorLevel``-clamped ``notset`` (DEBUG) the
-        audit trail (INFO and above) still emits -- the effective level is a
-        concrete DEBUG, never NOTSET(0)/defer that could sit above INFO.
-        """
-        root = logging.getLogger()
-        saved_level = root.level
-        try:
-            effective = AuditFloorLevel.from_name("notset").numeric
-            logging_config.apply_log_level(effective)
-            assert root.level == logging.DEBUG  # concrete, never NOTSET(0)
-            assert logging.getLogger("voxd.audit.child").isEnabledFor(logging.INFO)
-        finally:
-            root.setLevel(saved_level)
-
-
-class TestShipTransportIsGone:
-    """The ship transport and fallback file no longer exist (forward integration)."""
-
-    @pytest.mark.parametrize(
-        "module",
-        ["log_ship", "log_flush", "log_wire", "voxd.log_sink"],
+@pytest.mark.parametrize("echo", [False, True])
+def test_timer_failure_preserves_client_file_logging(
+    echo: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logging_config.configure_client_logging(role="cli")
+    root = logging.getLogger()
+    handlers = root.handlers[:]
+    with patch.object(
+        logging_config, "PrivateFileHandler", side_effect=LoggingSetupError("private")
+    ):
+        logging_config.configure_turn_timer_logging(echo_to_console=echo)
+    logging.getLogger("punt_vox.timer_failure").info("client logging survives")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "client.cli.punt_vox.timer_failure: client logging survives" in contents
+    assert root.handlers == handlers
+    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+    timer.error("private timer record")
+    assert all(isinstance(handler, logging.NullHandler) for handler in timer.handlers)
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
     )
-    def test_deleted_modules_do_not_import(self, module: str) -> None:
-        import importlib
 
-        with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(f"punt_vox.{module}")
+
+def test_turn_timer_unusable_path_is_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logging_config.configure_client_logging(role="cli")
+    path = paths.log_dir() / "vox.log"
+    handlers = logging.getLogger().handlers[:]
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("blocked")
+    monkeypatch.setattr(logging_config, "log_dir", lambda: blocked)
+    logging_config.configure_turn_timer_logging(echo_to_console=True)
+    logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME).error("private record")
+    logging.getLogger("punt_vox.test").info("root record after timer health failure")
+    assert "root record after timer health failure" in path.read_text()
+    assert logging.getLogger().handlers == handlers
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
+    )
+
+
+@pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_client_setup_failure_is_open(
+    role: logging_config.Role, error: OSError, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logging_config.configure_client_logging(role=role)
+    with patch.object(logging_config, "configure_logging", side_effect=error):
+        logging_config.configure_client_logging(role=role)
+    logging_config.apply_log_level(logging.DEBUG)
+    logging.getLogger("punt_vox.failed_setup").error("must never reach stderr")
+    assert all(
+        isinstance(handler, logging.NullHandler)
+        for handler in logging.getLogger().handlers
+    )
+    assert not any(
+        isinstance(h, PrivateFileHandler) for h in logging.getLogger().handlers
+    )
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
+    )
+
+
+def _append_process_records(writer: int, barrier: Barrier) -> None:
+    logging_config.configure_client_logging(role="worker")
+    handler = logging.getHandlerByName("file")
+    assert isinstance(handler, PrivateFileHandler)
+    handler.sink = AtomicAppendLog(
+        paths.log_dir() / "vox.log", max_bytes=2048, backup_count=100
+    )
+    barrier.wait(timeout=30)
+    for sequence in range(50):
+        logging.getLogger("punt_vox.concurrent").info(
+            "writer=%d record=%d payload=%s", writer, sequence, "x" * 128
+        )
+
+
+@pytest.mark.slow
+def test_multiple_configured_processes_rotate_without_losing_records() -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(4)
+    processes = [
+        context.Process(target=_append_process_records, args=(writer, barrier))
+        for writer in range(4)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=45)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+    directory = paths.log_dir()
+    logs = [directory / "vox.log", *directory.glob("vox.log.[0-9]*")]
+    assert len(logs) > 1
+    actual = Counter(
+        line.split("writer=", 1)[1]
+        for path in logs
+        for line in path.read_text().splitlines()
+    )
+    expected = Counter(
+        f"{writer} record={sequence} payload={'x' * 128}"
+        for writer in range(4)
+        for sequence in range(50)
+    )
+    assert actual == expected
+    assert directory.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in directory.iterdir())
+
+
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_daemon_setup_failure_propagates(error: OSError) -> None:
+    with (
+        patch.object(logging_config, "configure_logging", side_effect=error),
+        pytest.raises(OSError) as raised,
+    ):
+        logging_config.configure_daemon_logging()
+    assert raised.value is error
+
+
+def test_health_before_first_record() -> None:
+    assert logging_config.log_health() == {"name": "vox.log", "status": "healthy"}
+
+
+def test_redaction_and_suppression() -> None:
+    logging_config.configure_client_logging(role="cli", verbose=True)
+    logging.getLogger("httpx").info("suppressed marker")
+    logging.getLogger("punt_vox.test").warning("https://host/path?token=secret-marker")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "suppressed marker" not in contents
+    assert "secret-marker" not in contents

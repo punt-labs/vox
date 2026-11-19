@@ -223,6 +223,30 @@ _INSTALL_MODES = pytest.mark.parametrize(
 )
 
 
+@_INSTALL_MODES
+def test_git_is_required_even_without_plugin(
+    tmp_path: Path, args: tuple[str, ...], no_plugin_env: str | None
+) -> None:
+    empty_bin = tmp_path / "bin"
+    empty_bin.mkdir()
+    env = {"PATH": str(empty_bin), "HOME": str(tmp_path), "TERM": "dumb"}
+    if no_plugin_env is not None:
+        env["VOX_NO_PLUGIN"] = no_plugin_env
+    result = subprocess.run(
+        ["/bin/sh", str(_INSTALL_SH), *args],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "'git' is required" in result.stdout
+    assert "pinned punt-observe dependency" in result.stdout
+    assert "Checking uv" not in result.stdout
+
+
 class TestNoUserScopeGuide:
     """The installer never registers a user-scope guide, in any mode.
 
