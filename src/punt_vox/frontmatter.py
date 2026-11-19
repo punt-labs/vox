@@ -74,6 +74,7 @@ class Frontmatter:
 
     def _lock(self) -> SiblingLock:
         """Share a local-state lock across every spelling of the config path."""
+        # Read-only .punt-labs requires a pre-provisioned, writable local lock zone.
         target = self._path.resolve()
         directory = target.parent
         if directory.name == "vox" and directory.parent.name == ".punt-labs":
