@@ -224,11 +224,11 @@
     "avg_lcom": 0.995
   },
   "src/punt_vox/client_transport.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.848,
-    "avg_lcom": 0.848
+    "max_lcom": 0.722,
+    "avg_lcom": 0.722
   },
   "src/punt_vox/commands/__init__.py": {
     "efferent_coupling": 4.0,

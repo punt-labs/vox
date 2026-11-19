@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import re
 import socket
 import tomllib
@@ -11,6 +13,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import websockets
+import websockets.asyncio.server
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
@@ -109,3 +113,73 @@ def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
         pytest.raises(VoxdProtocolError, match=re.escape(expected)),
     ):
         asyncio.run(run())
+
+
+class _LateRosterDaemon:
+    """A real WebSocket server that answers the first roster request late.
+
+    Every reply names the provider it answers, so a reused connection that
+    reads a stale reply returns the wrong provider's roster.
+    """
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+        self._answered = 0
+
+    async def handle(self, ws: websockets.asyncio.server.ServerConnection) -> None:
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            async for raw in ws:
+                msg = json.loads(raw)
+                if self._answered == 0:
+                    await asyncio.sleep(self._delay)
+                self._answered += 1
+                voices = [f"{msg['provider']}-voice"]
+                await ws.send(json.dumps({"type": "done", "voices": voices}))
+
+
+async def _timed_out_request(transport: VoxdTransport, how: str) -> None:
+    msg: dict[str, object] = {"type": "voices", "provider": "elevenlabs"}
+    if how == "recv":
+        await transport.send_and_recv(msg, timeout=0.05)
+    elif how == "drain":
+        await transport.send_and_drain(msg, timeout=0.05)
+    else:
+        await asyncio.wait_for(transport.send_and_recv(msg, timeout=10), 0.05)
+
+
+@pytest.mark.parametrize(
+    ("how", "raised"),
+    [
+        ("recv", VoxdProtocolError),
+        ("drain", VoxdProtocolError),
+        ("cancel", TimeoutError),
+    ],
+)
+def test_a_reused_transport_never_returns_a_timed_out_requests_late_reply(
+    how: str, raised: type[Exception]
+) -> None:
+    """A late reply to an abandoned request must not answer the next one.
+
+    The daemon still answers a request the client gave up on; if the
+    connection stays open, that reply is the next frame the next request
+    reads. Covers the deadline expiring in ``send_and_recv`` and
+    ``send_and_drain`` and the caller cancelling (``BoundedCall``).
+    """
+    daemon = _LateRosterDaemon(delay=0.2)
+
+    async def run() -> dict[str, object]:
+        async with websockets.asyncio.server.serve(
+            daemon.handle, "127.0.0.1", 0
+        ) as server:
+            port = server.sockets[0].getsockname()[1]
+            transport = VoxdTransport("127.0.0.1", port, _TOKEN)
+            try:
+                with pytest.raises(raised):
+                    await _timed_out_request(transport, how)
+                await asyncio.sleep(0.3)  # the late reply has been sent
+                msg: dict[str, object] = {"type": "voices", "provider": "polly"}
+                return await transport.send_and_recv(msg, timeout=1)
+            finally:
+                await transport.close()
+
+    assert asyncio.run(run())["voices"] == ["polly-voice"]
