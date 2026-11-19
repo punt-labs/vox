@@ -140,11 +140,10 @@ class TextInput:
     @staticmethod
     def _segment_text(index: int, item: object) -> str:
         """Resolve a segment string or object, preserving its index on error."""
-        if isinstance(item, str):
-            return item
-        if isinstance(item, dict):
-            fields = cast("dict[object, object]", item)
-            return str(fields.get("text") or "")
-        raise typer.BadParameter(
-            f"Element {index} must be a string or {{voice, text}} object."
-        )
+        match item:
+            case (str() as text) | {"text": str() as text}:
+                return text
+            case _:
+                raise typer.BadParameter(
+                    f"Element {index} must be a string or an object with string text."
+                )

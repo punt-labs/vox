@@ -117,9 +117,9 @@ class TestTextInputFromFile:
         ("raw", "expected"),
         [
             ([], []),
-            (["", {"text": ""}, {}], []),
-            (["héllo", {"text": "世界"}, {"text": 42}], ["héllo", "世界", "42"]),
-            ([{"text": False}, {"text": None}, "last"], ["last"]),
+            (["", {"text": ""}], []),
+            (["héllo", {"text": "世界"}], ["héllo", "世界"]),
+            ([{"text": ""}, "last"], ["last"]),
         ],
     )
     def test_segment_values(
@@ -139,6 +139,19 @@ class TestTextInputFromFile:
         path = tmp_path / "segs.json"
         path.write_text("{not json", encoding="utf-8")
         with pytest.raises(typer.BadParameter, match="valid JSON"):
+            TextInput(OutputFormatter()).resolve(None, path)
+
+    @pytest.mark.parametrize(
+        "item",
+        [{"text": False}, {"text": 0}, {"text": [1, 2]}, {"text": None}, {}],
+        ids=["false", "zero", "array", "null", "missing"],
+    )
+    def test_object_requires_string_text(
+        self, tmp_path: Path, item: dict[str, object]
+    ) -> None:
+        path = tmp_path / "segs.json"
+        path.write_text(json.dumps(["valid", item]), encoding="utf-8")
+        with pytest.raises(typer.BadParameter, match=r"Element 1.*string text"):
             TextInput(OutputFormatter()).resolve(None, path)
 
     def test_non_array_raises_bad_parameter(self, tmp_path: Path) -> None:
