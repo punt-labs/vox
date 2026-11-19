@@ -31,42 +31,39 @@ class RunFiles:
     def port() -> int | None:
         """Return the daemon port from ``serve.port``; ``None`` if absent.
 
-        Only absence is ``None``: no voxd published a port. A file that is
-        there but cannot be read, or does not hold a port, raises
-        ``VoxdConnectionError`` naming why -- a voxd may well be running.
-
         Raises:
-            VoxdConnectionError: If the daemon port file is unreadable or does not
-                contain a decimal port.
+            VoxdConnectionError: If the file is unreadable or does not hold
+                a decimal port. This does not mean that voxd is absent.
         """
         port_file = _user_run_dir() / "serve.port"
-        text = RunFiles._published(port_file)
-        if text is None:
+        try:
+            text = RunFiles._read(port_file)
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise VoxdConnectionError(f"cannot read {port_file}: {exc}") from None
         if not text.isdecimal():
             msg = f"{port_file} does not hold a port: {text[:32]!r}"
             raise VoxdConnectionError(msg)
         return int(text)
 
     @staticmethod
-    def _published(run_file: Path) -> str | None:
-        """Return *run_file*'s stripped text; ``None`` only when it is absent."""
-        try:
-            return run_file.read_text().strip()
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            msg = f"cannot read {run_file}: {exc.strerror or exc}"
-            raise VoxdConnectionError(msg) from None
-
-    @staticmethod
     def token() -> str | None:
-        """Return the daemon auth token from ``serve.token``; ``None`` if absent."""
+        """Read the UTF-8 token, or return ``None`` for an OS read error."""
         token_file = _user_run_dir() / "serve.token"
         try:
-            return token_file.read_text().strip()
-        except (FileNotFoundError, OSError):
+            return RunFiles._read(token_file)
+        except OSError:
             return None
+
+    @staticmethod
+    def _read(run_file: Path) -> str:
+        """Read stripped UTF-8 without exposing malformed file contents."""
+        try:
+            return run_file.read_text(encoding="utf-8").strip()
+        except UnicodeDecodeError:
+            msg = f"cannot read {run_file}: invalid UTF-8"
+            raise VoxdConnectionError(msg) from None
 
 
 @final
