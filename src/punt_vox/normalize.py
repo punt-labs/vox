@@ -649,9 +649,9 @@ def _space_acronym(part: str) -> str:
     pronounceable-acronyms allowlist, or has fewer than 2 or more than 5
     letters. Combining marks stay with their letters.
     """
-    if not part.isupper() or part in _PRONOUNCEABLE_ACRONYMS:
-        return part
     letters = "".join(ch for ch in part if not unicodedata.category(ch).startswith("M"))
+    if not letters.isupper() or letters in _PRONOUNCEABLE_ACRONYMS:
+        return part
     if 2 <= len(letters) <= 5 and letters.isalpha() and part[0].isalpha():
         return re.sub(r"(?<=.)(?=\w)", " ", part)
     return part

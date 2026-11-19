@@ -228,6 +228,9 @@ class TestAcronymSpacing:
     def test_decomposed_acronym_keeps_marks_with_their_letters(self) -> None:
         assert normalize_for_speech("CAFE\u0301") == "C A F E\u0301"
 
+    def test_pronounceable_acronym_keeps_combining_marks_without_spacing(self) -> None:
+        assert normalize_for_speech("OK\u0301") == "OK\u0301"
+
     def test_ocr_spaced(self) -> None:
         assert normalize_for_speech("OCR") == "O C R"
 
