@@ -37,6 +37,21 @@ class TestSnakeCase:
     def test_mixed_snake_camel_with_abbreviation(self) -> None:
         assert normalize_for_speech("read_stdin") == "read standard input"
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("read_stdIn", "read standard input"),
+            ("write_stdOut", "write standard output"),
+            ("read_stdErr", "read standard error"),
+            ("eOf_received", "E O F received"),
+            ("stdIn", "std in"),
+        ],
+    )
+    def test_snake_case_expands_whole_mixed_case_parts(
+        self, text: str, expected: str
+    ) -> None:
+        assert normalize_for_speech(text) == expected
+
 
 # ---------------------------------------------------------------------------
 # camelCase / PascalCase splitting
