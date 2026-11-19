@@ -110,7 +110,7 @@ class TestTextInputFromFile:
             path.mkdir()
             message = "Invalid value: Cannot read --from file: Is a directory."
         elif kind == "missing":
-            message = f"Invalid value for '--from': Path '{path}' does not exist."
+            message = f"Invalid value for '--from': path '{path}' does not exist."
         else:
             path.write_text('["hello"]', encoding="utf-8")
             error = (
