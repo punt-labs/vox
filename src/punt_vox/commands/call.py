@@ -1,8 +1,16 @@
 """``vox call`` -- a live voice call with a persistent, read-only call agent.
 
-Registers the CLI verbs and owns the call lock, cross-process stop request,
-and crash boundary. :class:`~.call_runner.CallRunner` is loaded only on start;
-it drives the call and its persistent ``pi --mode rpc`` agent.
+Wires :class:`~punt_vox.voxd.conversation_mode.call_session.CallSession` (the
+tested orchestration in ``voxd/conversation_mode/``) to the CLI. The call's
+agent is one ``pi --mode rpc`` process spawned when the call starts and held
+for its whole length, opened with a context snapshot the user's main session
+wrote (``--context``); :class:`~.call_runner.CallRunner` runs that sequence and
+is imported lazily at ``vox call start`` so CLI and hook startup skip the
+live-call stack.
+This module keeps the CLI's own concerns: the verbs, the UserPromptSubmit
+lock (:class:`~.call_lock.CallLock`), cross-process control
+(:class:`~.call_control.CallControl`), speech through the existing daemon
+client (:class:`VoxClientSync.synthesize`), and the crash boundary.
 
 Two ways to drive one call, chosen at ``vox call start`` by whether
 ``--script`` is passed:
