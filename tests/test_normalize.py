@@ -310,6 +310,10 @@ class TestSymbolStripping:
             ("(a\u0323\u0301),", "a\u0323\u0301,"),
             ("hello\u2764\ufe0f!", "hello!"),
             ("\u0301 hello", "hello"),
+            ("1\ufe0f\u20e3", "1"),
+            ("press 1\ufe0f\u20e3!", "press 1!"),
+            ("1\ufe0f!", "1!"),
+            ("字\U000e0100", "字"),
         ],
     )
     def test_combining_marks_on_letters_survive(self, text: str, expected: str) -> None:

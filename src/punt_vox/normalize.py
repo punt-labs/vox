@@ -521,6 +521,7 @@ _HAS_CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]"
 # Tokens that look like file paths — leave these alone.
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _LEADING_NON_SPEECH_RE = re.compile(r"^[^\w~/.]+")
+_VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 
 
 # ---------------------------------------------------------------------------
@@ -575,13 +576,7 @@ def normalize_for_speech(text: str) -> str:
 
     Idempotent: running twice produces the same result.
     """
-    words = text.split()
-    result: list[str] = []
-    for word in words:
-        normalized = _normalize_token(word)
-        if normalized:
-            result.append(normalized)
-    return " ".join(result)
+    return " ".join(filter(None, map(_normalize_token, text.split())))
 
 
 def _normalize_token(token: str) -> str:
@@ -685,13 +680,14 @@ def _strip_punctuation(token: str) -> tuple[str, str]:
 
 
 def _split_trailing_symbols(core_candidate: str) -> tuple[str, str]:
-    """Split off trailing symbols, keeping marks attached to letters or numbers."""
+    """Split off trailing symbols, keeping attached marks that affect speech."""
     suffix_start = len(core_candidate)
     for index in range(suffix_start - 1, -1, -1):
         ch = core_candidate[index]
         if ch.isalnum():
             break
-        if not unicodedata.category(ch).startswith("M"):
+        category = unicodedata.category(ch)
+        if category not in ("Mn", "Mc") or _VARIATION_SELECTOR_RE.match(ch):
             suffix_start = index
             if ch == "_":
                 break
