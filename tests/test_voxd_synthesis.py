@@ -9,6 +9,7 @@ import os
 import tempfile
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,55 @@ from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        SynthesisSpec(rate=150),
+        SynthesisSpec(model="other-model"),
+        SynthesisSpec(language="de"),
+        SynthesisSpec(stability=0.2),
+        SynthesisSpec(similarity=0.3),
+        SynthesisSpec(style=0.4),
+        SynthesisSpec(speaker_boost=False),
+    ],
+    ids=["rate", "model", "language", "stability", "similarity", "style", "boost"],
+)
+def test_cache_isolates_synthesis_settings(
+    tmp_path: Path, changed: SynthesisSpec
+) -> None:
+    async def drive() -> None:
+        pipeline = SynthesisPipeline(playback_mutex=asyncio.Lock())
+        source = tmp_path / "synthesized.mp3"
+        source.write_bytes(b"rate=90")
+        with (
+            patch("punt_vox.cache.CACHE_DIR", tmp_path / "cache"),
+            patch("punt_vox.voxd.synthesis.get_provider"),
+            patch(
+                "punt_vox.voxd.synthesis.TempFileSynthesis.run",
+                new_callable=AsyncMock,
+                return_value=source,
+            ) as synthesize,
+        ):
+            baseline = SynthesisSpec(rate=90)
+            first = await pipeline.synthesize_to_file("hello", baseline)
+            assert not first.cached
+            again = await pipeline.synthesize_to_file("hello", baseline)
+            assert again.cached
+            source.write_bytes(b"changed settings")
+            result = await pipeline.synthesize_to_file(
+                "hello", replace(changed, rate=changed.rate or 90)
+            )
+            print(
+                f"changed={changed!r} cached={result.cached} "
+                f"bytes={result.path.read_bytes()!r}"
+            )
+            assert not result.cached
+            assert result.path.read_bytes() == b"changed settings"
+            assert synthesize.await_count == 2
+
+    asyncio.run(drive())
 
 
 def _default_spec(**overrides: object) -> SynthesisSpec:
