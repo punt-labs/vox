@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, final
 
 import typer
 from typer._click.exceptions import UsageError
-from typer.core import TyperGroup, TyperOption
+from typer.core import TyperGroup
 
+from punt_vox.cli_usage_parser import UsageParser
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
@@ -64,12 +65,10 @@ class VoxGroup(TyperGroup):
         json_option = next(p for p in self.get_params(ctx) if p.name == "json_output")
         while True:
             scan = command.context_class(
-                command, parent=ctx, resilient_parsing=True, ignore_unknown_options=True
+                command, parent=ctx, ignore_unknown_options=True
             )
-            parser = command.make_parser(scan)
-            json_option.add_to_parser(parser, scan)
-            options, rest, _ = parser.parse_args(self._mode_args(command, scan, args))
-            if options.get("json_output"):
+            requested, rest = UsageParser(command, scan, json_option).parse(args)
+            if requested:
                 return True
             if not isinstance(command, TyperGroup) or not rest:
                 return False
@@ -78,28 +77,12 @@ class VoxGroup(TyperGroup):
                 scan = self.context_class(
                     self,
                     parent=ctx,
-                    resilient_parsing=True,
                     ignore_unknown_options=True,
                     allow_interspersed_args=True,
                 )
-                options, _, _ = self.make_parser(scan).parse_args(
-                    self._mode_args(self, scan, rest)
-                )
-                return bool(options.get("json_output"))
+                requested, _ = UsageParser(self, scan, json_option).parse(rest)
+                return requested
             command, ctx, args = child, scan, rest[1:]
-
-    def _mode_args(self, command: Command, ctx: Context, args: list[str]) -> list[str]:
-        """Ignore invalid flag assignments only in the output-mode scan."""
-        flags = {
-            name
-            for parameter in [*command.get_params(ctx), *self.get_params(ctx)]
-            if isinstance(parameter, TyperOption) and parameter.is_flag
-            for name in [*parameter.opts, *parameter.secondary_opts]
-        }
-        return [
-            arg.split("=", 1)[0] if arg.split("=", 1)[0] in flags else arg
-            for arg in args
-        ]
 
     @contextmanager
     def _usage_errors(self) -> Generator[None]:

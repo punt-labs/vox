@@ -43,6 +43,8 @@ def test_json_usage_errors(args: list[str], message: str, position: str) -> None
         ["nonexistent"],
         ["daemon"],
         ["--verbose=true", "nonexistent"],
+        ["--json=false", "nonexistent"],
+        ["--json=", "nonexistent"],
     ],
 )
 def test_plain_usage_errors_unchanged(args: list[str]) -> None:
@@ -72,6 +74,21 @@ def test_json_missing_option_value() -> None:
     assert json.loads(result.stdout) == {
         "error": "Option '--rate' requires an argument."
     }
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--verbose=true", "--json", "nonexistent"],
+        ["--json=false", "--json", "nonexistent"],
+        ["--json", "--json=false", "nonexistent"],
+    ],
+)
+def test_valid_json_flag_survives_malformed_flag(args: list[str]) -> None:
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"].endswith("does not take a value.")
     assert result.stderr == ""
 
 
