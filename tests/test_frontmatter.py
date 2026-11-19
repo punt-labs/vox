@@ -16,7 +16,12 @@ from punt_vox.types_errors import ConfigValueError
 
 
 def _concurrent_writer(
-    path: Path, key: str, value: str, read: Event, release: Event
+    path: Path,
+    key: str,
+    value: str,
+    read: Event,
+    release: Event,
+    started: Event | None = None,
 ) -> None:
     original = Path.read_text
 
@@ -28,6 +33,8 @@ def _concurrent_writer(
         return text
 
     with patch.object(Path, "read_text", paused_read):
+        if started is not None:
+            started.set()
         Frontmatter(path).write_field(key, value)
 
 
@@ -44,18 +51,27 @@ def test_concurrent_writers_preserve_both_fields(
     ctx = multiprocessing.get_context("spawn")
     first_read, second_read = ctx.Event(), ctx.Event()
     first_release, second_release = ctx.Event(), ctx.Event()
+    second_started = ctx.Event()
     first = ctx.Process(
         target=_concurrent_writer,
         args=(path, "provider", "polly", first_read, first_release),
     )
     second = ctx.Process(
         target=_concurrent_writer,
-        args=(second_path, "voice", "fin", second_read, second_release),
+        args=(
+            second_path,
+            "voice",
+            "fin",
+            second_read,
+            second_release,
+            second_started,
+        ),
     )
     first.start()
     try:
         assert first_read.wait(10)
         second.start()
+        assert second_started.wait(10), "second writer did not start"
         # An unlocked writer reads the stale snapshot; a locked one waits.
         second_read.wait(1)
         first_release.set()
