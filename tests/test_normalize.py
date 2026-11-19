@@ -37,6 +37,21 @@ class TestSnakeCase:
     def test_mixed_snake_camel_with_abbreviation(self) -> None:
         assert normalize_for_speech("read_stdin") == "read standard input"
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("read_stdIn", "read standard input"),
+            ("write_stdOut", "write standard output"),
+            ("read_stdErr", "read standard error"),
+            ("eOf_received", "E O F received"),
+            ("stdIn", "std in"),
+        ],
+    )
+    def test_snake_case_expands_whole_mixed_case_parts(
+        self, text: str, expected: str
+    ) -> None:
+        assert normalize_for_speech(text) == expected
+
 
 # ---------------------------------------------------------------------------
 # camelCase / PascalCase splitting
@@ -305,6 +320,22 @@ class TestAcronymSpacing:
 
 
 class TestSymbolStripping:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("-5", "-5"),
+            ("temperature (-2.5 C)", "temperature -2.5 C"),
+            ("delta [\u22123.5],", "delta \u22123.5,"),
+            ("-.5", "-.5"),
+            ("-5ms", "-5 ms"),
+            ("--5", "5"),
+            ("- --help well-known 1-5", "help well-known 1-5"),
+        ],
+    )
+    def test_only_numeric_minus_signs_survive(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
     @pytest.mark.parametrize(
         ("text", "expected"),
         [

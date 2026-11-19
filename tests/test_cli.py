@@ -189,6 +189,39 @@ class TestSayCommand:
         assert result.exit_code == 0
         assert "%%" not in result.output
 
+    def test_say_once_help_documents_zero(self) -> None:
+        assert "Use 0 or omit the option to play every time." in option_help(
+            "say", option="--once"
+        )
+
+    @pytest.mark.parametrize(
+        ("once_args", "expected_ttl"),
+        [
+            ([], None),
+            (["--once", "0"], None),
+            (["--once", "60"], 60),
+        ],
+    )
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_once_passes_ttl_to_client(
+        self,
+        mock_client_cls: MagicMock,
+        once_args: list[str],
+        expected_ttl: int | None,
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        result = CliRunner().invoke(
+            app, ["say", "hello", "--provider", "espeak", *once_args]
+        )
+
+        assert result.exit_code == 0, result.output
+        synthesize.assert_called_once()
+        assert synthesize.call_args.kwargs["once"] == expected_ttl
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
         self,
@@ -565,6 +598,30 @@ class TestApiKeyInputPaths:
 
         assert result.exit_code != 0
         assert "is empty" in result.output or "is empty" in result.stderr
+
+    def test_api_key_file_not_utf8_json(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A non-UTF-8 key file is a usage error with a JSON envelope, no traceback."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.bin"
+        key_path.write_bytes(b"\xffsk_secret\n")
+        key_path.chmod(0o600)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["--json", "say", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code == 2
+        assert not isinstance(result.exception, UnicodeDecodeError)
+        payload = json.loads(result.output)
+        assert payload == {
+            "error": f"Invalid value: --api-key-file: {key_path} is not valid UTF-8"
+        }
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_api_key_stdin_pipe(
