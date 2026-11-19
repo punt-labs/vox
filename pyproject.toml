@@ -110,7 +110,7 @@ dev = [
     "pydoclint==0.12.0",
     "markdown==3.11.3",
     "types-markdown>=3.10,<4",
-    "punt-oo-ratchet==0.1.0",
+    "punt-oo-ratchet==0.3.0",
     "mypy>=1.18.1",
     "pyright>=1.1.400",
     "ruff>=0.13.0",
