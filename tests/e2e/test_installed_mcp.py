@@ -24,6 +24,7 @@ pytestmark = pytest.mark.e2e
 
 _PROTOCOL_VERSION = "2024-11-05"
 _TIMEOUT = 60.0
+_DEFAULT_BINARY = Path.home() / ".local" / "bin" / "vox"
 # A server that starts but never answers -- import hang, lifespan deadlock --
 # must fail this test in seconds with a diagnostic, not stall the CI job until
 # Actions kills it.
@@ -178,7 +179,7 @@ def _spawn() -> subprocess.Popen[str]:
     ``VOX_E2E_BINARY``) forces the packaged artifact.
     """
     override = os.environ.get("VOX_E2E_BINARY")
-    binary = Path(override) if override else Path.home() / ".local" / "bin" / "vox"
+    binary = Path(override) if override else _DEFAULT_BINARY
     if not binary.is_file():
         pytest.skip(
             f"installed vox not found at {binary}; run `make install` "
