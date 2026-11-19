@@ -32,7 +32,9 @@ def test_json_usage_errors(args: list[str], message: str, position: str) -> None
     assert result.stderr == ""
 
 
-@pytest.mark.parametrize("args", [["say", "hi", "--rate", "nope"], ["nonexistent"]])
+@pytest.mark.parametrize(
+    "args", [["say", "hi", "--rate", "nope"], ["nonexistent"], ["daemon"]]
+)
 def test_plain_usage_errors_unchanged(args: list[str]) -> None:
     runner = CliRunner()
     result = runner.invoke(app, args)
@@ -43,7 +45,7 @@ def test_plain_usage_errors_unchanged(args: list[str]) -> None:
     finally:
         app.info.cls = original_cls
     assert result.exit_code == original.exit_code == 2
-    assert result.stdout == original.stdout == ""
+    assert result.stdout == original.stdout
     assert result.stderr == original.stderr
 
 
@@ -70,3 +72,10 @@ def test_usage_error_does_not_leak_output_mode() -> None:
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "No such command" in result.stderr
+
+
+def test_json_group_without_subcommand() -> None:
+    result = CliRunner().invoke(app, ["--json", "daemon"])
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {"error": "Missing command for 'daemon'."}
+    assert result.stderr == ""

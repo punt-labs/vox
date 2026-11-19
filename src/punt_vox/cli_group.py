@@ -13,7 +13,7 @@ from typer.core import TyperGroup
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
-    from typer._click import Context
+    from typer._click import Command, Context
 
 
 @final
@@ -44,6 +44,20 @@ class VoxGroup(TyperGroup):
         """Include command resolution and child-command parsing in the boundary."""
         with self._usage_errors():
             return super().invoke(ctx)
+
+    def resolve_command(
+        self, ctx: Context, args: list[str]
+    ) -> tuple[str | None, Command | None, list[str]]:
+        """Reject an empty group before Typer renders its implicit help."""
+        name, command, rest = super().resolve_command(ctx, args)
+        if (
+            self._json_requested
+            and isinstance(command, TyperGroup)
+            and command.no_args_is_help
+            and not rest
+        ):
+            raise UsageError(f"Missing command for '{name}'.", ctx=ctx)
+        return name, command, rest
 
     @contextmanager
     def _usage_errors(self) -> Generator[None]:
