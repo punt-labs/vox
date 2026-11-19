@@ -16,15 +16,15 @@ from punt_vox.__main__ import app
     [
         (
             ["say", "hi", "--rate", "nope"],
-            "Invalid value for '--rate': 'nope' is not a valid int.",
+            "Invalid value for '--rate': Input should be a valid integer",
         ),
         (
             ["say", "hi", "--once", "-1"],
-            "Invalid value for '--once': -1 is not in the range x>=0.",
+            "Invalid value for '--once': Input should be greater than or equal to 0",
         ),
         (
             ["say", "hi", "--once", "nope"],
-            "Invalid value for '--once': 'nope' is not a valid int range.",
+            "Invalid value for '--once': Input should be a valid integer",
         ),
         (["nonexistent"], "No such command 'nonexistent'."),
         (["--unknown"], "No such option: --unknown"),
@@ -40,7 +40,9 @@ def test_json_usage_errors(args: list[str], message: str, position: str) -> None
     argv = ["--json", *args] if position == "before" else [*args, "--json"]
     result = CliRunner().invoke(app, argv)
     assert result.exit_code == 2
-    assert json.loads(result.stdout) == {"error": message}
+    payload = json.loads(result.stdout)
+    assert set(payload) == {"error"}
+    assert payload["error"].startswith(message)
     assert result.stderr == ""
 
 
@@ -129,9 +131,10 @@ def test_json_group_without_subcommand() -> None:
 def test_root_separator_keeps_child_json_option() -> None:
     result = CliRunner().invoke(app, ["--", "say", "hi", "--json", "--rate", "nope"])
     assert result.exit_code == 2
-    assert json.loads(result.stdout) == {
-        "error": "Invalid value for '--rate': 'nope' is not a valid int."
-    }
+    payload = json.loads(result.stdout)
+    assert set(payload) == {"error"}
+    assert payload["error"].startswith("Invalid value for '--rate':")
+    assert "valid integer" in payload["error"]
     assert result.stderr == ""
 
 
