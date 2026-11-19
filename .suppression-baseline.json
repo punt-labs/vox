@@ -1,16 +1,19 @@
 {
-  "total": 202,
+  "total": 176,
   "by_category": {
-    "noqa": 31,
-    "type_ignore": 4,
+    "noqa": 24,
+    "type_ignore": 5,
     "pylint_disable": 0,
-    "pyright_ignore": 91,
-    "per_file_ignores": 76
+    "pyright_ignore": 58,
+    "file_level": 12,
+    "per_file_ignores": 77
   },
   "by_file": {
     "src/punt_vox/__main__.py": {
       "noqa": 5,
-      "pyright_ignore": 12
+      "pyright_ignore": 12,
+      "file_level": 1,
+      "per_file_ignores": 5
     },
     "src/punt_vox/cli_io.py": {
       "pyright_ignore": 2
@@ -21,15 +24,13 @@
     "src/punt_vox/core.py": {
       "noqa": 1
     },
-    "src/punt_vox/daemon_restarter.py": {
-      "noqa": 3,
-      "pyright_ignore": 2
-    },
     "src/punt_vox/doctor.py": {
-      "pyright_ignore": 2
+      "pyright_ignore": 2,
+      "per_file_ignores": 2
     },
     "src/punt_vox/hooks.py": {
-      "pyright_ignore": 11
+      "pyright_ignore": 11,
+      "per_file_ignores": 5
     },
     "src/punt_vox/log_append_handler.py": {
       "noqa": 1
@@ -39,37 +40,43 @@
     },
     "src/punt_vox/providers/elevenlabs.py": {
       "noqa": 4,
-      "pyright_ignore": 22
-    },
-    "src/punt_vox/providers/elevenlabs_music.py": {
-      "pyright_ignore": 9
+      "pyright_ignore": 2,
+      "per_file_ignores": 1
     },
     "src/punt_vox/providers/espeak.py": {
-      "pyright_ignore": 3
+      "pyright_ignore": 3,
+      "per_file_ignores": 2
     },
     "src/punt_vox/providers/openai.py": {
       "noqa": 4,
-      "pyright_ignore": 3
+      "pyright_ignore": 1,
+      "per_file_ignores": 1
     },
     "src/punt_vox/providers/polly.py": {
-      "type_ignore": 3,
-      "pyright_ignore": 5
+      "type_ignore": 4,
+      "pyright_ignore": 6,
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/providers/provider_refusal.py": {
+      "pyright_ignore": 1
+    },
+    "src/punt_vox/providers/provider_status.py": {
+      "pyright_ignore": 1
     },
     "src/punt_vox/providers/say.py": {
-      "pyright_ignore": 3
+      "pyright_ignore": 3,
+      "per_file_ignores": 2
     },
     "src/punt_vox/server.py": {
       "noqa": 3,
-      "pyright_ignore": 1
+      "pyright_ignore": 1,
+      "per_file_ignores": 2
     },
     "src/punt_vox/server_audio_tools.py": {
       "noqa": 1
     },
-    "src/punt_vox/service/installer.py": {
-      "pyright_ignore": 2
-    },
-    "src/punt_vox/service/launchctl.py": {
-      "noqa": 5
+    "src/punt_vox/service/launchctl_query.py": {
+      "noqa": 1
     },
     "src/punt_vox/types_errors.py": {
       "pyright_ignore": 1
@@ -80,27 +87,116 @@
     "src/punt_vox/types_synthesis_errors.py": {
       "pyright_ignore": 1
     },
+    "src/punt_vox/voxd/__init__.py": {
+      "file_level": 1
+    },
+    "src/punt_vox/voxd/config.py": {
+      "file_level": 1
+    },
     "src/punt_vox/voxd/daemon.py": {
-      "type_ignore": 1
+      "type_ignore": 1,
+      "file_level": 1,
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/voxd/health.py": {
+      "file_level": 1,
+      "per_file_ignores": 1
     },
     "src/punt_vox/voxd/music_player/player_event_codec.py": {
       "pyright_ignore": 1
     },
-    "src/punt_vox/voxd/programs/music_producer.py": {
-      "pyright_ignore": 1
+    "src/punt_vox/voxd/playback.py": {
+      "file_level": 1
+    },
+    "src/punt_vox/voxd/provider_status_handler.py": {
+      "file_level": 1
+    },
+    "src/punt_vox/voxd/record_handler.py": {
+      "file_level": 1
     },
     "src/punt_vox/voxd/router.py": {
-      "pyright_ignore": 3
+      "pyright_ignore": 3,
+      "file_level": 1
     },
     "src/punt_vox/voxd/speech_handlers.py": {
-      "pyright_ignore": 1
+      "pyright_ignore": 1,
+      "file_level": 1,
+      "per_file_ignores": 1
     },
     "src/punt_vox/voxd/synthesis.py": {
-      "pyright_ignore": 3
+      "pyright_ignore": 3,
+      "file_level": 1,
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/voxd/system_handlers.py": {
+      "file_level": 1
     },
     "src/punt_vox/voxd/types.py": {
       "noqa": 1
+    },
+    "tests/*": {
+      "per_file_ignores": 12
+    },
+    "scripts/*": {
+      "per_file_ignores": 5
+    },
+    "tools/*": {
+      "per_file_ignores": 8
+    },
+    "typings/*": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/doctor_mpv.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/client.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/types_synthesis.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/paths.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/service/__init__.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/service/process.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/service/launchd.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/service/systemd.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/service/installer.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/playback.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/voxd/conversation_mode/git_ignores.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/voices.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/providers/__init__.py": {
+      "per_file_ignores": 3
+    },
+    "src/punt_vox/voxd/conversation_mode/mic_audio_source.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/providers/elevenlabs_music.py": {
+      "per_file_ignores": 1
+    },
+    "src/punt_vox/providers/convert.py": {
+      "per_file_ignores": 2
+    },
+    "src/punt_vox/providers/local_play.py": {
+      "per_file_ignores": 2
     }
   },
-  "updated_at": "2026-08-25T06:45:51Z"
+  "updated_at": "2026-11-19T02:37:40Z"
 }

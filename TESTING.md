@@ -157,18 +157,6 @@ tests/
   test_music_phrases.py      # Music phrase pools
   test_music_prompts.py      # Music prompt building
 
-  # OO ratchet & tooling
-  test_oo_ratchet.py         # Ratchet gate against baseline
-  test_oo_baseline.py        # Baseline read/write
-  test_oo_score.py           # Score model
-  test_oo_scorer.py          # Scorer
-  test_oo_compare.py         # Baseline comparison
-  test_oo_apply.py           # Baseline apply/update
-  test_oo_audit.py           # Audit-log append
-  test_oo_cli.py             # Ratchet CLI
-  test_coupling_ratchet.py   # Coupling/cohesion ratchet
-  test_suppression_ratchet.py     # Lint/type suppression ratchet
-
   music_player/              # Lux music-player surface (voxd/music_player/)
     conftest.py
     test_player.py, test_player_view.py, test_player_events.py
@@ -260,27 +248,13 @@ in-process code stay here.
 | Z-spec partition tests | `test_server_partition.py` |
 | Lux music-player / audio-programs subsystems (mocked Lux client) | `tests/music_player/`, `tests/programs/` -- ~854 tests, the largest subpackage, all in-memory/mocked |
 
-### The `slow` marker: real-git-subprocess ratchet tests
+### OO, coupling, and suppression ratchets
 
-`@pytest.mark.slow` is applied to four files whose tests each spin up a real
-`git init`/`commit`/`checkout` sequence in a tmp directory and then invoke the
-ratchet tool itself as a subprocess, per assertion:
-
-| File | Tests | What it drives |
-|------|-------|-----------------|
-| `test_oo_ratchet.py` | 55 | `tools/oo_ratchet` against real tmp git repos |
-| `test_oo_cli.py` | 10 | `tools/oo_ratchet.cli` argument parsing + a real git-repo fixture |
-| `test_coupling_ratchet.py` | 46 | `tools/coupling` merge-base scoping against real tmp git repos |
-| `test_suppression_ratchet.py` | 42 | `tools/suppression` counting + CLI dispatch against real tmp git repos |
-
-These are the single largest identifiable per-test cost in the suite: on this
-box, in isolation, the 153 tests took 32s (vs. ~0.02s/test for the unmarked
-default tier) -- real `git` subprocess round trips dominate, not CPU work
-(observed CPU utilization during these tests is well under 100% of one core,
-meaning the wall time is mostly the OS scheduling and I/O of spawning `git`
-processes, not computation). They are correct as real-subprocess tests --
-the ratchet tools must be proven against real git history, not a mock -- so
-the fix is not to make them lie about git; it is to make them opt-in.
+The dev dependency `punt-oo-ratchet==0.1.0` supplies all three gates through
+`oo-ratchet {oo,coupling,suppressions}`. Their implementation tests live in
+[`python-oo-ratchet`](https://github.com/punt-labs/python-oo-ratchet), not in
+this repository. Run `make check-oo check-coupling check-suppressions` to
+check vox against its existing committed baselines and audit logs.
 
 ### Tier 3a: `subprocess` -- real shell/git subprocess spawns
 
@@ -529,7 +503,6 @@ stated otherwise -- the same discipline biff's testing doc holds.
 | Tier | Command | When to run it |
 |------|---------|-----------------|
 | 1 (default) | `uv run pytest` | Constantly. No external dependency; this is the inner loop. |
-| `slow` | `uv run pytest -m slow` | Before touching `tools/oo_ratchet`, `tools/coupling`, or `tools/suppression`. |
 | `subprocess` (3a) | `uv run pytest -m subprocess` | Before touching `plugin/hooks/*.sh`, `install.sh`, or `scripts/check-plugin-surface.sh`. No extra infra -- `bash`/`sh`/`git` are already required to develop this repo at all. |
 | `integration` (3b) | *(no tests yet)* | N/A until populated -- see the reserved-tier rationale above. |
 | `sdk` (4) | *(no tests yet)* | N/A until `conversation_mode` lands and needs it. Local-only by design once it exists, same as biff's tier 4 -- real API cost per test, never in CI. |
