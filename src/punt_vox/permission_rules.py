@@ -32,7 +32,6 @@ VOX_RULES: MappingProxyType[str, tuple[str, ...]] = MappingProxyType(
                 "desktop",
                 "cache",
                 "mcp",
-                "register-guidance",
             )
         ),
     }

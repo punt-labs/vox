@@ -32,7 +32,7 @@ def test_stamped_appends_tag_line_at_tail(tmp_path: Path) -> None:
     asset = tmp_path / "asset.md"
     asset.write_text("body text\n", encoding="utf-8")
     stamp = GuideStamp(asset)
-    stamped = stamp.stamped("body text\n")
+    stamped = stamp.stamped()
     # The whole asset lands verbatim first, then the stamp on its own line.
     assert stamped.startswith("body text\n")
     tail = stamped.removeprefix("body text\n")
@@ -45,11 +45,44 @@ def test_stamped_pads_missing_final_newline(tmp_path: Path) -> None:
     asset = tmp_path / "asset.md"
     asset.write_text("no trailing newline", encoding="utf-8")
     stamp = GuideStamp(asset)
-    stamped = stamp.stamped("no trailing newline")
+    stamped = stamp.stamped()
     assert stamped == (
         "no trailing newline\n"
         f"<!-- vox-guide-source-sha256: {stamp.packaged_hash()} -->\n"
     )
+
+
+def test_stamped_digest_matches_body_when_asset_changes_mid_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A package upgrade can rewrite the asset while it is being stamped. The
+    # stamp must hash the very bytes it writes as the body, or ``vox doctor``
+    # reports old text as up to date.
+    asset = tmp_path / "asset.md"
+    asset.write_text("old body\n", encoding="utf-8")
+    real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
+
+    def upgrade_after(path: Path) -> None:
+        if path == asset:
+            asset.write_text("new body\n", encoding="utf-8")
+
+    def read_text_then_upgrade(self: Path, *args: str, **kwargs: str) -> str:
+        text = real_read_text(self, *args, **kwargs)
+        upgrade_after(self)
+        return text
+
+    def read_bytes_then_upgrade(self: Path) -> bytes:
+        data = real_read_bytes(self)
+        upgrade_after(self)
+        return data
+
+    monkeypatch.setattr(Path, "read_text", read_text_then_upgrade)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes_then_upgrade)
+
+    body, _, tail = GuideStamp(asset).stamped().partition("<!-- ")
+    digest = tail.removeprefix("vox-guide-source-sha256: ").removesuffix(" -->\n")
+    assert digest == hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +103,7 @@ def test_read_recovers_embedded_digest(tmp_path: Path) -> None:
     asset.write_text("body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     assert stamp.read(deposited) == stamp.packaged_hash()
 
 
@@ -126,7 +159,7 @@ def test_verify_agrees_on_fresh_deposit(tmp_path: Path) -> None:
     asset.write_text("body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     assert stamp.verify(deposited) is GuideStampVerdict.AGREE
 
 
@@ -135,7 +168,7 @@ def test_verify_diverges_after_asset_changes(tmp_path: Path) -> None:
     asset.write_text("original body\n", encoding="utf-8")
     stamp = GuideStamp(asset)
     deposited = tmp_path / "deposited.md"
-    deposited.write_text(stamp.stamped("original body\n"), encoding="utf-8")
+    deposited.write_text(stamp.stamped(), encoding="utf-8")
     # Packaged asset drifts after the deposit was stamped.
     asset.write_text("new body\n", encoding="utf-8")
     assert stamp.verify(deposited) is GuideStampVerdict.DIVERGE

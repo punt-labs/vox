@@ -20,6 +20,7 @@ from punt_vox.client_errors import (
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.doctor import DoctorCheck
 from punt_vox.doctor_result import CheckResult, CheckResults
+from punt_vox.guide_stamp import GuideStamp
 from punt_vox.types_health import HealthStatus
 from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 
@@ -662,6 +663,31 @@ class TestRunAll:
         assert isinstance(results, list)
         assert all(isinstance(r, CheckResult) for r in results)
         assert len(results) >= 4  # python, ffmpeg, daemon, uvx at minimum
+
+    def test_missing_guide_asset_fails_one_row_and_the_run_continues(
+        self, tmp_path: Path
+    ) -> None:
+        """A broken install is one fail row; every other check still reports."""
+        (tmp_path / ".punt-labs" / "vox").mkdir(parents=True)
+        (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").write_text(
+            "deposited\n", encoding="utf-8"
+        )
+        missing = GuideStamp(tmp_path / "gone" / "agent-guide.md")
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.health.side_effect = VoxdConnectionError("nope")
+        mock_client.provider_status.side_effect = VoxdConnectionError("nope")
+        with (
+            patch("punt_vox.doctor_guide.find_repo_root", return_value=tmp_path),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=missing),
+        ):
+            results = DoctorCheck(client=mock_client).run_all()
+
+        messages = [r.message for r in results]
+        guide_rows = [r for r in results if "packaged asset unreadable" in r.message]
+        assert len(guide_rows) == 1
+        assert guide_rows[0].passed is False
+        assert any(m.startswith("Python ") for m in messages)
+        assert any(m.startswith("output") for m in messages)
 
     def test_no_which_or_config_path_leaks_into_any_message(
         self, tmp_path: Path

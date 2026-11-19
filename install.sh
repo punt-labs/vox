@@ -26,8 +26,8 @@ BINARY="vox"
 #
 # `--no-plugin` (or VOX_NO_PLUGIN=1) installs the harness-neutral CLI and skips
 # ONLY the Claude Code marketplace-register + plugin-install steps. Every other
-# step -- binary, PATH, daemon, tool dirs, seed, and the user-scope CLAUDE.md
-# @-import -- runs unchanged. Both forms work over `curl ... | sh`:
+# step -- binary, PATH, daemon, tool dirs, and seed -- runs unchanged. Both
+# forms work over `curl ... | sh`:
 #   curl ... | sh -s -- --no-plugin      (flag)
 #   curl ... | VOX_NO_PLUGIN=1 sh        (env)
 usage() {
@@ -318,8 +318,7 @@ fi
 #
 # Skipped as a unit when SKIP_PLUGIN=1 (--no-plugin, VOX_NO_PLUGIN=1, or the
 # claude/git capability auto-skip from Step 1). The scope is exactly the
-# marketplace-register + plugin-install steps; the user-scope guide import
-# below runs in both modes.
+# marketplace-register + plugin-install steps.
 
 if [ "$SKIP_PLUGIN" = "0" ]; then
   # --- Step 6: Register marketplace ---
@@ -371,28 +370,6 @@ if [ "$SKIP_PLUGIN" = "0" ]; then
   cleanup_https_rewrite
 else
   info "Skipping Claude Code plugin (CLI-only install)"
-fi
-
-# --- Register the agent usage guide (user-scope CLAUDE.md @-import) ---
-#
-# Runs in BOTH plugin and CLI-only modes. The plugin path installs directly
-# (never via `vox install`), so the import must be registered here; and a
-# --no-plugin box still needs the ~/.punt-labs/vox/CLAUDE.md import so an agent
-# driving vox through the `vox` CLI gets the guidance. Idempotent + best-effort.
-#
-# `register-guidance` is unreleased plumbing: a punt-vox pinned to an older
-# VERSION won't have the subcommand, so probe with `--help` (typer exits
-# non-zero on an unknown command) before invoking. An older install no-ops
-# cleanly instead of emitting a failure every run; a new enough install
-# registers. Do not couple this to a lockstep version bump.
-if "$BINARY" register-guidance --help < /dev/null >/dev/null 2>&1; then
-  if "$BINARY" register-guidance < /dev/null 2>/dev/null; then
-    ok "usage guide registered"
-  else
-    warn "Could not register usage guide (run '$BINARY register-guidance' manually)"
-  fi
-else
-  info "usage guide registration not supported by $PACKAGE $VERSION (skipped)"
 fi
 
 # --- Step 9: Verify ---
