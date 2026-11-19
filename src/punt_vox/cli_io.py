@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import Self, cast
+from typing import Self
 
 import typer
 
 from punt_vox.logging_config import configure_client_logging
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.segment_file import SegmentFile
 
 __all__ = ["OutputFlags", "TextInput"]
 
@@ -93,11 +93,11 @@ class TextInput:
 
         Raises:
             typer.Exit: If no text is provided or standard input is empty.
-            typer.BadParameter: If file encoding, JSON, or segment shapes are invalid.
-            OSError: If the input file or standard input cannot be read.
+            typer.BadParameter: If the file cannot be read or its content is invalid.
+            OSError: If standard input cannot be read.
         """
         if from_file is not None:
-            return self._segments_from_file(from_file)
+            return SegmentFile(from_file).segments()
         if self._should_read_stdin(text):
             return [self._read_stdin()]
         if text is None:
@@ -126,35 +126,3 @@ class TextInput:
             self._formatter.error("no text on stdin", "Error: no text on stdin.")
             raise typer.Exit(code=1)
         return data
-
-    @staticmethod
-    def _read_json(from_file: Path) -> object:
-        """Read UTF-8 JSON, translating malformed input into CLI usage errors."""
-        try:
-            return json.loads(from_file.read_text(encoding="utf-8"))
-        except UnicodeDecodeError as exc:
-            raise typer.BadParameter("--from file must contain valid UTF-8.") from exc
-        except json.JSONDecodeError as exc:
-            raise typer.BadParameter("--from file must contain valid JSON.") from exc
-
-    @classmethod
-    def _segments_from_file(cls, from_file: Path) -> list[str]:
-        """Parse a JSON segments file into a list of text strings."""
-        raw = cls._read_json(from_file)
-        if not isinstance(raw, list):
-            raise typer.BadParameter("--from file must contain a JSON array.")
-        items = cast("list[object]", raw)
-        return [
-            text for i, item in enumerate(items) if (text := cls._segment_text(i, item))
-        ]
-
-    @staticmethod
-    def _segment_text(index: int, item: object) -> str:
-        """Resolve a segment string or object, preserving its index on error."""
-        match item:
-            case (str() as text) | {"text": str() as text}:
-                return text
-            case _:
-                raise typer.BadParameter(
-                    f"Element {index} must be a string or an object with string text."
-                )
