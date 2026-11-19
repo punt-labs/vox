@@ -163,7 +163,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 - **mypy vs pyright on boto3** (`providers/polly.py`): boto3-stubs types `boto3.client("polly")` correctly for mypy but pyright sees partially unknown overloads. Solution: `cast("PollyClientType", boto3.client("polly"))` with `# type: ignore[redundant-cast]` + `# pyright: ignore[reportUnknownMemberType]`.
 - **pydub** has local type stubs in `typings/pydub/`. No `Any` annotations needed.
 - **elevenlabs** ships `py.typed` but has pyright issues on some generated client code. Inline pyright ignores where needed.
-- **`voxd` logs to stderr only in daemon mode.** Never use `print()` in server or daemon code.
+- **`voxd` logs to the private shared file, never stderr.** Never use `print()` in server or daemon code. All entry points configure logging through `logging_config.py`.
 
 ## Testing
 

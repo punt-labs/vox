@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.append_log import AtomicAppendLog, SinkHealth
+from punt_observe.logging import append_log
+
 from punt_vox.paths import log_dir
 
 if TYPE_CHECKING:
@@ -37,12 +38,12 @@ class VibeTraceLog:
 
     __slots__ = ("_sink",)
 
-    _sink: AtomicAppendLog
+    _sink: append_log.AtomicAppendLog
 
     def __new__(cls, path: Path) -> Self:
         """Create a vibe trace log."""
         self = super().__new__(cls)
-        self._sink = AtomicAppendLog(path)
+        self._sink = append_log.AtomicAppendLog(path)
         return self
 
     @classmethod
@@ -55,7 +56,7 @@ class VibeTraceLog:
         """Return the file path clients ``grep`` for ``[vibe-trace]`` lines."""
         return self._sink.path
 
-    def health(self) -> SinkHealth:
+    def health(self) -> append_log.SinkHealth:
         """Return the sink's path and live writability for the status API.
 
         Delegates to the shared sink's ``health`` -- the client-observable answer
