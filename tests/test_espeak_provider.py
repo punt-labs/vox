@@ -272,22 +272,25 @@ class TestEspeakProviderSynthesize:
         assert result.voice == "en"
         assert result.language == "en"
 
+    @pytest.mark.parametrize("text", ["hello", "-5 degrees"])
     def test_synthesize_espeak_args(
         self,
         espeak_provider: EspeakProvider,
         tmp_output_dir: Path,
+        text: str,
     ) -> None:
         mp3 = _get_valid_mp3_bytes()
         out = tmp_output_dir / "test.mp3"
         mock_run = self._mock_subprocess(mp3)
         with patch("punt_vox.providers.espeak.subprocess.run", mock_run):
             espeak_provider.synthesize(
-                SynthesisRequest(text="hello", voice="en", rate=90),
+                SynthesisRequest(text=text, voice="en", rate=90),
                 out,
             )
         espeak_args = mock_run.call_args_list[0][0][0]
         assert espeak_args[espeak_args.index("-v") + 1] == "en"
         assert espeak_args[espeak_args.index("-s") + 1] == "157"
+        assert espeak_args[-2:] == ["--", text]
 
     def test_synthesize_cleans_up_wav(
         self,
@@ -335,9 +338,11 @@ class TestEspeakProviderSynthesize:
 
 
 class TestEspeakDirectPlayerPlayDirectly:
+    @pytest.mark.parametrize("text", ["hello", "-5 degrees"])
     def test_spawns_without_w_flag(
         self,
         espeak_provider: EspeakProvider,
+        text: str,
     ) -> None:
         player = EspeakDirectPlayer(
             binary=espeak_provider._binary,  # pyright: ignore[reportPrivateUsage]
@@ -348,11 +353,12 @@ class TestEspeakDirectPlayerPlayDirectly:
         )
         with patch("punt_vox.providers.local_play.subprocess.run", mock):
             rc = player.play_directly(
-                SynthesisRequest(text="hello", voice="en"),
+                SynthesisRequest(text=text, voice="en"),
             )
         assert rc == 0
         args = mock.call_args[0][0]
         assert "-w" not in args
+        assert args[-2:] == ["--", text]
 
     def test_nonzero_rc_returned(
         self,
