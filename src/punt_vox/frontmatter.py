@@ -83,7 +83,7 @@ class Frontmatter:
             lock_path = (
                 Path.home() / ".punt-labs" / "vox" / "run" / "config-locks" / digest
             )
-        return SiblingLock(target, lock_path=lock_path)
+        return SiblingLock(target, lock_path=lock_path, mode=0o666)
 
     def _write_fields(self, updates: dict[str, str]) -> None:
         """Read and write the config while holding its local-state lock."""

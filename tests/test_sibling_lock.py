@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import fcntl
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,19 @@ def test_explicit_lock_path_creates_only_the_local_lock(tmp_path: Path) -> None:
         assert lock.path == local
         assert local.is_file()
         assert not host.parent.exists()
+
+
+def test_a_read_only_lock_file_can_be_flocked(tmp_path: Path) -> None:
+    lock = SiblingLock(tmp_path / "vox.md", mode=0o666)
+    previous_umask = os.umask(0o022)
+    try:
+        with lock.held():
+            assert stat.S_IMODE(lock.path.stat().st_mode) == 0o644
+    finally:
+        os.umask(previous_umask)
+    lock.path.chmod(0o444)
+    with lock.held():
+        assert lock.path.read_text() == ""
 
 
 def test_held_creates_the_lock_and_flocks_it_exclusively(

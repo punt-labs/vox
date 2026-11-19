@@ -32,9 +32,10 @@ class SiblingLock:
     number of times and raise :class:`TimeoutError` once the window elapses.
     """
 
-    __slots__ = ("_host", "_path")
+    __slots__ = ("_host", "_mode", "_path")
 
     _host: Path
+    _mode: int
     _path: Path
 
     # ~5s total: an honest RMW holds the lock for milliseconds, so anything past
@@ -42,9 +43,12 @@ class SiblingLock:
     _ACQUIRE_ATTEMPTS = 50
     _ACQUIRE_INTERVAL_S = 0.1
 
-    def __new__(cls, host_path: Path, *, lock_path: Path | None = None) -> Self:
+    def __new__(
+        cls, host_path: Path, *, lock_path: Path | None = None, mode: int = 0o600
+    ) -> Self:
         self = super().__new__(cls)
         self._host = host_path
+        self._mode = mode
         self._path = (
             lock_path or host_path.parent / f".{host_path.name}.punt-import.lock"
         )
@@ -55,9 +59,9 @@ class SiblingLock:
         """Return the lock file path (a host sibling unless explicitly supplied)."""
         return self._path
 
-    # Never followed, never truncated, private: a root process taking the
+    # Never followed, never truncated, private by default: a root process taking the
     # lock in a user's directory must not write through a planted symlink.
-    _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+    _OPEN_FLAGS = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 
     @contextlib.contextmanager
     def held(self, *, dir_fd: int | None = None) -> Generator[None]:
@@ -67,12 +71,16 @@ class SiblingLock:
         relative to it, so a rename of that directory cannot move the lock.
         A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
         untouched, as is whatever it points at.
+
+        A read descriptor suffices for ``flock`` on macOS and Linux. Callers
+        may share the empty lock via its creation mode (subject to umask)
+        without granting other accounts permission to write to it.
         """
         if dir_fd is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            lock = os.open(self._path, self._OPEN_FLAGS, 0o600)
+            lock = os.open(self._path, self._OPEN_FLAGS, self._mode)
         else:
-            lock = os.open(self._path.name, self._OPEN_FLAGS, 0o600, dir_fd=dir_fd)
+            lock = os.open(self._path.name, self._OPEN_FLAGS, self._mode, dir_fd=dir_fd)
         try:
             self._acquire(lock)
             try:
