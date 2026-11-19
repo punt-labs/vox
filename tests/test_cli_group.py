@@ -18,6 +18,14 @@ from punt_vox.__main__ import app
             ["say", "hi", "--rate", "nope"],
             "Invalid value for '--rate': 'nope' is not a valid int.",
         ),
+        (
+            ["say", "hi", "--once", "-1"],
+            "Invalid value for '--once': -1 is not in the range x>=0.",
+        ),
+        (
+            ["say", "hi", "--once", "nope"],
+            "Invalid value for '--once': 'nope' is not a valid int range.",
+        ),
         (["nonexistent"], "No such command 'nonexistent'."),
         (["--unknown"], "No such option: --unknown"),
         (
