@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
-from _cli_introspect import command_opts
+from _cli_introspect import command_opts, option_help
 from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
@@ -1334,6 +1334,15 @@ class TestMainGroup:
         # 80-col width, so substring matches on the rendered output are
         # width-dependent and fail on Linux CI.)
         assert app.info.name == "vox"
+
+    @pytest.mark.parametrize("command", ["say", "voice"])
+    def test_provider_help_names_vox_md_default(self, command: str) -> None:
+        # The default provider is the repo's vox.md; there is no auto-detect
+        # fallback (docs/provider-authority.md), so help must not promise one.
+        text = option_help(command, option="--provider")
+        assert "auto-detect" not in text
+        assert "vox.md" in text
+        assert "vox provider <name>" in text
 
     def test_say_help(self) -> None:
         # ``say`` exposes a --voice option. Assert it against the registered

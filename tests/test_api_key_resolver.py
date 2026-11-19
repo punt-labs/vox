@@ -50,6 +50,16 @@ class TestApiKeyResolver:
         with pytest.raises(typer.BadParameter, match="mutually exclusive"):
             resolver.resolve()
 
+    def test_empty_env_key_does_not_shadow_file(self, tmp_path: Path) -> None:
+        """An empty VOX_API_KEY is no source, so --api-key-file still resolves."""
+        key_path = tmp_path / "key.txt"
+        key_path.write_text("sk_file\n", encoding="utf-8")
+        key_path.chmod(0o600)
+
+        ctx = MagicMock(spec=typer.Context)
+        resolver = ApiKeyResolver(ctx, "", key_path, api_key_stdin=False)
+        assert resolver.resolve() == "sk_file"
+
     def test_read_file_missing(self, tmp_path: Path) -> None:
         """Missing file raises BadParameter."""
         missing = tmp_path / "nope.txt"
