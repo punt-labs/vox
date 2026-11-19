@@ -20,6 +20,10 @@ from punt_vox.__main__ import app
         ),
         (["nonexistent"], "No such command 'nonexistent'."),
         (["--unknown"], "No such option: --unknown"),
+        (
+            ["--verbose=true", "nonexistent"],
+            "Option '--verbose' does not take a value.",
+        ),
         (["daemon", "nonexistent"], "No such command 'nonexistent'."),
     ],
 )
@@ -33,7 +37,13 @@ def test_json_usage_errors(args: list[str], message: str, position: str) -> None
 
 
 @pytest.mark.parametrize(
-    "args", [["say", "hi", "--rate", "nope"], ["nonexistent"], ["daemon"]]
+    "args",
+    [
+        ["say", "hi", "--rate", "nope"],
+        ["nonexistent"],
+        ["daemon"],
+        ["--verbose=true", "nonexistent"],
+    ],
 )
 def test_plain_usage_errors_unchanged(args: list[str]) -> None:
     runner = CliRunner()
@@ -103,6 +113,8 @@ def test_global_json_option_on_command_without_local_flag() -> None:
         ["say", "hi", "--voice", "--json", "--rate", "nope"],
         ["music", "new", "PROMPT", "--title", "--json", "--unknown"],
         ["say", "--rate", "nope", "--", "--json"],
+        ["--verbose=true", "say", "hi", "--voice", "--json", "--rate", "nope"],
+        ["say", "--verbose=true", "--rate", "nope", "--", "--json"],
     ],
 )
 def test_json_value_or_child_literal_preserves_plain_errors(args: list[str]) -> None:
