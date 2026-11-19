@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--json` reports CLI usage and unknown-command errors on stdout.**
   Invalid arguments and unknown commands now return a JSON error object
   instead of empty stdout, retaining exit code 2 and unchanged non-JSON output.
+- **A config value with a backslash is stored as written.** Updating a field
+  already in `vox.md` or `vox.local.md` passed the value to `re.sub` as a
+  replacement template, so `vox vibe 'abc\1'` stored `abcold`,
+  `vox vibe 'C:\new'` wrote a raw newline into the file, and
+  `vox vibe 'abc\q'` crashed with `PatternError`.
 - **`vox --version` and `vox --help` no longer prompt in an enabled repo
   (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
   rule, which matched every command starting with an option. The ask tier is
