@@ -49,6 +49,11 @@ class VoxdExchange:
         return self
 
     @property
+    def connection(self) -> websockets.asyncio.client.ClientConnection:
+        """The connection this exchange's request and replies travel on."""
+        return self._ws
+
+    @property
     def op(self) -> str:
         """The request's ``type``, as error messages name it."""
         return str(self._msg.get("type", ""))

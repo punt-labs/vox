@@ -92,16 +92,18 @@ class VoxdTransport:
             await self._ws.close()
             self._ws = None
 
-    async def _discard(self) -> None:
-        """Close the connection and forget it, so the next request reconnects.
+    async def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
+        """Close *ws* and, if it is still the active connection, forget it.
 
-        Close errors are suppressed: the socket may already be gone, and the
-        caller is abandoning it either way.
+        Only the failed exchange's own socket is closed: if another request
+        has already reconnected, its connection is left alone. Close errors
+        are suppressed: the socket may already be gone, and the caller is
+        abandoning it either way.
         """
-        ws, self._ws = self._ws, None
-        if ws is not None:
-            with contextlib.suppress(Exception):
-                await ws.close()
+        if self._ws is ws:
+            self._ws = None
+        with contextlib.suppress(Exception):
+            await ws.close()
 
     async def _ensure_connected(self) -> websockets.asyncio.client.ClientConnection:
         """Return the active connection, reconnecting if needed.
@@ -138,7 +140,7 @@ class VoxdTransport:
             await exchange.send()
             yield exchange
         except BaseException:
-            await self._discard()
+            await self._discard(exchange.connection)
             raise
 
     async def send_and_recv(
@@ -225,5 +227,5 @@ class VoxdTransport:
                     # Server will still send terminal_type (e.g., 'done' after
                     # 'playing'). Discard the connection so that stale message
                     # cannot be consumed by the next request on a reused one.
-                    await self._discard()
+                    await self._discard(exchange.connection)
                     return responses

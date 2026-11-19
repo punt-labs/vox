@@ -183,3 +183,35 @@ def test_a_reused_transport_never_returns_a_timed_out_requests_late_reply(
                 await transport.close()
 
     assert asyncio.run(run())["voices"] == ["polly-voice"]
+
+
+def test_a_failed_request_never_closes_a_connection_another_request_opened() -> None:
+    """Discarding after a failure closes only the failed request's own socket.
+
+    If another request reconnected while this one waited, the transport keeps
+    that newer connection and the next request reuses it.
+    """
+    stale, fresh = AsyncMock(), AsyncMock()
+    transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
+
+    async def reconnect_then_drop() -> str:
+        await transport.connect()
+        raise websockets.exceptions.ConnectionClosedError(None, None)
+
+    stale.recv.side_effect = reconnect_then_drop
+    fresh.recv.return_value = json.dumps({"type": "done", "voices": []})
+    connect = AsyncMock(side_effect=[stale, fresh])
+    msg: dict[str, object] = {"type": "voices", "provider": "polly"}
+
+    async def run() -> dict[str, object]:
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect", connect
+        ):
+            with pytest.raises(VoxdConnectionError):
+                await transport.send_and_recv(msg, timeout=1)
+            return await transport.send_and_recv(msg, timeout=1)
+
+    assert asyncio.run(run()) == {"type": "done", "voices": []}
+    stale.close.assert_awaited_once()
+    fresh.close.assert_not_awaited()
+    assert connect.await_count == 2
