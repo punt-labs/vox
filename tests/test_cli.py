@@ -189,6 +189,39 @@ class TestSayCommand:
         assert result.exit_code == 0
         assert "%%" not in result.output
 
+    def test_say_once_help_documents_zero(self) -> None:
+        assert "Use 0 or omit the option to play every time." in option_help(
+            "say", option="--once"
+        )
+
+    @pytest.mark.parametrize(
+        ("once_args", "expected_ttl"),
+        [
+            ([], None),
+            (["--once", "0"], None),
+            (["--once", "60"], 60),
+        ],
+    )
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_once_passes_ttl_to_client(
+        self,
+        mock_client_cls: MagicMock,
+        once_args: list[str],
+        expected_ttl: int | None,
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        result = CliRunner().invoke(
+            app, ["say", "hello", "--provider", "espeak", *once_args]
+        )
+
+        assert result.exit_code == 0, result.output
+        synthesize.assert_called_once()
+        assert synthesize.call_args.kwargs["once"] == expected_ttl
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
         self,
