@@ -197,12 +197,10 @@ OnceOpt = Annotated[
     int | None,
     typer.Option(
         "--once",
+        min=0,
         help=(
-            "Deduplicate identical text within N seconds. When set, voxd "
-            "skips the play if the same text was played within the window "
-            "(e.g. when multiple Claude Code sessions broadcast the same "
-            "biff wall). Omit to play every time. Must be a positive "
-            "integer when set."
+            "Skip playback if the same text played within this many seconds. "
+            "Use 0 or omit the option to play every time."
         ),
     ),
 ]
@@ -339,22 +337,8 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
-
-    Raises:
-        typer.BadParameter: If once is negative.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    # Negative values are a user error. Zero is accepted and treated
-    # as unset (no dedup) — matches the server-side semantics so the
-    # two surfaces are consistent. Scripts can safely pass
-    # ``--once ${ONCE_TTL:-0}`` as a default.
-    if once is not None and once < 0:
-        raise typer.BadParameter(
-            "--once must be a non-negative integer (seconds). "
-            "Use 0 or omit the flag to disable dedup."
-        )
-    once = once or None
-
     # Resolve the per-call API key from exactly one of the four
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
@@ -381,7 +365,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
     )
 
     segments = _text_input.resolve(text, from_file)
-    _speak_segments(segments, spec, once)
+    _speak_segments(segments, spec, once or None)
 
 
 # ---------------------------------------------------------------------------

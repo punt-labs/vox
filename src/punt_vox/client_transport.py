@@ -2,8 +2,9 @@
 
 :class:`VoxdTransport` owns one connection to voxd -- connecting to the URI
 its :class:`~punt_vox.client_endpoint.VoxdEndpoint` resolves, and closing;
-and the framed send/receive primitives the RPC surface in
-:mod:`punt_vox.client` is built on.
+and the request/reply exchanges the RPC surface in :mod:`punt_vox.client` is
+built on. The frames of one exchange are read by
+:class:`~punt_vox.client_exchange.VoxdExchange`.
 Split out of :mod:`punt_vox.client` so connection lifecycle and wire framing
 live apart from the request vocabulary.
 """
@@ -12,8 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any, Self
 
 import websockets
@@ -21,12 +22,7 @@ import websockets.asyncio.client
 
 from punt_vox.client_connect_failure import ConnectFailure
 from punt_vox.client_endpoint import VoxdEndpoint
-from punt_vox.client_errors import (
-    VoxdConnectionError,
-    VoxdProtocolError,
-    VoxdRejectionError,
-)
-from punt_vox.client_fetch import FetchAssembly
+from punt_vox.client_exchange import VoxdExchange
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +92,19 @@ class VoxdTransport:
             await self._ws.close()
             self._ws = None
 
+    def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
+        """Drop *ws* and, if it is still the active connection, forget it.
+
+        The socket is aborted, not closed: a closing handshake against a peer
+        that stopped answering would wait out the close timeout after the
+        caller's own deadline has passed, and the connection is abandoned
+        either way. Only the failed exchange's own socket is dropped: if
+        another request has already reconnected, its connection is left alone.
+        """
+        if self._ws is ws:
+            self._ws = None
+        ws.transport.abort()
+
     async def _ensure_connected(self) -> websockets.asyncio.client.ClientConnection:
         """Return the active connection, reconnecting if needed.
 
@@ -114,6 +123,26 @@ class VoxdTransport:
         # The endpoint re-reads port and token from disk unless given.
         return await self.connect()
 
+    @contextlib.asynccontextmanager
+    async def _exchange(self, msg: dict[str, object]) -> AsyncGenerator[VoxdExchange]:
+        """Send *msg* and yield the exchange its replies are read through.
+
+        If the exchange fails -- the deadline expires, the caller cancels, a
+        frame is malformed or out of order -- the connection is discarded before
+        the error propagates. voxd still answers a request the client gave up
+        on, and on a reused connection that late reply (or the rest of a chunk
+        stream) would be the first frame the NEXT request reads, handing it
+        another request's answer. The next request reconnects to a clean
+        connection via :meth:`_ensure_connected` instead.
+        """
+        exchange = VoxdExchange(await self._ensure_connected(), msg)
+        try:
+            await exchange.send()
+            yield exchange
+        except BaseException:
+            self._discard(exchange.connection)
+            raise
+
     async def send_and_recv(
         self,
         msg: dict[str, object],
@@ -129,65 +158,8 @@ class VoxdTransport:
             VoxdProtocolError: If JSON is invalid, object fields fail validation,
                 or the response deadline expires.
         """
-        ws = await self._ensure_connected()
-        await self._send_frame(ws, msg)
-        msg_type = str(msg.get("type", ""))
-        raw = await self._recv_frame(
-            ws, timeout, f"Timeout waiting for response to '{msg_type}'", msg
-        )
-        return self._decode(raw)
-
-    async def _send_frame(
-        self, ws: websockets.asyncio.client.ClientConnection, msg: dict[str, object]
-    ) -> None:
-        """Send one JSON frame, wrapping a lost connection as a ``VoxError``."""
-        try:
-            await ws.send(json.dumps(msg))
-        except (websockets.exceptions.WebSocketException, OSError) as exc:
-            raise VoxdConnectionError(self._transport_failure(msg, exc)) from exc
-
-    async def _recv_frame(
-        self,
-        ws: websockets.asyncio.client.ClientConnection,
-        timeout: float,
-        timeout_msg: str,
-        msg: dict[str, object],
-    ) -> object:
-        """Receive one frame within *timeout*, wrapping every transport failure.
-
-        A ``ConnectionClosed`` or ``OSError`` from ``ws.recv()`` must surface as
-        a :class:`VoxError` -- otherwise it escapes a CLI command's
-        ``(VoxdConnectionError, VoxdProtocolError)`` catch as a raw traceback.
-        A timeout is a protocol failure; a dropped socket is a connection one.
-        """
-        try:
-            return await asyncio.wait_for(ws.recv(), timeout=timeout)
-        except TimeoutError as exc:
-            raise VoxdProtocolError(timeout_msg) from exc
-        except (websockets.exceptions.WebSocketException, OSError) as exc:
-            raise VoxdConnectionError(self._transport_failure(msg, exc)) from exc
-
-    @staticmethod
-    def _transport_failure(msg: dict[str, object], exc: Exception) -> str:
-        """Describe a lost/closed connection for a wrapped transport error."""
-        msg_type = str(msg.get("type", ""))
-        return f"connection to voxd lost during '{msg_type}': {exc}"
-
-    @staticmethod
-    def _decode(raw: object) -> dict[str, Any]:
-        """Parse an object frame, rejecting invalid JSON and daemon error replies.
-
-        Invalid JSON raises ``VoxdProtocolError``. Daemon error replies raise
-        ``VoxdRejectionError``. Valid JSON values other than objects raise
-        ``AttributeError``.
-        """
-        try:
-            resp: dict[str, Any] = json.loads(str(raw))
-        except json.JSONDecodeError as exc:
-            raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
-        if resp.get("type") == "error":
-            raise VoxdRejectionError(str(resp.get("message", "unknown error")))
-        return resp
+        async with self._exchange(msg) as exchange:
+            return await exchange.reply(timeout)
 
     async def fetch_stream(self, msg: dict[str, object], *, timeout: float) -> bytes:
         """Send a fetch request and reassemble the chunked stream into bytes.
@@ -196,17 +168,14 @@ class VoxdTransport:
         one frame at a time so client memory holds only the reassembled file plus
         a single chunk. The running total is checked against the declared byte
         count and the sha256 is verified, so a short, reordered, or corrupted
-        stream raises. A mid-stream ``error`` frame surfaces through ``_decode`` as
-        a :class:`VoxdProtocolError`, and the partial buffer is discarded.
+        stream raises. A mid-stream ``error`` frame surfaces as a
+        :class:`VoxdRejectionError`, and the partial buffer is discarded.
 
-        On ANY mid-stream fault the connection is *tainted and closed* before the
-        error propagates: the daemon may still be sending this fetch's remaining
-        chunk frames, and on a reused persistent connection those stale frames
-        would be read by the NEXT request and desync the protocol (a
-        sha256/byte-count mismatch or an out-of-order frame on a later, unrelated
-        fetch or command). Discarding the poisoned socket makes the next request
-        reconnect to a clean one via :meth:`_ensure_connected`, so a fault leaves
-        no partial file and no stale frames behind.
+        On ANY mid-stream fault the connection is discarded (see
+        :meth:`_exchange`): the daemon may still be sending this fetch's
+        remaining chunk frames, which would otherwise desync the next request
+        on the reused connection. A fault leaves no partial file and no stale
+        frames behind.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -215,63 +184,9 @@ class VoxdTransport:
             VoxdProtocolError: If JSON is invalid, object fields fail validation,
                 or the response deadline expires.
         """
-        ws = await self._ensure_connected()
-        await self._send_frame(ws, msg)
-        deadline = asyncio.get_running_loop().time() + timeout
-        try:
-            return await self._reassemble(ws, deadline, msg)
-        except BaseException:
-            # Poison the connection: stale chunk frames from this failed fetch
-            # must not be read by the next request.
-            await self._discard(ws)
-            raise
-
-    async def _discard(self, ws: websockets.asyncio.client.ClientConnection) -> None:
-        """Close *ws* and forget it, so the next request reconnects cleanly.
-
-        Close errors are suppressed: the socket may already be gone, and the
-        caller is abandoning it either way.
-        """
-        with contextlib.suppress(Exception):
-            await ws.close()
-        self._ws = None
-
-    async def _reassemble(
-        self,
-        ws: websockets.asyncio.client.ClientConnection,
-        deadline: float,
-        msg: dict[str, object],
-    ) -> bytes:
-        """Consume ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end`` into bytes.
-
-        Verifies the frame order, the declared byte count, and the sha256 before
-        returning, so a short, reordered, or corrupted stream raises. The caller
-        owns the connection-tainting on any raise from here.
-        """
-        begin = self._decode(await self._recv(ws, deadline, msg, "fetch_begin"))
-        assembly = FetchAssembly.begin(begin)
-        for seq in range(assembly.chunks):
-            frame = self._decode(await self._recv(ws, deadline, msg, "chunk"))
-            assembly.append(frame, seq)
-        end = self._decode(await self._recv(ws, deadline, msg, "fetch_end"))
-        return assembly.finish(end)
-
-    async def _recv(
-        self,
-        ws: websockets.asyncio.client.ClientConnection,
-        deadline: float,
-        msg: dict[str, object],
-        expected: str,
-    ) -> object:
-        """Receive one frame before *deadline*, or raise a timeout protocol error.
-
-        *expected* names the frame awaited; the timeout names it in *msg*'s op.
-        """
-        timeout_msg = f"Timeout waiting for '{expected}' in '{msg.get('type', '')}'"
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise VoxdProtocolError(timeout_msg)
-        return await self._recv_frame(ws, remaining, timeout_msg, msg)
+        async with self._exchange(msg) as exchange:
+            deadline = asyncio.get_running_loop().time() + timeout
+            return await exchange.reassemble(deadline)
 
     async def send_and_drain(
         self,
@@ -298,21 +213,19 @@ class VoxdTransport:
             VoxdProtocolError: If JSON is invalid, object fields fail validation,
                 or the response deadline expires.
         """
-        ws = await self._ensure_connected()
-        await self._send_frame(ws, msg)
         responses: list[dict[str, Any]] = []
-        deadline = asyncio.get_running_loop().time() + timeout
         expected = early_terminal or terminal_type
-        while True:
-            raw = await self._recv(ws, deadline, msg, expected)
-            resp = self._decode(raw)  # wraps bad JSON + error frames as VoxError
-            responses.append(resp)
-            resp_type = resp.get("type")
-            if resp_type == terminal_type:
-                return responses
-            if early_terminal is not None and resp_type == early_terminal:
-                # Server will still send terminal_type (e.g., 'done' after
-                # 'playing'). Discard the connection so that stale message
-                # cannot be consumed by the next request on a reused one.
-                await self._discard(ws)
-                return responses
+        async with self._exchange(msg) as exchange:
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                resp = exchange.decode(await exchange.recv_before(deadline, expected))
+                responses.append(resp)
+                resp_type = resp.get("type")
+                if resp_type == terminal_type:
+                    return responses
+                if resp_type == expected:
+                    # Server will still send terminal_type (e.g., 'done' after
+                    # 'playing'). Discard the connection so that stale message
+                    # cannot be consumed by the next request on a reused one.
+                    self._discard(exchange.connection)
+                    return responses

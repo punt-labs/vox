@@ -36,8 +36,8 @@ class SayDirectPlayer(DirectPlayProvider):
     def play_directly(self, request: AudioRequest) -> int:
         """Play directly via the macOS ``say`` command.
 
-        Spawns ``say -v <voice> -r <wpm> <text>`` without ``-o``, so
-        say writes to the default audio device instead of an AIFF file.
+        Passes the text on stdin without ``-o``, so say writes to the default
+        audio device instead of an AIFF file.
         """
         resolved_voice = request.voice or self._voices.default_key
         voice_cfg = self._voices.resolve(resolved_voice)
@@ -45,14 +45,7 @@ class SayDirectPlayer(DirectPlayProvider):
         wpm = rate_to_wpm(rate)
         text = strip_vibe_tags(request.text)
 
-        cmd = [
-            "say",
-            "-v",
-            voice_cfg.name,
-            "-r",
-            str(wpm),
-            text,
-        ]
+        cmd = ["say", "-v", voice_cfg.name, "-r", str(wpm)]
         logger.info(
             "say direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,
@@ -65,7 +58,7 @@ class SayDirectPlayer(DirectPlayProvider):
                 check=False,
                 capture_output=True,
                 timeout=60,
-                stdin=subprocess.DEVNULL,
+                input=text.encode(),
                 start_new_session=True,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
@@ -99,7 +92,7 @@ class EspeakDirectPlayer(DirectPlayProvider):
     def play_directly(self, request: AudioRequest) -> int:
         """Play directly via espeak-ng's built-in audio output.
 
-        Spawns ``espeak-ng -v <voice> -s <wpm> <text>`` without ``-w``,
+        Spawns ``espeak-ng -v <voice> -s <wpm> -- <text>`` without ``-w``,
         so espeak-ng writes to the default audio device.
         """
         resolved_voice = request.voice or self._voices.default_key
@@ -108,14 +101,7 @@ class EspeakDirectPlayer(DirectPlayProvider):
         wpm = rate_to_wpm(rate)
         text = strip_vibe_tags(request.text)
 
-        cmd = [
-            self._binary,
-            "-v",
-            voice_cfg.name,
-            "-s",
-            str(wpm),
-            text,
-        ]
+        cmd = [self._binary, "-v", voice_cfg.name, "-s", str(wpm), "--", text]
         logger.info(
             "espeak direct-play: voice=%s wpm=%d chars=%d",
             voice_cfg.name,

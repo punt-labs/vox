@@ -8,6 +8,8 @@ from typing import Self
 
 import typer
 
+from punt_vox.api_key_file import ApiKeyFile
+
 __all__ = ["ApiKeyResolver"]
 
 _API_KEY_ARGV_WARNING = (
@@ -55,7 +57,7 @@ class ApiKeyResolver:
         self._check_mutual_exclusion()
 
         if self._api_key_file is not None:
-            return self._read_file(self._api_key_file)
+            return ApiKeyFile(self._api_key_file).read()
         if self._api_key_stdin:
             return self._read_stdin()
         if self._api_key:
@@ -90,30 +92,6 @@ class ApiKeyResolver:
             "These are mutually exclusive."
         )
         raise typer.BadParameter(msg)
-
-    @staticmethod
-    def _read_file(path: Path) -> str:
-        """Read a per-call API key from a file.
-
-        Rejects missing paths, non-files, and empty files. Warns when
-        file permissions are too broad (anything beyond 0600).
-        """
-        if not path.is_file():
-            msg = f"--api-key-file: {path} is not a file"
-            raise typer.BadParameter(msg)
-        mode = path.stat().st_mode
-        if mode & 0o077:
-            typer.echo(
-                f"warning: --api-key-file: {path} is accessible to group "
-                f"or other users (mode {oct(mode & 0o777)}). Run "
-                f"'chmod 600 {path}' to tighten permissions.",
-                err=True,
-            )
-        value = path.read_text(encoding="utf-8").strip()
-        if not value:
-            msg = f"--api-key-file: {path} is empty"
-            raise typer.BadParameter(msg)
-        return value
 
     @staticmethod
     def _read_stdin() -> str:

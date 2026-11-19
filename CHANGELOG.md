@@ -16,11 +16,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clients report corrupt daemon discovery files as a connection error.**
+  Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
+  without a traceback or the file's contents.
+
+- **Non-UTF-8 `--api-key-file` contents report a usage error.** `vox say`
+  now exits with code 2 and a JSON error under `--json` instead of a
+  `UnicodeDecodeError` traceback, without echoing the key's bytes (PL-1186).
+
+- **A reused `VoxClient` no longer returns a stale reply after a timeout.**
+  When a request timed out or was cancelled, voxd's late answer stayed on the
+  open connection and was returned as the next request's reply. Any failed or
+  abandoned exchange now discards the connection, so the next request
+  reconnects.
+
+- **Unreadable `vox say --from` inputs report a usage error.** Directory paths
+  and file read failures now exit with code 2 instead of a traceback, with a
+  JSON error under `--json`.
+
 - Speech cleanup preserves combining marks on text such as decomposed `café`
   and `हिन्दी` instead of dropping them before synthesis (PL-1166).
 
 - **Non-UTF-8 `vox say --from` files report a usage error.** Invalid encoding
   now exits with code 2 instead of a traceback, with a JSON error under `--json`.
+
+- **`vox say --help` now explains that `--once 0` disables deduplication.**
+  Omitting `--once` still plays every time; negative values are rejected.
 
 - **`--json` reports CLI usage and unknown-command errors on stdout.**
   Invalid arguments and unknown commands now return a JSON error object
@@ -52,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triple-backtick inline span such as ```` ```x``` ```` is not a fence.
 
 ### Changed
+
+- **`.oo-audit.jsonl` merges with git's union driver (PL-1183).** A new
+  `.gitattributes` marks the append-only OO audit log `merge=union`, so
+  merging `main` into a PR branch keeps both sides' audit lines instead of
+  stopping on a conflict the ratchet cannot parse.
+
+- Pin `punt-oo-ratchet==0.3.0` and audit the OO baseline refresh for
+  code-only module sizes and class-count exemptions (PL-1141). Merged
+  suppression waivers now retire; align the documented default efferent
+  coupling limit with the package's 10-module limit (PL-1188).
 
 - **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
   (vox-f9ih, punt-kit#425). `vox install`, `vox uninstall`, and

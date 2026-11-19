@@ -12,7 +12,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
-from punt_vox.cache import CacheKey, cache_get, cache_put
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
 from punt_vox.types import (
@@ -23,6 +22,7 @@ from punt_vox.types import (
 )
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
+from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
 
@@ -188,31 +188,14 @@ class SynthesisPipeline:
         )
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
-        key = CacheKey(
-            normalized,
-            spec.voice or "",
-            provider_name,
-            rate=spec.rate,
-            model=spec.model,
-            language=spec.language,
-            stability=spec.stability,
-            similarity=spec.similarity,
-            style=spec.style,
-            speaker_boost=spec.speaker_boost,
-        )
-        if api_key is None:
-            cached = cache_get(key)
-            if cached is not None:
-                # Distinguish cache reuse from actual synthesis work.
-                logger.info(
-                    "served %d chars from cache (%s)",
-                    len(text),
-                    provider_name or "system",
-                )
-                return SynthesisOutcome(path=cached, cached=True)
+        lookup = SynthesisCache.for_request(normalized, spec, len(text))
+        if (cached := lookup.outcome()) is not None:
+            return cached
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
+            if (cached := lookup.outcome()) is not None:
+                return cached
             with ApiKeyEnv(provider_name, api_key).applied():
                 provider = get_provider(provider_name, model=model)
                 request = self._build_audio_request(normalized, spec)
@@ -221,7 +204,7 @@ class SynthesisPipeline:
                 ).run()
 
                 # Report caching only when the anonymous write succeeds.
-                cached_path = cache_put(key, output_path) if api_key is None else None
+                cached_path = lookup.store(output_path)
                 logger.info(
                     "synthesized %d chars with %s%s",
                     len(text),
