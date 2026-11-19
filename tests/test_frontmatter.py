@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import multiprocessing
+import time
 from multiprocessing.synchronize import Event
 from pathlib import Path
 from unittest.mock import patch
@@ -21,21 +23,38 @@ def _concurrent_writer(
     value: str,
     read: Event,
     release: Event,
-    started: Event | None = None,
+    attempted: Event | None = None,
 ) -> None:
     original = Path.read_text
+    original_flock = fcntl.flock
+
+    def observed_flock(fd: int, operation: int) -> None:
+        if attempted is not None and operation & fcntl.LOCK_EX:
+            attempted.set()
+        original_flock(fd, operation)
 
     def paused_read(self: Path, *args: object, **kwargs: object) -> str:
         text = original(self, encoding="utf-8")
         if self == path:
             read.set()
-            assert release.wait(10), "writer was not released"
+            assert release.wait(30), "writer was not released"
         return text
 
-    with patch.object(Path, "read_text", paused_read):
-        if started is not None:
-            started.set()
+    with (
+        patch.object(Path, "read_text", paused_read),
+        patch("punt_vox.sibling_lock.fcntl.flock", observed_flock),
+    ):
         Frontmatter(path).write_field(key, value)
+
+
+def _wait_for_either(first: Event, second: Event, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while not (first.is_set() or second.is_set()):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        first.wait(min(0.01, remaining))
+    return True
 
 
 @pytest.mark.parametrize("symlinked", [False, True])
@@ -51,7 +70,7 @@ def test_concurrent_writers_preserve_both_fields(
     ctx = multiprocessing.get_context("spawn")
     first_read, second_read = ctx.Event(), ctx.Event()
     first_release, second_release = ctx.Event(), ctx.Event()
-    second_started = ctx.Event()
+    second_attempted = ctx.Event()
     first = ctx.Process(
         target=_concurrent_writer,
         args=(path, "provider", "polly", first_read, first_release),
@@ -64,16 +83,17 @@ def test_concurrent_writers_preserve_both_fields(
             "fin",
             second_read,
             second_release,
-            second_started,
+            second_attempted,
         ),
     )
     first.start()
     try:
         assert first_read.wait(10)
         second.start()
-        assert second_started.wait(10), "second writer did not start"
         # An unlocked writer reads the stale snapshot; a locked one waits.
-        second_read.wait(1)
+        assert _wait_for_either(second_read, second_attempted, 10), (
+            "second writer neither read nor attempted the lock"
+        )
         first_release.set()
         first.join(10)
         assert first.exitcode == 0
