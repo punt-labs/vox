@@ -72,6 +72,28 @@ def test_an_unparseable_endpoint_is_a_connection_error_not_a_raw_value_error(
     assert _TOKEN not in text
 
 
+@pytest.mark.parametrize("name", ["serve.port", "serve.token"])
+def test_a_non_utf8_run_file_is_a_content_free_connection_error(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for var in ("VOXD_HOST", "VOXD_PORT", "VOXD_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
+    (tmp_path / "serve.port").write_text("8421", encoding="utf-8")
+    (tmp_path / "serve.token").write_text(_TOKEN, encoding="utf-8")
+    (tmp_path / name).write_bytes(_TOKEN.encode() + b"\xff")
+
+    transport = VoxdTransport(None, None, None)
+    with pytest.raises(VoxdConnectionError) as caught:
+        asyncio.run(transport.connect())
+
+    assert type(caught.value) is VoxdConnectionError
+    assert str(caught.value) == f"cannot read {tmp_path / name}: invalid UTF-8"
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "UnicodeDecodeError" not in rendered
+    assert _TOKEN not in rendered
+
+
 async def _never() -> str:
     await asyncio.Event().wait()
     return ""
