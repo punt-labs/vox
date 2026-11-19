@@ -6,7 +6,9 @@ from dataclasses import is_dataclass
 from unittest.mock import Mock
 
 import pytest
+from typer._coercion import TypeDescriptor
 from typer.core import TyperCommand, TyperOption
+from typer.models import OptionInfo
 
 from punt_vox.cli_usage_parser import UsageParser
 
@@ -15,15 +17,31 @@ from punt_vox.cli_usage_parser import UsageParser
 def parser() -> UsageParser:
     callback = Mock(side_effect=AssertionError("Option callbacks must not run"))
     json_option = TyperOption(
-        param_decls=["--json", "json_output"], is_flag=True, callback=callback
+        param_decls=["--json", "json_output"],
+        type_descriptor=TypeDescriptor(bool, OptionInfo(), None),
+        is_flag=True,
+        callback=callback,
     )
     command = TyperCommand(
         "say",
         params=[
             json_option,
-            TyperOption(param_decls=["--verbose"], is_flag=True, callback=callback),
-            TyperOption(param_decls=["--voice"], callback=callback),
-            TyperOption(param_decls=["--rate"], type=int, callback=callback),
+            TyperOption(
+                param_decls=["--verbose"],
+                type_descriptor=TypeDescriptor(bool, OptionInfo(), None),
+                is_flag=True,
+                callback=callback,
+            ),
+            TyperOption(
+                param_decls=["--voice"],
+                type_descriptor=TypeDescriptor(str, OptionInfo(), None),
+                callback=callback,
+            ),
+            TyperOption(
+                param_decls=["--rate"],
+                type_descriptor=TypeDescriptor(int, OptionInfo(), None),
+                callback=callback,
+            ),
         ],
     )
     context = command.context_class(command, ignore_unknown_options=True)
