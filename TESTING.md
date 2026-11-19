@@ -141,9 +141,9 @@ tests/
   test_voxd_log_level_handler.py  # Log-level handler
 
   # Logging
-  test_logging_config.py     # Logging configuration
-  test_append_log.py         # Append-only log
-  test_log_append_handler.py # Append log handler
+  test_logging_config.py     # Shared logging adapter and private sink policy
+  test_logging_entrypoints.py # Entry-point roles
+  test_logging_sources.py    # Logging source-policy gate
   test_log_sanitize.py       # Log sanitization (secret redaction)
   test_crash_logging.py      # Crash logging
 

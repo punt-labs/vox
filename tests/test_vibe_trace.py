@@ -127,7 +127,7 @@ class TestVibeTraceLog:
             calls["n"] += 1
             return real_write(fd, bytes(data)[:5])  # every write is short
 
-        monkeypatch.setattr("punt_vox.append_log.os.write", always_short)
+        monkeypatch.setattr("punt_observe.logging.append_log.os.write", always_short)
         VibeTraceLog(tmp_path / "vibe-trace.log").record("music off")
 
         assert calls["n"] == 1  # one atomic append -- no remainder loop
@@ -149,7 +149,7 @@ class TestVibeTraceLog:
         assert raw.endswith(b"\n")
         assert not any(b < 0x20 or b == 0x7F for b in raw[:-1])  # no raw control byte
         assert trace.path.read_text(encoding="utf-8") == (
-            "[vibe-trace] music on style=jazz\\n[vibe-trace] forged\\rX\\x07\n"
+            "[vibe-trace] music on style=jazz\\x0a[vibe-trace] forged\\x0dX\\x07\n"
         )
 
     def test_record_escapes_unicode_line_separators(self, tmp_path: Path) -> None:
@@ -277,7 +277,7 @@ class TestVibeTraceLog:
         def deny(_path: object, _mode: int) -> bool:
             raise PermissionError(13, "Permission denied")
 
-        monkeypatch.setattr("punt_vox.append_log.os.access", deny)
+        monkeypatch.setattr("punt_observe.logging.append_log.os.access", deny)
         assert trace.is_writable() is False
 
     def test_health_survives_probe_oserror(
@@ -289,7 +289,7 @@ class TestVibeTraceLog:
         def blow_up(_path: object, _mode: int) -> bool:
             raise OSError(5, "I/O error")
 
-        monkeypatch.setattr("punt_vox.append_log.os.access", blow_up)
+        monkeypatch.setattr("punt_observe.logging.append_log.os.access", blow_up)
         assert trace.health() == {"name": "vibe-trace.log", "status": "degraded"}
 
     def test_record_swallows_io_failure(self, tmp_path: Path) -> None:
