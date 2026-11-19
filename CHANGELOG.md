@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster CLI and hook startup.** Load the live-call runtime and ElevenLabs
+  SDK only when starting a call, not when running other commands or viewing help.
+
 - **`vox enable` allows each surface broadly with exact `ask` carve-outs
   (PL-1033, punt-kit#471).** It adds `Bash(vox:*)`, `mcp__plugin_vox_mic__*`
   and `Skill(vox:*)` to `permissions.allow`, and `ask` rules for `install`,
