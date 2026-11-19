@@ -262,8 +262,10 @@ class TestTTSClientSynthesizePairBatch:
 
 
 class TestStitchAudio:
-    def _write_fake_mp3(self, path: Path) -> None:
-        """Write minimal valid MP3 bytes using ffmpeg."""
+    def _write_fake_mp3(
+        self, path: Path, source: str = "anullsrc=r=22050:cl=mono"
+    ) -> None:
+        """Write a short MP3 using ffmpeg."""
         import subprocess
 
         subprocess.run(
@@ -273,7 +275,7 @@ class TestStitchAudio:
                 "-f",
                 "lavfi",
                 "-i",
-                "anullsrc=r=22050:cl=mono",
+                source,
                 "-t",
                 "0.1",
                 "-c:a",
@@ -297,6 +299,37 @@ class TestStitchAudio:
 
         assert out.exists()
         assert out.stat().st_size > seg1.stat().st_size
+
+    def test_stitch_preserves_mixed_format_output_with_linear_copy_work(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        low = tmp_path / "low.mp3"
+        high = tmp_path / "high.mp3"
+        self._write_fake_mp3(low, "sine=frequency=440:sample_rate=8000")
+        self._write_fake_mp3(high, "sine=frequency=880:sample_rate=44100")
+        segments = [low] * 8 + [high, low]
+        pause = AudioSegment.silent(duration=73)
+        expected = AudioSegment.from_mp3(low)
+        for path in segments[1:]:
+            expected = expected + pause + AudioSegment.from_mp3(path)
+        expected = expected + AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+        reference = io.BytesIO()
+        expected.export(reference, format="mp3")
+
+        copied_ms = 0
+        add = AudioSegment.__add__
+
+        def count_add(left: AudioSegment, right: AudioSegment) -> AudioSegment:
+            nonlocal copied_ms
+            copied_ms += len(left) + len(right)
+            return add(left, right)
+
+        monkeypatch.setattr(AudioSegment, "__add__", count_add)
+        out = tmp_path / "stitched.mp3"
+        stitch_audio(segments, out, pause_ms=73)
+
+        assert out.read_bytes() == reference.getvalue()
+        assert copied_ms <= 2 * len(expected)
 
     def test_stitch_single_segment(self, tmp_path: Path) -> None:
         seg = tmp_path / "a.mp3"
