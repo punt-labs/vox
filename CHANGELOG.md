@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Unreadable `vox say --from` inputs report a usage error.** Directory paths
+  and file read failures now exit with code 2 instead of a traceback, with a
+  JSON error under `--json`.
+
 - Speech cleanup preserves combining marks on text such as decomposed `café`
   and `हिन्दी` instead of dropping them before synthesis (PL-1166).
 
