@@ -189,6 +189,13 @@ class Usage:
         return result
 
     @staticmethod
+    def direct_result(result: int | None) -> int | None:
+        """Mark unsuccessful direct playback without changing its return value."""
+        with suppress(Exception):
+            _failed.set(_failed.get() or result not in (None, 0))
+        return result
+
+    @staticmethod
     @contextmanager
     def _outcome(context: AbstractContextManager[None]) -> Generator[None]:
         handled_error = RuntimeError()
@@ -220,4 +227,5 @@ _usage = Usage()
 register = Usage.register
 command_span = Usage.command_span
 mcp_result = Usage.mcp_result
+direct_result = Usage.direct_result
 span = Usage.observe

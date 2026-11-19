@@ -29,6 +29,7 @@ from typer.testing import CliRunner
 
 from punt_vox import hooks, server, usage
 from punt_vox.__main__ import app
+from punt_vox.providers.local_play import EspeakDirectPlayer, SayDirectPlayer
 from punt_vox.types import AudioProviderId
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.synthesis import SynthesisPipeline
@@ -210,23 +211,78 @@ async def test_mcp_signal(captured: InMemorySpanExporter, failed: bool) -> None:
 @pytest.mark.parametrize("provider", ["say", "espeak"])
 @pytest.mark.parametrize("text", ["", "private local speech"])
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("exit_code", [None, 0, 1])
 async def test_direct_speech_signal(
-    captured: InMemorySpanExporter, provider: str, text: str, failed: bool
+    captured: InMemorySpanExporter,
+    provider: str,
+    text: str,
+    failed: bool,
+    exit_code: int | None,
 ) -> None:
     pipeline = SynthesisPipeline(playback_mutex=asyncio.Lock())
     error = OSError("private direct playback failure")
-    operation = AsyncMock(return_value=0, side_effect=error if failed else None)
+    operation = AsyncMock(return_value=exit_code, side_effect=error if failed else None)
     with patch.object(SynthesisPipeline, "_run_direct_play", operation):
         result = await pipeline.try_direct_play(
             text, SynthesisSpec(provider=provider), record_result=MagicMock()
         )
-    assert result is error if failed else result == 0
+    assert result is error if failed else result == exit_code
     [span] = _spans(captured, "vox.daemon.synthesize")
     assert span.attributes is not None
     assert span.attributes["provider"] == provider
     assert span.attributes["cached"] is False
-    assert span.attributes["outcome"] == ("error" if failed else "ok")
+    assert span.attributes["outcome"] == (
+        "error" if failed or exit_code not in (None, 0) else "ok"
+    )
     assert span.attributes["text_length"] == usage._usage._open().length(text)
+    assert not span.events
+    assert span.status.description is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["say", "espeak"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        None,
+        FileNotFoundError("private binary"),
+        subprocess.TimeoutExpired("private", 60),
+    ],
+)
+async def test_direct_subprocess_error_signal(
+    captured: InMemorySpanExporter, provider: str, error: Exception | None
+) -> None:
+    voices = MagicMock()
+    voices.default_key = "local"
+    voices.resolve.return_value.name = "local"
+    player = (
+        SayDirectPlayer(voices=voices)
+        if provider == "say"
+        else EspeakDirectPlayer(binary="espeak-ng", voices=voices)
+    )
+    operation = MagicMock(
+        return_value=subprocess.CompletedProcess([], 5, b"", b"private stderr"),
+        side_effect=error,
+    )
+    record_result = MagicMock()
+    pipeline = SynthesisPipeline(playback_mutex=asyncio.Lock())
+    with (
+        patch("punt_vox.voxd.synthesis.get_provider", return_value=player),
+        patch("punt_vox.providers.local_play.subprocess.run", operation),
+    ):
+        result = await pipeline.try_direct_play(
+            "private speech",
+            SynthesisSpec(provider=provider),
+            record_result=record_result,
+        )
+    assert result == (1 if error else 5)
+    assert record_result.call_args.kwargs["rc"] == result
+    operation.assert_called_once()
+    [span] = _spans(captured, "vox.daemon.synthesize")
+    assert span.attributes is not None
+    assert span.attributes["provider"] == provider
+    assert span.attributes["cached"] is False
+    assert span.attributes["outcome"] == "error"
     assert not span.events
     assert span.status.description is None
 

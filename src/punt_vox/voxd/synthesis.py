@@ -254,8 +254,10 @@ class SynthesisPipeline:
         start = time.monotonic()
         try:
             with usage.span("daemon", provider_name, text=text, cached=False):
-                rc = await self._run_direct_play(
-                    spec, _factory, self._build_audio_request(normalized, spec)
+                rc = usage.direct_result(
+                    await self._run_direct_play(
+                        spec, _factory, self._build_audio_request(normalized, spec)
+                    )
                 )
         except Exception as exc:
             # provider_name is a raw client field -- %r so an embedded newline

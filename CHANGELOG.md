@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Direct local speech records error outcomes for nonzero subprocess exits,
+  including subprocess timeouts, without changing playback return values.
 - CLI help and successful system exits record successful usage outcomes while
   preserving their original exit behavior.
 - Handled MCP JSON error responses now record an error outcome without changing
