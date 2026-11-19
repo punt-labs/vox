@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--json` reports CLI usage and unknown-command errors on stdout.**
+  Invalid arguments and unknown commands now return a JSON error object
+  instead of empty stdout, retaining exit code 2 and unchanged non-JSON output.
 - **`vox --version` and `vox --help` no longer prompt in an enabled repo
   (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
   rule, which matched every command starting with an option. The ask tier is
