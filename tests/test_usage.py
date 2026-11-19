@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import typer
 from mcp.server.fastmcp import FastMCP
+from mcp.types import TextContent
 from opentelemetry.sdk.metrics.export import MetricExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from punt_observe.telemetry import EnumAttr, SchemaRegistry, TelemetryConfig
@@ -193,6 +194,39 @@ async def test_direct_speech_signal(
     assert span.attributes["text_length"] == usage._usage._open().length(text)
     assert not span.events
     assert span.status.description is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "outcome"),
+    [
+        ([TextContent(type="text", text='{"error":"private failure"}')], "error"),
+        ({"error": "private failure"}, "error"),
+        (([], {"error": "private failure"}), "error"),
+        ([TextContent(type="text", text="not json")], "ok"),
+        ([TextContent(type="text", text='{"status":"ok"}')], "ok"),
+        ([], "ok"),
+    ],
+)
+async def test_mcp_handled_error_signal(
+    captured: InMemorySpanExporter, reply: object, outcome: str
+) -> None:
+    with patch.object(FastMCP, "call_tool", AsyncMock(return_value=reply)):
+        assert await server.mcp.call_tool("status", {}) is reply
+    [span] = _spans(captured, "vox.mcp.tool")
+    assert span.attributes is not None
+    assert span.attributes["outcome"] == outcome
+    assert not span.events
+    assert span.status.description is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_actual_error_payload(captured: InMemorySpanExporter) -> None:
+    response = await server.mcp.call_tool("speak", {"mode": "invalid"})
+    assert response
+    [span] = _spans(captured, "vox.mcp.tool")
+    assert span.attributes is not None
+    assert span.attributes["outcome"] == "error"
 
 
 @pytest.mark.asyncio

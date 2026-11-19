@@ -90,7 +90,7 @@ class _LoggingFastMCP(FastMCP):
             reapply_client_log_level()
             logger.info("mic:%s", name)
             self._reject_unknown_kwargs(name, arguments)
-            return await super().call_tool(name, arguments)
+            return usage.mcp_result(await super().call_tool(name, arguments))
 
     def _reject_unknown_kwargs(self, name: str, arguments: dict[str, Any]) -> None:
         """Raise ``ToolError`` when *arguments* has a key the tool did not declare."""

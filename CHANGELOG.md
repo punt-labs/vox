@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Handled MCP JSON error responses now record an error outcome without changing
+  tool responses or exporting error content.
 - Local `say` and `espeak` direct playback records daemon synthesis telemetry
   with the provider, derived text length, and uncached status.
 - Turn-timer logging setup fails open so an unusable private log path does not

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import threading
-from collections.abc import Callable, Iterable
-from contextlib import AbstractContextManager, nullcontext, suppress
+from collections.abc import Callable, Generator, Iterable
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
+from contextvars import ContextVar
 from enum import StrEnum
 from importlib import import_module
 from typing import TYPE_CHECKING, Literal, Self, cast
@@ -24,6 +26,7 @@ _SIGNALS = {
     "daemon": ("vox.daemon.synthesize", "provider"),
 }
 _REGISTRIES: dict[str, Callable[[], Iterable[str]]] = {}
+_failed: ContextVar[bool] = ContextVar("vox_usage_failed", default=False)
 
 
 class McpTool(StrEnum):
@@ -61,29 +64,31 @@ class Usage:
 
     def schemas(self) -> tuple[SignalSchema, ...]:
         """Declare the four version-one signals from active process registries."""
-        shared = import_module("punt_observe.telemetry")
-
         registries: dict[str, Callable[[], Iterable[str]]] = {
             **_REGISTRIES,
             "mcp": lambda: tuple(map(str, McpTool)),
             "daemon": lambda: tuple(map(str, AudioProviderId)),
         }
         self._choices = {
-            surface: tuple(
-                sorted({"other", *(v for v in values() if v and v[0].isalpha())})
-            )
+            surface: self._enum_values(values())
             for surface, values in registries.items()
         }
-        schemas: list[SignalSchema] = []
-        for surface, (name, attribute) in _SIGNALS.items():
-            attrs = {
-                attribute: shared.EnumAttr(self._choices.get(surface, ("other",))),
-                "outcome": shared.EnumAttr(("ok", "error")),
-            }
-            if surface == "daemon":
-                attrs.update(cached=shared.BoolAttr(), text_length=shared.LengthAttr())
-            schemas.append(shared.SignalSchema(name, 1, "span", attrs))
-        return tuple(schemas)
+        return tuple(self._schema(surface) for surface in _SIGNALS)
+
+    @staticmethod
+    def _enum_values(values: Iterable[str]) -> tuple[str, ...]:
+        return tuple(sorted({"other", *(v for v in values if v and v[0].isalpha())}))
+
+    def _schema(self, surface: str) -> SignalSchema:
+        shared = import_module("punt_observe.telemetry")
+        name, attribute = _SIGNALS[surface]
+        attrs = {
+            attribute: shared.EnumAttr(self._choices.get(surface, ("other",))),
+            "outcome": shared.EnumAttr(("ok", "error")),
+        }
+        if surface == "daemon":
+            attrs.update(cached=shared.BoolAttr(), text_length=shared.LengthAttr())
+        return cast("SignalSchema", shared.SignalSchema(name, 1, "span", attrs))
 
     def _open(self) -> Telemetry:
         shared = import_module("punt_observe.telemetry")
@@ -142,6 +147,47 @@ class Usage:
         return nullcontext() if command == "hook" else _usage.span("cli", command)
 
     @staticmethod
+    def _error_result(result: object) -> bool:
+        if isinstance(result, dict):
+            return "error" in result
+        if isinstance(result, list | tuple):
+            return any(
+                Usage._error_result(part) for part in cast("Iterable[object]", result)
+            )
+        return Usage._text_error(result)
+
+    @staticmethod
+    def _text_error(result: object) -> bool:
+        if getattr(result, "type", None) == "text":
+            with suppress(ValueError, TypeError):
+                return Usage._error_result(json.loads(getattr(result, "text", "")))
+        return False
+
+    @staticmethod
+    def mcp_result[T](result: T) -> T:
+        """Mark handled JSON errors without changing the MCP response."""
+        with suppress(Exception):
+            if Usage._error_result(result):
+                _failed.set(True)
+        return result
+
+    @staticmethod
+    @contextmanager
+    def _outcome(context: AbstractContextManager[None]) -> Generator[None]:
+        handled_error = RuntimeError()
+        token = _failed.set(False)
+        try:
+            with context:
+                yield
+                if _failed.get():
+                    raise handled_error
+        except RuntimeError as exc:
+            if exc is not handled_error:
+                raise
+        finally:
+            _failed.reset(token)
+
+    @staticmethod
     def observe(
         surface: Surface,
         value: str,
@@ -150,10 +196,11 @@ class Usage:
         cached: bool | None = None,
     ) -> AbstractContextManager[None]:
         """Observe through the lazy process owner without exporter imports."""
-        return _usage.span(surface, value, text=text, cached=cached)
+        return Usage._outcome(_usage.span(surface, value, text=text, cached=cached))
 
 
 _usage = Usage()
 register = Usage.register
 command_span = Usage.command_span
+mcp_result = Usage.mcp_result
 span = Usage.observe
