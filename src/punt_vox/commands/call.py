@@ -1,14 +1,8 @@
 """``vox call`` -- a live voice call with a persistent, read-only call agent.
 
-Wires :class:`~punt_vox.voxd.conversation_mode.call_session.CallSession` (the
-tested orchestration in ``voxd/conversation_mode/``) to the CLI. The call's
-agent is one ``pi --mode rpc`` process spawned when the call starts and held
-for its whole length, opened with a context snapshot the user's main session
-wrote (``--context``); :class:`~.call_runner.CallRunner` runs that sequence.
-This module keeps the CLI's own concerns: the verbs, the UserPromptSubmit
-lock (:class:`~.call_lock.CallLock`), cross-process control
-(:class:`~.call_control.CallControl`), speech through the existing daemon
-client (:class:`VoxClientSync.synthesize`), and the crash boundary.
+Registers the CLI verbs and owns the call lock, cross-process stop request,
+and crash boundary. :class:`~.call_runner.CallRunner` is loaded only on start;
+it drives the call and its persistent ``pi --mode rpc`` agent.
 
 Two ways to drive one call, chosen at ``vox call start`` by whether
 ``--script`` is passed:
@@ -45,8 +39,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import typer
 
@@ -57,7 +52,6 @@ from punt_vox.commands.call_options import (
     ScriptOpt as _ScriptOpt,
     TraceTurnsOpt as _TraceTurnsOpt,
 )
-from punt_vox.commands.call_runner import CallRunner
 from punt_vox.commands.call_spec import resolve_call_spec
 from punt_vox.dirs import find_repo_root
 from punt_vox.logging_config import configure_turn_timer_logging
@@ -65,6 +59,7 @@ from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 
 if TYPE_CHECKING:
+    from punt_vox.commands.call_runner import CallRunner
     from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 
 __all__ = ["CallCli"]
@@ -146,6 +141,10 @@ class CallCli:
 
     async def _run(self, context: Path, script: Path | None) -> None:
         """Run one call under the lock, behind the crash boundary."""
+        runner_type = cast(
+            "type[CallRunner]",
+            import_module("punt_vox.commands.call_runner").CallRunner,
+        )
         client = VoxClientSync()
         # Resolved once, before the call state machine starts -- see
         # call_spec.py's module docstring for why: a call that cannot
@@ -153,7 +152,7 @@ class CallCli:
         # speak() call fail silently on the wire.
         cues = DaemonCues(client, resolve_call_spec())
         speak = cues.speak
-        runner = CallRunner(
+        runner = runner_type(
             speak=speak,
             chime=cues.chime,
             control=CallControl.for_repo(),
