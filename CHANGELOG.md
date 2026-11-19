@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merging `main` into a PR branch keeps both sides' audit lines instead of
   stopping on a conflict the ratchet cannot parse.
 
+- Pin `punt-oo-ratchet==0.3.0` and audit the OO baseline refresh for
+  code-only module sizes and class-count exemptions (PL-1141). Merged
+  suppression waivers now retire; align the documented default efferent
+  coupling limit with the package's 10-module limit (PL-1188).
+
 - **Install touches no `CLAUDE.md`; `vox enable` is the only guide writer**
   (vox-f9ih, punt-kit#425). `vox install`, `vox uninstall`, and
   `install.sh` no longer write `~/.punt-labs/vox/CLAUDE.md` or an

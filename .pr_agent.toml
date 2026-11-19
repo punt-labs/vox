@@ -16,7 +16,7 @@ Targets: macOS (bash 3.2 for plugin/hooks/*.sh) and Ubuntu 24.04. Nothing else.
 Report every finding in this one pass; do not hold findings back for a later pass.
 Flag only defects reachable by a real caller of the changed code: logic errors, None paths, security, API contract breaks, concurrency, resource leaks.
 Do not flag hypothetical environments (exotic env vars such as CDPATH or GIT_TRACE, control bytes in paths, tests run as root).
-Do not flag what CI enforces: ruff format/lint, mypy and pyright strict, shellcheck, the OO, coupling and suppression ratchets (the punt-oo-ratchet package from PyPI; oo-ratchet {oo,coupling,suppressions}; source: punt-labs/python-oo-ratchet).
+Do not flag what CI enforces: ruff format/lint, mypy and pyright strict, shellcheck, the OO, coupling and suppression ratchets (punt-oo-ratchet==0.3.0 from PyPI; oo-ratchet {oo,coupling,suppressions}; source: punt-labs/python-oo-ratchet).
 Do not flag lines the PR did not change.
 Never suggest suppressions (# noqa, # type: ignore, xfail) or replacing __new__ with __init__; __new__ is the constructor by design.
 """
