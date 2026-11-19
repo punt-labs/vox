@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes rate, model, language, and all voice settings. Entries written with
   the incomplete legacy key are not reused.
 
+- **A config value with a backslash is stored as written.** Updating a field
+  already in `vox.md` or `vox.local.md` passed the value to `re.sub` as a
+  replacement template, so `vox vibe 'abc\1'` stored `abcold`,
+  `vox vibe 'C:\new'` wrote a raw newline into the file, and
+  `vox vibe 'abc\q'` crashed with `PatternError`.
 - **`vox --version` and `vox --help` no longer prompt in an enabled repo
   (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
   rule, which matched every command starting with an option. The ask tier is
