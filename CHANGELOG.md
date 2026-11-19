@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Speech settings no longer reuse stale cached audio.** Cache identity now
+  includes rate, model, language, and all voice settings. Entries written with
+  the incomplete legacy key are not reused.
+
 - **`vox --version` and `vox --help` no longer prompt in an enabled repo
   (punt-kit DES-039).** `vox enable` stops granting the `Bash(vox -*)` ask
   rule, which matched every command starting with an option. The ask tier is
