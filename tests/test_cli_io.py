@@ -107,6 +107,19 @@ class TestTextInputFromFile:
         with pytest.raises(typer.BadParameter, match="valid JSON"):
             TextInput(OutputFormatter()).resolve(None, path)
 
+    @pytest.mark.parametrize(
+        "item",
+        [{"text": False}, {"text": 0}, {"text": [1, 2]}, {"text": None}, {}],
+        ids=["false", "zero", "array", "null", "missing"],
+    )
+    def test_object_requires_string_text(
+        self, tmp_path: Path, item: dict[str, object]
+    ) -> None:
+        path = tmp_path / "segs.json"
+        path.write_text(json.dumps(["valid", item]), encoding="utf-8")
+        with pytest.raises(typer.BadParameter, match=r"Element 1.*string text"):
+            TextInput(OutputFormatter()).resolve(None, path)
+
     def test_non_array_raises_bad_parameter(self, tmp_path: Path) -> None:
         path = tmp_path / "segs.json"
         path.write_text(json.dumps({"text": "x"}), encoding="utf-8")
