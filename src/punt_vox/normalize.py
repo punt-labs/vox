@@ -503,9 +503,7 @@ _PRONOUNCEABLE_ACRONYMS: frozenset[str] = frozenset(
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# camelCase / PascalCase boundary: insert space before an uppercase letter
-# that follows a lowercase letter or digit, or before a run of uppercase
-# letters followed by a lowercase letter (e.g. "HTMLParser" → "HTML Parser").
+# Split camelCase and letter/digit boundaries.
 _CAMEL_BOUNDARY = re.compile(
     r"(?<=[a-z])(?=[A-Z])"  # fooBar → foo Bar
     r"|(?<=[A-Z])(?=[A-Z][a-z])"  # HTMLParser → HTML Parser
@@ -513,14 +511,9 @@ _CAMEL_BOUNDARY = re.compile(
     r"|(?<=[0-9])(?=[a-zA-Z])"  # foo2bar → foo2 bar (combined: foo 2 bar)
 )
 
-# A "programmer token" contains underscores or camelCase/digit boundaries.
-# We process these; plain English words pass through unchanged.
-_HAS_UNDERSCORE = re.compile(r"_")
-_HAS_CAMEL = re.compile(r"[a-z][A-Z]|[A-Z]{2,}[a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]")
-
 # Tokens that look like file paths — leave these alone.
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
-_LEADING_NON_SPEECH_RE = re.compile(r"^[^\w~/.]+")
+_LEADING_NON_SPEECH_RE = re.compile(r"^(?:[-\u2212]{2,}|(?![-\u2212]\.?\d)[^\w~/.])+")
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 
 
@@ -588,53 +581,32 @@ def _normalize_token(token: str) -> str:
     if not core or _FILE_PATH_RE.match(core):
         return core + suffix
 
-    # snake_case: split on underscores, process each part
-    if _HAS_UNDERSCORE.search(core):
-        return _expand_parts(core.split("_"), suffix)
+    if "_" in core:
+        return " ".join(map(_expand_snake_part, filter(None, core.split("_")))) + suffix
 
-    # camelCase / PascalCase: split on case boundaries
-    if _HAS_CAMEL.search(core):
-        return _expand_parts(_CAMEL_BOUNDARY.sub(" ", core).split(), suffix)
-
-    # Standalone abbreviation
-    expanded = _expand_abbreviation(core)
-    if expanded != core:
-        return expanded + suffix
-
-    return _expand_standalone_acronym(core) + suffix
+    parts = _CAMEL_BOUNDARY.split(core)
+    if len(parts) > 1:
+        return _expand_parts(parts) + suffix
+    return _ABBREVIATIONS.get(core.lower(), _space_acronym(core)) + suffix
 
 
-def _expand_standalone_acronym(core: str) -> str:
-    """Space out a standalone ALL_CAPS token for TTS spelling, else pass through."""
-    if core.isupper() and len(core) > 1:
-        return _space_acronym(core)
-    return core
+def _expand_snake_part(part: str) -> str:
+    """Look up the whole snake_case part before splitting it further."""
+    return _ABBREVIATIONS.get(part.lower()) or _expand_parts(
+        _CAMEL_BOUNDARY.split(part)
+    )
 
 
-def _expand_parts(parts: list[str], suffix: str) -> str:
-    """Expand each identifier part, rejoin with spaces, and append *suffix*.
-
-    The shared tail of the snake_case and camelCase branches: both split an
-    identifier into parts and differ only in how they split, so the
-    expand-and-rejoin step lives here once.
-    """
-    return " ".join(_expand_part(p) for p in parts if p) + suffix
+def _expand_parts(parts: list[str]) -> str:
+    """Expand and rejoin identifier pieces."""
+    return " ".join(map(_expand_part, parts))
 
 
 def _expand_part(part: str) -> str:
-    """Expand a single sub-token (after snake/camel splitting).
-
-    Also applies camelCase splitting so that mixed identifiers like
-    ``get_fileName`` fully normalize to ``get file name``.
-    """
-    expanded = _expand_abbreviation(part)
-    if expanded != part:
+    """Expand a single sub-token after identifier splitting."""
+    expanded = _ABBREVIATIONS.get(part.lower())
+    if expanded:
         return expanded
-    # camelCase within a snake_case part (e.g. "fileName" from "get_fileName")
-    if _HAS_CAMEL.search(part):
-        split = _CAMEL_BOUNDARY.sub(" ", part)
-        sub_parts = split.split()
-        return " ".join(_expand_part(p) for p in sub_parts)
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
     # unless the word is pronounceable (real word or known acronym).
     if part.isupper():
@@ -649,24 +621,21 @@ def _space_acronym(part: str) -> str:
     pronounceable-acronyms allowlist, or has fewer than 2 or more than 5
     letters. Combining marks stay with their letters.
     """
+    if not part.isupper():
+        return part
     letters = "".join(ch for ch in part if not unicodedata.category(ch).startswith("M"))
-    if not letters.isupper() or letters in _PRONOUNCEABLE_ACRONYMS:
+    if letters in _PRONOUNCEABLE_ACRONYMS:
         return part
     if 2 <= len(letters) <= 5 and letters.isalpha() and part[0].isalpha():
         return re.sub(r"(?<=.)(?=\w)", " ", part)
     return part
 
 
-def _expand_abbreviation(word: str) -> str:
-    """Look up a word in the abbreviation dictionary (case-insensitive)."""
-    return _ABBREVIATIONS.get(word.lower(), word)
-
-
 def _strip_punctuation(token: str) -> tuple[str, str]:
     """Strip leading/trailing punctuation, returning (core, suffix).
 
-    Leading punctuation is always discarded; leading ``~/._`` are kept in
-    core (file path / identifier prefixes).
+    Leading punctuation is discarded except for file path / identifier
+    prefixes (``~/._``) and a minus sign before digits or a decimal fraction.
     Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
     ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
     symbols (parentheses, brackets, slashes, etc.) are discarded since

@@ -209,17 +209,19 @@ class TestSayProviderSynthesize:
         assert result.language == "en"
         assert result.text == "hello"
 
+    @pytest.mark.parametrize("text", ["hello", "-5 degrees"])
     def test_synthesize_say_args(
         self,
         say_provider: SayProvider,
         tmp_output_dir: Path,
+        text: str,
     ) -> None:
         mp3_bytes = _get_valid_mp3_bytes()
         out = tmp_output_dir / "test.mp3"
         mock_run = self._mock_subprocess(mp3_bytes)
         with patch("punt_vox.providers.say.subprocess.run", mock_run):
             say_provider.synthesize(
-                SynthesisRequest(text="hello", voice="fred", rate=90),
+                SynthesisRequest(text=text, voice="fred", rate=90),
                 out,
             )
         say_call = mock_run.call_args_list[0]
@@ -227,6 +229,8 @@ class TestSayProviderSynthesize:
         assert say_args[0] == "say"
         assert say_args[say_args.index("-v") + 1] == "Fred"
         assert say_args[say_args.index("-r") + 1] == "157"
+        assert text not in say_args
+        assert say_call.kwargs["input"] == text.encode()
 
     def test_synthesize_ffmpeg_via_convert(
         self,
@@ -307,19 +311,22 @@ class TestSayProviderSynthesize:
 
 
 class TestSayDirectPlayerPlayDirectly:
-    def test_spawns_without_o_flag(self, say_provider: SayProvider) -> None:
+    @pytest.mark.parametrize("text", ["hello", "-5 degrees"])
+    def test_spawns_without_o_flag(self, say_provider: SayProvider, text: str) -> None:
         player = SayDirectPlayer(voices=say_provider._voices)  # pyright: ignore[reportPrivateUsage]
         mock = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         )
         with patch("punt_vox.providers.local_play.subprocess.run", mock):
             rc = player.play_directly(
-                SynthesisRequest(text="hello", voice="fred"),
+                SynthesisRequest(text=text, voice="fred"),
             )
         assert rc == 0
         args = mock.call_args[0][0]
         assert args[0] == "say"
         assert "-o" not in args
+        assert text not in args
+        assert mock.call_args.kwargs["input"] == text.encode()
 
     def test_nonzero_rc_returned(self, say_provider: SayProvider) -> None:
         player = SayDirectPlayer(voices=say_provider._voices)  # pyright: ignore[reportPrivateUsage]
@@ -342,7 +349,7 @@ class TestSayDirectPlayerPlayDirectly:
                 SynthesisRequest(text="[serious] Hello world", voice="fred"),
             )
         args = mock.call_args[0][0]
-        assert "Hello world" in args
+        assert mock.call_args.kwargs["input"] == b"Hello world"
         assert "[serious]" not in " ".join(args)
 
 
