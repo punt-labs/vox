@@ -50,6 +50,7 @@ def test_held_creates_the_lock_and_flocks_it_exclusively(
     real_flock = fcntl.flock
 
     def spy_flock(fd: int, operation: int) -> None:
+        assert fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_WRONLY
         ops.append((os.fstat(fd).st_ino, operation))
         real_flock(fd, operation)
 
@@ -64,6 +65,40 @@ def test_held_creates_the_lock_and_flocks_it_exclusively(
     assert ops[0] == (sibling, fcntl.LOCK_EX | fcntl.LOCK_NB)
     assert ops[-1] == (sibling, fcntl.LOCK_UN)
     assert all(inode == sibling for inode, _ in ops)
+
+
+@pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize("readable", [False, True])
+def test_permission_denied_falls_back_to_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool, readable: bool
+) -> None:
+    lock = SiblingLock(tmp_path / "vox.md")
+    lock.path.touch()
+    real_open = os.open
+    accesses: list[int] = []
+
+    def shared_open(
+        path: str | Path, flags: int, mode: int, *, dir_fd: int | None = None
+    ) -> int:
+        access = flags & os.O_ACCMODE
+        accesses.append(access)
+        if access == os.O_WRONLY or not readable:
+            raise PermissionError(errno.EACCES, "access denied")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    directory = real_open(tmp_path, os.O_RDONLY) if relative else None
+    monkeypatch.setattr("punt_vox.sibling_lock.os.open", shared_open)
+    try:
+        if readable:
+            with lock.held(dir_fd=directory):
+                assert lock.path.read_text() == ""
+        else:
+            with pytest.raises(PermissionError), lock.held(dir_fd=directory):
+                pytest.fail("an unreadable lock must not enter the critical section")
+        assert accesses == [os.O_WRONLY, os.O_RDONLY]
+    finally:
+        if directory is not None:
+            os.close(directory)
 
 
 def test_held_creates_missing_parent_directory(tmp_path: Path) -> None:

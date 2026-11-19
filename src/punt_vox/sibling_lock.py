@@ -61,7 +61,7 @@ class SiblingLock:
 
     # Never followed, never truncated, private by default: a root process taking the
     # lock in a user's directory must not write through a planted symlink.
-    _OPEN_FLAGS = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+    _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 
     @contextlib.contextmanager
     def held(self, *, dir_fd: int | None = None) -> Generator[None]:
@@ -72,15 +72,12 @@ class SiblingLock:
         A symlink at the lock path raises ``OSError`` (``ELOOP``) and is left
         untouched, as is whatever it points at.
 
-        A read descriptor suffices for ``flock`` on macOS and Linux. Callers
-        may share the empty lock via its creation mode (subject to umask)
-        without granting other accounts permission to write to it.
+        Writable descriptors support exclusive locks on NFS. Readable shared
+        locks fall back to read-only descriptors when write access is denied.
         """
         if dir_fd is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            lock = os.open(self._path, self._OPEN_FLAGS, self._mode)
-        else:
-            lock = os.open(self._path.name, self._OPEN_FLAGS, self._mode, dir_fd=dir_fd)
+        lock = self._open(dir_fd)
         try:
             self._acquire(lock)
             try:
@@ -89,6 +86,14 @@ class SiblingLock:
                 fcntl.flock(lock, fcntl.LOCK_UN)
         finally:
             os.close(lock)
+
+    def _open(self, dir_fd: int | None) -> int:
+        path = self._path if dir_fd is None else self._path.name
+        try:
+            return os.open(path, self._OPEN_FLAGS, self._mode, dir_fd=dir_fd)
+        except PermissionError:
+            flags = self._OPEN_FLAGS & ~os.O_WRONLY
+            return os.open(path, flags, self._mode, dir_fd=dir_fd)
 
     def _acquire(self, lock: int) -> None:
         """Take the exclusive lock, retrying on contention, then failing loud.
