@@ -23,7 +23,7 @@ class ApiKeyResolver:
     Sources (mutually exclusive):
     1. ``--api-key-file <path>``
     2. ``--api-key-stdin``
-    3. ``VOX_API_KEY`` env var
+    3. ``VOX_API_KEY`` env var (empty, as a global CI export, is no source)
     4. ``--api-key <value>`` on argv
     """
 
@@ -57,7 +57,7 @@ class ApiKeyResolver:
             return self._read_file(self._api_key_file)
         if self._api_key_stdin:
             return self._read_stdin()
-        if self._api_key is not None:
+        if self._api_key:
             source = self._ctx.get_parameter_source("api_key")
             # Typer 0.27 vendors its own click; compare enum by ``.name``.
             if getattr(source, "name", None) == "COMMANDLINE":
@@ -69,7 +69,7 @@ class ApiKeyResolver:
         """Raise if more than one source is set."""
         file_set = self._api_key_file is not None
         stdin_set = self._api_key_stdin
-        argv_or_env_set = self._api_key is not None
+        argv_or_env_set = bool(self._api_key)
         sources_set = int(file_set) + int(stdin_set) + int(argv_or_env_set)
         if sources_set <= 1:
             return
