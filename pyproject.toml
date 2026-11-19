@@ -199,6 +199,8 @@ select = [
     "BLE",  # flake8-blind-except
     "T10",  # flake8-debugger
     "T20",  # flake8-print
+    "LOG",  # flake8-logging
+    "G",    # flake8-logging-format
     "A",    # flake8-builtins
     "ERA",  # flake8-eradicate (commented code)
     "PIE",  # flake8-pie

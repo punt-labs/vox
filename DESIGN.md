@@ -1729,8 +1729,9 @@ unchanged) — play the named track, retarget the pool/fill to that track's pool
    generate-vs-rotate decision is now *split by owner*: rotate/advance = the loop
    via `select_next_track` (never generates); generate = `PoolFiller` (never
    plays).
-5. **No `print()` in daemon code; logs to stderr only.** `PoolFiller` and the
-   reduced loop log via `logging.getLogger(__name__)`.
+5. **No `print()` in daemon code; use the private shared log file.** `PoolFiller`
+   and the reduced loop log via `logging.getLogger(__name__)`. DES-075 supersedes
+   the original stderr-only logging policy.
 
 ### Rejected alternatives
 

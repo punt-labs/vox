@@ -4110,10 +4110,10 @@
   "src/punt_vox/voxd/music_player/lux_trace.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
+    "avg_params": 2.0,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
-    "module_size": 19.0,
+    "module_size": 13.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

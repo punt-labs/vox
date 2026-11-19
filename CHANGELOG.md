@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Logging lint rules and a source-policy gate reject private-sink bypasses,
+  including aliased imports and rotating-handler configuration strings.
 - Privacy-safe usage spans for MCP tools, hooks, CLI commands, and daemon
   synthesis through shared `punt-observe`. Local-only SQLite capture is the
   default; `VOX_TELEMETRY=off` or `PUNT_TELEMETRY=off` disables it entirely.
