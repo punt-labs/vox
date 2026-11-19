@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`.oo-audit.jsonl` merges with git's union driver (PL-1183).** A new
+  `.gitattributes` marks the append-only OO audit log `merge=union`, so
+  merging `main` into a PR branch keeps both sides' audit lines instead of
+  stopping on a conflict the ratchet cannot parse.
+
 - Pin `punt-oo-ratchet==0.3.0` and audit the OO baseline refresh for
   code-only module sizes and class-count exemptions (PL-1141). Merged
   suppression waivers now retire; align the documented default efferent
