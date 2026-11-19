@@ -82,6 +82,7 @@ class Frontmatter:
             )
             return
 
+        # Fail on read-only files before atomic rename can bypass write permissions.
         with self._path.open("a", encoding="utf-8"):
             pass
 
