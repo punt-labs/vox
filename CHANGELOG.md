@@ -75,7 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Upgrade to `punt-oo-ratchet==0.3.1` and backfill the missing `_audio.py`
-  coupling baseline row through its audited update path (PL-1196).
+  and `voxd/synthesis_cache.py` coupling baseline rows through its audited
+  update path (PL-1196).
 
 - **`.oo-audit.jsonl` merges with git's union driver (PL-1183).** A new
   `.gitattributes` marks the append-only OO audit log `merge=union`, so
