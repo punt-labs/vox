@@ -1677,7 +1677,7 @@ requires-dist = [
     { name = "punt-observe", git = "https://github.com/punt-labs/punt-observe?rev=53e657555cab240795c850ea7f0e4dd77a8d98fc" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "sounddevice", marker = "extra == 'call'", specifier = ">=0.5.6" },
-    { name = "typer", specifier = ">=0.27.2" },
+    { name = "typer", specifier = ">=0.29.1" },
     { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["call"]
