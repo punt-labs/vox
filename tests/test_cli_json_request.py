@@ -5,7 +5,9 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
+from typer._coercion import TypeDescriptor
 from typer.core import TyperCommand, TyperGroup, TyperOption
+from typer.models import OptionInfo
 
 from punt_vox.cli_json_request import JsonRequest
 
@@ -31,7 +33,13 @@ def test_json_intent_precedes_callbacks(args: list[str], expected: bool) -> None
     child = TyperCommand(
         "child",
         callback=callback,
-        params=[TyperOption(param_decls=["--count"], type=int, callback=callback)],
+        params=[
+            TyperOption(
+                param_decls=["--count"],
+                type_descriptor=TypeDescriptor(int, OptionInfo(), None),
+                callback=callback,
+            )
+        ],
     )
     root = TyperGroup(
         name="root",
@@ -39,10 +47,16 @@ def test_json_intent_precedes_callbacks(args: list[str], expected: bool) -> None
         params=[
             TyperOption(
                 param_decls=["json_output", "--json"],
+                type_descriptor=TypeDescriptor(bool, OptionInfo(), None),
                 is_flag=True,
                 callback=callback,
             ),
-            TyperOption(param_decls=["--verbose"], is_flag=True, callback=callback),
+            TyperOption(
+                param_decls=["--verbose"],
+                type_descriptor=TypeDescriptor(bool, OptionInfo(), None),
+                is_flag=True,
+                callback=callback,
+            ),
         ],
         commands={
             "child": child,
