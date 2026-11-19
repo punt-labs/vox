@@ -19,6 +19,8 @@ _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
 # inserted field lands above that rule instead of in the frontmatter.
 _OPENING_FENCE_RE = re.compile(r"\A---[ \t]*\n")
 _FENCE_LINE_RE = re.compile(r"\n---[ \t]*$", re.MULTILINE)
+# Each character that ends a quoted value early, and how a rejection names it.
+_UNQUOTABLE = (("\n", "newlines"), ("\r", "newlines"), ('"', "double-quotes"))
 
 
 @final
@@ -60,12 +62,10 @@ class FrontmatterBlock:
         type, not a bare ``ValueError``, because a caller answering this has
         a real value it cannot store, not a malformed request to discard.
         """
-        if "\n" in value or "\r" in value:
-            msg = f"config values must not contain newlines, got: {value!r}"
-            raise ConfigValueError(msg)
-        if '"' in value:
-            msg = f"config values must not contain double-quotes, got: {value!r}"
-            raise ConfigValueError(msg)
+        for char, kind in _UNQUOTABLE:
+            if char in value:
+                msg = f"config values must not contain {kind}, got: {value!r}"
+                raise ConfigValueError(msg)
 
     @property
     def text(self) -> str:
@@ -113,11 +113,11 @@ class FrontmatterBlock:
         text = self._text
         for key, value in updates.items():
             line = f'{key}: "{value}"'
-            field_re = self._field_re(key)
+            # A replacement template expands backslashes; doubled, they stay text.
+            template = line.replace("\\", r"\\")
+            text, replaced = self._field_re(key).subn(template, text)
             # Each insert shifts the fence, so it is found afresh per key.
-            if field_re.search(text):
-                text = field_re.sub(line, text)
-            else:
+            if not replaced:
                 text = self._inserted(text, line)
         return type(self)(text)
 
