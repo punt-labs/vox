@@ -651,3 +651,4 @@
 {"ts":"2026-11-19T01:49:52Z","commit":"5ebac5c","source":null,"files_scored":416,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-11-19T02:22:59Z","commit":"a24b7e3","source":null,"files_scored":416,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"PL-1152: Reuse SiblingLock for config RMW transactions rather than duplicating flock mechanics.","deltas":{"src/punt_vox/frontmatter.py":{"efferent_coupling":[1.0,2.0],"max_lcom":[0.583,0.618],"avg_lcom":[0.583,0.618]}}}
 {"ts":"2026-11-19T02:23:01Z","commit":"a24b7e3","source":null,"files_scored":416,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/sibling_lock.py":{"max_lcom":[0.333,0.3],"avg_lcom":[0.333,0.3]}}}
+{"ts":"2026-11-19T02:37:31Z","commit":"395db4e","source":"PL-1160","files_scored":416,"files_improved":0,"files_regressed":0,"verdict":"rebaseline","reason":null,"deltas":{}}

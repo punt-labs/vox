@@ -34,25 +34,25 @@ SUPPRESSION_BASE ?=
 check: lint type docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
-	uv run python tools/oo_score.py src/punt_vox/ --check $(OO_BASE)
+	uv run oo-ratchet oo src/punt_vox/ --check $(OO_BASE)
 
 update-oo: ## Update OO baseline after improvements (stage .oo-baseline.json and .oo-audit.jsonl)
-	uv run python tools/oo_score.py src/punt_vox/ --update $(OO_BASE)
+	uv run oo-ratchet oo src/punt_vox/ --update $(OO_BASE)
 
 check-coupling: ## Coupling ratchet — merge-base scoped, must not regress
-	uv run python tools/oo_coupling.py src/punt_vox/ --check $(COUPLING_BASE)
+	uv run oo-ratchet coupling src/punt_vox/ --check $(COUPLING_BASE)
 
 update-coupling: ## Update coupling baseline (stage .oo-coupling-baseline.json and .oo-coupling-audit.jsonl)
-	uv run python tools/oo_coupling.py src/punt_vox/ --update $(COUPLING_BASE)
+	uv run oo-ratchet coupling src/punt_vox/ --update $(COUPLING_BASE)
 
 check-suppressions: ## Suppression ratchet — base-commit scoped, count must not increase
-	uv run python tools/suppression_ratchet.py src/punt_vox/ --check $(SUPPRESSION_BASE)
+	uv run oo-ratchet suppressions src/punt_vox/ --check $(SUPPRESSION_BASE)
 
 update-suppressions: ## Update suppression baseline
-	uv run python tools/suppression_ratchet.py src/punt_vox/ --update
+	uv run oo-ratchet suppressions src/punt_vox/ --update
 
 report: ## Full diagnostics (OO score + all checks, no fail-fast)
-	-uv run python tools/oo_score.py src/punt_vox/ --threshold
+	-uv run oo-ratchet oo src/punt_vox/ --threshold
 	-uv run mypy src/ tests/
 	-uv run ruff format --check src/ tests/
 	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,PLC1901,S101 src/ tests/
