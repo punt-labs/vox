@@ -3932,7 +3932,7 @@ context.
 
 Adopt `punt-observe` for private logging and usage telemetry rather than retain
 vox copies of file security, append/rotation, redaction, or exporters. Pin the
-dependency to git commit `a90872cc20cf688dfd41aeb36c7120e63fc69849` until the
+dependency to git commit `53e657555cab240795c850ea7f0e4dd77a8d98fc` until the
 shared package is published on PyPI.
 
 `logging_config.py` remains the sole vox logging policy adapter: preserve the
