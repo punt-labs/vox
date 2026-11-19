@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Live diagnostic level changes restore root DEBUG admission; failed client
+  setup detaches old sinks so only the fixed metadata warning reaches stderr.
+- The installer requires git for the pinned shared dependency, even without
+  the Claude Code plugin.
 - **Clients report corrupt daemon discovery files as a connection error.**
   Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
   without a traceback or the file's contents.

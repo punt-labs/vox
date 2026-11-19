@@ -92,7 +92,8 @@ def reapply_client_log_level() -> None:
 
 
 def apply_log_level(numeric: int) -> None:
-    """Change only the durable root file handler's threshold."""
+    """Admit DEBUG records at root, leaving output policy to each handler."""
+    logging.getLogger().setLevel(logging.DEBUG)
     _file_handler().setLevel(numeric)
 
 
@@ -102,11 +103,10 @@ def _file_handler() -> logging.Handler:
 
 
 def _disable_client_file_logging() -> None:
-    """Discard any old durable sink and report setup failure without values."""
-    handler = _file_handler()
-    logging.getLogger().removeHandler(handler)
+    """Detach old sinks and suppress fallback before the fixed setup warning."""
     with suppress(OSError):
-        handler.close()
+        _file_handler().close()
+    logging.getLogger().handlers[:] = [logging.NullHandler()]
     with suppress(OSError, ValueError, AttributeError):
         sys.stderr.write("vox: private logging unavailable; continuing without file\n")
 

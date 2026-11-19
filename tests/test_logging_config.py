@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from punt_observe import logging as shared_logging
-from punt_observe.logging import LoggingSetupError
+from punt_observe.logging import AtomicAppendLog, LoggingSetupError
 from punt_observe.logging.handler import PrivateFileHandler
 
 from punt_vox import logging_config, paths
 from punt_vox.config import ConfigStore
+
+if TYPE_CHECKING:
+    from multiprocessing.synchronize import Barrier
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +84,7 @@ def test_level_switch_changes_file_only(monkeypatch: pytest.MonkeyPatch) -> None
     stderr = next(h for h in root.handlers if isinstance(h, logging.StreamHandler))
     logger = logging.getLogger("punt_vox.test")
     logger.debug("hidden marker")
+    root.setLevel(logging.INFO)
     monkeypatch.setattr(
         ConfigStore, "resolve_log_level", classmethod(lambda cls: "debug")
     )
@@ -93,6 +100,23 @@ def test_level_switch_changes_file_only(monkeypatch: pytest.MonkeyPatch) -> None
         next(h for h in root.handlers if isinstance(h, PrivateFileHandler)).level
         == logging.INFO
     )
+
+
+def test_live_daemon_level_switch_writes_debug() -> None:
+    logging_config.configure_daemon_logging()
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    logger = logging.getLogger("punt_vox.live_daemon")
+    logger.debug("hidden daemon debug")
+    logging_config.apply_log_level(logging.DEBUG)
+    logger.debug("visible daemon debug")
+    logging_config.apply_log_level(logging.INFO)
+    logger.debug("hidden again daemon debug")
+    contents = (paths.log_dir() / "vox.log").read_text()
+    assert "visible daemon debug" in contents
+    assert "hidden daemon debug" not in contents
+    assert "hidden again daemon debug" not in contents
+    assert all(isinstance(h, PrivateFileHandler) for h in root.handlers)
 
 
 def test_verbose_overrides_config() -> None:
@@ -137,12 +161,68 @@ def test_client_setup_failure_is_open(
     with patch.object(logging_config, "configure_logging", side_effect=error):
         logging_config.configure_client_logging(role=role)
     logging_config.apply_log_level(logging.DEBUG)
+    logging.getLogger("punt_vox.failed_setup").error("must never reach stderr")
+    assert all(
+        isinstance(handler, logging.NullHandler)
+        for handler in logging.getLogger().handlers
+    )
     assert not any(
         isinstance(h, PrivateFileHandler) for h in logging.getLogger().handlers
     )
     assert capsys.readouterr().err == (
         "vox: private logging unavailable; continuing without file\n"
     )
+
+
+def _append_process_records(writer: int, barrier: Barrier) -> None:
+    logging_config.configure_client_logging(role="worker")
+    handler = logging.getHandlerByName("file")
+    assert isinstance(handler, PrivateFileHandler)
+    handler.sink = AtomicAppendLog(
+        paths.log_dir() / "vox.log", max_bytes=2048, backup_count=100
+    )
+    barrier.wait(timeout=30)
+    for sequence in range(50):
+        logging.getLogger("punt_vox.concurrent").info(
+            "writer=%d record=%d payload=%s", writer, sequence, "x" * 128
+        )
+
+
+@pytest.mark.slow
+def test_multiple_configured_processes_rotate_without_losing_records() -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(4)
+    processes = [
+        context.Process(target=_append_process_records, args=(writer, barrier))
+        for writer in range(4)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=45)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+    directory = paths.log_dir()
+    logs = [directory / "vox.log", *directory.glob("vox.log.[0-9]*")]
+    assert len(logs) > 1
+    actual = Counter(
+        line.split("writer=", 1)[1]
+        for path in logs
+        for line in path.read_text().splitlines()
+    )
+    expected = Counter(
+        f"{writer} record={sequence} payload={'x' * 128}"
+        for writer in range(4)
+        for sequence in range(50)
+    )
+    assert actual == expected
+    assert directory.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in directory.iterdir())
 
 
 @pytest.mark.parametrize(
