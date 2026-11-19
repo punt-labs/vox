@@ -44,7 +44,10 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
         )
         _filter_client_records(role)
         return
-    _disable_client_file_logging()
+    with suppress(OSError):
+        _file_handler().close()
+    logging.getLogger().handlers[:] = [logging.NullHandler()]
+    _warn_logging_unavailable()
 
 
 def _filter_client_records(role: Role) -> None:
@@ -72,7 +75,7 @@ def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
             handler.addFilter(ClientRoleFilter("cli"))
             logger.addHandler(handler)
         return
-    _disable_client_file_logging()
+    _warn_logging_unavailable()
 
 
 def _reset_turn_timer() -> logging.Logger:
@@ -107,11 +110,8 @@ def _file_handler() -> logging.Handler:
     return logging.getHandlerByName("file") or logging.NullHandler()
 
 
-def _disable_client_file_logging() -> None:
-    """Detach old sinks and suppress fallback before the fixed setup warning."""
-    with suppress(OSError):
-        _file_handler().close()
-    logging.getLogger().handlers[:] = [logging.NullHandler()]
+def _warn_logging_unavailable() -> None:
+    """Emit only fixed metadata when private logging setup fails."""
     with suppress(OSError, ValueError, AttributeError):
         sys.stderr.write("vox: private logging unavailable; continuing without file\n")
 
