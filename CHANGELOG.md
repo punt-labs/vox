@@ -16,11 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clients report corrupt daemon discovery files as a connection error.**
+  Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
+  without a traceback or the file's contents.
+
 - **A reused `VoxClient` no longer returns a stale reply after a timeout.**
   When a request timed out or was cancelled, voxd's late answer stayed on the
   open connection and was returned as the next request's reply. Any failed or
   abandoned exchange now discards the connection, so the next request
   reconnects.
+
 - **Unreadable `vox say --from` inputs report a usage error.** Directory paths
   and file read failures now exit with code 2 instead of a traceback, with a
   JSON error under `--json`.
