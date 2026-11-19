@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.deposited_files import DepositedGuide
 from punt_vox.dirs import find_repo_root
 from punt_vox.doctor_result import CheckResult
-from punt_vox.guide_stamp import GuideStampVerdict
+from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,7 +60,7 @@ class GuideCheck:
         # missing or unreadable asset raises here whatever state the deposit is
         # in, instead of a verdict whose remedy fails on the same broken install.
         try:
-            verdict = DepositedGuide(deposited, deposited.parents[2]).verify()
+            verdict = GuideStamp.for_packaged_asset().verify(deposited)
         except OSError as exc:
             return [self._unreadable_asset(exc)]
         return [self._result(verdict)]
