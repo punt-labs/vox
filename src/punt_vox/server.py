@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from websockets.exceptions import WebSocketException
 
-from punt_vox import __version__
+from punt_vox import __version__, usage
 from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
@@ -86,10 +86,11 @@ class _LoggingFastMCP(FastMCP):
         never landed. Naming the offending key back at the caller turns a silent
         drop into a diagnostic failure.
         """
-        reapply_client_log_level()
-        logger.info("mic:%s", name)
-        self._reject_unknown_kwargs(name, arguments)
-        return await super().call_tool(name, arguments)
+        with usage.span("mcp", name):
+            reapply_client_log_level()
+            logger.info("mic:%s", name)
+            self._reject_unknown_kwargs(name, arguments)
+            return await super().call_tool(name, arguments)
 
     def _reject_unknown_kwargs(self, name: str, arguments: dict[str, Any]) -> None:
         """Raise ``ToolError`` when *arguments* has a key the tool did not declare."""
@@ -410,7 +411,7 @@ def _error(message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(name=usage.McpTool.unmute.value)
 def unmute(
     text: str | None = None,
     voice: str | None = None,
@@ -539,10 +540,10 @@ def unmute(
 # folded into the single `music` tool below (server_music_tool).
 _rec_tool = RecTool(_voxd_client, lambda: _session)
 
-mcp.tool(name="rec")(_rec_tool.dispatch)
+mcp.tool(name=usage.McpTool.rec.value)(_rec_tool.dispatch)
 
 
-@mcp.tool()
+@mcp.tool(name=usage.McpTool.vibe.value)
 def vibe(
     mood: str | None = None,
     tags: str | None = None,
@@ -592,13 +593,13 @@ _music_tool = MusicTool(
     lambda: _music_pref,
 )
 
-mcp.tool(name="music")(_music_tool.dispatch)
+mcp.tool(name=usage.McpTool.music.value)(_music_tool.dispatch)
 
 # The repo enable/disable tool: one action-dispatched verb writing the same
 # `.punt-labs/vox/enabled` marker `vox enable` writes, so both surfaces agree
 # (tool-enable-disable.md 2.14). Repo file operations, not daemon-owned state.
 _enablement_tool = EnablementTool()
-mcp.tool(name="enablement")(_enablement_tool.dispatch)
+mcp.tool(name=usage.McpTool.enablement.value)(_enablement_tool.dispatch)
 
 
 # The three switch tools -- one MCP tool per engine capability (§4a). Each
@@ -610,12 +611,12 @@ _model_tool = ModelTool(lambda: _session, _find_config_dir, _voxd_client)
 _provider_tool = ProviderTool(lambda: _session, _find_config_dir, _voxd_client)
 _voice_tool = VoiceTool(lambda: _session, _find_config_dir, _voxd_client)
 
-mcp.tool(name="model")(_model_tool.dispatch)
-mcp.tool(name="provider")(_provider_tool.dispatch)
-mcp.tool(name="voice")(_voice_tool.dispatch)
+mcp.tool(name=usage.McpTool.model.value)(_model_tool.dispatch)
+mcp.tool(name=usage.McpTool.provider.value)(_provider_tool.dispatch)
+mcp.tool(name=usage.McpTool.voice.value)(_voice_tool.dispatch)
 
 
-@mcp.tool()
+@mcp.tool(name=usage.McpTool.notify.value)
 def notify(
     mode: Literal["y", "c"],
 ) -> str:
@@ -653,7 +654,7 @@ def notify(
     return json.dumps({"notify": updates})
 
 
-@mcp.tool()
+@mcp.tool(name=usage.McpTool.speak.value)
 def speak(
     mode: str,
 ) -> str:
@@ -682,7 +683,7 @@ def speak(
     return json.dumps(updates)
 
 
-@mcp.tool()
+@mcp.tool(name=usage.McpTool.status.value)
 def status() -> str:
     """Show current vox state (provider, voice, notify, vibe) and the Program.
 

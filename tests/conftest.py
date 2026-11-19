@@ -59,6 +59,7 @@ def hermetic_home(  # pyright: ignore[reportUnusedFunction]
     """Keep home-relative state and inherited subprocess HOME inside this test."""
     home = tmp_path_factory.mktemp("vox-home")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PUNT_TELEMETRY", "off")
     return home
 
 

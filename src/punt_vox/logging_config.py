@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, cast
+from contextlib import suppress
+from typing import TYPE_CHECKING
 
 from punt_observe.logging import AtomicAppendLog, configure_logging
 from punt_observe.logging.formatter import RedactingFormatter
@@ -37,9 +38,16 @@ def configure_daemon_logging() -> None:
 
 def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
     """Configure a client with its role and effective file verbosity."""
-    configure_logging(
-        "vox", role, level=_resolve_level(verbose=verbose), quiet=_SUPPRESSED
-    )
+    with suppress(OSError):
+        configure_logging(
+            "vox", role, level=_resolve_level(verbose=verbose), quiet=_SUPPRESSED
+        )
+        _filter_client_records(role)
+        return
+    _disable_client_file_logging()
+
+
+def _filter_client_records(role: Role) -> None:
     for handler in logging.getLogger().handlers:
         handler.addFilter(ClientRoleFilter(role))
 
@@ -88,9 +96,19 @@ def apply_log_level(numeric: int) -> None:
     _file_handler().setLevel(numeric)
 
 
-def _file_handler() -> PrivateFileHandler:
+def _file_handler() -> logging.Handler:
     """Return the named durable handler installed by shared configuration."""
-    return cast("PrivateFileHandler", logging.getHandlerByName("file"))
+    return logging.getHandlerByName("file") or logging.NullHandler()
+
+
+def _disable_client_file_logging() -> None:
+    """Discard any old durable sink and report setup failure without values."""
+    handler = _file_handler()
+    logging.getLogger().removeHandler(handler)
+    with suppress(OSError):
+        handler.close()
+    with suppress(OSError, ValueError, AttributeError):
+        sys.stderr.write("vox: private logging unavailable; continuing without file\n")
 
 
 def _resolve_level(*, verbose: bool = False) -> str:

@@ -12,6 +12,25 @@ vox adds text-to-speech (TTS) and background music to Claude Code and to your ow
 
 **Platforms:** macOS, Linux
 
+## Diagnostics and usage telemetry
+
+Private diagnostic logs live at `~/.punt-labs/vox/logs/vox.log` (0600 files,
+0700 directories). `--verbose` and the `log_level` setting control file verbosity.
+The daemon never mirrors diagnostics to stderr; clients continue without a file
+sink if private logging cannot be configured, with one metadata-only warning.
+
+Usage telemetry is local-only by default, stored separately in
+`~/.punt-labs/vox/telemetry.db`, with 90-day retention. It captures versioned spans
+for MCP tools, dispatched hooks, top-level CLI commands, and daemon synthesis:
+closed operation/provider names, success/error outcomes, cache hits, and text
+lengths. It never captures text, prompts, paths, credentials, or exception messages.
+Unknown operation names become `other`. Shared `punt-observe` configuration owns
+exporters; network export requires explicit opt-in consent.
+
+Set `VOX_TELEMETRY=off` to disable vox usage telemetry, or `PUNT_TELEMETRY=off`
+to disable it for all Punt tools. Either switch wins; disabled telemetry opens no
+database and creates no salt. Diagnostic logging remains available.
+
 ## Quick Start
 
 ```bash

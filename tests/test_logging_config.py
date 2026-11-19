@@ -126,6 +126,37 @@ def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
         logging_config.configure_daemon_logging()
 
 
+@pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_client_setup_failure_is_open(
+    role: logging_config.Role, error: OSError, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logging_config.configure_client_logging(role=role)
+    with patch.object(logging_config, "configure_logging", side_effect=error):
+        logging_config.configure_client_logging(role=role)
+    logging_config.apply_log_level(logging.DEBUG)
+    assert not any(
+        isinstance(h, PrivateFileHandler) for h in logging.getLogger().handlers
+    )
+    assert capsys.readouterr().err == (
+        "vox: private logging unavailable; continuing without file\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
+)
+def test_daemon_setup_failure_propagates(error: OSError) -> None:
+    with (
+        patch.object(logging_config, "configure_logging", side_effect=error),
+        pytest.raises(OSError) as raised,
+    ):
+        logging_config.configure_daemon_logging()
+    assert raised.value is error
+
+
 def test_health_before_first_record() -> None:
     assert logging_config.log_health() == {"name": "vox.log", "status": "healthy"}
 

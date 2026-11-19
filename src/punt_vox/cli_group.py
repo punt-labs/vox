@@ -10,7 +10,8 @@ import typer
 from typer._click.exceptions import UsageError
 from typer.core import TyperGroup
 
-from punt_vox.cli_usage_parser import UsageParser
+from punt_vox import usage
+from punt_vox.cli_json_request import JsonRequest
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ class VoxGroup(TyperGroup):
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Read the output mode before Click can reject an argument."""
-        self._json_requested = self._requests_json(ctx, args)
+        self._json_requested = JsonRequest(self).requested(ctx, args)
         with self._usage_errors():
             return super().parse_args(ctx, args)
 
@@ -53,6 +54,8 @@ class VoxGroup(TyperGroup):
         Raises:
             UsageError: If JSON output is requested without a subcommand.
         """
+        usage.register("cli", lambda: self.commands)
+        ctx.with_resource(usage.command_span(next(iter(args), "other")))
         name, command, rest = super().resolve_command(ctx, args)
         if (
             self._json_requested
@@ -62,31 +65,6 @@ class VoxGroup(TyperGroup):
         ):
             raise UsageError(f"Missing command for '{name}'.", ctx=ctx)
         return name, command, rest
-
-    def _requests_json(self, ctx: Context, args: list[str]) -> bool:
-        """Inspect raw parser results without conversions or option callbacks."""
-        command: Command = self
-        json_option = next(p for p in self.get_params(ctx) if p.name == "json_output")
-        while True:
-            scan = command.context_class(
-                command, parent=ctx, ignore_unknown_options=True
-            )
-            requested, rest = UsageParser(command, scan, json_option).parse(args)
-            if requested:
-                return True
-            if not isinstance(command, TyperGroup) or not rest:
-                return False
-            child = command.get_command(scan, rest[0])
-            if child is None:
-                scan = command.context_class(
-                    command,
-                    parent=ctx,
-                    ignore_unknown_options=True,
-                    allow_interspersed_args=True,
-                )
-                requested, _ = UsageParser(command, scan, json_option).parse(args)
-                return requested
-            command, ctx, args = child, scan, rest[1:]
 
     @contextmanager
     def _usage_errors(self) -> Generator[None]:

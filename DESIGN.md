@@ -3921,3 +3921,47 @@ context.
   `/call stop` and `/vox:call stop`.
 - The reply bound is inactivity (no RPC event for N seconds), never a total
   turn time, so tool-heavy replies are not killed as hangs.
+
+## DES-075: Shared Private Diagnostics and Schema-Owned Usage Telemetry
+
+**Date:** 2026-11-19
+**Status:** Accepted
+
+### Decision
+
+Adopt `punt-observe` for private logging and usage telemetry rather than retain
+vox copies of file security, append/rotation, redaction, or exporters. Pin the
+dependency to git commit `a90872cc20cf688dfd41aeb36c7120e63fc69849` until the
+shared package is published on PyPI.
+
+`logging_config.py` remains the sole vox logging policy adapter: preserve the
+shared log path, file-level controls, role prefixes, and dedicated turn timer.
+The daemon removes stderr logging, including the fallback handler, because a
+service manager would otherwise capture an unprotected copy. Daemon setup is
+fail-closed. CLI, MCP, hook and worker setup is fail-open on private sink errors:
+remove any durable sink, emit one fixed metadata-only stderr line, and continue.
+No logging error may prevent a hook from completing.
+
+`usage.py` owns all four version-1 span schemas and lazily opens one shared
+telemetry facade per process. Entry points supply live command registries;
+the `McpTool` enum drives both tool registration and telemetry, avoiding an eager
+server import in hooks. Provider IDs come from `AudioProviderId`; absent surfaces
+and unknown values use `other`. The internal `_chime` helper is also represented as `other` rather
+than introducing a nonconforming enum. Instrumentation imports only the vox
+facade. OpenTelemetry loads on the first signal, not facade import. Exit-time
+shutdown has a 0.2-second bound.
+
+Capture only closed names/outcomes, cache booleans, and shared-API-derived text
+lengths. Do not capture text, paths, credentials, or exception details. The shared
+configuration owns exporters, private local SQLite storage, 90-day retention,
+network consent and any-off-wins environment controls. Telemetry failures do not
+change operation results or suppress their exceptions. Tests disable telemetry
+globally unless explicitly exercising it under a temporary HOME.
+
+### Rejected alternatives
+
+- Keeping vox-specific sink/exporter implementations duplicates security policy
+  and prevents exporter changes from remaining configuration-only.
+- Mirroring daemon logs to stderr creates a second, non-private durable copy.
+- Failing all clients closed on diagnostics errors breaks hooks for unrelated
+  filesystem problems. Failing the daemon open hides a broken diagnostic sink.

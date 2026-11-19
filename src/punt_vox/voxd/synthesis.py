@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
+from punt_vox import usage
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
 from punt_vox.types import (
@@ -180,7 +181,6 @@ class SynthesisPipeline:
         """
         provider_name = spec.provider or ""
         model = spec.model
-        api_key = spec.api_key
 
         # Normalize around bracket tags so expressive instructions survive.
         normalized = self.apply_vibe_for_synthesis(
@@ -190,28 +190,33 @@ class SynthesisPipeline:
         # Anonymous cache only; credentials are deliberately excluded from identity.
         lookup = SynthesisCache.for_request(normalized, spec, len(text))
         if (cached := lookup.outcome()) is not None:
-            return cached
+            with usage.span("daemon", provider_name, text=text, cached=True):
+                return cached
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
-            if (cached := lookup.outcome()) is not None:
-                return cached
-            with ApiKeyEnv(provider_name, api_key).applied():
-                provider = get_provider(provider_name, model=model)
-                request = self._build_audio_request(normalized, spec)
-                output_path = await TempFileSynthesis(
-                    provider, request, spec, len(text)
-                ).run()
+            cached = lookup.outcome()
+            with usage.span(
+                "daemon", provider_name, text=text, cached=cached is not None
+            ):
+                if cached is not None:
+                    return cached
+                with ApiKeyEnv(provider_name, spec.api_key).applied():
+                    provider = get_provider(provider_name, model=model)
+                    request = self._build_audio_request(normalized, spec)
+                    output_path = await TempFileSynthesis(
+                        provider, request, spec, len(text)
+                    ).run()
 
-                # Report caching only when the anonymous write succeeds.
-                cached_path = lookup.store(output_path)
-                logger.info(
-                    "synthesized %d chars with %s%s",
-                    len(text),
-                    provider_name or "system",
-                    ", cached" if cached_path else "",
-                )
-                return SynthesisOutcome(path=output_path, cached=False)
+                    # Report caching only when the anonymous write succeeds.
+                    cached_path = lookup.store(output_path)
+                    logger.info(
+                        "synthesized %d chars with %s%s",
+                        len(text),
+                        provider_name or "system",
+                        ", cached" if cached_path else "",
+                    )
+                    return SynthesisOutcome(path=output_path, cached=False)
 
     async def try_direct_play(
         self,

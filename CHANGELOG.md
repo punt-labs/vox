@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Privacy-safe usage spans for MCP tools, hooks, CLI commands, and daemon
+  synthesis through shared `punt-observe`. Local-only SQLite capture is the
+  default; `VOX_TELEMETRY=off` or `PUNT_TELEMETRY=off` disables it entirely.
+- Shared private, redacting diagnostic logging through `punt-observe`, pinned
+  to a git commit until PyPI publication. Client logging setup fails open with
+  a metadata-only warning; daemon setup remains fail-closed with no stderr copy.
+
 - Google-style public Python API documentation, comment and docstring lint
   gates, and a generated API reference verified during local checks and CI.
   Audited, documentation-only OO baseline migration updates module-size counts
