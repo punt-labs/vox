@@ -599,6 +599,30 @@ class TestApiKeyInputPaths:
         assert result.exit_code != 0
         assert "is empty" in result.output or "is empty" in result.stderr
 
+    def test_api_key_file_not_utf8_json(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A non-UTF-8 key file is a usage error with a JSON envelope, no traceback."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        key_path = tmp_path / "key.bin"
+        key_path.write_bytes(b"\xffsk_secret\n")
+        key_path.chmod(0o600)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["--json", "say", "hello", "--api-key-file", str(key_path)]
+        )
+
+        assert result.exit_code == 2
+        assert not isinstance(result.exception, UnicodeDecodeError)
+        payload = json.loads(result.output)
+        assert payload == {
+            "error": f"Invalid value: --api-key-file: {key_path} is not valid UTF-8"
+        }
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_api_key_stdin_pipe(
         self,
