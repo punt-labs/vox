@@ -25,6 +25,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/_audio.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 4.0,
+    "avg_complexity": 1.8,
+    "module_size": 57.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/api_key_resolver.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -641,8 +654,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 2.77,
     "max_complexity": 9.0,
-    "avg_complexity": 4.08,
-    "module_size": 292.0,
+    "avg_complexity": 3.85,
+    "module_size": 279.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.2,
     "init_violations": 1.0,

@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import re
 import tempfile
-import warnings
 from collections.abc import Callable, Iterable
 from functools import partial
 from pathlib import Path
 from typing import Literal
 
+from punt_vox._audio import AudioSegment, MP3Assembly
 from punt_vox.types import (
     MergeStrategy,
     SynthesisRequest,
@@ -18,15 +18,6 @@ from punt_vox.types import (
     TTSProvider,
     generate_filename,
 )
-
-# pydub 0.25.1 uses unescaped parentheses in regex strings (utils.py lines
-# 300, 301, 310, 314) which emit SyntaxWarning on Python 3.13 during bytecode
-# compilation. This is an upstream bug; filter before importing pydub.
-# Must match on message, not module — compile-time warnings ignore module filters.
-warnings.filterwarnings(
-    "ignore", category=SyntaxWarning, message=r"invalid escape sequence"
-)
-from pydub import AudioSegment  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -336,20 +327,12 @@ def stitch_audio(segments: list[Path], output_path: Path, pause_ms: int = 500) -
         raise ValueError("segments must not be empty")
 
     silence = AudioSegment.silent(duration=pause_ms)
-    combined: AudioSegment | None = None
+    paths = iter(segments)
+    combined = MP3Assembly(next(paths))
+    for path in paths:
+        combined.append_file(path, silence)
 
-    for path in segments:
-        if not path.exists():
-            raise FileNotFoundError(f"Segment not found: {path}")
-        segment = AudioSegment.from_mp3(str(path))
-        combined = segment if combined is None else combined + silence + segment
-
-    if combined is None:
-        raise ValueError("No audio segments to stitch")
-
-    tail = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
-    combined = combined + tail
-
+    combined.append(AudioSegment.silent(duration=TRAILING_SILENCE_MS))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    combined.export(str(output_path), format="mp3")
+    combined.build().export(str(output_path), format="mp3")
     logger.info("Stitched %d segments → %s", len(segments), output_path)
