@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clients report corrupt daemon discovery files as a connection error.**
+  Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
+  without a traceback or the file's contents.
+
 - **Non-UTF-8 `--api-key-file` contents report a usage error.** `vox say`
   now exits with code 2 and a JSON error under `--json` instead of a
   `UnicodeDecodeError` traceback, without echoing the key's bytes (PL-1186).
