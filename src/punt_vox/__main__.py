@@ -165,7 +165,7 @@ ProviderOpt = Annotated[
         envvar="TTS_PROVIDER",
         help=(
             "TTS provider (elevenlabs, polly, openai, say, espeak)."
-            " Default: auto-detect."
+            " Default: this repo's vox.md provider (vox provider <name>)."
         ),
     ),
 ]
@@ -364,24 +364,10 @@ def say(  # pyright: ignore[reportUnusedFunction]
         )
     once = once or None
 
-    # Empty string from ``VOX_API_KEY=""`` or a literal ``--api-key ""``
-    # is normalized to ``None`` so it does not shadow the mutual
-    # exclusion rules in ``_resolve_api_key``. Real-world trigger: a CI
-    # pipeline that exports ``VOX_API_KEY=""`` globally (because some
-    # jobs use vox and others don't) would otherwise be unable to pass
-    # ``--api-key-file`` or ``--api-key-stdin`` — typer hands the empty
-    # env value to ``api_key``, and without this normalization the
-    # mutual-exclusion check counts it as a fourth source. The
-    # individual readers (``_read_api_key_file``, ``_read_api_key_stdin``)
-    # still reject their own empty content with their own BadParameter
-    # messages, so there is no silent fall-through for paths where
-    # emptiness is actually a user error.
-    api_key = api_key or None
-
     # Resolve the per-call API key from exactly one of the four
     # supported sources (file, stdin, env var, argv) and fire a
     # stderr warning when the argv path was used. See
-    # ``_resolve_api_key`` for the full rationale.
+    # ``ApiKeyResolver`` for the full rationale.
     resolved_api_key = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     ).resolve()
