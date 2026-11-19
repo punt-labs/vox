@@ -96,6 +96,13 @@ class TestWithFields:
         held.with_fields({"voice": "roger"})
         assert held.field("voice") == "charlie"
 
+    @pytest.mark.parametrize("value", [r"abc\1", r"abc\q", r"C:\new", r"\g<0>", "a\\b"])
+    def test_replaces_a_field_with_its_value_taken_literally(self, value: str) -> None:
+        """A backslash is text, not a regex group reference or escape."""
+        updated = FrontmatterBlock(_FENCED).with_fields({"voice": value})
+        assert updated.field("voice") == value
+        assert updated.text == _FENCED.replace('"charlie"', f'"{value}"')
+
 
 class TestValidateValue:
     @pytest.mark.parametrize("bad", ["a\nb", "a\rb"])
