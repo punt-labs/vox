@@ -35,8 +35,7 @@ class VoxGroup(TyperGroup):
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Read the output mode before Click can reject an argument."""
-        options = args[: args.index("--")] if "--" in args else args
-        self._json_requested = "--json" in options
+        self._json_requested = self._requests_json(ctx, args)
         with self._usage_errors():
             return super().parse_args(ctx, args)
 
@@ -58,6 +57,34 @@ class VoxGroup(TyperGroup):
         ):
             raise UsageError(f"Missing command for '{name}'.", ctx=ctx)
         return name, command, rest
+
+    def _requests_json(self, ctx: Context, args: list[str]) -> bool:
+        """Inspect raw parser results without conversions or option callbacks."""
+        command: Command = self
+        json_option = next(p for p in self.get_params(ctx) if p.name == "json_output")
+        while True:
+            scan = command.context_class(
+                command, parent=ctx, resilient_parsing=True, ignore_unknown_options=True
+            )
+            parser = command.make_parser(scan)
+            json_option.add_to_parser(parser, scan)
+            options, rest, _ = parser.parse_args(args.copy())
+            if options.get("json_output"):
+                return True
+            if not isinstance(command, TyperGroup) or not rest:
+                return False
+            child = command.get_command(scan, rest[0])
+            if child is None:
+                scan = self.context_class(
+                    self,
+                    parent=ctx,
+                    resilient_parsing=True,
+                    ignore_unknown_options=True,
+                    allow_interspersed_args=True,
+                )
+                options, _, _ = self.make_parser(scan).parse_args(rest.copy())
+                return bool(options.get("json_output"))
+            command, ctx, args = child, scan, rest[1:]
 
     @contextmanager
     def _usage_errors(self) -> Generator[None]:

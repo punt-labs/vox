@@ -79,3 +79,32 @@ def test_json_group_without_subcommand() -> None:
     assert result.exit_code == 2
     assert json.loads(result.stdout) == {"error": "Missing command for 'daemon'."}
     assert result.stderr == ""
+
+
+def test_root_separator_keeps_child_json_option() -> None:
+    result = CliRunner().invoke(app, ["--", "say", "hi", "--json", "--rate", "nope"])
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {
+        "error": "Invalid value for '--rate': 'nope' is not a valid int."
+    }
+    assert result.stderr == ""
+
+
+def test_global_json_option_on_command_without_local_flag() -> None:
+    result = CliRunner().invoke(app, ["cache", "status", "--json"])
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {"error": "No such option: --json"}
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["say", "hi", "--voice", "--json", "--rate", "nope"],
+        ["music", "new", "PROMPT", "--title", "--json", "--unknown"],
+        ["say", "--rate", "nope", "--", "--json"],
+    ],
+)
+def test_json_value_or_child_literal_preserves_plain_errors(args: list[str]) -> None:
+    test_plain_usage_errors_unchanged(args)
+    assert CliRunner().invoke(app, args).stdout == ""
