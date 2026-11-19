@@ -74,13 +74,13 @@ class VoxGroup(TyperGroup):
                 return False
             child = command.get_command(scan, rest[0])
             if child is None:
-                scan = self.context_class(
-                    self,
+                scan = command.context_class(
+                    command,
                     parent=ctx,
                     ignore_unknown_options=True,
                     allow_interspersed_args=True,
                 )
-                requested, _ = UsageParser(self, scan, json_option).parse(rest)
+                requested, _ = UsageParser(command, scan, json_option).parse(args)
                 return requested
             command, ctx, args = child, scan, rest[1:]
 

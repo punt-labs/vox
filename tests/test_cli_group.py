@@ -61,11 +61,21 @@ def test_plain_usage_errors_unchanged(args: list[str]) -> None:
     assert result.stderr == original.stderr
 
 
-def test_json_literal_after_separator_is_not_a_flag() -> None:
-    result = CliRunner().invoke(app, ["nonexistent", "--", "--json"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["nonexistent", "--", "--json"],
+        ["--", "nonexistent", "--json"],
+        ["daemon", "--", "nonexistent", "--json"],
+        ["--verbose=true", "--", "nonexistent", "--json"],
+    ],
+)
+def test_json_literal_after_separator_is_not_a_flag(args: list[str]) -> None:
+    result = CliRunner().invoke(app, args)
     assert result.exit_code == 2
     assert result.stdout == ""
-    assert "No such command" in result.stderr
+    assert result.stderr
+    test_plain_usage_errors_unchanged(args)
 
 
 def test_json_missing_option_value() -> None:

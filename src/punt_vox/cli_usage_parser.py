@@ -44,12 +44,15 @@ class UsageParser:
         name, separator, _ = args[index].partition("=")
         if not separator or name != exc.option_name:
             return False
-        return any(
-            isinstance(parameter, TyperOption)
-            and parameter.is_flag
-            and name in [*parameter.opts, *parameter.secondary_opts]
+        return name in self._flag_names()
+
+    def _flag_names(self) -> set[str]:
+        return {
+            name
             for parameter in [
                 *self._command.get_params(self._context),
                 self._json_option,
             ]
-        )
+            if isinstance(parameter, TyperOption) and parameter.is_flag
+            for name in [*parameter.opts, *parameter.secondary_opts]
+        }
