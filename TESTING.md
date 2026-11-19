@@ -250,7 +250,7 @@ in-process code stay here.
 
 ### OO, coupling, and suppression ratchets
 
-The dev dependency `punt-oo-ratchet==0.1.0` supplies all three gates through
+The dev dependency `punt-oo-ratchet>=0.1,<0.2` supplies all three gates through
 `oo-ratchet {oo,coupling,suppressions}`. Their implementation tests live in
 [`python-oo-ratchet`](https://github.com/punt-labs/python-oo-ratchet), not in
 this repository. Run `make check-oo check-coupling check-suppressions` to

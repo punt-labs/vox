@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Vox now installs the dev-only `punt-oo-ratchet` package from PyPI instead
+  of embedding the OO, coupling, and suppression ratchets (PL-1160).
+
 ### Fixed
 
 - **`--json` reports CLI usage and unknown-command errors on stdout.**

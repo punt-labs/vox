@@ -40,12 +40,18 @@
 Vox enforces three code-quality ratchets, each a command-line gate run
 under \texttt{make check} and in CI:
 
+All three gates are supplied by the dev-only PyPI package
+\texttt{punt-oo-ratchet}, whose source and implementation tests live in
+\href{https://github.com/punt-labs/python-oo-ratchet}{punt-labs/python-oo-ratchet}.
+The Makefile invokes its CLI against \texttt{src/punt\_vox/} and retains
+vox's committed baseline and audit files.
+
 \begin{itemize}
-\item \textbf{check-oo} (\texttt{tools/oo\_ratchet}): a \emph{must-improve}
+\item \textbf{check-oo} (\texttt{oo-ratchet oo}): a \emph{must-improve}
   ratchet on per-file object-orientation metrics.
-\item \textbf{check-coupling} (\texttt{tools/coupling}): a
+\item \textbf{check-coupling} (\texttt{oo-ratchet coupling}): a
   \emph{regression-only} ratchet on per-file coupling/cohesion metrics.
-\item \textbf{check-suppressions} (\texttt{tools/suppression}): a
+\item \textbf{check-suppressions} (\texttt{oo-ratchet suppressions}): a
   \emph{regression-only} ratchet on a single scalar --- the total count of
   lint/type suppression comments plus \texttt{per-file-ignores}.
 \end{itemize}
@@ -115,8 +121,9 @@ $o = bootstrapPass$. The two non-zero outcomes are the two failure kinds.
 \section{Metric Ordering}
 
 Each metric carries a direction and an absolute target. These are the
-\texttt{Thresholds} tables in the code (\texttt{oo\_ratchet/thresholds.py},
-\texttt{coupling/thresholds.py}). The model leaves the tables abstract:
+\texttt{Thresholds} tables in the package source
+(\texttt{src/oo\_ratchet/oo/thresholds.py},
+\texttt{src/oo\_ratchet/coupling/thresholds.py}). The model leaves the tables abstract:
 only the ordering they induce matters to the ratchet.
 
 \begin{axdef}
@@ -306,7 +313,7 @@ A base baseline that resolves and exists but fails to parse --- or is
 non-dict, carries a non-dict entry, holds a non-numeric or boolean metric,
 or is non-UTF8 --- raises \texttt{GitError}, which the CLI turns into a
 controlled non-zero. All three tools reject these uniformly: check-oo's
-\texttt{show\_baseline} (\texttt{oo\_ratchet/gitio.py}) and its in-tree
+\texttt{show\_baseline} (\texttt{src/oo\_ratchet/oo/gitio.py} in the package source) and its in-tree
 \texttt{Baseline.\_load} now type-harden the blob exactly as coupling and
 suppression do, so a parseable-but-ill-typed baseline can never reach the
 comparison and raise an uncaught \texttt{TypeError}.
