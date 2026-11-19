@@ -56,6 +56,10 @@ class GitIgnores:
         Raises :class:`~.call_agent_errors.CallAgentSpawnError` when git
         cannot run or cannot say which of the two *root* is: a call whose
         ignore rules are unknown must not start.
+
+        Raises:
+            CallAgentSpawnError: If a required executable or repository configuration is
+                unavailable.
         """
         argv = ("git", "-C", str(root), "rev-parse", "--is-inside-work-tree")
         try:
@@ -82,6 +86,9 @@ class GitIgnores:
         """Return those of *paths* (relative to the root, ``/``-separated) git ignores.
 
         Raises :class:`GitIgnoreError` when git does not answer.
+
+        Raises:
+            GitIgnoreError: If git cannot determine which paths are ignored.
         """
         asked = list(dict.fromkeys(path for path in paths if path))
         if not self._active or not asked:

@@ -107,6 +107,10 @@ vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
 dev = [
+    "pydoclint==0.12.0",
+    "docstring-parser-fork==0.0.16",
+    "markdown==3.11.3",
+    "types-markdown>=3.10,<4",
     "punt-oo-ratchet==0.1.0",
     "mypy>=1.18.1",
     "pyright>=1.1.400",
@@ -116,6 +120,11 @@ dev = [
     "pytest-cov>=6.0.0",
     # Builds the throwaway certificates the TLS-verification tests handshake with.
     "cryptography>=46.0.0",
+]
+
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocstrings[python]>=1.0.8",
 ]
 
 [build-system]
@@ -205,6 +214,16 @@ ignore = [
 "src/punt_vox/providers/espeak.py" = ["S603", "S607"]
 "src/punt_vox/providers/convert.py" = ["S603", "S607"]
 "src/punt_vox/providers/local_play.py" = ["S603", "S607"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pydoclint]
+style = "google"
+arg-type-hints-in-docstring = false
+skip-checking-short-docstrings = false
+allow-init-docstring = true
+check-style-mismatch = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

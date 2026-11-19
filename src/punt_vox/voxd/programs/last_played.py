@@ -23,6 +23,7 @@ class LastPlayed:
     _album: AlbumId | None
 
     def __new__(cls) -> Self:
+        """Create a last played."""
         self = super().__new__(cls)
         self._album = None
         return self
@@ -37,6 +38,9 @@ class LastPlayed:
         The bare-``play`` contract is to *repeat an album*; with no history there
         is no album to return, so this raises (PY-EH-8) and the surface renders
         the message beside the catalog rather than playing an arbitrary album.
+
+        Raises:
+            ValueError: If no album has been played.
         """
         if self._album is None:
             msg = "no album played yet; specify an album by id, name, or style/vibe"

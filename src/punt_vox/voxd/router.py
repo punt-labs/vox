@@ -37,6 +37,7 @@ class WebSocketRouter:
         handlers: dict[str, MessageHandler],
         auth_token: str | None,
     ) -> Self:
+        """Create a web socket router."""
         self = super().__new__(cls)
         self._handlers = handlers
         self._auth_token = auth_token
@@ -58,7 +59,7 @@ class WebSocketRouter:
     # -- Connection handler ----------------------------------------------------
 
     async def handle_connection(self, websocket: WebSocket) -> None:
-        """Main WebSocket route at /ws."""
+        """Route WebSocket messages received at /ws."""
         # Browsers always send Origin on a WebSocket handshake; vox's native
         # Python clients (CLI, hooks, MCP server, remote over VOXD_HOST/SSH) never
         # do. A present Origin is therefore a scripted cross-site connection

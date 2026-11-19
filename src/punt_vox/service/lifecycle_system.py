@@ -77,6 +77,7 @@ class LifecycleSystem:
         poll: Poll,
         version: str,
     ) -> Self:
+        """Create a lifecycle system."""
         self = super().__new__(cls)
         self._backend = backend
         self._probe = probe

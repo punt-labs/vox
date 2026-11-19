@@ -1,4 +1,4 @@
-"""Regression test: release scripts must not bypass git hooks (pkit-hsyi)."""
+"""release scripts must not bypass git hooks."""
 
 from __future__ import annotations
 
@@ -8,13 +8,8 @@ from pathlib import Path
 def test_release_scripts_never_bypass_git_hooks() -> None:
     """No release-path script may pass ``--no-verify`` to git.
 
-    The org CLAUDE.md bans ``--no-verify`` outright. ``release-plugin.sh``
-    previously carried it on the "prepare plugin for release" commit; this
-    test greps both release-path scripts so a reintroduction fails
-    immediately, not on the next release. Comments in the target scripts
-    are stripped before scanning, so prose describing the ban (e.g. in
-    ``restore-dev-plugin.sh``'s CONTRACT comment) does not trigger a
-    false positive.
+    The org CLAUDE.md bans --no-verify outright. Comments are stripped before
+    scanning so explanations of the ban do not trigger false positives.
     """
     root = Path(__file__).parent.parent
     targets = [

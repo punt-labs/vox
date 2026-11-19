@@ -54,6 +54,7 @@ class SessionSpec:
     _state: SessionState
 
     def __new__(cls, state: SessionState) -> Self:
+        """Create a session spec."""
         self = super().__new__(cls)
         self._state = state
         return self

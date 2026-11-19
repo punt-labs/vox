@@ -37,6 +37,7 @@ class PendingCapture:
     _in_progress: bool
 
     def __new__(cls) -> Self:
+        """Create a pending capture."""
         self = super().__new__(cls)
         self._chunks = []
         self._in_progress = False
@@ -48,12 +49,12 @@ class PendingCapture:
         return self._in_progress
 
     def note_speech(self) -> bool:
-        """Record a ``SPEECH_CONTINUING`` chunk; return whether this is the rising edge.
+        r"""Record a speech chunk; return whether this is the rising edge.
 
         ``True`` only the first time this is called for the current run --
         every call after that (including across a mid-turn silence dip)
-        returns ``False``, until the run :meth:`close`\\ s or is
-        :meth:`discard`\\ ed.
+        returns ``False``, until the run :meth:`close`\ s or is
+        :meth:`discard`\ ed.
         """
         if self._in_progress:
             return False

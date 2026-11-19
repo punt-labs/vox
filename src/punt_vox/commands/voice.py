@@ -22,6 +22,7 @@ class VoiceCommand:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a voice command."""
         return super().__new__(cls)
 
     async def __call__(
@@ -42,10 +43,7 @@ class VoiceCommand:
         if name is None:
             return self._list(ctx, provider, cfg.voice)
 
-        # Setting a voice with no provider configured lands a wrong-provider
-        # voice into vox.md the moment a caller runs mic:provider -- exactly
-        # the substitution class this bead exists to prevent. Listing does
-        # not require a provider (empty roster is fine); setting does.
+        # Voice names are provider-scoped, so setting requires a provider.
         if not cfg.provider:
             message = str(ProviderNotConfiguredError.for_cli())
             return CommandResult(

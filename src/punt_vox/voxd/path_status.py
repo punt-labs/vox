@@ -38,6 +38,7 @@ class PathStatus:
     _mode: int
 
     def __new__(cls, mode: int) -> Self:
+        """Create a path status."""
         self = super().__new__(cls)
         self._mode = mode
         return self

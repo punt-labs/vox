@@ -579,7 +579,7 @@ class TestApiKeyPassthroughIntegration:
 
 
 class TestCacheApiKeyBypass:
-    """Cache bypass when ``api_key`` is set -- vox-a3e billing isolation."""
+    """Cache bypass when ``api_key`` is set ensures billing isolation."""
 
     def _build_counting_provider(self, calls: list[str | None]) -> type:
         """Stub provider that appends to ``calls`` on every construction."""

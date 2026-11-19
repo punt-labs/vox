@@ -152,11 +152,8 @@ def test_new_uses_configured_provider_from_state(
 ) -> None:
     """``vox rec new`` sends the provider ``vox.md`` names, not an empty field.
 
-    ``vox rec new`` used to build a ``SynthesisSpec`` with only the flags the
-    caller passed, so a bare ``vox rec new "hi"`` sent no provider and let
-    the daemon guess -- the same substitution the client half of vox-w3f8
-    exists to prevent. Routing through ``SessionSpec`` off ``vox.md`` fills
-    provider from state.
+    SessionSpec fills the provider from vox.md before the request reaches the
+    daemon; an omitted CLI flag must not make the daemon guess.
     """
     hermetic_config.joinpath("vox.md").write_text(
         '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
@@ -586,7 +583,7 @@ def test_rec_help_carries_no_internal_labels() -> None:
 
 
 def test_list_accepts_json_flag_after_the_subcommand() -> None:
-    """vox-cnak: --json parses AFTER the subcommand, not only before it."""
+    """: --json parses AFTER the subcommand, not only before it."""
     fmt = OutputFormatter()
     flags = OutputFlags(fmt)
     cli = RecCli(fmt, lambda: InMemoryRecordGateway(), flags=flags)

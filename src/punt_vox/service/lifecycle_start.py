@@ -49,6 +49,7 @@ class StartVerb:
     def __new__(
         cls, system: LifecycleSystem, deadline_s: float, *, require_fresh: bool
     ) -> Self:
+        """Create a start verb."""
         self = super().__new__(cls)
         self._system = system
         self._deadline_s = deadline_s

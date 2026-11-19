@@ -34,6 +34,10 @@ class RunFiles:
         Only absence is ``None``: no voxd published a port. A file that is
         there but cannot be read, or does not hold a port, raises
         ``VoxdConnectionError`` naming why -- a voxd may well be running.
+
+        Raises:
+            VoxdConnectionError: If the daemon port file is unreadable or does not
+                contain a decimal port.
         """
         port_file = _user_run_dir() / "serve.port"
         text = RunFiles._published(port_file)
@@ -76,6 +80,7 @@ class VoxdEndpoint:
     _token: str | None  # None: from VOXD_TOKEN, else serve.token, on each connect
 
     def __new__(cls, host: str | None, port: int | None, token: str | None) -> Self:
+        """Create a voxd endpoint."""
         self = super().__new__(cls)
         self._host = host if host is not None else DaemonEnv.host()
         self._port = port

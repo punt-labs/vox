@@ -47,6 +47,7 @@ class AuditFloorLevel:
     _numeric: int
 
     def __new__(cls, numeric: int) -> Self:
+        """Create an audit floor level."""
         self = super().__new__(cls)
         # Clamp both ends: cap at INFO (the audit floor) and raise to DEBUG (a
         # concrete level), so the result is never NOTSET(0) and never defers.
@@ -62,6 +63,9 @@ class AuditFloorLevel:
         defer-to-parent threshold of zero) clamps up to ``debug``. An unrecognized
         name is a rejected client request -- ``ValueError`` (PY-EH-8), not a
         silent default -- so a malformed frame is refused, not defaulted.
+
+        Raises:
+            ValueError: If name is not a recognized logging level.
         """
         numeric = logging.getLevelNamesMapping().get(name.strip().upper())
         if numeric is None:

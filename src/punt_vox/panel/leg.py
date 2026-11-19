@@ -68,6 +68,7 @@ class VoxPanelLeg:
         topics: tuple[str, ...],
         rest_factory: Callable[[], LuxClient] | None = None,
     ) -> Self:
+        """Create a vox panel leg."""
         self = super().__new__(cls)
         self._service = service
         self._topics = topics

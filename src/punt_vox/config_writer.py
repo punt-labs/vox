@@ -51,6 +51,7 @@ class ConfigWriter:
     _config_dir_finder: Callable[[], Path | None]
 
     def __new__(cls, config_dir_finder: Callable[[], Path | None]) -> Self:
+        """Create a config writer."""
         self = super().__new__(cls)
         self._config_dir_finder = config_dir_finder
         return self

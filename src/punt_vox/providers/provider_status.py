@@ -33,6 +33,7 @@ class ProviderStatusError(Exception):
     def __new__(  # pyright: ignore[reportInconsistentConstructor]
         cls, provider: str, status_code: int | None, detail: str | None
     ) -> Self:
+        """Create a provider status error."""
         self = super().__new__(cls, provider, status_code, detail)
         self._provider_name = provider
         self._status_code = status_code

@@ -39,6 +39,7 @@ class VoiceNotFoundError(ValueError):
     _available: tuple[str, ...]
 
     def __new__(cls, name: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        """Create the exception with its structured failure details."""
         self = super().__new__(cls, name, available)
         self._voice_name = name
         # Tuple-copy in __new__ so the stored field is immutable outright:

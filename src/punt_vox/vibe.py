@@ -28,7 +28,11 @@ class VibeChange:
     mode: str | None
 
     def validate(self) -> None:
-        """Raise ``ValueError`` when the mode is not a recognized value."""
+        """Raise ``ValueError`` when the mode is not a recognized value.
+
+        Raises:
+            ValueError: If mode is not one of the supported vibe modes.
+        """
         if self.mode is not None and self.mode not in VALID_VIBE_MODES:
             msg = f"invalid vibe mode: {self.mode!r}"
             raise ValueError(msg)

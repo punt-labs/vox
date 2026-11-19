@@ -46,6 +46,7 @@ class ChimeHandler(MessageHandler):
         chime_dedup: ChimeDedup,
         playback: PlaybackQueue,
     ) -> Self:
+        """Create a chime handler."""
         self = super().__new__(cls)
         self._chimes = chimes
         self._chime_dedup = chime_dedup
@@ -82,6 +83,7 @@ class VoicesHandler(MessageHandler):
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a voices handler."""
         return super().__new__(cls)
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
@@ -135,6 +137,7 @@ class HealthHandler(MessageHandler):
         *,
         health: DaemonHealth,
     ) -> Self:
+        """Create a health handler."""
         self = super().__new__(cls)
         self._health = health
         return self

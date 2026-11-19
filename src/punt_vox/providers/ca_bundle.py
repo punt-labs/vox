@@ -90,6 +90,7 @@ class CaBundle:
         var: str | None = _CA_FILE_VAR,
         default: TrustDefault = "certifi",
     ) -> Self:
+        """Create a ca bundle."""
         self = super().__new__(cls)
         self._path = path
         self._var = var
@@ -109,8 +110,10 @@ class CaBundle:
 
     @classmethod
     def in_effect(cls, *, default: TrustDefault) -> Self:
-        """Return the trust anchors the client used: the file, else the dir,
-        else *default* -- the anchors that client falls back to."""
+        """Return the trust anchors the client used: the file, else the dir,.
+
+        else *default* -- the anchors that client falls back to.
+        """
         for var in _NOUNS:
             if path := os.environ.get(var):
                 return cls(path, var=var, default=default)

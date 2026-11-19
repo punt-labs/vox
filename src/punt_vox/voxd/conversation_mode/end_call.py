@@ -17,4 +17,5 @@ class EndCall:
     """FR-2's explicit hangup: the human said goodbye or asked to hang up."""
 
     def apply(self, state: CallState) -> None:
+        """Apply the end call transition to the call state."""
         state.end_call()

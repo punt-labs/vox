@@ -42,6 +42,7 @@ class ApiKeyResolver:
         *,
         api_key_stdin: bool,
     ) -> Self:
+        """Create an api key resolver."""
         self = super().__new__(cls)
         self._ctx = ctx
         self._api_key = api_key

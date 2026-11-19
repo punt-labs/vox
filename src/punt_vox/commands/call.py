@@ -79,6 +79,7 @@ class CallCli:
     __slots__ = ()
 
     def __new__(cls) -> Self:
+        """Create a call cli."""
         return super().__new__(cls)
 
     @classmethod

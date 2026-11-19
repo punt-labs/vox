@@ -176,9 +176,8 @@ class TestGuideCheck:
         assert str(packaged) not in results[0].message
 
     def test_missing_asset_wins_over_an_unstamped_deposit(self, tmp_path: Path) -> None:
-        # An unstamped deposit never needed the asset to reach ABSENT_STAMP, so
-        # doctor used to advise "run vox enable" -- which then fails on the same
-        # missing asset. The broken install is the real fault; report it.
+        # A missing packaged asset is an installation fault: advising vox enable would
+        # fail on the same missing asset.
         repo = self._make_repo(tmp_path)
         packaged = self._packaged(tmp_path)
         stamp = GuideStamp(packaged)

@@ -38,6 +38,7 @@ class VoxLuxClients:
     _identity: ClientIdentity
 
     def __new__(cls) -> Self:
+        """Create a vox lux clients."""
         self = super().__new__(cls)
         self._identity = ClientIdentity(
             kind="app", name=_APP_NAME, lease_ttl=_LEASE_TTL_SECONDS

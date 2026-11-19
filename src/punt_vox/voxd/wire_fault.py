@@ -40,6 +40,7 @@ class SafeFault:
     _detail: str
 
     def __new__(cls, wire: str, detail: str) -> Self:
+        """Create a safe fault."""
         self = super().__new__(cls)
         self._wire = wire
         self._detail = detail

@@ -57,6 +57,7 @@ class VoxPanelApplet:
     __slots__ = ("_program",)
 
     def __new__(cls, program: VoxPanelProgram) -> Self:
+        """Create a vox panel applet."""
         self = super().__new__(cls)
         self._program = program
         return self
@@ -79,7 +80,7 @@ class VoxPanelApplet:
 
     @staticmethod
     def _leg_for(session_pid: int) -> VoxPanelLeg:
-        """The leg this applet serves on, identified to the Hub by its session.
+        """Return the leg this applet serves on, identified by its session.
 
         The program token rides in front of the pid so ``AppletIdentity``
         derives a name that distinguishes ``vox-panel`` from any sibling

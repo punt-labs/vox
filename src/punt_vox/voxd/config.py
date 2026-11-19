@@ -87,6 +87,7 @@ class _TokenRedactFilter(logging.Filter):
     """Strip auth tokens from access log messages."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Redact authentication tokens from the record and allow it to be logged."""
         if isinstance(getattr(record, "msg", None), str):
             record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
         if record.args and isinstance(record.args, tuple):
@@ -125,6 +126,7 @@ class DaemonConfig:
     _auth_token: str | None
 
     def __new__(cls, run_dir: Path, config_dir: Path, log_dir: Path) -> Self:
+        """Create a daemon config."""
         self = super().__new__(cls)
         self._run_dir = run_dir
         self._config_dir = config_dir
@@ -211,6 +213,9 @@ class DaemonConfig:
         """Read auth token from run dir, or generate a new one.
 
         Stores the result in ``self._auth_token`` for later access.
+
+        Raises:
+            SystemExit: If an existing token is unreadable or empty.
         """
         token_file = self._run_dir / "serve.token"
         if token_file.exists():

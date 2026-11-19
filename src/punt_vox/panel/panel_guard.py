@@ -52,6 +52,7 @@ class PanelGuard:
         rest_factory: Callable[[], LuxClient],
         logger: logging.Logger,
     ) -> Self:
+        """Create a panel guard."""
         self = super().__new__(cls)
         self._service = service
         self._rest_factory = rest_factory

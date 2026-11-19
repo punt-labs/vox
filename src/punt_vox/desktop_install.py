@@ -1,31 +1,4 @@
-"""Register the vox MCP server with Claude Desktop -- without leaking secrets.
-
-Threat (PL-PP-4): the earlier ``install-desktop`` path resolved the
-ElevenLabs/OpenAI API key and wrote it in plaintext into
-``claude_desktop_config.json`` as ``"env": {"ELEVENLABS_API_KEY": "sk_..."}``.
-That file is world-readable in practice, cloud-synced, and lands in
-backups -- a long-lived secret sprayed into an unprotected config. Anyone
-with read access to the user's home, sync, or backup gets the key.
-
-The MCP server (``vox mcp``) is a thin WebSocket client of ``voxd``. It
-never synthesizes audio and never needs a provider key. ``voxd`` -- the
-daemon that actually calls the provider -- reads its key from ``keys.env``
-at startup (see :meth:`punt_vox.voxd.config.DaemonConfig.load_keys`).
-``vox daemon install`` writes ``keys.env`` (mode 0600, in the 0700 state
-dir) from the installing user's environment.
-
-Therefore the Claude Desktop config must carry only non-secret routing
-config -- the provider name and the output directory. The API key never
-appears there. This module builds that secret-free entry and, when the
-selected provider needs a key the daemon cannot yet reach, emits guidance
-that names the missing variable and where to set it -- never the value.
-
-Design (§3.8): the provider-name choice runs against
-:class:`ProviderCredentials`' own dispatch rather than a second local
-probe, and the ``keys.env`` readiness check uses the same key-variable
-map the daemon's gate reads. Two code paths asking the same question
-were the shape of the state-authority defect this bead closes.
-"""
+"""Build Claude Desktop MCP configuration for an explicitly selected provider."""
 
 from __future__ import annotations
 
@@ -74,6 +47,7 @@ class DesktopInstaller:
     _DEFAULT_CONFIG_HOME: ClassVar[str] = "~/.config"
 
     def __new__(cls, provider: str, audio_dir: Path) -> Self:
+        """Create a desktop installer."""
         self = super().__new__(cls)
         self._provider = provider
         self._audio_dir = audio_dir
@@ -99,6 +73,9 @@ class DesktopInstaller:
         (:meth:`punt_vox.service.installer.ServiceInstaller.detect_platform`),
         so no host vox supports reaches the refusal, and no unverified path is
         guessed for one it does not.
+
+        Raises:
+            ValueError: If the host platform is not macOS or Linux.
         """
         system = platform.system()
         if system == "Darwin":
@@ -145,6 +122,9 @@ class DesktopInstaller:
         resolve identically. Raises :class:`ValueError` when no provider
         is ready: a fresh install with no credentials in view of the
         installer has nothing sensible to write as the routing default.
+
+        Raises:
+            ValueError: If no configured provider is available.
         """
         if provider_name is not None:
             return cls(provider_name.lower(), audio_dir)
@@ -178,11 +158,11 @@ class DesktopInstaller:
         }
 
     def requires_credential(self) -> bool:
-        """True if the provider authenticates with an API key."""
+        """Return whether the provider authenticates with an API key."""
         return self._provider in _PROVIDER_KEY_VARS
 
     def daemon_can_authenticate(self) -> bool:
-        """True if the daemon can reach the provider key (or needs none).
+        """Return whether the daemon can reach the provider key (or needs none).
 
         Reachability is determined *solely* from ``keys.env``. The daemon
         (``voxd``) is a detached launchd/systemd service that never inherits
@@ -200,6 +180,9 @@ class DesktopInstaller:
         Precondition: the provider is key-based (:meth:`requires_credential`).
         Names the missing variable and where the daemon reads it -- never the
         secret value.
+
+        Raises:
+            ValueError: If this provider does not require a credential.
         """
         if not self.requires_credential():
             msg = (
@@ -218,7 +201,7 @@ class DesktopInstaller:
 
     @staticmethod
     def _keys_env_has(key_var: str) -> bool:
-        """True if ``keys.env`` holds a non-empty value for *key_var*.
+        """Return whether ``keys.env`` holds a non-empty value for *key_var*.
 
         Reading the daemon's credential file is a system boundary: a
         missing, unreadable, or non-UTF-8 file means "the daemon has no

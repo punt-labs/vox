@@ -107,6 +107,7 @@ class ProgramService:
         sleeper: Sleeper,
         mpv_socket: Path,
     ) -> Self:
+        """Create a program service."""
         self = super().__new__(cls)
         self._store = store
         self._root = root
@@ -304,6 +305,9 @@ class ProgramService:
         Distinguishes an unknown id from a known-but-empty album: a resolved
         album with zero ready tracks reports "no playable tracks yet" rather than
         the generic tag-miss message, which would misread as an unknown album.
+
+        Raises:
+            ValueError: If the album is missing or contains no playable parts.
         """
         album = self._catalog.by_id(album_id)
         if album is None:
@@ -323,6 +327,9 @@ class ProgramService:
         recorded, so a bare ``play`` never silently falls back to an arbitrary
         album -- with no history the register raises and the surface lists the
         catalog instead.
+
+        Raises:
+            ValueError: If there is no last-played album or it is no longer playable.
         """
         self.replay_album(self._last_played.require())
 

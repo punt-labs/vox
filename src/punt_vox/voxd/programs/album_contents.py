@@ -38,6 +38,9 @@ class PartFile:
         file: a manifest entry that resolves to a symlink or directory is corrupt
         and raises ``ValueError`` (the manifest handler turns it into a clean wire
         error) rather than leaking the byte count of whatever the link targets.
+
+        Raises:
+            ValueError: If the audio path is not a regular file.
         """
         contained = root.contained_child(part.identity)
         info = contained.lstat()

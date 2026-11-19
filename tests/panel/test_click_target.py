@@ -57,9 +57,7 @@ class TestModel:
     def test_a_snapshot_with_no_provider_offers_no_models(self) -> None:
         """No provider chosen means no model list -- never a substituted one.
 
-        The panel used to fall back to ElevenLabs' models here, showing a
-        session that had picked no provider a list belonging to one it
-        never chose. Every index must now be refused instead.
+        A provider without selectable models must not display ElevenLabs models.
         """
         target = ClickTarget(_state(provider=None, model=None))
         with pytest.raises(ValueError):

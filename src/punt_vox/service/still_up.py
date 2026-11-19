@@ -27,6 +27,7 @@ class StillUp:
     _main: tuple[int, ...]
 
     def __new__(cls, unmanaged: Iterable[int], main: Iterable[int]) -> Self:
+        """Create a still up."""
         self = super().__new__(cls)
         self._unmanaged = tuple(sorted(unmanaged))
         self._main = tuple(sorted(main))

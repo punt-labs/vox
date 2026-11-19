@@ -51,6 +51,7 @@ class AnchorUnresolvedError(ValueError):
     def __new__(  # pyright: ignore[reportInconsistentConstructor]
         cls, anchor: str
     ) -> Self:
+        """Create an anchor unresolved error."""
         # Pass ``anchor`` through so BaseException.__init__ stores it in
         # ``.args`` (structured data for pickling and reflection); the descriptive
         # message is composed in :meth:`__str__` from ``self._anchor``.
@@ -84,6 +85,9 @@ class PlayerEventCodec:
         before the lux publish-payload passthrough lands, ``lux-r4pp``: no ``anchor``
         yet, so the click is inert), or an anchor naming no catalogued album raises
         (PY-EH-8), and the subscription boundary logs and drops it.
+
+        Raises:
+            ValueError: If the event name or payload is unsupported.
         """
         match topic:
             case MusicTopic.PLAY:

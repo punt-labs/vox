@@ -38,6 +38,7 @@ class PermanentSttFailure:
     _ending: str
 
     def __new__(cls, kind: type[Exception], detail: str, ending: str) -> Self:
+        """Create a permanent stt failure."""
         self = super().__new__(cls)
         self._kind = kind
         self._detail = detail

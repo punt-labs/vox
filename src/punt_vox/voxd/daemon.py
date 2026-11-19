@@ -103,6 +103,7 @@ class VoxDaemon:
         # "Music" frame on their display beside the real one.
         lux_clients: LuxClientFactory | None = None,
     ) -> Self:
+        """Create a vox daemon."""
         self = super().__new__(cls)
         self._config = config
         self._playback = playback

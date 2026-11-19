@@ -67,6 +67,7 @@ class PiRpcChannel:
     _stderr: PiStderr
 
     def __new__(cls, process: asyncio.subprocess.Process) -> Self:
+        """Create a pi rpc channel."""
         self = super().__new__(cls)
         self._process = process
         self._stderr = PiStderr(process.stderr)
@@ -74,7 +75,12 @@ class PiRpcChannel:
 
     @classmethod
     async def open(cls, launch: CallAgentLaunch, cwd: Path) -> Self:
-        """Start the process *launch* describes, in *cwd*, with its stripped env."""
+        """Start the process *launch* describes, in *cwd*, with its stripped env.
+
+        Raises:
+            CallAgentSpawnError: If a required executable or repository configuration is
+                unavailable.
+        """
         try:
             process = await asyncio.create_subprocess_exec(
                 *launch.argv(),
@@ -110,6 +116,9 @@ class PiRpcChannel:
         The bound restarts with every record, of any kind -- a tool-heavy
         reply streams tool events the whole time it works, so only genuine
         silence trips it, never a long but busy turn.
+
+        Raises:
+            CallAgentEndedError: If the agent exits or its output stream cannot be read.
         """
         stdout = self._process.stdout
         if stdout is None:

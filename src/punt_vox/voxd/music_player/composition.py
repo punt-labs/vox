@@ -53,6 +53,7 @@ class MusicPlayerSubsystem:
         # None means voxd's real app-identity clients; tests inject a fake factory.
         clients: LuxClientFactory | None = None,
     ) -> Self:
+        """Create a music player subsystem."""
         lux = clients if clients is not None else VoxLuxClients()
         self = super().__new__(cls)
         self._publisher = LuxScenePublisher(lux.client)

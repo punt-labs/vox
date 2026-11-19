@@ -43,6 +43,7 @@ class CliGuard:
     _formatter: OutputFormatter
 
     def __new__(cls, formatter: OutputFormatter) -> Self:
+        """Create a cli guard."""
         self = super().__new__(cls)
         self._formatter = formatter
         return self
@@ -60,6 +61,9 @@ class CliGuard:
         Routed through the formatter so ``--json`` answers with the same
         ``{"error": ...}`` envelope the ``mic`` tools return, rather than a blank
         stdout beside plain-text stderr a JSON consumer cannot parse.
+
+        Raises:
+            typer.Exit: Always, after reporting the failure to the caller.
         """
         self._formatter.error(message, f"Error: {message}")
         raise typer.Exit(code=1)

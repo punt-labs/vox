@@ -28,6 +28,7 @@ class SettingsDocument:
     _origin: Path
 
     def __new__(cls, data: dict[str, Any], origin: Path) -> Self:
+        """Create a settings document."""
         self = super().__new__(cls)
         self._data = data
         self._origin = origin
@@ -38,6 +39,9 @@ class SettingsDocument:
         """Return the document *text* holds; empty or blank text is ``{}``.
 
         Raise ``ValueError`` when the root is not a JSON object.
+
+        Raises:
+            ValueError: If the JSON document is not an object.
         """
         if not text.strip():
             return cls({}, origin)
@@ -56,6 +60,9 @@ class SettingsDocument:
         a string or number would, rather than being read as absent and silently
         overwritten. Only a genuinely *absent* key is safe to treat as empty and
         create later.
+
+        Raises:
+            ValueError: If the named permission entry is not a list.
         """
         if "permissions" not in self._data:
             return []

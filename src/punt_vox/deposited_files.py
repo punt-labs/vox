@@ -38,6 +38,7 @@ class VoxMarker:
     _file: ToolOwnedFile
 
     def __new__(cls, path: Path, base: Path) -> Self:
+        """Create a vox marker."""
         self = super().__new__(cls)
         self._file = ToolOwnedFile(path, base)
         return self
@@ -73,6 +74,7 @@ class DepositedGuide:
     _file: ToolOwnedFile
 
     def __new__(cls, path: Path, base: Path) -> Self:
+        """Create a deposited guide."""
         self = super().__new__(cls)
         self._file = ToolOwnedFile(path, base)
         return self
@@ -98,6 +100,9 @@ class DepositedGuide:
         The asset is read in full before the truncating write, so a broken
         install raises with the reinstall step and leaves any existing deposit
         byte-identical.
+
+        Raises:
+            OSError: If neither linking nor copying can deposit the file.
         """
         try:
             text = GuideStamp.for_packaged_asset().stamped()

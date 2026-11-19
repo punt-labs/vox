@@ -67,6 +67,7 @@ class EnablementCli:
     _NOTIFY_VALUES: ClassVar[dict[str, str]] = {"normal": "y", "continuous": "c"}
 
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
+        """Create an enablement cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._flags = flags
@@ -162,7 +163,7 @@ class EnablementCli:
     ) -> None:
         """Set the per-repo notification level within "on" (normal or continuous).
 
-        Distinct from the enablement marker: ``off`` is no longer a level; use
+        Distinct from the enablement marker: ``off`` is not a level; use
         ``vox disable`` to turn vox off for the repo. ``continuous`` implies
         speech (sets ``speak=y``); ``normal`` leaves ``speak`` alone after the
         first init. Change the session voice through ``vox voice`` -- notify
@@ -173,6 +174,9 @@ class EnablementCli:
 
         See also: vox enable/disable (enablement marker), vox speak (voice on/off),
         vox voice (session voice), mic:notify (MCP peer).
+
+        Raises:
+            typer.BadParameter: If mode is not one of the supported notify values.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         if mode not in self._NOTIFY_VALUES:

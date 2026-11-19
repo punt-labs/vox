@@ -35,6 +35,7 @@ class VoxPanelProgram:
     __slots__ = ("_claim", "_leg", "_watch")
 
     def __new__(cls, claim: AppletClaim, leg: VoxPanelLeg, watch: SessionEnd) -> Self:
+        """Create a vox panel program."""
         self = super().__new__(cls)
         self._claim = claim
         self._leg = leg

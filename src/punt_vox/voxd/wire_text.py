@@ -49,6 +49,7 @@ class SafeText:
     _text: str
 
     def __new__(cls, text: str) -> Self:
+        """Create a safe text."""
         self = super().__new__(cls)
         self._text = text
         return self

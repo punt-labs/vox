@@ -1,19 +1,7 @@
-"""Shared per-user path resolution for voxd and the vox CLI.
+"""Resolve shared per-user paths for the daemon and its clients.
 
-Both ``voxd.py`` and ``service.py`` need a consistent view of where the
-daemon's per-user state lives. Previously each file defined its own
-``_data_root()``/``_config_dir()``/``_log_dir()``/``_run_dir()`` helpers
-that resolved to FHS system paths (``/etc/vox``, ``/var/log/vox``,
-``/var/run/vox``) on Linux and Homebrew-prefix paths on macOS. That was a
-regression: voxd runs as a single user (``User=`` in the systemd unit,
-``UserName`` in the launchd plist), so its state is per-user, not
-system-shared. The FHS paths stranded user API keys on upgrade, required
-``sudo`` to edit personal tokens, and created a chown mismatch where the
-file voxd was told to read was owned by root.
-
-This module is the single source of truth for those paths. Keep it
-lightweight — stdlib only — so both the heavy voxd import chain and the
-minimal client can depend on it without pulling providers.
+Daemon state is per-user, not system-shared. Keep this module stdlib-only so
+lightweight clients can resolve paths without importing providers.
 """
 
 from __future__ import annotations
@@ -95,8 +83,7 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
     cached synthesis output, saved recordings, call summaries. The chmod is
     applied on every call,
     not just at creation time, so pre-existing directories with looser
-    permissions (for example 0755 from an older version that respected
-    process umask) are tightened on the next startup.
+    permissions (for example 0755 from process umask) are tightened on startup.
 
     Idempotent: safe to call repeatedly. Does not chown — callers are
     expected to invoke this as the target user.
@@ -122,6 +109,9 @@ def installed_version() -> str:
     version-reporting standard. Used by both the ``vox doctor``
     daemon-staleness check and by voxd at startup when populating the
     health response, so both always resolve the one true version.
+
+    Raises:
+        RuntimeError: If no installed package metadata can be found.
     """
     try:
         return importlib.metadata.version("punt-vox")

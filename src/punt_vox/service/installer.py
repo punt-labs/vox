@@ -52,6 +52,7 @@ class ServiceInstaller:
     _process_mgr: ProcessManager
 
     def __new__(cls) -> Self:
+        """Create a service installer."""
         self = super().__new__(cls)
         self._process_mgr = ProcessManager()
         self._keys_writer = KeysEnvWriter()
@@ -111,7 +112,11 @@ class ServiceInstaller:
 
     @staticmethod
     def detect_platform() -> PlatformName:
-        """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms."""
+        """Return ``'macos'`` or ``'linux'``.  Raise on unsupported platforms.
+
+        Raises:
+            SystemExit: If the platform has no supported service backend.
+        """
         system = platform.system()
         if system == "Darwin":
             return "macos"
@@ -131,6 +136,9 @@ class ServiceInstaller:
         """Install voxd as a system service.  Return a status message.
 
         Must be run as a normal user, not as root or under ``sudo``.
+
+        Raises:
+            SystemExit: If service installation fails.
         """
         self._refuse_root("install")
         try:
@@ -193,6 +201,9 @@ class ServiceInstaller:
         signalled, so reporting success would strand a live daemon. Must be
         run as a normal user: as root its run-directory writes would follow
         whatever the user left there.
+
+        Raises:
+            SystemExit: If service removal fails.
         """
         self._refuse_root("uninstall")
         try:

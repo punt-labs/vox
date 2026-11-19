@@ -66,6 +66,11 @@ class CallAgentLaunch:
     _policy: SecretPathPolicy
 
     def __new__(cls, policy: SecretPathPolicy, *, pi_bin: str = "pi") -> Self:
+        """Create a call agent launch.
+
+        Raises:
+            ValueError: If the secret-guard executable is missing.
+        """
         if not SECRET_GUARD.is_file():
             msg = f"the call agent's secret guard is missing: {SECRET_GUARD}"
             raise ValueError(msg)
@@ -76,10 +81,12 @@ class CallAgentLaunch:
 
     @property
     def program(self) -> str:
+        """Return the call-agent executable."""
         return self._pi_bin
 
     @property
     def policy(self) -> SecretPathPolicy:
+        """Return the secret-path policy enforced for this agent."""
         return self._policy
 
     def argv(self) -> tuple[str, ...]:

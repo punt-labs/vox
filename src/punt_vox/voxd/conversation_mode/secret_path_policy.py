@@ -104,6 +104,7 @@ class SecretPathPolicy:
         # None: a policy of patterns alone, which consults no git rules.
         git: GitIgnores | None = None,
     ) -> Self:
+        """Create a secret path policy."""
         self = super().__new__(cls)
         self._root = Path(os.path.normpath(root.expanduser().absolute()))
         self._real_root = self._root.resolve()
@@ -118,6 +119,10 @@ class SecretPathPolicy:
         Raises :class:`~.call_agent_errors.CallAgentSpawnError` unless the
         ``.gitignore`` reads cleanly or is absent: a deny-list missing the
         repo's own secret patterns is not one to start an agent under.
+
+        Raises:
+            CallAgentSpawnError: If a required executable or repository configuration is
+                unavailable.
         """
         gitignore = root / ".gitignore"
         try:
@@ -132,6 +137,7 @@ class SecretPathPolicy:
 
     @property
     def patterns(self) -> tuple[str, ...]:
+        """Return the secret-path patterns enforced by this policy."""
         return self._patterns
 
     def denies(self, candidate: str, *, cwd: Path) -> bool:

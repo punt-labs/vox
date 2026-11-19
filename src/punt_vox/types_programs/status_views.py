@@ -46,7 +46,12 @@ class NowPlaying:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a now-playing view from a wire object, raising on a bad record."""
+        """Build a now-playing view from a wire object, raising on a bad record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(index=obj.require_int("index"), of=obj.require_int("of"))
 
 
@@ -80,7 +85,12 @@ class GenerationStatus:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a generation view from a wire object, raising on a bad record."""
+        """Build a generation view from a wire object, raising on a bad record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(
             filling=obj.require_bool("filling"),
             attempts=obj.require_int("attempts"),
@@ -106,5 +116,10 @@ class FailedPartView:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a failed-Part view from a wire object, raising on a bad record."""
+        """Build a failed-Part view from a wire object, raising on a bad record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         return cls(index=obj.require_int("index"), reason=obj.require_str("reason"))

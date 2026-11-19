@@ -50,6 +50,7 @@ class SceneMailbox:
     _ready: asyncio.Event
 
     def __new__(cls) -> Self:
+        """Create a scene mailbox."""
         self = super().__new__(cls)
         self._latest = None
         self._install = False

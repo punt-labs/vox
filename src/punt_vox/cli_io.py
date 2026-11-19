@@ -32,6 +32,7 @@ class OutputFlags:
     _quiet_seen: bool
 
     def __new__(cls, formatter: OutputFormatter) -> Self:
+        """Create an output flags."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._verbose_seen = False
@@ -46,7 +47,11 @@ class OutputFlags:
         self._formatter.set_quiet(value=False)
 
     def apply(self, *, json_output: bool, verbose: bool, quiet: bool) -> None:
-        """Fold one position's flags into the shared formatter and logging."""
+        """Fold one position's flags into the shared formatter and logging.
+
+        Raises:
+            typer.BadParameter: If verbose and quiet are both requested.
+        """
         if verbose:
             self._verbose_seen = True
         if quiet:
@@ -76,6 +81,7 @@ class TextInput:
     _formatter: OutputFormatter
 
     def __new__(cls, formatter: OutputFormatter) -> Self:
+        """Create a text input."""
         self = super().__new__(cls)
         self._formatter = formatter
         return self
@@ -86,6 +92,9 @@ class TextInput:
         Text may come from the argument, from a ``--from`` JSON file (an array of
         strings or ``{text}`` objects), or from stdin -- when TEXT is ``-`` or
         when no argument is given and stdin is not a terminal (a pipe).
+
+        Raises:
+            typer.Exit: If text cannot be read from the arguments or standard input.
         """
         if from_file is not None:
             return self._segments_from_file(from_file)

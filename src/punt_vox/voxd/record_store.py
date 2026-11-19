@@ -4,7 +4,7 @@ A wire client never names a daemon path. It supplies at most a **bare name**
 (or nothing, in which case the store content-addresses by text); the store
 rejects anything absolute, separated, traversing, empty, or NUL-bearing, then
 resolves the candidate under a daemon-owned root and **verifies containment**
-before writing. This is the vox-zu39 (P1) security primitive: the token
+before writing. This is the  (P1) security primitive: the token
 authorizes audio operations, not filesystem writes as the daemon user, so no
 request -- local or remote -- can escape the root.
 
@@ -80,6 +80,7 @@ class RecordStore:
     _root: Path
 
     def __new__(cls, root: Path) -> Self:
+        """Create a record store."""
         self = super().__new__(cls)
         self._root = root
         return self
@@ -141,6 +142,9 @@ class RecordStore:
         client could never have named. A missing root is an empty store; a root
         that exists but cannot be read raises, so an access fault is never masked
         as an empty listing (``RecListHandler`` turns the ``OSError`` into a fault).
+
+        Raises:
+            OSError: If the store exists but cannot be enumerated or inspected.
         """
         if not PathStatus.of(self._root).is_directory:
             return ()
@@ -195,6 +199,9 @@ class RecordStore:
         ``FileNotFoundError`` so a client can trust a success; an ``OSError`` from
         the classify or the unlink (a permission or device fault) propagates
         unchanged -- an access fault is never mislabeled a benign "not found".
+
+        Raises:
+            FileNotFoundError: If the reference is neither a stored file nor a symlink.
         """
         path = self._child_within_root(ref)
         # A no-follow classify accepts a link entry (even a broken one) so its

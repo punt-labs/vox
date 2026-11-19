@@ -56,6 +56,7 @@ class CallControl:
     _path: Path
 
     def __new__(cls, path: Path) -> Self:
+        """Create a call control."""
         self = super().__new__(cls)
         self._path = path
         return self
@@ -92,6 +93,9 @@ class CallControl:
         reported as "no request" rather than raised, since a caller
         mid-call must not have its boundary handler end the whole call
         over a malformed control file.
+
+        Raises:
+            OSError: If the mailbox cannot be renamed or the consumed file removed.
         """
         consuming_path = self._path.with_name(self._path.name + ".consuming")
         try:

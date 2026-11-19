@@ -36,6 +36,7 @@ class ClickTarget:
     __slots__ = ("_state",)
 
     def __new__(cls, state: PanelState) -> Self:
+        """Create a click target."""
         self = super().__new__(cls)
         self._state = state
         return self

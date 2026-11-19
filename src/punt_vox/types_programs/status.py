@@ -1,18 +1,7 @@
-"""``ProgramStatus`` -- the first-class, format-spanning observability surface.
+"""Represent format-neutral, daemon-authoritative program status.
 
-Because any client now drives ``voxd`` (ownership is gone), any client must be
-able to *see* what ``voxd`` is doing. ``ProgramStatus`` is that view: a single,
-format-neutral value object rendered identically through the ``mic`` MCP
-``status`` tool and the ``vox music status`` CLI. It carries no ``vibe``/``style``
-content (that is manifest *subject* data, not runtime status), so the same shape
-reports a playlist track today and a podcast segment or audiobook chapter later
-with no field change -- the shape is decided here, once (design section 5).
-
-Both failure surfaces are present and distinct:
-``generation.last_error`` is the *program-level* failure (retrying/failed,
-nothing can play) and ``failed_parts`` is the *per-Part* permanent failure while
-the Program plays on. Reading a log is not a strategy for a client: a caller
-asking "what is playing?" gets exactly this, authoritatively, on every call.
+CLI and MCP clients share this view. Program-level generation failures are
+separate from permanent per-part failures that let playback continue.
 """
 
 from __future__ import annotations
@@ -151,7 +140,12 @@ class ProgramStatus:
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a status from a wire object, raising on a malformed record."""
+        """Build a status from a wire object, raising on a malformed record.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
         now = obj.opt_object("now_playing")
         fault = obj.opt_object("playback_error")
         return cls(

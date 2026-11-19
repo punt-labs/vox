@@ -46,6 +46,7 @@ class CountStore:
     __slots__ = ("_counts", "_lock", "_written")
 
     def __new__(cls) -> Self:
+        """Create a count store."""
         self = super().__new__(cls)
         self._counts = {}
         self._lock = threading.Lock()

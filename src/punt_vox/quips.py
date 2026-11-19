@@ -3,8 +3,7 @@
 Each pool is a tuple of strings — immutable, deterministic ordering for
 testing.  ``random.choice()`` picks from them at runtime.
 
-Pools are grouped by hook event.  Keeping all text here simplifies
-future localization (swap this module) and theming (load from config).
+Pools are grouped by hook event.
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ on the full rendered message rather than a substring, because the whole
 reason :class:`ProviderUnavailableError` exists is that ``BaseException``
 clobbers ``args`` set in ``__new__``: a ``match="polly"`` substring test
 against a tuple repr passes when the real render is broken, which is
-exactly how the earlier defect (bead vox-ll26) survived review.
+exactly how the earlier defect (bead ) survived review.
 """
 
 from __future__ import annotations

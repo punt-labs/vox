@@ -43,7 +43,9 @@ class ChimeFn(Protocol):
     call's event loop" reason as ``SpeakFn`` (see that Protocol's docstring).
     """
 
-    async def __call__(self) -> None: ...
+    async def __call__(self) -> None:
+        """Play one bundled wait chime without synthesizing speech."""
+        ...
 
 
 @final
@@ -61,6 +63,7 @@ class WaitCue:
     _chime: ChimeFn | None
 
     def __new__(cls, chime: ChimeFn | None) -> Self:
+        """Create a wait cue."""
         self = super().__new__(cls)
         self._chime = chime
         return self

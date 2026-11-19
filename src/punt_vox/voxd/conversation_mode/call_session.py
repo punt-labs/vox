@@ -107,6 +107,7 @@ class CallSession:
         # not a deferred decision.
         chime: ChimeFn | None = None,
     ) -> Self:
+        """Create a call session."""
         self = super().__new__(cls)
         self._actor = CallActor()
         self._turn_detector = turn_detector

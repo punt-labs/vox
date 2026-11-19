@@ -35,9 +35,8 @@ if TYPE_CHECKING:
 
 __all__ = ["SettingsRegistration"]
 
-# Rules an earlier vox granted and no longer does, stripped by every rewrite so
-# enable and disable both retire them: ``Bash(vox -*)`` made ``vox --version``
-# prompt (punt-kit DES-039).
+# Strip the broad flag rule on both enable and disable: it prompts even for
+# read-only invocations such as ``vox --version``.
 _LEGACY_RULES: dict[str, tuple[str, ...]] = {"ask": ("Bash(vox -*)",)}
 
 
@@ -60,6 +59,7 @@ class SettingsRegistration:
     def __new__(
         cls, settings_path: Path, rules: Mapping[str, tuple[str, ...]] = VOX_RULES
     ) -> Self:
+        """Create a settings registration."""
         self = super().__new__(cls)
         self._path = settings_path
         self._lock = SiblingLock(settings_path)

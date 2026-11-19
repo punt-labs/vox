@@ -72,6 +72,7 @@ class ReplyRedactor:
     )
 
     def __new__(cls) -> Self:
+        """Create a reply redactor."""
         return super().__new__(cls)
 
     def __call__(self, text: str) -> str:

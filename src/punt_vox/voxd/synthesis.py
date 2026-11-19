@@ -58,6 +58,7 @@ class SynthesisPipeline:
     _playback_mutex: asyncio.Lock
 
     def __new__(cls, *, playback_mutex: asyncio.Lock) -> Self:
+        """Create a synthesis pipeline."""
         self = super().__new__(cls)
         self._env_lock = asyncio.Lock()
         self._playback_mutex = playback_mutex

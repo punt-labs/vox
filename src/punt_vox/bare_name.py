@@ -53,6 +53,12 @@ class BareName:
     _value: str
 
     def __new__(cls, name: str, label: str) -> Self:
+        """Create a bare name.
+
+        Raises:
+            ValueError: If the name is empty, contains separators, or is a dot
+                component.
+        """
         for is_rejected, suffix in _REJECTIONS:
             if is_rejected(name):
                 raise ValueError(f"{label} {suffix}")

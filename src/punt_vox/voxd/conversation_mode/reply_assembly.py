@@ -27,6 +27,7 @@ class ReplyAssembly:
     _pieces: list[str]
 
     def __new__(cls) -> Self:
+        """Create a reply assembly."""
         self = super().__new__(cls)
         self._pieces = []
         return self

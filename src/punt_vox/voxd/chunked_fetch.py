@@ -42,6 +42,11 @@ class ChunkedTransfer:
     _chunk_bytes: int
 
     def __new__(cls, reply: WireReply, chunk_bytes: int) -> Self:
+        """Create a chunked transfer.
+
+        Raises:
+            ValueError: If chunk_bytes is not positive.
+        """
         if chunk_bytes <= 0:
             msg = f"chunk_bytes must be positive, got {chunk_bytes}"
             raise ValueError(msg)

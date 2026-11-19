@@ -24,6 +24,7 @@ class ListHandler:
     _service: ProgramService
 
     def __new__(cls, service: ProgramService) -> Self:
+        """Create a list handler."""
         self = super().__new__(cls)
         self._service = service
         return self

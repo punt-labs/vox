@@ -73,18 +73,22 @@ class CallAgentState:
 
     @property
     def proc(self) -> AgentProc:
+        """Return the call agent's managed process."""
         return self._proc
 
     @property
     def context_delivered(self) -> bool:
+        """Return whether the agent has received its initial session context."""
         return self._context_delivered
 
     @property
     def read_only(self) -> bool:
+        """Return whether the call agent is restricted to read-only tools."""
         return self._read_only
 
     @property
     def turns_handled(self) -> int:
+        """Return the number of turns handled by this call agent."""
         return self._turns_handled
 
     @property

@@ -62,8 +62,7 @@ class _LoggingFastMCP(FastMCP):
     """A ``FastMCP`` that logs one vox-owned ``mic:<tool>`` INFO line per call.
 
     ``call_tool`` is the one method every tool invocation flows through, so
-    overriding it names each call in vox.log -- replacing the suppressed ``mcp``
-    framework's tool-name-less "Processing request" noise. Unlike a per-function
+    overriding it names each call in vox.log. Unlike a per-function
     decorator (which FastMCP unwraps via ``__wrapped__`` and bypasses), the
     override is always on the invocation path, and it never touches a tool's
     signature or schema. It is also where the long-lived server picks up a
@@ -82,7 +81,7 @@ class _LoggingFastMCP(FastMCP):
 
         Reject any ``arguments`` key the tool's schema does not declare before
         dispatch. FastMCP's Pydantic argument model silently drops undeclared
-        keys, so a caller sending a retired parameter (e.g. ``voice=`` on
+        keys, so a caller sending an unsupported parameter (e.g. ``voice=`` on
         ``mic:speak``) would see a success envelope while the intended write
         never landed. Naming the offending key back at the caller turns a silent
         drop into a diagnostic failure.
@@ -172,6 +171,7 @@ class SessionConfig:
 
     @voice.setter
     def voice(self, value: str | None) -> None:
+        """Set the session's voice override."""
         self._voice = value
 
     @property
@@ -181,6 +181,7 @@ class SessionConfig:
 
     @provider.setter
     def provider(self, value: str | None) -> None:
+        """Set the session's provider override."""
         self._provider = value
 
     @property
@@ -190,6 +191,7 @@ class SessionConfig:
 
     @model.setter
     def model(self, value: str | None) -> None:
+        """Set the session's model override."""
         self._model = value
 
     @property
@@ -215,7 +217,11 @@ class SessionConfig:
     # -- Validated setters -------------------------------------------------
 
     def set_notify(self, mode: str) -> None:
-        """Set notification mode with validation."""
+        """Set notification mode with validation.
+
+        Raises:
+            ValueError: If mode is not y, n, or c.
+        """
         if mode not in _VALID_NOTIFY_MODES:
             msg = f"invalid notify mode: {mode!r}"
             raise ValueError(msg)
@@ -226,6 +232,9 @@ class SessionConfig:
 
         When *explicit* is True (the default), marks the choice as
         user-initiated so future notify-enable calls preserve it.
+
+        Raises:
+            ValueError: If mode is not y or n.
         """
         if mode not in _VALID_SPEAK_MODES:
             msg = f"invalid speak mode: {mode!r}"
@@ -435,7 +444,8 @@ def unmute(
         segments: List of segment objects, each with "text" (required)
             and optional "voice", "language", and "vibe_tags".
             Per-segment "vibe_tags" override the top-level default.
-            Example:
+
+    Example:
             [{"voice": "roger", "text": "Hello.", "vibe_tags": "[excited]"},
              {"text": "Hi."}]
         rate: Speech rate as percentage. Defaults to 90.
@@ -520,7 +530,7 @@ def unmute(
 
 
 # The single `rec` tool: one subcommand-dispatched verb (new/list/play/get/
-# remove), replacing the five separate rec tools. FastMCP builds the schema from
+# remove). FastMCP builds the schema from
 # the `dispatch` signature (minus self) and the daemon still owns containment and
 # audit -- the tool is a thin caller. rec new fills its synthesis defaults from a
 # closure yielding the live session, refreshed on each call; the classes live in
@@ -565,7 +575,7 @@ def vibe(
 
 
 # The single `music` tool: one subcommand-dispatched verb (on/off/play/next/
-# list/new/get/remove), replacing the seven separate music tools. It reads the
+# list/new/get/remove). It reads the
 # module globals through call-time closures so a test patching `_program_tools`,
 # `_session`, or `_music_pref` is honoured on the next call; the classes live in
 # server_music_tool. The bare registration adds no module-level public name; the
@@ -594,8 +604,8 @@ mcp.tool(name="enablement")(_enablement_tool.dispatch)
 # The three switch tools -- one MCP tool per engine capability (§4a). Each
 # holds call-time providers so a test patching the server's module globals is
 # honoured on the next call, and each writes through the same
-# ``ConfigStore.write_field`` choke-point the CLI uses. mic:who is retired;
-# its list capability lives on ``mic:voice`` (no arg).
+# ``ConfigStore.write_field`` choke-point the CLI uses. ``mic:voice`` lists voices
+# when called without an argument.
 _model_tool = ModelTool(lambda: _session, _find_config_dir, _voxd_client)
 _provider_tool = ProviderTool(lambda: _session, _find_config_dir, _voxd_client)
 _voice_tool = VoiceTool(lambda: _session, _find_config_dir, _voxd_client)

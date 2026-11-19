@@ -93,6 +93,7 @@ class ProviderCredentials:
     def __new__(
         cls, requirements: dict[str, CredentialRequirement] | None = None
     ) -> Self:
+        """Create a provider credentials."""
         self = super().__new__(cls)
         self._requirements = (
             dict(requirements) if requirements is not None else _default_requirements()
@@ -119,6 +120,10 @@ class ProviderCredentials:
         available names, and duplicating that verdict here would be
         two answers to one question. This method only guards the
         provider-is-known-but-uncredentialed case (F2).
+
+        Raises:
+            ProviderUnavailableError: If a known provider's requirements are not
+                satisfied.
         """
         requirement = self._requirements.get(provider)
         if requirement is None:
@@ -191,7 +196,7 @@ class ProviderCredentials:
         """Return the provider a fresh repo should adopt, or ``None`` if none.
 
         The proposal answered here reaches clients through the
-        ``provider_status`` wire op (§3.6, delivered by PR 3);
+        ``provider_status`` wire op;
         ``vox enable`` uses it in §3.8. Reading ``TTS_PROVIDER`` here
         is not a run-time override of state -- it is an input to a
         proposal a human will see written into ``vox.md``, which is

@@ -70,6 +70,7 @@ class DaemonCli:
     _flags: OutputFlags
 
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
+        """Create a daemon cli."""
         self = super().__new__(cls)
         self._formatter = formatter
         self._flags = flags
@@ -203,6 +204,9 @@ class DaemonCli:
         it), ``unknown`` (a listener vox cannot attribute, or a port or unit
         it cannot inspect), or ``not_running`` (``off_port_pids`` names any
         voxd on another port). Each exits 1.
+
+        Raises:
+            typer.Exit: If the daemon status requires a nonzero exit code.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         reading = self._read_status()

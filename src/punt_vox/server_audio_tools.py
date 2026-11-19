@@ -130,6 +130,7 @@ class RecTool:
         client_factory: Callable[[], VoxClientSync],
         session_provider: Callable[[], SessionDefaults],
     ) -> Self:
+        """Create a rec tool."""
         self = super().__new__(cls)
         self._client_factory = client_factory
         self._session_provider = session_provider
@@ -150,7 +151,7 @@ class RecTool:
         speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP schema requires bool
         ref: str | None = None,
     ) -> str:
-        """Author, list, play, fetch, or delete stored recordings.
+        """Create, list, play, fetch, or delete stored recordings.
 
         The recordings store is one daemon-owned directory of MP3s; every reply
         carries a bare store id, never a daemon path.

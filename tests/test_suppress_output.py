@@ -116,7 +116,7 @@ class TestSilentToolsStopNarration:
 class TestVibeMusicHint:
     """A vibe change while music plays must deliver the re-pool directive.
 
-    vox-q1z4 makes ``vibe`` return a ``music_hint`` — an imperative "author 12
+     makes ``vibe`` return a ``music_hint`` — an imperative "author 12
     prompts and call music(...)" instruction — whenever a Program is playing.
     ``vibe`` is in the STOP_NARRATION silent set, so without this branch the
     directive is swallowed and the whole re-pool feature does nothing through

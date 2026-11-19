@@ -50,6 +50,7 @@ class SingleFlightRefresh:
     _task: asyncio.Task[None] | None
 
     def __new__(cls) -> Self:
+        """Create a single flight refresh."""
         self = super().__new__(cls)
         self._running = False
         self._pending = False

@@ -40,6 +40,7 @@ class FillReconciler:
     _plan_source: FillPlanSource
 
     def __new__(cls, filler: Fill, plan_source: FillPlanSource) -> Self:
+        """Create a fill reconciler."""
         self = super().__new__(cls)
         self._filler = filler
         self._plan_source = plan_source

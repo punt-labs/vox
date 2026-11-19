@@ -7,7 +7,7 @@ method delegates to the matching :class:`VoxClient` coroutine through
 :meth:`VoxClientSync._drive`, which takes a Callable factory (``lambda c:
 c.synthesize(...)``), opens a connection, awaits the operation, and closes.
 The Callable-factory shape preserves each ``VoxClient`` method's precise return
-type through the bridge; a ``getattr``-based dispatch would have forced every
+    type through the bridge; a ``getattr``-based dispatch would force every
 method to carry a ``# type: ignore[no-any-return]``. The event-loop plumbing
 lives in a composed :class:`_SyncRunner`, generic over the coroutine return
 type, so the facade owns only the "which async op, on which connection" concern.
@@ -52,9 +52,7 @@ class _SyncRunner:
 
     Generic over the coroutine's return type ``T`` so a typed
     ``Coroutine[..., SynthesizeResult]`` passed in emerges as a
-    ``SynthesizeResult`` at the call site -- the untyped bridge that
-    forced every :class:`VoxClientSync` method to carry a
-    ``# type: ignore[no-any-return]`` is retired.
+    ``SynthesizeResult`` at the call site without type suppressions.
     """
 
     __slots__ = ()
@@ -96,8 +94,9 @@ class VoxClientSync:
         vox.synthesize("build finished")
 
     The per-call connection is deliberate: sync callers are short-lived, so
-    pooling would add complexity for no gain. Every failure raises a
-    :class:`~punt_vox.VoxError`. With no arguments, host, port, and token
+    pooling would add complexity for no gain. Connection and protocol validation
+    failures raise :class:`~punt_vox.VoxError`; non-object JSON replies can
+    instead raise ``AttributeError``. With no arguments, host, port, and token
     resolve from the ``VOXD_*`` environment variables and the daemon's
     run-directory files.
     """
@@ -115,6 +114,7 @@ class VoxClientSync:
         port: int | None = None,
         token: str | None = None,
     ) -> Self:
+        """Create a synchronous Vox client."""
         self = super().__new__(cls)
         self._host = host if host is not None else DaemonEnv.host()
         self._port = port
@@ -132,20 +132,10 @@ class VoxClientSync:
         # None: no overall bound; the client's own per-step timeouts apply.
         within_s: float | None = None,
     ) -> T:
-        """Open a connection, drive *op* on it, close, return the value.
+        """Open a connection, drive the operation, close, and return its result.
 
-        The old ``_call(method_name, *args)`` used ``getattr(client,
-        method)`` which loses the method's precise return type -- every
-        caller then carried a ``# type: ignore[no-any-return]`` to
-        reconcile a ``-> ExactType`` annotation with the ``Any`` that
-        came back. This helper takes a Callable factory instead, so
-        the caller's ``lambda c: c.synthesize(...)`` preserves the
-        return type through the bridge and the ignore is unnecessary.
-
-        One fresh connection per call: :class:`BoundedCall` opens it,
-        awaits *op*, and closes it, holding the whole call to *within_s*
-        seconds when given. Sync callers are short-lived so pooling would
-        add complexity for no gain.
+        A callable factory preserves the return type through the synchronous bridge.
+        An optional within_s bounds the entire call, including connection setup.
         """
         call = BoundedCall(within_s)
         return self._runner.run(call.run(self._make_client(), op))
@@ -161,19 +151,36 @@ class VoxClientSync:
         """Send synthesize request. Audio plays on server.
 
         *spec* bundles the voice/provider/rate parameters; *once* is the dedup
-        TTL. *timeout* overrides how long to wait for voxd's 'playing' ack --
-        see :meth:`VoxClient.synthesize`'s own parameter comment; absence
-        keeps every caller's current default. See :class:`SynthesizeResult`
+        TTL in seconds. *timeout* overrides how long to wait for voxd's 'playing'
+        acknowledgement, including synthesis time; None uses 30 seconds.
+        See :class:`SynthesizeResult`
         for the returned fields -- in particular the ``deduped`` flag that
         surfaces when ``once=<ttl>`` matches an identical text already
         played within the window.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+            ValueError: If a deduplication timestamp is not numeric.
+            TypeError: If a deduplication timestamp is null or cannot become seconds.
         """
         return self._drive(
             lambda c: c.synthesize(text, spec, once=once, timeout=timeout)
         )
 
     def chime(self, signal: str) -> None:
-        """Play a bundled chime asset."""
+        """Play a bundled chime asset.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         self._drive(lambda c: c.chime(signal))
 
     def record(
@@ -188,19 +195,50 @@ class VoxClientSync:
         Returns a :class:`RecordResult` locator (store id/name, store path,
         byte count). The daemon owns the file; no audio crosses the wire and the
         client names no daemon path.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         return self._drive(lambda c: c.record(text, spec, name=name))
 
     def play(self, ref: str) -> None:
-        """Play a stored recording on the daemon host by its store reference."""
+        """Play a stored recording on the daemon host by its store reference.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         self._drive(lambda c: c.play(ref))
 
     def fetch(self, ref: str) -> bytes:
-        """Return a stored recording's bytes by its store reference."""
+        """Return a stored recording's bytes by its store reference.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.fetch(ref))
 
     def voices(self, provider: str) -> list[str]:
-        """List *provider*'s voice roster; the wire always carries a provider."""
+        """List *provider*'s voice roster; the wire always carries a provider.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.voices(provider))
 
     def health(self, *, timeout: float | None = None) -> HealthStatus:
@@ -209,6 +247,13 @@ class VoxClientSync:
         *timeout* bounds the whole call, connect included, in seconds; a
         bounded poll passes what is left of its wait. Absent (``None``), the
         client's own per-step timeouts apply, as for every other call.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         return self._drive(lambda c: c.health(), within_s=timeout)
 
@@ -221,13 +266,28 @@ class VoxClientSync:
         cached snapshot.  With *provider* omitted, the reply carries
         every registered verdict; with it set, the reply carries just
         that one row.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         return self._drive(lambda c: c.provider_status(provider))
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
     def program_status(self) -> ProgramStatus:
-        """Return the daemon's authoritative Program status."""
+        """Return the daemon's authoritative Program status.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_status())
 
     def program_on(
@@ -238,29 +298,77 @@ class VoxClientSync:
         name: str | None = None,
         prompts: PromptSet | None = None,
     ) -> CommandOutcome:
-        """Turn a Program on from the session vibe and authored prompts."""
+        """Turn a Program on from the session vibe and authored prompts.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(
             lambda c: c.program_on(style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
     def program_stop(self) -> CommandOutcome:
-        """Halt the active Program."""
+        """Halt the active Program.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_stop())
 
     def program_next(self) -> CommandOutcome:
-        """User transport next: step the replay cursor forward, or skip a Program."""
+        """User transport next: step the replay cursor forward, or skip a Program.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_next())
 
     def program_prev(self) -> CommandOutcome:
-        """User transport prev: step the replay cursor back one part."""
+        """User transport prev: step the replay cursor back one part.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_prev())
 
     def program_pause(self) -> CommandOutcome:
-        """Suspend the active source in place (transport pause)."""
+        """Suspend the active source in place (transport pause).
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_pause())
 
     def program_resume(self) -> CommandOutcome:
-        """Continue a suspended source (transport resume)."""
+        """Continue a suspended source (transport resume).
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_resume())
 
     def program_select(
@@ -271,7 +379,15 @@ class VoxClientSync:
         name: str | None = None,
         album_id: str | None = None,
     ) -> CommandOutcome:
-        """Replay a Selection resolved by album id (direct) or by tags."""
+        """Replay a Selection resolved by album id (direct) or by tags.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(
             lambda c: c.program_select(
                 style=style, vibe=vibe, name=name, album_id=album_id
@@ -279,27 +395,67 @@ class VoxClientSync:
         )
 
     def program_list(self) -> tuple[ProgramSummary, ...]:
-        """Return every album as a catalogue summary."""
+        """Return every album as a catalogue summary.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.program_list())
 
     # -- recordings store (rec group) ---------------------------------------
 
     def rec_list(self) -> tuple[RecordingSummary, ...]:
-        """Return the store's recordings (name + bytes)."""
+        """Return the store's recordings (name + bytes).
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.rec_list())
 
     def rec_remove(self, ref: str) -> None:
-        """Delete recording *ref* from the store."""
+        """Delete recording *ref* from the store.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         self._drive(lambda c: c.rec_remove(ref))
 
     # -- cache (daemon-owned MP3 quip cache) --------------------------------
 
     def cache_status(self) -> CacheStatus:
-        """Return the daemon cache's entry count, size, and path."""
+        """Return the daemon cache's entry count, size, and path.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.cache_status())
 
     def cache_clear(self) -> int:
-        """Delete every entry in the daemon cache; return the count deleted."""
+        """Delete every entry in the daemon cache; return the count deleted.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         return self._drive(lambda c: c.cache_clear())
 
     def set_log_level(self, level: str) -> str:
@@ -307,24 +463,57 @@ class VoxClientSync:
 
         The daemon clamps *level* to the INFO audit floor, so a stricter request
         comes back as ``info`` -- the audit trail is never blinded.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         return self._drive(lambda c: c.set_log_level(level))
 
     # -- music catalog (music group) ----------------------------------------
 
     def music_new(self, prompts: PromptSet, name: str | None = None) -> str:
-        """Author one track into a fresh catalog album; return its bare album id.
+        """Create one track into a fresh catalog album; return its bare album id.
 
         Both surfaces build *prompts* as ``PromptSet.single(prompt)`` and send it,
         so the daemon receives the authored-input object (its ``base`` as the wire
         ``base_prompt``), never a bare string.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         return self._drive(lambda c: c.music_new(prompts, name))
 
     def music_get(self, album_id: str, dest_dir: Path) -> Path:
-        """Copy an album into *dest_dir* as a directory of its parts."""
+        """Copy an album into *dest_dir* as a directory of its parts.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+            ValueError: If the album has no ready parts to export.
+            OSError: If the destination cannot be created or written.
+            FileExistsError: If the destination album directory already exists.
+        """
         return self._drive(lambda c: c.music_get(album_id, dest_dir))
 
     def music_remove(self, album_id: str) -> None:
-        """Delete a catalog album by id (a playing album is refused)."""
+        """Delete a catalog album by id (a playing album is refused).
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         self._drive(lambda c: c.music_remove(album_id))

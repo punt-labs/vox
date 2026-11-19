@@ -41,6 +41,11 @@ class CallSnapshot:
     _text: str
 
     def __new__(cls, text: str) -> Self:
+        """Create a call snapshot.
+
+        Raises:
+            ValueError: If text is blank or exceeds the snapshot byte limit.
+        """
         stripped = text.strip()
         if not stripped:
             msg = "the context snapshot is empty"
@@ -61,6 +66,9 @@ class CallSnapshot:
         snapshot -- an expected usage error the CLI reports cleanly. At most
         one byte past the limit is ever read, so an endless or enormous
         source is refused without being drained into memory.
+
+        Raises:
+            ValueError: If the file exceeds the byte limit or is not valid UTF-8.
         """
         try:
             data = cls._read_bounded(source, stdin)
@@ -85,6 +93,7 @@ class CallSnapshot:
 
     @property
     def text(self) -> str:
+        """Return the captured transcript text."""
         return self._text
 
     def opening_message(self) -> str:

@@ -17,4 +17,5 @@ class StartCall:
     """Enqueued once, at call start, to move ``CallState`` into ``listening``."""
 
     def apply(self, state: CallState) -> None:
+        """Apply the start call transition to the call state."""
         state.start_call()

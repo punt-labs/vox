@@ -113,7 +113,7 @@ class _UnreachableClient:
 
     Models "the daemon is not running" so a synthesis or voice test that forgets
     to install its own mock fails loudly with ``VoxdConnectionError`` -- instead
-    of silently reaching, or mutating, the real daemon (the vox-73m5 class).
+    of silently reaching, or mutating, the real daemon (the  class).
     """
 
     __slots__ = ()
@@ -166,7 +166,7 @@ def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
     from state through :class:`~punt_vox.session_spec.SessionSpec` -- the
     ``mic:unmute`` synthesis path in particular -- have an authoritative
     provider to send. Without a seed every ``TestUnmute`` case would hit
-    the F1 refusal introduced by vox-w3f8 and exit before the assertion it
+    the F1 refusal introduced by  and exit before the assertion it
     was written for. Tests that mean to exercise the unset-provider
     branch reset ``_session._provider`` explicitly.
 
@@ -190,7 +190,7 @@ def _hermetic_daemon(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignor
     / ``who`` drive ``_voxd_client`` (``speak`` / ``notify`` / ``vibe`` touch neither
     seam -- they only read and write config). Left un-patched, both reach the
     live daemon -- a test asserting ``music_mode == "off"`` then fails whenever
-    music is actually playing (the vox-73m5 config/state-pollution class). The
+    music is actually playing (the  config/state-pollution class). The
     defaults installed here are a clean *idle* ``FakeProgramGateway`` and an
     *unreachable* synthesis client, so every test starts hermetic. Tests that need
     a specific Program state override ``_program_tools`` via ``_install_fake``;
@@ -1180,7 +1180,7 @@ class TestSuiteDoesNotTouchRealDaemon:
 
     Analogous to ``TestSuiteDoesNotTouchRealConfig`` (test_config_isolation): it
     fails loudly if the hermetic default ever regresses and a server-tool test can
-    once again read or mutate the live ``voxd`` (the vox-73m5 class).
+    once again read or mutate the live ``voxd`` (the  class).
     """
 
     def test_program_seam_defaults_to_a_fake(self) -> None:
@@ -1273,7 +1273,7 @@ class TestMusicTool:
 
         assert result["applied"] is True
         # The panel line is a DJ phrase with the style interpolated -- and, per
-        # vox-5aom, never the raw session mood.
+        # , never the raw session mood.
         expected = {f"♪ {p.format(style='techno')}" for p in GENERATING_WITH_STYLE}
         assert result["message"] in expected
         assert "focused" not in result["message"]
@@ -2102,7 +2102,7 @@ class TestRefreshIntegrationWithTools:
     def test_music_panel_never_carries_the_session_mood(
         self, _refresh_config: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The DJ panel line uses style/name only, never the raw mood (vox-5aom).
+        """The DJ panel line uses style/name only, never the raw mood.
 
         The session vibe is display/record state; it neither surfaces in the
         panel line nor travels into a Program transition.
@@ -2186,7 +2186,7 @@ class TestPerToolLogging:
         # 5 session/synthesis tools (unmute, vibe, notify, speak, status) + 3
         # switch tools (model, provider, voice) + the single `music` tool + the
         # single `rec` tool + the `enablement` tool. mic:who is retired; its
-        # list capability lives on ``mic:voice`` no-arg (vox-0rp9).
+        # list capability lives on ``mic:voice`` no-arg.
         assert len(tools) == 11  # schema intact, no tool lost to wrapping
         with caplog.at_level(logging.INFO, logger="punt_vox.server"):
             await srv.mcp.call_tool("status", {})

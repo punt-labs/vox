@@ -51,6 +51,7 @@ class VoxdTransport:
         port: int | None,
         token: str | None,
     ) -> Self:
+        """Create a voxd transport."""
         self = super().__new__(cls)
         self._endpoint = VoxdEndpoint(host, port, token)
         self._ws = None
@@ -62,6 +63,10 @@ class VoxdTransport:
         Never through a proxy: the URI carries the token, and websockets
         otherwise honours ``http_proxy`` / ``all_proxy`` from the environment,
         loopback included, so ``GET /ws?token=...`` would cross the proxy.
+
+        Raises:
+            VoxdConnectionError: If the endpoint is unavailable, unreadable, or rejects
+                the handshake.
         """
         uri = self._endpoint.uri()
         try:
@@ -115,7 +120,15 @@ class VoxdTransport:
         *,
         timeout: float,
     ) -> dict[str, Any]:
-        """Send a JSON message and wait for a single JSON response."""
+        """Send a JSON message and wait for a single JSON response.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
+        """
         ws = await self._ensure_connected()
         await self._send_frame(ws, msg)
         msg_type = str(msg.get("type", ""))
@@ -162,13 +175,11 @@ class VoxdTransport:
 
     @staticmethod
     def _decode(raw: object) -> dict[str, Any]:
-        """Parse a wire frame, raising ``VoxdProtocolError`` on bad JSON or error.
+        """Parse an object frame, rejecting invalid JSON and daemon error replies.
 
-        The one place both drain and single-response paths turn a malformed or
-        truncated frame, and ``voxd``'s ``{"type": "error", "message": ...}``,
-        into a raised protocol error -- so a non-JSON frame surfaces as a
-        one-line ``VoxError`` instead of a raw ``JSONDecodeError`` traceback, and
-        the error contract lives in a single spot rather than at every site.
+        Invalid JSON raises ``VoxdProtocolError``. Daemon error replies raise
+        ``VoxdRejectionError``. Valid JSON values other than objects raise
+        ``AttributeError``.
         """
         try:
             resp: dict[str, Any] = json.loads(str(raw))
@@ -196,6 +207,13 @@ class VoxdTransport:
         fetch or command). Discarding the poisoned socket makes the next request
         reconnect to a clean one via :meth:`_ensure_connected`, so a fault leaves
         no partial file and no stale frames behind.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         ws = await self._ensure_connected()
         await self._send_frame(ws, msg)
@@ -272,6 +290,13 @@ class VoxdTransport:
         as soon as the audio is queued without waiting for playback.
         Dedup short-circuits still send 'done' directly (no 'playing'),
         so terminal_type='done' handles that path correctly.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            AttributeError: If the daemon sends a non-object JSON reply.
+            VoxdProtocolError: If JSON is invalid, object fields fail validation,
+                or the response deadline expires.
         """
         ws = await self._ensure_connected()
         await self._send_frame(ws, msg)

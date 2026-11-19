@@ -34,6 +34,7 @@ class BoundedCall:
     _within_s: float | None  # None: no overall bound; per-step timeouts apply
 
     def __new__(cls, within_s: float | None = None) -> Self:
+        """Create a bounded call."""
         self = super().__new__(cls)
         self._within_s = within_s
         return self
@@ -46,6 +47,12 @@ class BoundedCall:
         Running out of the bound raises ``VoxdProtocolError``; any other
         ``TimeoutError`` (a websockets open timeout, say) raises
         ``VoxdConnectionError`` naming its own cause.
+
+        Raises:
+            VoxdConnectionError: If the daemon is unreachable or the connection is lost.
+            VoxdRejectionError: If the daemon rejects the request.
+            VoxdProtocolError: If the reply is malformed or the response deadline
+                expires.
         """
         # asyncio.timeout(None) never expires, so an unbounded call shares
         # this path; the deadline is fixed here, before connect starts.

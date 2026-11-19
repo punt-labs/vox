@@ -24,4 +24,5 @@ class BargeIn:
     """
 
     def apply(self, state: CallState) -> None:
+        """Apply the barge in transition to the call state."""
         state.barge_in()

@@ -52,6 +52,7 @@ class AlbumRoster:
     _albums: tuple[Album, ...]
 
     def __new__(cls, displays: tuple[AlbumDisplay, ...]) -> Self:
+        """Create an album roster."""
         self = super().__new__(cls)
         self._displays = displays
         self._albums = tuple(display.album for display in displays)

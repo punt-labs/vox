@@ -291,9 +291,7 @@ class TestInstallPrerequisites:
 
         assert result.exit_code == 1
         assert "No TTS provider credentials" in result.output
-        # This refusal is the last of the four, so it is the one that proves
-        # the ordering: it used to fire *after* the output directory had
-        # already been created.
+        # All preflight refusals must precede filesystem changes.
         assert not (tmp_path / "audio").exists()
         assert not (tmp_path / "xdg").exists()
 
@@ -378,7 +376,7 @@ class TestInstallDirectoryCreation:
     def test_unwritable_output_dir_json_gets_an_error_envelope(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The refusal a traceback used to swallow: ``--json`` still parses."""
+        """JSON output remains parseable when installation is refused."""
         _linux_host(monkeypatch, tmp_path)
         audio_dir = tmp_path / "audio"
         _failing_mkdir(monkeypatch, audio_dir)

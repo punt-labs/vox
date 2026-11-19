@@ -52,6 +52,7 @@ class Selection:
     _pool: tuple[Part, ...]
 
     def __new__(cls, parts: tuple[SelectedPart, ...]) -> Self:
+        """Create a selection."""
         self = super().__new__(cls)
         self._parts = parts
         # The rotation pool is a pure map over the immutable parts, so it never

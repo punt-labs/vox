@@ -21,10 +21,8 @@ from punt_vox.__main__ import app
 if TYPE_CHECKING:
     from typer._click import Command
 
-# Typer 0.27 stopped inheriting TyperGroup from click.Group; group semantics
-# now live on TyperGroup itself with its own `.commands` mapping. Accept either
-# shape so introspection works across the older-Group and newer-TyperGroup
-# layouts.
+# TyperGroup and click.Group each own a commands mapping; accept both so introspection
+# works across supported Typer layouts.
 _GroupType = Group | TyperGroup
 
 

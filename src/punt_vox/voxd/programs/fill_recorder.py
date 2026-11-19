@@ -46,6 +46,7 @@ class FillRecorder:
     _channel: ControlChannel
 
     def __new__(cls, channel: ControlChannel) -> Self:
+        """Create a fill recorder."""
         self = super().__new__(cls)
         self._channel = channel
         return self

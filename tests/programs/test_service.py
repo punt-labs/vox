@@ -346,7 +346,7 @@ class TestConsumeControls:
 
 
 class TestTransport:
-    """The phase-3 transport verbs on the service, asserting the model by name.
+    """Exercise the service transport verbs against their named model invariants.
 
     ``prev``/``advance`` (Z ``Prev``/``Next``) step a single-album replay cursor
     deterministically; ``pause``/``resume`` (Z ``Pause``/``Resume``) flip the

@@ -262,9 +262,6 @@ class TestHandleSynthesizeOnceFlag:
         monkeypatch.setattr(
             "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
         )
-        # Provider is now required on the wire (design §3.7): tests must
-        # send it, so the daemon-side ``auto_detect_provider`` monkeypatch
-        # this fixture used to install is gone with the function itself.
 
         handler = _make_synthesize_handler(synthesis=mock_synth)
 
@@ -388,9 +385,6 @@ class TestHandleSynthesizeCachedSignal:
         monkeypatch.setattr(
             "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
         )
-        # Provider is now required on the wire (design §3.7): tests must
-        # send it, so the daemon-side ``auto_detect_provider`` monkeypatch
-        # this fixture used to install is gone with the function itself.
         handler = _make_synthesize_handler(synthesis=mock_synth)
 
         class _InstantPlaybackQueue:
@@ -484,12 +478,9 @@ class TestSynthesizeHandlerTypedErrorRouting:
     ``id`` (the WARNING ``rejected op`` audit shape), never as a
     ``fault`` frame carrying ``"operation failed"``.
 
-    The tests exist because catching a type in isolation and testing
-    the type in isolation both pass while nothing actually raises it --
-    the exact defect the review found in this bead's first round: three
-    honest artifacts (the catch clause, the test suite, the commit
-    message) each described a wired path that had no raise site behind
-    it. Handler-level tests close the gap.
+    Handler-level tests exercise the raise site as well as the catch clause.
+    Testing an exception type in isolation cannot prove a handler actually
+    raises it.
     """
 
     @staticmethod
@@ -603,11 +594,8 @@ class TestSynthesizeHandlerTypedErrorRouting:
 
     @pytest.mark.asyncio
     async def test_f5_voice_not_found_crosses_verbatim_via_error(self) -> None:
-        # F5: the bead's ORIGINALLY reported incident. Before this PR
-        # the path produced "operation failed" instead of the voice
-        # list; this test pins that the __str__ override PR 1 added
-        # plus the pre-broad-guard catch this PR adds together make
-        # the sentence cross the wire.
+        # The voice-not-found reason and available voices must cross the wire verbatim,
+        # not become a generic operation-failed fault.
         handler, _ = self._handler_that_raises(
             VoiceNotFoundError("bella", ["alloy", "ash", "ballad"])
         )
