@@ -77,6 +77,16 @@ On PRs, neither total line nor branch coverage may decrease versus the merge
 base; there is no absolute percentage gate or numeric baseline to update.
 See [Coverage policy](TESTING.md#coverage-policy) for reports and local comparison.
 
+CI also runs installed-wheel packaging smoke in a separate `packaging-e2e`
+job. To run it locally:
+
+```bash
+make install
+make test-e2e
+```
+
+This `e2e` marker checks CLI/MCP packaging, not manual live-audio quality.
+
 List all Make targets:
 
 ```bash
