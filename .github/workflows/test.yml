@@ -362,8 +362,8 @@ jobs:
           cd "$RUNNER_TEMP/vox-coverage-base"
           uv sync --frozen --all-extras
           make install
-          COVERAGE_RCFILE="$GITHUB_WORKSPACE/pyproject.toml" \
-            uv run python "$GITHUB_WORKSPACE/tools/run_coverage.py"
+          uv run python "$GITHUB_WORKSPACE/tools/run_coverage.py" \
+            --rcfile "$GITHUB_WORKSPACE/pyproject.toml"
       - name: Publish coverage and enforce merge-base ratchet
         if: always()
         env:
