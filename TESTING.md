@@ -478,6 +478,10 @@ runs the credentialed matrix nightly or manually with strict prerequisites.
 
 ### Coverage policy
 
+Combined coverage excludes `roundtrip` explicitly, so its selection does not
+depend on whether Whisper is installed. The dedicated speech job enforces WER;
+the coverage ratchet covers default, slow, subprocess, and packaging tiers.
+
 Coverage is measured, not subject to an absolute percentage floor (punt-kit
 `ci.md` section 11). On PRs the test job also measures the merge base with the
 target branch in a detached worktree, using that revision's tests/dependencies

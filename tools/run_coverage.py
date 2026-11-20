@@ -60,7 +60,7 @@ def run_coverage() -> int:
                 "-m",
                 "pytest",
                 "-m",
-                "not integration and not sdk",
+                "not integration and not sdk and not roundtrip",
                 "--cov=punt_vox",
                 "--cov-report=",
             ],
