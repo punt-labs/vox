@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Install shared diagnostics from PyPI with `punt-observe==0.1.0`, including
+  upstream fork-hook and exit-flush fixes. Package installation no longer
+  requires git for this dependency.
+
 ### Added
 
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
@@ -22,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Privacy-safe usage spans for MCP tools, hooks, CLI commands, and daemon
   synthesis through shared `punt-observe`. Local-only SQLite capture is the
   default; `VOX_TELEMETRY=off` or `PUNT_TELEMETRY=off` disables it entirely.
-- Shared private, redacting diagnostic logging through `punt-observe`, pinned
-  to a git commit until PyPI publication. Client logging setup fails open with
+- Shared private, redacting diagnostic logging through `punt-observe`.
+  Client logging setup fails open with
   a metadata-only warning; daemon setup remains fail-closed with no stderr copy.
 
 - Google-style public Python API documentation, comment and docstring lint
@@ -37,8 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inherited `COVERAGE_RCFILE` cannot break nested coverage harness tests.
 - Turn-timer sink setup failures leave ordinary client logging intact while
   disabling only the dedicated timer logger and emitting the fixed warning.
-- Update the shared `punt-observe` pin to `53e6575` for concurrent SQLite
-  initialization safety, strict rotation caps, and idle telemetry pruning.
+- Shared `punt-observe` provides concurrent SQLite initialization safety,
+  strict rotation caps, and idle telemetry pruning.
 - Direct local speech records error outcomes for nonzero subprocess exits,
   including subprocess timeouts, without changing playback return values.
 - CLI help and successful system exits record successful usage outcomes while
@@ -51,8 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prevent call startup, including with `--trace-turns`.
 - Live diagnostic level changes restore root DEBUG admission; failed client
   setup detaches old sinks so only the fixed metadata warning reaches stderr.
-- The installer requires git for the pinned shared dependency, even without
-  the Claude Code plugin.
 - **Clients report corrupt daemon discovery files as a connection error.**
   Invalid UTF-8 in `serve.port` or `serve.token` is reported by filename
   without a traceback or the file's contents.

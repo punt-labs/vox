@@ -3931,9 +3931,8 @@ context.
 ### Decision
 
 Adopt `punt-observe` for private logging and usage telemetry rather than retain
-vox copies of file security, append/rotation, redaction, or exporters. Pin the
-dependency to git commit `53e657555cab240795c850ea7f0e4dd77a8d98fc` until the
-shared package is published on PyPI.
+vox copies of file security, append/rotation, redaction, or exporters. Depend on
+the published PyPI release `punt-observe==0.1.0` rather than a git reference.
 
 `logging_config.py` remains the sole vox logging policy adapter: preserve the
 shared log path, file-level controls, role prefixes, and dedicated turn timer.

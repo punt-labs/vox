@@ -18,6 +18,7 @@ a user-scope ``~/.punt-labs/vox/CLAUDE.md``.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +123,7 @@ class InstallSandbox:
         *args: str,
         no_plugin_env: str | None = None,
         mpv_version: str = "0.38.0",
+        system_path: bool = True,
     ) -> InstallRun:
         """Run ``install.sh`` with ``args`` under the sandbox, return the result.
 
@@ -133,11 +135,16 @@ class InstallSandbox:
         path. Only the stub ``bin`` is on ``PATH`` besides the base system
         dirs, and ``XDG_DATA_HOME`` points at an empty temp tree so the
         root-owned-``__pycache__`` cleanup (which would ``sudo``) never fires.
+        ``system_path=False`` restricts command discovery to the sandbox alone.
         """
         if self._log.exists():
             self._log.unlink()
         env = {
-            "PATH": f"{self._bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": (
+                f"{self._bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+                if system_path
+                else str(self._bin)
+            ),
             "HOME": str(self._work),
             "XDG_DATA_HOME": str(self._xdg),
             "VOX_TEST_LOG": str(self._log),
@@ -224,27 +231,25 @@ _INSTALL_MODES = pytest.mark.parametrize(
 
 
 @_INSTALL_MODES
-def test_git_is_required_even_without_plugin(
-    tmp_path: Path, args: tuple[str, ...], no_plugin_env: str | None
+def test_missing_git_only_skips_plugin(
+    sandbox: InstallSandbox,
+    tmp_path: Path,
+    args: tuple[str, ...],
+    no_plugin_env: str | None,
 ) -> None:
-    empty_bin = tmp_path / "bin"
-    empty_bin.mkdir()
-    env = {"PATH": str(empty_bin), "HOME": str(tmp_path), "TERM": "dumb"}
-    if no_plugin_env is not None:
-        env["VOX_NO_PLUGIN"] = no_plugin_env
-    result = subprocess.run(
-        ["/bin/sh", str(_INSTALL_SH), *args],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert result.returncode == 1
-    assert "'git' is required" in result.stdout
-    assert "pinned punt-observe dependency" in result.stdout
-    assert "Checking uv" not in result.stdout
+    commands = tmp_path / "bin"
+    (commands / "git").unlink()
+    for name in ("sh", "uname", "awk", "grep", "find", "mkdir"):
+        executable = shutil.which(name)
+        assert executable is not None
+        (commands / name).symlink_to(executable)
+    result = sandbox.run(*args, no_plugin_env=no_plugin_env, system_path=False)
+    assert result.returncode == 0, result.stderr
+    assert "'git' not found" in result.stdout
+    assert result.ran("uv tool install")
+    assert result.ran("vox daemon install")
+    assert not result.ran("claude plugin")
+    assert not result.ran("ssh ")
 
 
 class TestNoUserScopeGuide:
