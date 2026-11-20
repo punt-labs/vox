@@ -61,7 +61,7 @@ def run_coverage(rcfile: Path | None = None) -> int:
                 "-m",
                 "pytest",
                 "-m",
-                "not integration and not sdk",
+                "not integration and not sdk and not roundtrip",
                 "--cov=punt_vox",
                 f"--cov-config={config_file}",
                 "--cov-report=",

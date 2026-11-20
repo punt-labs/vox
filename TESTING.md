@@ -1,6 +1,6 @@
 # Testing
 
-No network or API dependencies. Every test runs fully offline — no API keys, no network, no audio hardware — but they do rely on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng).
+The default suite needs no API keys, network, or audio hardware, but relies on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng). Opt-in roundtrip checks use a downloaded Whisper model; live integration checks call credentialed APIs.
 
 ## Philosophy
 
@@ -197,22 +197,23 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,187 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,202 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `integration` | Credentialed real provider APIs; reserved/empty | `uv run pytest -m integration` | No | 0 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,187 default / 9,406 collected across all markers. `slow` is cross-cutting,
+9,202 default / 9,453 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,187 of 9,406 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,202 of 9,453 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -271,12 +272,11 @@ default tier. The pi-side secret guard extension runs under real `node` in
 `test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
 problem repeated in a different domain, not a new marker.
 
-### `integration` and `sdk` -- reserved, deliberately empty
+### `integration` and `sdk`
 
-Neither marker currently carries tests. `integration` is reserved for real,
-credentialed provider API calls, not mocked cross-component wiring.
-Populating it needs a credentials and cost/quota plan for the cloud providers.
-The local platform providers do not require paid API credentials.
+`integration` marks the credentialed speech roundtrip matrix, not mocked
+cross-component wiring. The nightly/manual workflow supplies provider secrets
+and fails when prerequisites are missing; local runs name and skip missing keys.
 
 `sdk` is reserved for a real paid Claude Agent SDK session and is not run in
 CI. Conversation mode already has default and subprocess coverage; that does
@@ -397,7 +397,7 @@ verify:
 
 The [named-tier table](#testing-pyramid) lists every marker, its command,
 CI coverage, and collected count. The default selection excludes `slow`,
-`subprocess`, `e2e`, `integration`, and `sdk`. An explicit `-m`
+`subprocess`, `e2e`, `integration`, `sdk`, and `roundtrip`. An explicit `-m`
 expression overrides that selection. Live audio has no pytest marker.
 
 ## Running Tests
@@ -418,8 +418,8 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# Everything except the credentialed integration/sdk tiers
-uv run pytest -m "not integration and not sdk"
+# All local tiers except the separately run speech oracle
+uv run pytest -m "not integration and not sdk and not roundtrip"
 
 # Packaging e2e separately, against the installed wheel
 make install
@@ -431,11 +431,25 @@ make coverage
 
 ## Integration Tests
 
-Tests requiring real, credentialed provider API calls are marked
-`@pytest.mark.integration` and excluded from the default run. None currently
-exist. See [the reserved markers](#integration-and-sdk----reserved-deliberately-empty)
-above for why that is a deliberate call, not an oversight, and what would be
-needed to populate it.
+Speech intelligibility checks live in `tests/roundtrip/`. Run
+`make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and
+pinned deterministic CPU/int8 Whisper small.en transcription. The first model
+download needs network; recognition is then offline. The model cache is resolved
+before test HOME isolation; both CI workflows set and cache the same absolute
+`HF_HUB_CACHE`. Normalization, splitting
+at a 240-character budget, and stitching run through vox's real `TTSClient`.
+The oracle rejects silent/empty decoded audio and WER above **0.02** offline
+(measured 0, 0, 0, 1/74 across four passages; margin 0.0065), or 0.25 for live
+TTS. One wrong word in the shortest reference costs 0.10, above the limit.
+Real synthesized drop, swap, identity-normalizer, and wrong-text faults must
+all be rejected. Identifier references are independent of the normalizer.
+
+Run `make test-roundtrip-live` for ElevenLabs/OpenAI/Polly TTS crossed with
+Whisper/Scribe (also marked `integration`). Missing keys produce named skips
+unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
+`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
+Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
 ## Dev box vs CI
 
@@ -448,8 +462,9 @@ Use the commands in the [named-tier table](#testing-pyramid). Run the
 default tier during development, `subprocess` when changing scripts or their
 process boundaries, and `slow` when changing concurrent logging or other
 heavy local operations. Run `make install` then `make test-e2e` to verify
-the installed wheel. The reserved `integration` and `sdk` commands currently
-select no tests. Live audio requires manual listening, not packaging smoke.
+the installed wheel. Run `make test-roundtrip` for the offline speech oracle and
+`make test-roundtrip-live` for the credentialed matrix. The reserved `sdk`
+command currently selects no tests. Live audio requires manual listening, not packaging smoke.
 
 ### In CI
 
@@ -458,8 +473,14 @@ tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
 invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
+The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
+runs the credentialed matrix nightly or manually with strict prerequisites.
 
 ### Coverage policy
+
+Combined coverage excludes `roundtrip` explicitly, so its selection does not
+depend on whether Whisper is installed. The dedicated speech job enforces WER;
+the coverage ratchet covers default, slow, subprocess, and packaging tiers.
 
 Coverage is measured, not subject to an absolute percentage floor (punt-kit
 `ci.md` section 11). On PRs the test job also measures the merge base with the
@@ -489,14 +510,13 @@ both the test venv and the installed wheel's tool environment, and exports
 mapped back to source. Hooks are removed on exit. Processes that deliberately
 strip the environment or are killed before coverage can flush cannot contribute
 data; shell scripts themselves are not Python coverage. Live audio/hardware and
-human-judged tests remain outside automated CI. Neither `integration` nor
-`sdk` currently has tests or a CI job.
+human-judged tests remain outside automated CI. `sdk` remains empty; live
+`integration and roundtrip` checks run in the separate nightly/manual workflow.
 
 ## Follow-ups
 
 - Evaluate `pytest-xdist` separately, including fixture isolation and
   measured performance under parallel execution.
-- Populating `integration` needs a credentials and cost/quota plan.
 - Profile the current default tier before proposing runtime fixes; the
   historical contention theory is not a diagnosis of today's suite.
 

@@ -40,6 +40,9 @@ def test_runner_reports_and_preserves_exit(
 
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "pytest" in args:
+            assert args[args.index("-m", args.index("pytest")) + 1] == (
+                "not integration and not sdk and not roundtrip"
+            )
             assert (
                 (root / "vox_coverage.pth").read_text().startswith("import coverage;")
             )
