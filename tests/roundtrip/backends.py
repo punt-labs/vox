@@ -36,8 +36,8 @@ def load_whisper() -> WhisperModel:
     whisper = pytest.importorskip("faster_whisper", reason="install uv group roundtrip")
     hub = pytest.importorskip("huggingface_hub", reason="install uv group roundtrip")
     model_path = hub.snapshot_download(
-        "Systran/faster-whisper-base.en",
-        revision="3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "Systran/faster-whisper-small.en",
+        revision="d1d751a5f8271d482d14ca55d9e2deeebbae577f",
         allow_patterns=["model.bin", "config.json", "tokenizer.json", "vocabulary.*"],
     )
     return cast(

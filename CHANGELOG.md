@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
-  word error rate and non-silence gates, offline PR checks, and a strict nightly
-  credentialed provider matrix.
+  a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
+  and normalization fault checks, non-silence gates, offline PR checks, and a
+  strict nightly credentialed provider matrix.
 
 - Logging lint rules and a source-policy gate reject private-sink bypasses,
   including aliased imports and rotating-handler configuration strings.

@@ -195,44 +195,31 @@ subpackage whose call agent is one persistent `pi --mode rpc` process per
 call, spoken to as JSON lines over its stdin and stdout. The tiers below
 reflect that shape, not a copy of biff's.
 
-```text
-             ┌───────────┐
-             │  Tier 4   │  sdk — real Claude Agent SDK session (reserved,
-             │           │  no tests yet; lands with conversation_mode)
-             ├───────────┤
-          ┌──┤  Tier 3b  │  integration — real, credentialed provider API
-          │  │           │  calls (roundtrip matrix; nightly/manual)
-          │  ├───────────┤
-       ┌──┤  │  Tier 3a  │  subprocess — real shell/git subprocess spawns
-       │  │  │           │  (hook scripts, install.sh, plugin-surface gate)
-       │  │  ├───────────┤
-       │  │  │  slow     │  cross-cutting -- heavy real-subprocess/
-       │  │  │           │  real-filesystem tests, wherever they occur
-       │  │  ├───────────┤
-       │  │  │  Tier 1   │  Unit -- mocked-provider-boundary, pure
-       │  │  │           │  functions, in-memory state machines
-       └──┴──┴───────────┘
-```
+| Tier / marker | What it covers | How to run | Runs in CI? | Current count |
+|---------------|----------------|------------|-------------|---------------|
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,153 |
+| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, second test-job invocation | 208 |
+| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, second test-job invocation | 1 |
+| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, separate `packaging-e2e` job | 10 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
+| `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
+| Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
-`slow` is cross-cutting rather than a numbered tier because heavy tests do
-not cluster in one place: today they are all real-git-subprocess ratchet
-tests, but the marker exists for any test whose cost is disproportionate to
-what it verifies, wherever it turns up next. `subprocess` is a numbered tier
-because it is a specific, recurring shape in this codebase -- a test that can
-only be honest by spawning a real process (`bash`, `sh`, `git`) because the
-thing under test *is* a shell script or an install flow that cannot be
-unit-tested in-process.
+Counts are collected test cases as of this revision, not execution results:
+9,153 default / 9,404 collected across all markers. `slow` is cross-cutting,
+so marker counts need not be disjoint in future revisions.
 
-### Tier 1: Unit (default, unmarked)
+### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (~4,130 of ~4,340 tests) and runs on every `uv run pytest`, `make test`,
+suite (9,153 of 9,404 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
 import-lightness probe -- but none reach the network or a credentialed API, so
 the tier's contract ("safe to run anywhere, no external service dependency") holds. Tests that spawn a real *shell script* under test move to
-Tier 3a; local `ffmpeg`/interpreter spawns from tests whose subject is
+the `subprocess` tier; local `ffmpeg`/interpreter spawns from tests whose subject is
 in-process code stay here.
 
 | What it covers | Representative files |
@@ -246,7 +233,7 @@ in-process code stay here.
 | Filesystem/config I/O against `tmp_path` | `test_config.py`, `test_frontmatter.py`, `test_atomic_file.py` |
 | Service lifecycle, subprocess calls mocked via `@patch` | `test_service_process.py`, `test_service_launchctl.py`, `test_service_systemd.py` -- these spawn zero real processes; `subprocess.run` is patched at every call site |
 | Z-spec partition tests | `test_server_partition.py` |
-| Lux music-player / audio-programs subsystems (mocked Lux client) | `tests/music_player/`, `tests/programs/` -- ~854 tests, the largest subpackage, all in-memory/mocked |
+| Lux music-player / audio-programs subsystems (mocked Lux client) | `tests/music_player/`, `tests/programs/` -- in-memory/mocked |
 
 ### OO, coupling, and suppression ratchets
 
@@ -256,28 +243,28 @@ The dev dependency `punt-oo-ratchet==0.3.1` supplies all three gates through
 this repository. Run `make check-oo check-coupling check-suppressions` to
 check vox against its existing committed baselines and audit logs.
 
-### Tier 3a: `subprocess` -- real shell/git subprocess spawns
+### `subprocess` -- real local process tests
 
 `@pytest.mark.subprocess` is applied to the files that can only be honest by
-spawning a real process, because the thing under test is a shell script that
-cannot run in-process:
+spawning a real process to exercise scripts and their process boundaries:
 
-| File | Tests | What it drives |
-|------|-------|-----------------|
-| `test_hook_gate.py` | 18 | Real `bash plugin/hooks/*.sh` invocations -- the per-repo enablement gate and the panel-spawn block |
-| `test_plugin_surface.py` | 8 | Real `bash scripts/check-plugin-surface.sh` invocations against fixture surfaces |
-| `test_install_script.py` | 13 | Real `sh install.sh` invocations under a sandboxed `PATH` of stub executables |
-| `test_suppress_output.py` | 27 | Real `bash plugin/hooks/suppress-output.sh` invocations -- the PostToolUse two-channel display contract (also requires `jq` on `PATH`; auto-skipped when absent) |
+| File | What it drives |
+|------|----------------|
+| `test_hook_gate.py` | Real `bash plugin/hooks/*.sh` invocations |
+| `test_plugin_surface.py` | Real plugin-surface gate against fixture surfaces |
+| `test_install_script.py` | Real `sh install.sh` under a sandboxed `PATH` |
+| `test_suppress_output.py` | Real PostToolUse output script; requires `jq` |
+| `test_logging_sources.py` | Real Python logging-source gate against fixture trees |
+| `test_session_start_hook.py` | Real session-start command deployment; requires `jq` |
+| `test_session_start_pid.py` | Real session-start process-tree PID resolution |
+| `conversation_mode/test_pi_secret_guard.py` | Real Node secret-guard extension |
 
 `test_hook_scripts.py` looks like it belongs in this tier by name but does
 not: it makes static text assertions over the `.sh` files (`grep`-shaped
 checks for dead references), imports no `subprocess`, and spawns nothing. It
 stays in the default tier.
 
-This tier is the vox equivalent of biff's tier 3a (`StdioTransport`
-subprocess tests) -- the same underlying problem (a real process, real
-stdio/exit-code plumbing) applied to shell scripts instead of an MCP server
-process. `conversation_mode`'s call agent follows the same split. Its
+`conversation_mode`'s call agent follows the same split. Its
 `pi --mode rpc` process is faked at the subprocess boundary
 (`tests/conversation_mode/_pi_rpc_fakes.py`: real pipes, scripted JSONL
 records), so the channel, record parsing, and agent state machine run in the
@@ -285,75 +272,41 @@ default tier. The pi-side secret guard extension runs under real `node` in
 `test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
 problem repeated in a different domain, not a new marker.
 
-### Tier 3b: `integration` -- credentialed speech roundtrip
+### `integration` and `sdk`
 
-`tests/roundtrip/test_live.py` carries `integration` and `roundtrip` together.
-It covers ElevenLabs, OpenAI, and Polly synthesis crossed with Scribe and
-Whisper transcription. Run it explicitly with `make test-roundtrip-live`;
-the nightly/manual workflow requires credentials rather than skipping.
+`integration` marks the credentialed speech roundtrip matrix, not mocked
+cross-component wiring. The nightly/manual workflow supplies provider secrets
+and fails when prerequisites are missing; local runs name and skip missing keys.
 
-### Tier 4: `sdk` -- reserved, deliberately empty
+`sdk` is reserved for a real paid Claude Agent SDK session and is not run in
+CI. Conversation mode already has default and subprocess coverage; that does
+not imply it has tests against a real SDK session.
 
-`@pytest.mark.sdk` is declared but **no test currently carries it**. This is
-the vox equivalent of biff's tier 4: a marker reserved for a real Claude
-Agent SDK session, real API cost per test, local-only by design and never in
-CI. It has no tests yet because `conversation_mode` (the subsystem that will
-need it) has not landed in this worktree -- the marker exists so that work,
-when it arrives, has the tier ready rather than inventing its own name for
-"the same problem biff already solved."
+### `slow` -- cross-cutting overhead
 
-## Why the Suite Takes as Long as It Does
+The current `slow` test exercises concurrent logging-process rotation in
+`test_logging_config.py`. Ratchet implementation tests now live in
+`python-oo-ratchet`, not in this suite.
 
-A `make check` pytest pass was observed taking 22+ minutes wall-clock during
-today's review-fix cycle. Investigating that number directly:
+### `e2e` -- installed-wheel packaging
 
-**A clean, isolated run of the full unmarked suite (4,340 tests, before this
-change) took 2:52 on this machine** (`uv run pytest`, no marker filter,
-nothing else running). That is nowhere near 22 minutes. The single largest
-identifiable per-test cost -- the git-subprocess ratchet tests, now marked
-`slow` -- accounts for 32s of that 2:52; the shell-subprocess tests, now
-marked `subprocess`, account for another 21s. Together they are ~18% of a
-2:52 run, not the ~25-30% of a 22-minute run their per-test overhead would
-suggest.
+Run `make install` then `make test-e2e` to drive the installed `vox` CLI
+and `vox mcp` over stdio. This checks packaging and startup, not human-judged
+audio quality. It runs in its own CI job and is excluded from the default tier.
 
-The gap between 2:52 (isolated) and 22+ minutes (observed) does not point to
-a structural defect at the scale the observed number implies. The most
-likely explanation is **CPU contention from concurrent agents sharing this
-dev machine** -- this workspace's `CLAUDE.md` documents exactly this
-scenario ("when multiple agents share one worktree..."), and the evidence is
-consistent with it: an early measurement of just the ratchet-subprocess
-files, taken while other activity may have been running, showed 25% CPU
-utilization and took 4:35 for tests that took 32s under a later, uncontended
-measurement of the identical files -- roughly an 8x slowdown with no code
-change in between, which is a contention signature (I/O/scheduler wait), not
-a CPU-bound one. **This is a real, if intermittent, cost**: whatever
-consumed 8x the wall-clock time on a shared box will do it again to the next
-person who runs `make check` while another agent is active, and it is worth
-flagging plainly rather than resolving with only "the isolated number looks
-fine."
+## Suite Runtime
 
-**No `pytest-xdist` is installed.** `time`'s CPU-utilization column shows the
-suite pinning close to one CPU-core's worth of work throughout even the
-uncontended runs, on an 8-core machine. This is the highest-leverage
-structural fix available and is *not* applied here (see Follow-ups) --
-adding it and running `-n auto` would let the suite use the seven idle cores
-instead of one, independent of whether the box is contended by other agents
-or not.
+The default tier was observed taking **~12.5 minutes on a Devin VM**.
+This is a machine-specific observation, not a CI timing guarantee or a new
+measurement made during this documentation update.
 
-Two candidates were investigated and ruled out:
+The previous 2:52 benchmark described a smaller historical suite. Its
+ratchet-test breakdown and CPU-contention hypothesis do not establish the
+cause of the current runtime. Profile the current suite before attributing
+its cost to a particular component or to machine contention.
 
-- **Real ffmpeg encode per test** (the historical MP3 problem) -- checked:
-  `conftest.py` generates the valid MP3 bytes exactly once per session
-  (`_VALID_MP3_BYTES` module-level cache) and every mock provider reuses the
-  cached bytes. Not a repeated cost.
-- **The two `asyncio.sleep(5.0)` calls in `tests/music_player/`**
-  (`test_composition.py`, `test_lux_scene_publisher.py`) look like an
-  obvious 10-second tax at first read. They are not: both live inside a
-  `_BlockingClient`/`_BlockingSceneAccessor` double used to prove a writer
-  or publisher does not block on a slow render, and every test using them
-  cancels the background task well before the 5s sleep resolves.
-  `--durations=10` on both files confirms it: the slowest individual test
-  call across both files is 0.24s. Left unmarked, correctly.
+`pytest-xdist` is not a declared dependency; the default command does not
+request parallel workers.
 
 ## The MP3 Problem
 
@@ -441,22 +394,15 @@ verify:
 
 ## Markers
 
-| Marker | Tier | What it requires | Default run? |
-|--------|------|-------------------|---------------|
-| *(none)* | 1 -- Unit | Nothing | Yes |
-| `roundtrip` | Speech oracle | `uv sync --group roundtrip`, ffmpeg, espeak-ng, cached base.en Whisper model; live also `integration` and provider credentials | No |
-| `slow` | cross-cutting | Nothing (real `git`/subprocess round trips, no external service) | No |
-| `subprocess` | 3a | `bash`/`sh`/`git` on `PATH` (present on every dev box and CI runner already) | No |
-| `integration` | 3b | Real, credentialed provider API access; live roundtrip matrix | No |
-| `sdk` | 4 | `ANTHROPIC_API_KEY`, real Claude Agent SDK session (reserved -- no tests yet) | No |
-
-Live roundtrip checks carry both `integration` and `roundtrip`; use
-`-m "roundtrip and not integration"` to select only the offline speech tier.
+The [named-tier table](#testing-pyramid) lists every marker, its command,
+CI coverage, and collected count. The default selection excludes `slow`,
+`subprocess`, `e2e`, `integration`, `sdk`, and `roundtrip`. An explicit `-m`
+expression overrides that selection. Live audio has no pytest marker.
 
 ## Running Tests
 
 ```bash
-# Default: tier 1 only -- fast, no external dependency, no real subprocess
+# Default: no live services or credentials; some local processes
 uv run pytest
 
 # Single file
@@ -465,14 +411,18 @@ uv run pytest tests/test_hooks.py -v
 # Single test
 uv run pytest tests/test_hooks.py::TestHandleStop::test_voice_mode_blocks_clean_reason -v
 
-# slow -- real-git-subprocess ratchet tests
+# slow -- heavy local process/filesystem overhead
 uv run pytest -m slow
 
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# Everything except the reserved, currently-empty integration/sdk tiers
-uv run pytest -m "slow or subprocess or (not slow and not integration and not subprocess and not sdk)"
+# Test-job coverage: default + slow + subprocess, excluding packaging e2e
+uv run pytest -m "not integration and not sdk and not e2e and not roundtrip"
+
+# Packaging e2e separately, against the installed wheel
+make install
+make test-e2e
 
 # With coverage
 uv run pytest tests/ --cov=src --cov-report=term-missing
@@ -481,25 +431,22 @@ uv run pytest tests/ --cov=src --cov-report=term-missing
 ## Integration Tests
 
 Speech intelligibility checks live in `tests/roundtrip/`. Run
-`make test-roundtrip` for real espeak-ng synthesis and deterministic CPU/int8
-Whisper base.en transcription; the first model download needs network, then
-recognition is offline. Run `make test-roundtrip-live` for ElevenLabs, OpenAI,
-and Polly crossed with Whisper and ElevenLabs Scribe. They normalize identifiers
-through vox, split at a deliberately small 240-character budget to exercise
-chunking economically, and stitch through `TTSClient`, without a daemon.
-The oracle rejects silent/empty decoded audio and word error rates above 0.60
-offline (robotic espeak baseline max 0.538, with margin), or 0.25 for live TTS.
-The offline tier also proves that unrelated spoken text fails the gate.
-Live prerequisites are named in skip reasons; `VOX_ROUNDTRIP_REQUIRE_LIVE=1`
-makes missing credentials failures (nightly CI). AWS requires explicit
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION` for this
-reproducible check; `AWS_SESSION_TOKEN` is optional. Both API providers use
-their usual `ELEVENLABS_API_KEY` / `OPENAI_API_KEY` names; Scribe also needs
-`ELEVENLABS_API_KEY`. See `roundtrip-live.yml` for the secret mapping.
+`make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and
+pinned deterministic CPU/int8 Whisper small.en transcription. The first model
+download needs network; recognition is then offline. Normalization, splitting
+at a 240-character budget, and stitching run through vox's real `TTSClient`.
+The oracle rejects silent/empty decoded audio and WER above **0.02** offline
+(measured 0, 0, 0, 1/74 across four passages; margin 0.0065), or 0.25 for live
+TTS. One wrong word in the shortest reference costs 0.10, above the limit.
+Real synthesized drop, swap, identity-normalizer, and wrong-text faults must
+all be rejected. Identifier references are independent of the normalizer.
 
-Tests requiring real, credentialed provider API calls are marked
-`@pytest.mark.integration` and excluded from the default run. See
-[Tier 3b](#tier-3b-integration----credentialed-speech-roundtrip) for the matrix.
+Run `make test-roundtrip-live` for ElevenLabs/OpenAI/Polly TTS crossed with
+Whisper/Scribe (also marked `integration`). Missing keys produce named skips
+unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
+`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
+Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
 ## Dev box vs CI
 
@@ -508,60 +455,30 @@ stated otherwise -- the same discipline biff's testing doc holds.
 
 ### On your dev box
 
-| Tier | Command | When to run it |
-|------|---------|-----------------|
-| 1 (default) | `uv run pytest` | Constantly. No external dependency; this is the inner loop. |
-| Speech roundtrip | `make test-roundtrip` / `make test-roundtrip-live` | Offline intelligibility before speech changes; credentialed matrix on demand. |
-| `subprocess` (3a) | `uv run pytest -m subprocess` | Before touching `plugin/hooks/*.sh`, `install.sh`, or `scripts/check-plugin-surface.sh`. No extra infra -- `bash`/`sh`/`git` are already required to develop this repo at all. |
-| `integration` (3b) | `make test-roundtrip-live` | With provider credentials; costs real API quota. |
-| `sdk` (4) | *(no tests yet)* | N/A until `conversation_mode` lands and needs it. Local-only by design once it exists, same as biff's tier 4 -- real API cost per test, never in CI. |
+Use the commands in the [named-tier table](#testing-pyramid). Run the
+default tier during development, `subprocess` when changing scripts or their
+process boundaries, and `slow` when changing concurrent logging or other
+heavy local operations. Run `make install` then `make test-e2e` to verify
+the installed wheel. Run `make test-roundtrip` for the offline speech oracle and
+`make test-roundtrip-live` for the credentialed matrix. The reserved `sdk`
+command currently selects no tests. Live audio requires manual listening, not packaging smoke.
 
 ### In CI
 
-What runs on every push/PR (`.github/workflows/test.yml`): **the default
-tier, plus `slow` and `subprocess`, as two separate `pytest` invocations in
-the same job.** Before this taxonomy existed, all of these ran unmarked in
-one `uv run pytest` call; splitting the invocation keeps that coverage
-intact rather than silently dropping it the moment the markers exist and the
-default `addopts` starts excluding them.
+On pushes to `main` and PRs targeting `main`,
+`.github/workflows/test.yml` runs the default tier, then
+`uv run pytest -m "slow or subprocess"` in the `test` job.
+A separate `packaging-e2e` job runs `make install` and `make test-e2e`.
+The `roundtrip` job runs the offline speech oracle. `roundtrip-live.yml`
+runs credentialed `integration and roundtrip` nightly/manual, with strict
+prerequisites. `sdk` remains empty. Live audio quality remains human-judged.
 
-- **`roundtrip`** -- offline espeak-ng → Whisper on every push/PR, in its own job.
-- **`integration`** -- live roundtrip matrix nightly and on manual dispatch in
-  `.github/workflows/roundtrip-live.yml`, never on untrusted PRs.
-- **`sdk`** -- no CI job, by design, matching biff's tier 4. It will cost
-  real money per test once it exists; it will never be a default CI job.
+## Follow-ups
 
-## Follow-ups Deliberately Left Out of This Pass
-
-These are named here rather than done, because each is a bigger structural
-change than "apply the taxonomy that already exists" -- reorganizing
-directories, adding a new dev dependency, or standing up real
-credentialed-API test infrastructure. Filed as recommendations, not silently
-skipped:
-
-- **Add `pytest-xdist` and run the default tier with `-n auto`.** The
-  single highest-leverage speedup available: this box has 8 cores and the
-  suite currently uses close to one throughout. This is a new dev dependency
-  and needs its own verification pass (the `hermetic_config` /
-  `hermetic_vibe_trace` / `hermetic_client_log` autouse fixtures in
-  `conftest.py` use `tmp_path_factory`, which is `xdist`-safe by design, but
-  that should be confirmed under `-n auto` before relying on it, not assumed).
-- **Split `test_voxd_*.py` into a subpackage.** 21 files, the single largest
-  flat cluster in `tests/` after `music_player/`/`programs/`. Not touched
-  here per the task's explicit "no directory restructuring" constraint, but
-  a real candidate for the same subpackage treatment `music_player/` and
-  `programs/` already have.
-- **Wire the `subprocess`/`sdk` markers into `conversation_mode`'s tests
-  when that subsystem lands.** The markers are reserved and documented now
-  so that work does not reinvent them.
-- **Investigate the machine-contention finding.** The 22-minute observation
-  this task started from was not reproduced in isolation (2:52 for the full
-  suite) but the 8x slowdown signature between a contended and an
-  uncontended run of the identical ratchet-subprocess files is real and
-  will recur for the next person running `make check` while another agent
-  is active on a shared box. Worth a session-level fix (e.g. a `make check`
-  guard that warns when other heavy processes are running) rather than a
-  test-suite fix, since the suite itself is not the defect.
+- Evaluate `pytest-xdist` separately, including fixture isolation and
+  measured performance under parallel execution.
+- Profile the current default tier before proposing runtime fixes; the
+  historical contention theory is not a diagnosis of today's suite.
 
 ## Quality Gates
 

@@ -12,9 +12,10 @@ from punt_vox.core import TTSClient, split_text
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.types import MergeStrategy, SynthesisRequest, TTSProvider
 
-THRESHOLD = 0.60
-# espeak-ng/base.en CPU int8 WER: garden .200, river .538, identifiers .200,
-# two-chunk passage .068; .60 leaves .062 margin above the observed maximum.
+THRESHOLD = 0.02
+# espeak-ng en-us at 131 WPM / small.en CPU int8 WER: garden 0, river 0,
+# identifiers 0, two-chunk passage 1/74 (.0135); .02 leaves .0065 margin.
+# The shortest reference has 10 words: one wrong word costs .10 > .02.
 
 
 class AudioLevels(Protocol):
@@ -61,7 +62,10 @@ def synthesize(provider: TTSProvider, text: str, directory: Path) -> Path:
     spoken = normalize_for_speech(text)
     chunks = split_text(spoken, max_chars=240)
     requests = [
-        SynthesisRequest(text=chunk, language="en", rate=90) for chunk in chunks
+        SynthesisRequest(text=chunk, language="en", voice="en-us", rate=75)
+        if provider.name == "espeak"
+        else SynthesisRequest(text=chunk, language="en", rate=90)
+        for chunk in chunks
     ]
     results = TTSClient(provider).synthesize_batch(
         requests, directory, MergeStrategy.ONE_FILE_PER_BATCH, pause_ms=150

@@ -9,6 +9,7 @@ import pytest
 from punt_vox.core import split_text
 from punt_vox.normalize import normalize_for_speech
 from punt_vox.providers.espeak import EspeakProvider
+from roundtrip import oracle
 from roundtrip.backends import WhisperModel, whisper_transcript
 from roundtrip.oracle import (
     THRESHOLD,
@@ -16,6 +17,7 @@ from roundtrip.oracle import (
     decode,
     synthesize,
     word_error_rate,
+    words,
 )
 
 pytestmark = pytest.mark.roundtrip
@@ -23,7 +25,7 @@ pytestmark = pytest.mark.roundtrip
 CORPUS = [
     "The garden gate is open. Please bring the flowers inside.",
     "A quiet river flows through the valley. The birds sing in the morning.",
-    "Read the user_name and check the filePath. Write the result to standard output.",
+    "Read the config_file and check the repoPath. Write the result to stdout.",
     (
         "The old library stands beside the river. Every morning the librarian opens "
         "the wooden doors and welcomes the readers. A young student walks through "
@@ -34,20 +36,63 @@ CORPUS = [
     ),
 ]
 
+REFERENCES = [
+    CORPUS[0],
+    CORPUS[1],
+    (
+        "Read the configuration file and check the repository path. "
+        "Write the result to standard output."
+    ),
+    CORPUS[3],
+]
+
 
 @pytest.mark.parametrize(
-    "text", CORPUS, ids=["garden", "river", "identifiers", "chunks"]
+    ("text", "expected"),
+    list(zip(CORPUS, REFERENCES, strict=True)),
+    ids=["garden", "river", "identifiers", "chunks"],
 )
 async def test_offline_roundtrip(
-    text: str, tmp_path: Path, whisper_model: WhisperModel
+    text: str, expected: str, tmp_path: Path, whisper_model: WhisperModel
 ) -> None:
     if text == CORPUS[-1]:
         assert len(split_text(normalize_for_speech(text), 240)) > 1
     path = synthesize(EspeakProvider(), text, tmp_path)
     decode(path)
     actual = await whisper_transcript(whisper_model, path)
-    error = assert_transcript(normalize_for_speech(text), actual, THRESHOLD)
-    print(f"offline WER={error:.3f}: {text[:45]}")
+    assert 1 / min(len(words(ref)) for ref in REFERENCES) > THRESHOLD
+    error = assert_transcript(expected, actual, THRESHOLD)
+    print(f"offline WER={error:.4f} limit={THRESHOLD}: {text[:45]}")
+
+
+@pytest.mark.parametrize(
+    "fault", ["dropped-word", "swapped-word", "normalizer-identity"]
+)
+async def test_injected_fault_is_rejected(
+    fault: str,
+    tmp_path: Path,
+    whisper_model: WhisperModel,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = REFERENCES[0]
+    if fault == "dropped-word":
+        text = CORPUS[0].replace("garden ", "")
+    elif fault == "swapped-word":
+        text = CORPUS[0].replace("garden", "wooden")
+    else:
+        text, expected = CORPUS[2], REFERENCES[2]
+
+        def identity(text: str) -> str:
+            return text
+
+        monkeypatch.setattr(oracle, "normalize_for_speech", identity)
+    path = synthesize(EspeakProvider(), text, tmp_path)
+    decode(path)
+    actual = await whisper_transcript(whisper_model, path)
+    error = word_error_rate(expected, actual)
+    print(f"{fault} WER={error:.4f} limit={THRESHOLD}: {actual}")
+    with pytest.raises(AssertionError, match="WER="):
+        assert_transcript(expected, actual, THRESHOLD)
 
 
 async def test_wrong_speech_is_rejected(
