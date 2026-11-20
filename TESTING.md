@@ -197,7 +197,7 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,158 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,187 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
@@ -206,13 +206,13 @@ reflect that shape, not a copy of biff's.
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,158 default / 9,377 collected across all markers. `slow` is cross-cutting,
+9,187 default / 9,406 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,158 of 9,377 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,187 of 9,406 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`

@@ -13,7 +13,7 @@ from typing import Self
 class CoverageTotals:
     """Exact line and branch ratios from a nonempty coverage JSON report."""
 
-    __slots__ = ("__lines", "__branches")
+    __slots__ = ("__branches", "__lines")
 
     __lines: Fraction
     __branches: Fraction
@@ -38,7 +38,12 @@ class CoverageTotals:
 
     @staticmethod
     def _ratio(covered: object, valid: object) -> Fraction:
-        if type(covered) is not int or type(valid) is not int:
+        if (
+            not isinstance(covered, int)
+            or not isinstance(valid, int)
+            or isinstance(covered, bool)
+            or isinstance(valid, bool)
+        ):
             raise ValueError("Coverage counters must be integers")
         if valid <= 0 or not 0 <= covered <= valid:
             raise ValueError(f"Invalid coverage totals: {covered}/{valid}")

@@ -64,6 +64,26 @@ def test_invalid_report(tmp_path: Path, contents: str) -> None:
         CoverageTotals(path)
 
 
+@pytest.mark.parametrize(
+    "counter", ["covered_lines", "num_statements", "covered_branches", "num_branches"]
+)
+@pytest.mark.parametrize("value", [True, False, 1.0, "1", None, [], {}])
+def test_rejects_non_integer_counters(
+    tmp_path: Path, counter: str, value: object
+) -> None:
+    totals: dict[str, object] = {
+        "covered_lines": 80,
+        "num_statements": 100,
+        "covered_branches": 50,
+        "num_branches": 100,
+    }
+    totals[counter] = value
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps({"totals": totals}))
+    with pytest.raises(ValueError, match="Coverage counters must be integers"):
+        CoverageTotals(path)
+
+
 def test_missing_report(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         CoverageTotals(tmp_path / "missing.xml")
