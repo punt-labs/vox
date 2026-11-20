@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolated merge-base coverage configuration from the test environment so
+  inherited `COVERAGE_RCFILE` cannot break nested coverage harness tests.
+
 ### Added
 
 - Combined line and branch coverage for all credential-free test tiers,

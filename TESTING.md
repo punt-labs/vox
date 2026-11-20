@@ -469,6 +469,11 @@ total branch coverage must not decrease, implementing the PL-TT-2 no-regression
 policy. The comparison uses exact covered/valid fractions, with no epsilon or
 rounding allowance. A missing, empty, or invalid report fails closed.
 
+The base measurement passes the head configuration explicitly with the harness's
+`--rcfile` option. The harness uses that file for pytest-cov, subprocess startup,
+and report generation; it ignores and removes inherited `COVERAGE_RCFILE` from
+the test environment so nested harness calls keep their own configuration.
+
 There is no committed numeric baseline to raise: improvements automatically
 become the comparison point after merging. Never lower a floor or regenerate a
 baseline to bypass a regression; add tests instead. Locally run `make coverage`
