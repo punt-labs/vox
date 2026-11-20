@@ -3,13 +3,39 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydub import AudioSegment
 
+from roundtrip import backends
 from roundtrip.backends import transcriber
 from roundtrip.oracle import assert_transcript, decode, word_error_rate
 from roundtrip.test_live import require_credentials
+
+
+def test_model_cache_survives_hermetic_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def snapshot_download(repo: str, *, cache_dir: str, **kwargs: object) -> str:
+        calls.append(cache_dir)
+        return cache_dir
+
+    model = object()
+
+    def whisper_model(*args: object, **kwargs: object) -> object:
+        return model
+
+    def importorskip(name: str, **kwargs: object) -> SimpleNamespace:
+        if name == "huggingface_hub":
+            return SimpleNamespace(snapshot_download=snapshot_download)
+        return SimpleNamespace(WhisperModel=whisper_model)
+
+    assert backends.MODEL_CACHE.is_absolute()
+    assert not backends.MODEL_CACHE.is_relative_to(Path.home())
+    monkeypatch.setattr(pytest, "importorskip", importorskip)
+    assert backends.load_whisper.__wrapped__() is model
+    assert calls == [str(backends.MODEL_CACHE)]
 
 
 @pytest.mark.parametrize(

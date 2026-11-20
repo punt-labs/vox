@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
       VOX_ROUNDTRIP_REQUIRE_LIVE: "1"
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -29,7 +30,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/huggingface/hub
+          path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
       - run: uv sync --frozen --all-extras --group roundtrip
       - run: make test-roundtrip-live

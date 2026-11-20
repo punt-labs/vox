@@ -197,7 +197,7 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,153 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,154 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, second test-job invocation | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, second test-job invocation | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, separate `packaging-e2e` job | 10 |
@@ -207,13 +207,13 @@ reflect that shape, not a copy of biff's.
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,153 default / 9,404 collected across all markers. `slow` is cross-cutting,
+9,154 default / 9,405 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,153 of 9,404 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,154 of 9,405 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -433,7 +433,9 @@ uv run pytest tests/ --cov=src --cov-report=term-missing
 Speech intelligibility checks live in `tests/roundtrip/`. Run
 `make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and
 pinned deterministic CPU/int8 Whisper small.en transcription. The first model
-download needs network; recognition is then offline. Normalization, splitting
+download needs network; recognition is then offline. The model cache is resolved
+before test HOME isolation; both CI workflows set and cache the same absolute
+`HF_HUB_CACHE`. Normalization, splitting
 at a 240-character budget, and stitching run through vox's real `TTSClient`.
 The oracle rejects silent/empty decoded audio and WER above **0.02** offline
 (measured 0, 0, 0, 1/74 across four passages; margin 0.0065), or 0.25 for live

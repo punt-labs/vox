@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable, Iterable
 from functools import cache, partial
 from pathlib import Path
@@ -12,6 +13,12 @@ import pytest
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from roundtrip.oracle import decode
+
+_CACHE_HOME = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+_HF_HOME = Path(os.environ.get("HF_HOME", _CACHE_HOME / "huggingface"))
+MODEL_CACHE = (
+    Path(os.environ.get("HF_HUB_CACHE", _HF_HOME / "hub")).expanduser().resolve()
+)
 
 
 class Segment(Protocol):
@@ -38,6 +45,7 @@ def load_whisper() -> WhisperModel:
     model_path = hub.snapshot_download(
         "Systran/faster-whisper-small.en",
         revision="d1d751a5f8271d482d14ca55d9e2deeebbae577f",
+        cache_dir=str(MODEL_CACHE),
         allow_patterns=["model.bin", "config.json", "tokenizer.json", "vocabulary.*"],
     )
     return cast(

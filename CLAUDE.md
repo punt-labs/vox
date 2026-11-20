@@ -171,7 +171,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,153 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,154 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, second test-job invocation | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, second test-job invocation | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, separate `packaging-e2e` job | 10 |
@@ -180,7 +180,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
-Counts are collected test cases as of this revision: 9,153 default / 9,404
+Counts are collected test cases as of this revision: 9,154 default / 9,405
 collected across all markers. `slow` is cross-cutting, not a separate
 numbered layer.
 
