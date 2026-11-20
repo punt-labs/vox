@@ -24,17 +24,12 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 22m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install
-    # + 2m save) + 5m for the rest of the job. Healthy runs take 3-5 min end
-    # to end (October 2026: 182-282 s, of which apt is 16-62 s), so the
-    # non-apt steps take at most 282 - 16 = 266 s (~4.4 min), inside the 5m
-    # allowance; the two pytest invocations (default tier, then
-    # slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long as It
-    # Does") are ~3.5 min of that. 22m is also above
-    # the 20m test-job default in punt-kit/standards/github.md.
-    timeout-minutes: 22
+    # Includes apt's 17m ceiling and two full instrumented suites on PRs.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -354,11 +349,41 @@ jobs:
           path: *apt-cache-paths
           key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
-      - run: uv run pytest
-      # slow + subprocess were folded into the unmarked default run before
-      # this taxonomy existed; run them explicitly so marking them opt-in
-      # locally does not silently drop them from CI coverage.
-      - run: uv run pytest -m "slow or subprocess"
+      - run: make coverage
+      - name: Measure PR merge base with the same coverage harness
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          BASE="$(git merge-base "origin/$BASE_REF" HEAD)"
+          test -n "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/vox-coverage-base" "$BASE"
+          cd "$RUNNER_TEMP/vox-coverage-base"
+          uv sync --frozen --all-extras
+          make install
+          COVERAGE_RCFILE="$GITHUB_WORKSPACE/pyproject.toml" \
+            uv run python "$GITHUB_WORKSPACE/tools/run_coverage.py"
+      - name: Publish coverage and enforce merge-base ratchet
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            make coverage-compare COVERAGE_BASE="$RUNNER_TEMP/vox-coverage-base/coverage.json"
+          else
+            make coverage-compare
+          fi
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            coverage.json
+            htmlcov/
+          if-no-files-found: error
 
   # Packaging e2e: drive the INSTALLED wheel -- the `vox` binary as a
   # subprocess and the `vox mcp` server over stdio. This job catches packaging

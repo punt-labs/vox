@@ -11,6 +11,9 @@ build/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
+coverage.json
 htmlcov/
 *.mp3
 !src/punt_vox/assets/chime_*.mp3

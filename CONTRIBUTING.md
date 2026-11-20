@@ -66,11 +66,16 @@ make check-coupling
 make check-suppressions
 ```
 
-CI also runs the slow and subprocess test tiers:
+CI measures all credential-free tiers, including slow, subprocess, and installed
+wheel e2e, with combined line and branch coverage:
 
 ```bash
-uv run pytest -m "slow or subprocess"
+make coverage
 ```
+
+On PRs, neither total line nor branch coverage may decrease versus the merge
+base; there is no absolute percentage gate or numeric baseline to update.
+See [Coverage policy](TESTING.md#coverage-policy) for reports and local comparison.
 
 CI also runs installed-wheel packaging smoke in a separate `packaging-e2e`
 job. To run it locally:
