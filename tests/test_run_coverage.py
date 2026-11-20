@@ -46,7 +46,7 @@ def test_runner_reports_and_preserves_exit(
             env = cast("dict[str, str]", kwargs["env"])
             assert env["COVERAGE_PROCESS_START"] == str(root / "pyproject.toml")
             assert "COVERAGE_RCFILE" not in env
-            assert args[args.index("--cov-config") + 1] == str(root / "pyproject.toml")
+            assert f"--cov-config={root / 'pyproject.toml'}" in args
             return subprocess.CompletedProcess(args, returncode)
         return subprocess.CompletedProcess(args, 0)
 
@@ -78,13 +78,45 @@ def test_explicit_config_is_shared_without_environment_leak(
             env = cast("dict[str, str]", kwargs["env"])
             assert "COVERAGE_RCFILE" not in env
             assert env["COVERAGE_PROCESS_START"] == str(config)
-            assert args[args.index("--cov-config") + 1] == str(config)
+            assert f"--cov-config={config}" in args
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr("tools.run_coverage.subprocess.run", run)
     assert run_coverage(Path("coverage config.toml")) == 0
     factory.assert_called_once_with(config_file=str(config))
     assert not (root / "vox_coverage.pth").exists()
+
+
+def test_external_config_keeps_local_test_discovery(
+    runner: tuple[Path, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = runner
+    (root / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
+    )
+    tests = root / "tests"
+    tests.mkdir()
+    (tests / "test_base.py").write_text("def test_base():\n    assert True\n")
+    spikes = root / "spikes"
+    spikes.mkdir()
+    (spikes / "test_uncollected.py").write_text(
+        'raise RuntimeError("spike tests must not be collected")\n'
+    )
+    head = root / "head"
+    head.mkdir()
+    config = head / "pyproject.toml"
+    config.write_text('[tool.coverage.run]\nsource = ["punt_vox"]\nbranch = true\n')
+    subprocess_run = subprocess.run
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "pytest" in args:
+            env = cast("dict[str, str]", kwargs["env"])
+            env.pop("PYTEST_ADDOPTS", None)
+            return subprocess_run(args, env=env, check=False, text=True)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr("tools.run_coverage.subprocess.run", run)
+    assert run_coverage(config) == 0
 
 
 @pytest.mark.parametrize("rcfile", [None, "head config.toml"])
