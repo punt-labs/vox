@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,15 @@ def test_invalid_report(tmp_path: Path, contents: str) -> None:
 def test_missing_report(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         CoverageTotals(tmp_path / "missing.xml")
+
+
+def test_ratios_are_read_only(tmp_path: Path) -> None:
+    totals = CoverageTotals(_report(tmp_path, "report.json"))
+    assert totals.lines == Fraction(4, 5)
+    assert totals.branches == Fraction(1, 2)
+    for name in ("lines", "branches"):
+        with pytest.raises(AttributeError):
+            setattr(totals, name, Fraction(1))
 
 
 def test_cli_summary_and_failure(

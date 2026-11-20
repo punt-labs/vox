@@ -13,16 +13,28 @@ from typing import Self
 class CoverageTotals:
     """Exact line and branch ratios from a nonempty coverage JSON report."""
 
-    lines: Fraction
-    branches: Fraction
+    __slots__ = ("__lines", "__branches")
+
+    __lines: Fraction
+    __branches: Fraction
 
     def __new__(cls, path: Path) -> Self:
         """Read totals, rejecting reports with absent or invalid counters."""
         totals = json.loads(path.read_text())["totals"]
         self = super().__new__(cls)
-        self.lines = cls._ratio(totals["covered_lines"], totals["num_statements"])
-        self.branches = cls._ratio(totals["covered_branches"], totals["num_branches"])
+        self.__lines = cls._ratio(totals["covered_lines"], totals["num_statements"])
+        self.__branches = cls._ratio(totals["covered_branches"], totals["num_branches"])
         return self
+
+    @property
+    def lines(self) -> Fraction:
+        """The read-only total line coverage ratio."""
+        return self.__lines
+
+    @property
+    def branches(self) -> Fraction:
+        """The read-only total branch coverage ratio."""
+        return self.__branches
 
     @staticmethod
     def _ratio(covered: object, valid: object) -> Fraction:
