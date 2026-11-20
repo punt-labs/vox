@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Combined line and branch coverage for all credential-free test tiers,
+  including installed-wheel subprocesses, with published reports and a PR
+  merge-base no-regression gate instead of an absolute percentage floor.
 - Logging lint rules and a source-policy gate reject private-sink bypasses,
   including aliased imports and rotating-handler configuration strings.
 - Privacy-safe usage spans for MCP tools, hooks, CLI commands, and daemon

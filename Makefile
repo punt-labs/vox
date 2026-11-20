@@ -109,7 +109,7 @@ depot: build ## Build and copy wheel to local depot
 metrics: ## Run ABC complexity metrics on src/
 	uv run python tools/run_metrics.py
 
-coverage: ## Run tests with coverage report
+coverage: install ## Measure line and branch coverage across all credential-free tiers
 	uv run python tools/run_coverage.py
 
 # LaTeX intermediate files to remove after compilation

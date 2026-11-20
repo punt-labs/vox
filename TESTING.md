@@ -478,11 +478,11 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# Everything except the reserved, currently-empty integration/sdk tiers
-uv run pytest -m "slow or subprocess or (not slow and not integration and not subprocess and not sdk)"
+# Everything except the credentialed integration/sdk tiers
+uv run pytest -m "not integration and not sdk"
 
-# With coverage
-uv run pytest tests/ --cov=src --cov-report=term-missing
+# All CI-capable tiers with line and branch coverage (builds/installs the wheel)
+make coverage
 ```
 
 ## Integration Tests
@@ -510,11 +510,36 @@ stated otherwise -- the same discipline biff's testing doc holds.
 ### In CI
 
 What runs on every push/PR (`.github/workflows/test.yml`): **the default
-tier, plus `slow` and `subprocess`, as two separate `pytest` invocations in
-the same job.** Before this taxonomy existed, all of these ran unmarked in
-one `uv run pytest` call; splitting the invocation keeps that coverage
-intact rather than silently dropping it the moment the markers exist and the
-default `addopts` starts excluding them.
+tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
+invocation.** `make coverage` builds and installs the wheel first, so packaging
+tests do not silently skip for lack of an installed binary. The separate
+packaging-e2e job remains as a fast packaging diagnostic.
+
+### Coverage policy
+
+Coverage is measured, not subject to an absolute percentage floor (punt-kit
+`ci.md` section 11). On PRs the test job also measures the merge base with the
+target branch in a detached worktree, using that revision's tests/dependencies
+and the current coverage harness/configuration. Both total line coverage and
+total branch coverage must not decrease, implementing the PL-TT-2 no-regression
+policy. The comparison uses exact covered/valid fractions, with no epsilon or
+rounding allowance. A missing, empty, or invalid report fails closed.
+
+There is no committed numeric baseline to raise: improvements automatically
+become the comparison point after merging. Never lower a floor or regenerate a
+baseline to bypass a regression; add tests instead. Locally run `make coverage`
+and compare reports with
+`uv run python tools/compare_coverage.py coverage.json --base /path/to/base.json`.
+
+The job summary publishes line and branch percentages. The `coverage` artifact
+contains XML, JSON, and browsable HTML; terminal output lists missing lines.
+The runner temporarily installs `coverage.process_startup()` `.pth` hooks in
+both the test venv and the installed wheel's tool environment, and exports
+`COVERAGE_PROCESS_START`. Parallel data is combined, with installed-wheel paths
+mapped back to source. Hooks are removed on exit. Processes that deliberately
+strip the environment or are killed before coverage can flush cannot contribute
+data; shell scripts themselves are not Python coverage. Live audio/hardware and
+human-judged tests remain outside automated CI.
 
 - **`integration`** -- no CI job, and none planned. Five independently
   billed provider APIs is a materially different problem from biff's one

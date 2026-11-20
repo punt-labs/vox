@@ -142,7 +142,8 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 - `make update-oo` — update baseline and append to audit log after improvements.
 - `make report` — full diagnostics including per-file OO breakdown.
 - `make metrics` — ABC complexity analysis.
-- `make coverage` — test coverage HTML report.
+- `make coverage` — all credential-free tiers, subprocess-aware line/branch
+  coverage, terminal/XML/HTML/JSON reports (see `TESTING.md` coverage policy).
 - `make check-coupling` — coupling/cohesion analysis; in the `make check` chain and enforced in CI (merge-base scoped via `COUPLING_BASE`, fail-closed).
 - `make check-suppressions` — lint/type suppression (`# noqa`, `# type: ignore`) count ratchet; in the `make check` chain and enforced in CI.
 
