@@ -72,6 +72,16 @@ CI also runs the slow and subprocess test tiers:
 uv run pytest -m "slow or subprocess"
 ```
 
+CI also runs installed-wheel packaging smoke in a separate `packaging-e2e`
+job. To run it locally:
+
+```bash
+make install
+make test-e2e
+```
+
+This `e2e` marker checks CLI/MCP packaging, not manual live-audio quality.
+
 List all Make targets:
 
 ```bash

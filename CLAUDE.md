@@ -150,7 +150,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
 
-The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test` against the installed artifact; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
+The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test`, plus `make test-e2e` against the installed wheel; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
 ### PR boundaries
 
@@ -169,13 +169,22 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 
 ### Pyramid
 
-| Layer | Marker | Runs in CI | What it covers |
-|-------|--------|------------|----------------|
-| Unit (default) | *(none)* | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
-| Ratchet gates | `make check-oo check-coupling check-suppressions` | yes | PyPI `punt-oo-ratchet==0.3.1`; implementation tests live in `python-oo-ratchet` |
-| Shell/install subprocess | `subprocess` | yes, as a second `pytest` step | `plugin/hooks/*.sh`, `install.sh`, `scripts/check-plugin-surface.sh` spawned as real processes |
-| Provider integration | `integration` | no (reserved, no tests yet — 5 providers, no credentials-in-CI plan) | Real provider synthesis end-to-end |
-| Shell scripts (static) | `make lint` (shellcheck) | yes | plugin/hooks/*.sh, scripts/*.sh, install.sh |
+| Tier / marker | What it covers | How to run | Runs in CI? | Current count |
+|---------------|----------------|------------|-------------|---------------|
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,139 |
+| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, second test-job invocation | 208 |
+| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, second test-job invocation | 1 |
+| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, separate `packaging-e2e` job | 10 |
+| `integration` | Credentialed real provider APIs; reserved/empty | `uv run pytest -m integration` | No | 0 |
+| `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
+| Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
+
+Counts are collected test cases as of this revision: 9,139 default / 9,358
+collected across all markers. `slow` is cross-cutting, not a separate
+numbered layer.
+
+Ratchet gates (`make check-oo check-coupling check-suppressions`) and static
+shell checks (`make lint`) also run in CI, but are not pytest tiers.
 
 Tests mirror source: one `test_*.py` per module plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
