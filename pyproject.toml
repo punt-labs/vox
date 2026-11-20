@@ -343,8 +343,13 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["src"]
+branch = true
+parallel = true
+source = ["punt_vox"]
 omit = ["tests/*", "*/test_*.py"]
+
+[tool.coverage.paths]
+source = ["src/punt_vox", "*/site-packages/punt_vox"]
 
 [tool.coverage.report]
 exclude_lines = [

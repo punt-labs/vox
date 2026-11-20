@@ -197,23 +197,23 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes | 9,154 |
-| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, second test-job invocation | 208 |
-| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, second test-job invocation | 1 |
-| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, separate `packaging-e2e` job | 10 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,202 |
+| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
+| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
+| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,154 default / 9,405 collected across all markers. `slow` is cross-cutting,
+9,202 default / 9,453 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,154 of 9,405 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,202 of 9,453 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -292,7 +292,8 @@ The current `slow` test exercises concurrent logging-process rotation in
 
 Run `make install` then `make test-e2e` to drive the installed `vox` CLI
 and `vox mcp` over stdio. This checks packaging and startup, not human-judged
-audio quality. It runs in its own CI job and is excluded from the default tier.
+audio quality. It runs in the combined coverage job and its own packaging CI
+job, and is excluded from the default tier.
 
 ## Suite Runtime
 
@@ -417,15 +418,15 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# Test-job coverage: default + slow + subprocess, excluding packaging e2e
-uv run pytest -m "not integration and not sdk and not e2e and not roundtrip"
+# All local tiers except the separately run speech oracle
+uv run pytest -m "not integration and not sdk and not roundtrip"
 
 # Packaging e2e separately, against the installed wheel
 make install
 make test-e2e
 
-# With coverage
-uv run pytest tests/ --cov=src --cov-report=term-missing
+# All CI-capable tiers with line and branch coverage (builds/installs the wheel)
+make coverage
 ```
 
 ## Integration Tests
@@ -467,13 +468,41 @@ command currently selects no tests. Live audio requires manual listening, not pa
 
 ### In CI
 
-On pushes to `main` and PRs targeting `main`,
-`.github/workflows/test.yml` runs the default tier, then
-`uv run pytest -m "slow or subprocess"` in the `test` job.
-A separate `packaging-e2e` job runs `make install` and `make test-e2e`.
-The `roundtrip` job runs the offline speech oracle. `roundtrip-live.yml`
-runs credentialed `integration and roundtrip` nightly/manual, with strict
-prerequisites. `sdk` remains empty. Live audio quality remains human-judged.
+What runs on every push/PR (`.github/workflows/test.yml`): **the default
+tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
+invocation.** `make coverage` builds and installs the wheel first, so packaging
+tests do not silently skip for lack of an installed binary. The separate
+packaging-e2e job remains as a fast packaging diagnostic.
+The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
+runs the credentialed matrix nightly or manually with strict prerequisites.
+
+### Coverage policy
+
+Coverage is measured, not subject to an absolute percentage floor (punt-kit
+`ci.md` section 11). On PRs the test job also measures the merge base with the
+target branch in a detached worktree, using that revision's tests/dependencies
+and the current coverage harness/configuration. Both total line coverage and
+total branch coverage must not decrease, implementing the PL-TT-2 no-regression
+policy. The comparison uses exact covered/valid fractions, with no epsilon or
+rounding allowance. A missing, empty, or invalid report fails closed.
+
+There is no committed numeric baseline to raise: improvements automatically
+become the comparison point after merging. Never lower a floor or regenerate a
+baseline to bypass a regression; add tests instead. Locally run `make coverage`
+and compare reports with
+`make coverage-compare COVERAGE_BASE=/path/to/base.json`. Without `COVERAGE_BASE`,
+`make coverage-compare` publishes the current totals without a comparison.
+
+The job summary publishes line and branch percentages. The `coverage` artifact
+contains XML, JSON, and browsable HTML; terminal output lists missing lines.
+The runner temporarily installs `coverage.process_startup()` `.pth` hooks in
+both the test venv and the installed wheel's tool environment, and exports
+`COVERAGE_PROCESS_START`. Parallel data is combined, with installed-wheel paths
+mapped back to source. Hooks are removed on exit. Processes that deliberately
+strip the environment or are killed before coverage can flush cannot contribute
+data; shell scripts themselves are not Python coverage. Live audio/hardware and
+human-judged tests remain outside automated CI. `sdk` remains empty; live
+`integration and roundtrip` checks run in the separate nightly/manual workflow.
 
 ## Follow-ups
 
