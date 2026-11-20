@@ -439,7 +439,7 @@ before test HOME isolation; both CI workflows set and cache the same absolute
 `HF_HUB_CACHE`. Normalization, splitting
 at a 240-character budget, and stitching run through vox's real `TTSClient`.
 The oracle rejects silent/empty decoded audio and WER above **0.02** offline
-(measured 0, 0, 0, 1/74 across four passages; margin 0.0065), or 0.25 for live
+(measured 0, 0, 0, 1/74 across four passages; margin 0.0065), or 0.05 for live
 TTS. One wrong word in the shortest reference costs 0.10, above the limit.
 Real synthesized drop, swap, identity-normalizer, and wrong-text faults must
 all be rejected. Identifier references are independent of the normalizer.

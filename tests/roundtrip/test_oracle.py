@@ -11,7 +11,7 @@ from pydub import AudioSegment
 from roundtrip import backends
 from roundtrip.backends import transcriber
 from roundtrip.oracle import assert_transcript, decode, word_error_rate
-from roundtrip.test_live import require_credentials
+from roundtrip.test_live import LIVE_THRESHOLD, require_credentials
 
 
 def test_model_cache_survives_hermetic_home(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,7 +56,20 @@ def test_wer(reference: str, actual: str, expected: float) -> None:
 
 def test_empty_reference_is_rejected() -> None:
     with pytest.raises(AssertionError, match="nonempty reference"):
-        assert_transcript("", "", 0.25)
+        assert_transcript("", "", LIVE_THRESHOLD)
+
+
+@pytest.mark.parametrize(
+    ("count", "dropped", "rejected"), [(10, 0, False), (20, 1, False), (10, 1, True)]
+)
+def test_live_wer_limit(count: int, dropped: int, rejected: bool) -> None:
+    reference = " ".join(["word"] * count)
+    actual = " ".join(["word"] * (count - dropped))
+    if rejected:
+        with pytest.raises(AssertionError, match=r"WER=0\.100 > 0\.050"):
+            assert_transcript(reference, actual, LIVE_THRESHOLD)
+    else:
+        assert assert_transcript(reference, actual, LIVE_THRESHOLD) == dropped / count
 
 
 def test_silent_audio_is_rejected(tmp_path: Path) -> None:

@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tightened the live speech roundtrip WER limit from 0.25 to 0.05 after all
+  24 provider/backend/passage cases measured zero WER, so one wrong word in
+  the shortest passage fails the gate.
 - Isolated merge-base coverage configuration from the test environment so
   inherited `COVERAGE_RCFILE` cannot break nested coverage harness tests.
 - Turn-timer sink setup failures leave ordinary client logging intact while
