@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Isolated merge-base coverage configuration from the test environment so
-  inherited `COVERAGE_RCFILE` cannot break nested coverage harness tests.
-
 ### Added
 
 - Combined line and branch coverage for all credential-free test tiers,
@@ -33,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Isolated merge-base coverage configuration from the test environment so
+  inherited `COVERAGE_RCFILE` cannot break nested coverage harness tests.
 - Turn-timer sink setup failures leave ordinary client logging intact while
   disabling only the dedicated timer logger and emitting the fixed warning.
 - Update the shared `punt-observe` pin to `53e6575` for concurrent SQLite
