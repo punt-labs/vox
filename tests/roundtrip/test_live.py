@@ -18,6 +18,11 @@ from roundtrip.test_offline import CORPUS
 
 pytestmark = [pytest.mark.roundtrip, pytest.mark.integration]
 
+# Dispatch 44762899638: all 24 provider/backend/passage cases had WER=0.000;
+# 44761757002 also measured 0.000 for OpenAI/Polly. The .05 limit is below
+# .10, the cost of one wrong word in the shortest (10-word) passage.
+LIVE_THRESHOLD = 0.05
+
 
 def require_credentials(provider: str, backend: str) -> None:
     required = {
@@ -52,5 +57,5 @@ async def test_live_roundtrip(
     path = synthesize(factory[provider](), text, tmp_path)
     decode(path)
     actual = await transcriber(backend)(path)
-    error = assert_transcript(normalize_for_speech(text), actual, 0.25)
+    error = assert_transcript(normalize_for_speech(text), actual, LIVE_THRESHOLD)
     print(f"{provider}/{backend} WER={error:.3f}: {text[:45]}")
