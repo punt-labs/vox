@@ -1,4 +1,4 @@
-.PHONY: help test test-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions check-comments check-docstrings build-api-docs report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
+.PHONY: help test test-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions check-comments check-docstrings build-api-docs report format build install clean depot metrics coverage coverage-compare prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -111,6 +111,11 @@ metrics: ## Run ABC complexity metrics on src/
 
 coverage: install ## Measure line and branch coverage across all credential-free tiers
 	uv run python tools/run_coverage.py
+
+COVERAGE_BASE ?=
+
+coverage-compare: ## Publish coverage; reject regressions when COVERAGE_BASE names a base JSON report
+	uv run python tools/compare_coverage.py coverage.json $(if $(COVERAGE_BASE),--base "$(COVERAGE_BASE)")
 
 # LaTeX intermediate files to remove after compilation
 LATEX_ARTIFACTS = *.aux *.log *.out *.bbl *.bcf *.blg *.run.xml *.fls \

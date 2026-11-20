@@ -473,7 +473,8 @@ There is no committed numeric baseline to raise: improvements automatically
 become the comparison point after merging. Never lower a floor or regenerate a
 baseline to bypass a regression; add tests instead. Locally run `make coverage`
 and compare reports with
-`uv run python tools/compare_coverage.py coverage.json --base /path/to/base.json`.
+`make coverage-compare COVERAGE_BASE=/path/to/base.json`. Without `COVERAGE_BASE`,
+`make coverage-compare` publishes the current totals without a comparison.
 
 The job summary publishes line and branch percentages. The `coverage` artifact
 contains XML, JSON, and browsable HTML; terminal output lists missing lines.

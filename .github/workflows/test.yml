@@ -370,10 +370,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "$EVENT_NAME" = pull_request ]; then
-            uv run python tools/compare_coverage.py coverage.json \
-              --base "$RUNNER_TEMP/vox-coverage-base/coverage.json"
+            make coverage-compare COVERAGE_BASE="$RUNNER_TEMP/vox-coverage-base/coverage.json"
           else
-            uv run python tools/compare_coverage.py coverage.json
+            make coverage-compare
           fi
       - name: Upload coverage XML
         if: always()
