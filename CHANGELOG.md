@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Install shared diagnostics from PyPI with `punt-observe==0.1.0`, including
-  upstream fork-hook and exit-flush fixes. Package installation no longer
-  requires git for this dependency.
-
 ### Added
 
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
@@ -114,6 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triple-backtick inline span such as ```` ```x``` ```` is not a fence.
 
 ### Changed
+
+- Install shared diagnostics from PyPI with `punt-observe==0.1.0`, including
+  upstream fork-hook and exit-flush fixes. Package installation no longer
+  requires git for this dependency.
 
 - Upgrade to `punt-oo-ratchet==0.3.1` and backfill the missing `_audio.py`
   and `voxd/synthesis_cache.py` coupling baseline rows through its audited
