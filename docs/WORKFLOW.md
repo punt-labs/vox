@@ -722,7 +722,7 @@ function mission_loop(mission):
         result   = worker submits
         findings = evaluator review      # a DISTINCT specialist
                  + leader verification   # make install; vox daemon restart;
-                                         # make test on the installed artifact;
+                                         # make test; make test-e2e against the installed wheel;
                                          # drive the real entry point;
                                          # review agents on the mission diff
         if findings: reflect(findings)   # another round, same mission
@@ -820,8 +820,8 @@ itself.
    evaluator reviews it; reflect-and-advance rounds continue until the
    evaluator accepts.
 6. **The leader verifies and closes.** Check the result against the contract:
-   `make install`, `vox daemon restart`, `make test` against the installed
-   artifact, and exercise the change through its real entry point with the
+   `make install`, `vox daemon restart`, `make test`, plus `make test-e2e` against the installed
+   wheel, and exercise the change through its real entry point with the
    expected output written first — one invalid input, one missing/erroring
    dependency, one boundary. Run the applicable local review agents on the
    mission diff and fix every finding; a dismissal requires the exact finding,
