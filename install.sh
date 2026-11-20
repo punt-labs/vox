@@ -57,8 +57,8 @@ done
 
 info "Checking prerequisites..."
 
-# Capability auto-skip: `claude` is needed only for the plugin. Without it the
-# CLI still installs for other harnesses (Codex, Cursor, a plain terminal).
+# Capability auto-skip: `claude` and `git` are needed only for the plugin.
+# Without either the CLI still installs for other harnesses.
 # This OR-combines with the explicit --no-plugin / VOX_NO_PLUGIN request.
 if command -v claude >/dev/null 2>&1; then
   ok "claude CLI found"
@@ -70,7 +70,8 @@ fi
 if command -v git >/dev/null 2>&1; then
   ok "git found"
 else
-  fail "'git' is required to install vox's pinned punt-observe dependency (including --no-plugin); install git and retry"
+  SKIP_PLUGIN=1
+  warn "'git' not found -- installing the vox CLI only (no Claude Code plugin)"
 fi
 
 # --- Step 2: uv ---
@@ -314,7 +315,7 @@ fi
 # --- Steps 6-8: Claude Code plugin ---
 #
 # Skipped as a unit when SKIP_PLUGIN=1 (--no-plugin, VOX_NO_PLUGIN=1, or the
-# claude capability auto-skip from Step 1). The scope is exactly the
+# claude/git capability auto-skip from Step 1). The scope is exactly the
 # marketplace-register + plugin-install steps.
 
 if [ "$SKIP_PLUGIN" = "0" ]; then

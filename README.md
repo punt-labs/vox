@@ -33,9 +33,6 @@ database and creates no salt. Diagnostic logging remains available.
 
 ## Quick Start
 
-Git is required for package installation, including CLI-only installs, until
-`punt-observe` is published to PyPI; vox currently pins it to commit `53e6575`.
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh | sh
 ```
@@ -68,7 +65,7 @@ Or set the environment variable, for places where passing arguments is awkward (
 curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh | VOX_NO_PLUGIN=1 sh
 ```
 
-`VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The installer also skips the plugin when `claude` is not installed. Git is still required for the package install.
+`VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The installer also skips the plugin when `claude` or `git` is not installed.
 
 <details>
 <summary>Manual install (if you already have uv)</summary>
