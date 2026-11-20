@@ -108,6 +108,8 @@ voxd = "punt_vox.voxd:entrypoint"
 vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
+roundtrip = ["faster-whisper==1.2.1", "av<19"]
+
 dev = [
     "pydoclint==0.12.0",
     "markdown==3.11.3",
@@ -323,11 +325,12 @@ reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
+    "roundtrip: real TTS to STT word-error-rate oracle (offline by default; live also marked integration)",
     "integration: marks tests requiring real, credentialed provider API calls (run with -m integration)",
     "slow: marks tests with heavy real-subprocess or real-filesystem overhead (run with -m slow)",
     "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",

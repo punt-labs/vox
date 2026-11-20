@@ -1,6 +1,6 @@
 # Testing
 
-No network or API dependencies. Every test runs fully offline — no API keys, no network, no audio hardware — but they do rely on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng).
+The default suite needs no API keys, network, or audio hardware, but relies on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng). Opt-in roundtrip checks use a downloaded Whisper model; live integration checks call credentialed APIs.
 
 ## Philosophy
 
@@ -201,7 +201,7 @@ reflect that shape, not a copy of biff's.
              │           │  no tests yet; lands with conversation_mode)
              ├───────────┤
           ┌──┤  Tier 3b  │  integration — real, credentialed provider API
-          │  │           │  calls (reserved, no tests yet -- see below)
+          │  │           │  calls (roundtrip matrix; nightly/manual)
           │  ├───────────┤
        ┌──┤  │  Tier 3a  │  subprocess — real shell/git subprocess spawns
        │  │  │           │  (hook scripts, install.sh, plugin-surface gate)
@@ -285,20 +285,12 @@ default tier. The pi-side secret guard extension runs under real `node` in
 `test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
 problem repeated in a different domain, not a new marker.
 
-### Tier 3b: `integration` -- reserved, deliberately empty
+### Tier 3b: `integration` -- credentialed speech roundtrip
 
-`@pytest.mark.integration` is declared but **no test currently carries it**.
-This is deliberate, not an oversight, and it is a different situation from
-biff's tier 3d/4: biff has one relay protocol to smoke-test against a real
-deployment; vox has **five independently-billed provider APIs**
-(ElevenLabs, OpenAI, Polly, macOS `say`, espeak-ng), each needing its own
-credentials sourced from the platform keychain, never committed. Writing
-real smoke tests against five live providers is a real piece of work --
-credential plumbing, cost/quota management per provider, flakiness triage
-for whichever provider is having a bad day -- and doing it well is out of
-scope for a tiering/documentation pass with no operator-approved
-credentials-in-CI plan. It is recommended as a follow-up (see below), not
-done here by fabricating tests against APIs this pass has no way to verify.
+`tests/roundtrip/test_live.py` carries `integration` and `roundtrip` together.
+It covers ElevenLabs, OpenAI, and Polly synthesis crossed with Scribe and
+Whisper transcription. Run it explicitly with `make test-roundtrip-live`;
+the nightly/manual workflow requires credentials rather than skipping.
 
 ### Tier 4: `sdk` -- reserved, deliberately empty
 
@@ -452,13 +444,14 @@ verify:
 | Marker | Tier | What it requires | Default run? |
 |--------|------|-------------------|---------------|
 | *(none)* | 1 -- Unit | Nothing | Yes |
+| `roundtrip` | Speech oracle | `uv sync --group roundtrip`, ffmpeg, espeak-ng, cached base.en Whisper model; live also `integration` and provider credentials | No |
 | `slow` | cross-cutting | Nothing (real `git`/subprocess round trips, no external service) | No |
 | `subprocess` | 3a | `bash`/`sh`/`git` on `PATH` (present on every dev box and CI runner already) | No |
-| `integration` | 3b | Real, credentialed provider API access (reserved -- no tests yet) | No |
+| `integration` | 3b | Real, credentialed provider API access; live roundtrip matrix | No |
 | `sdk` | 4 | `ANTHROPIC_API_KEY`, real Claude Agent SDK session (reserved -- no tests yet) | No |
 
-`pytest -m <marker>` always selects exactly that tier -- no marker is a
-superset of another, matching the discipline biff's tier markers hold.
+Live roundtrip checks carry both `integration` and `roundtrip`; use
+`-m "roundtrip and not integration"` to select only the offline speech tier.
 
 ## Running Tests
 
@@ -487,11 +480,26 @@ uv run pytest tests/ --cov=src --cov-report=term-missing
 
 ## Integration Tests
 
+Speech intelligibility checks live in `tests/roundtrip/`. Run
+`make test-roundtrip` for real espeak-ng synthesis and deterministic CPU/int8
+Whisper base.en transcription; the first model download needs network, then
+recognition is offline. Run `make test-roundtrip-live` for ElevenLabs, OpenAI,
+and Polly crossed with Whisper and ElevenLabs Scribe. They normalize identifiers
+through vox, split at a deliberately small 240-character budget to exercise
+chunking economically, and stitch through `TTSClient`, without a daemon.
+The oracle rejects silent/empty decoded audio and word error rates above 0.60
+offline (robotic espeak baseline max 0.538, with margin), or 0.25 for live TTS.
+The offline tier also proves that unrelated spoken text fails the gate.
+Live prerequisites are named in skip reasons; `VOX_ROUNDTRIP_REQUIRE_LIVE=1`
+makes missing credentials failures (nightly CI). AWS requires explicit
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION` for this
+reproducible check; `AWS_SESSION_TOKEN` is optional. Both API providers use
+their usual `ELEVENLABS_API_KEY` / `OPENAI_API_KEY` names; Scribe also needs
+`ELEVENLABS_API_KEY`. See `roundtrip-live.yml` for the secret mapping.
+
 Tests requiring real, credentialed provider API calls are marked
-`@pytest.mark.integration` and excluded from the default run. None currently
-exist. See [Tier 3b](#tier-3b-integration----reserved-deliberately-empty)
-above for why that is a deliberate call, not an oversight, and what would be
-needed to populate it.
+`@pytest.mark.integration` and excluded from the default run. See
+[Tier 3b](#tier-3b-integration----credentialed-speech-roundtrip) for the matrix.
 
 ## Dev box vs CI
 
@@ -503,8 +511,9 @@ stated otherwise -- the same discipline biff's testing doc holds.
 | Tier | Command | When to run it |
 |------|---------|-----------------|
 | 1 (default) | `uv run pytest` | Constantly. No external dependency; this is the inner loop. |
+| Speech roundtrip | `make test-roundtrip` / `make test-roundtrip-live` | Offline intelligibility before speech changes; credentialed matrix on demand. |
 | `subprocess` (3a) | `uv run pytest -m subprocess` | Before touching `plugin/hooks/*.sh`, `install.sh`, or `scripts/check-plugin-surface.sh`. No extra infra -- `bash`/`sh`/`git` are already required to develop this repo at all. |
-| `integration` (3b) | *(no tests yet)* | N/A until populated -- see the reserved-tier rationale above. |
+| `integration` (3b) | `make test-roundtrip-live` | With provider credentials; costs real API quota. |
 | `sdk` (4) | *(no tests yet)* | N/A until `conversation_mode` lands and needs it. Local-only by design once it exists, same as biff's tier 4 -- real API cost per test, never in CI. |
 
 ### In CI
@@ -516,9 +525,9 @@ one `uv run pytest` call; splitting the invocation keeps that coverage
 intact rather than silently dropping it the moment the markers exist and the
 default `addopts` starts excluding them.
 
-- **`integration`** -- no CI job, and none planned. Five independently
-  billed provider APIs is a materially different problem from biff's one
-  relay protocol; see the reserved-tier rationale above.
+- **`roundtrip`** -- offline espeak-ng → Whisper on every push/PR, in its own job.
+- **`integration`** -- live roundtrip matrix nightly and on manual dispatch in
+  `.github/workflows/roundtrip-live.yml`, never on untrusted PRs.
 - **`sdk`** -- no CI job, by design, matching biff's tier 4. It will cost
   real money per test once it exists; it will never be a default CI job.
 
@@ -542,10 +551,6 @@ skipped:
   here per the task's explicit "no directory restructuring" constraint, but
   a real candidate for the same subpackage treatment `music_player/` and
   `programs/` already have.
-- **Populate the `integration` tier.** Needs an operator decision on
-  credentials-in-CI (or explicitly local-only, matching `sdk`) before any
-  test is written against a live provider, plus a per-provider cost/quota
-  plan for five separately billed APIs.
 - **Wire the `subprocess`/`sdk` markers into `conversation_mode`'s tests
   when that subsystem lands.** The markers are reserved and documented now
   so that work does not reinvent them.
