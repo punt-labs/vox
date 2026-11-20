@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -12,9 +13,10 @@ from pathlib import Path
 import coverage
 
 
-def run_coverage() -> int:
+def run_coverage(rcfile: Path | None = None) -> int:
     """Install startup hooks, run pytest-cov, and combine reports."""
     root = Path.cwd()
+    config_file = str((rcfile or root / "pyproject.toml").resolve())
     subprocess.run(
         [
             "uv",
@@ -45,11 +47,10 @@ def run_coverage() -> int:
         if hook.exists():
             raise FileExistsError(hook)
     env = dict(os.environ)
-    env["COVERAGE_PROCESS_START"] = os.environ.get(
-        "COVERAGE_RCFILE", str(root / "pyproject.toml")
-    )
+    env.pop("COVERAGE_RCFILE", None)
+    env["COVERAGE_PROCESS_START"] = config_file
     env["COVERAGE_FILE"] = str(root / ".coverage")
-    cov = coverage.Coverage()
+    cov = coverage.Coverage(config_file=config_file)
     cov.erase()
     try:
         for hook in hooks:
@@ -62,6 +63,7 @@ def run_coverage() -> int:
                 "-m",
                 "not integration and not sdk",
                 "--cov=punt_vox",
+                f"--cov-config={config_file}",
                 "--cov-report=",
             ],
             env=env,
@@ -80,5 +82,12 @@ def run_coverage() -> int:
     return result.returncode
 
 
+def main() -> int:
+    """Run coverage with an explicit optional configuration path."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--rcfile", type=Path, help="Coverage configuration file")
+    return run_coverage(parser.parse_args().rcfile)
+
+
 if __name__ == "__main__":
-    sys.exit(run_coverage())
+    sys.exit(main())
