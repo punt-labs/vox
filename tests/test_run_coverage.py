@@ -41,7 +41,8 @@ def test_runner_reports_and_preserves_exit(
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "pytest" in args:
             assert args[args.index("-m", args.index("pytest")) + 1] == (
-                "not integration and not sdk and not roundtrip and not levels and not quarantine"
+                "not integration and not sdk and not roundtrip"
+                " and not levels and not quarantine"
             )
             assert args[args.index("-n") + 1] == "auto"
             assert (

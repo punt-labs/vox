@@ -63,7 +63,10 @@ def run_coverage(rcfile: Path | None = None, workers: str = "auto") -> int:
                 "-n",
                 workers,
                 "-m",
-                "not integration and not sdk and not roundtrip and not levels and not quarantine",
+                (
+                    "not integration and not sdk and not roundtrip"
+                    " and not levels and not quarantine"
+                ),
                 "--cov=punt_vox",
                 f"--cov-config={config_file}",
                 "--cov-report=",
