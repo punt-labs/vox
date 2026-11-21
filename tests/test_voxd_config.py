@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from punt_vox.paths import ensure_user_dirs
 from punt_vox.voxd.config import (
@@ -16,14 +17,54 @@ from punt_vox.voxd.config import (
     _run_dir,
 )
 
-if TYPE_CHECKING:
-    import pytest
-
 
 def _load_keys(config_dir: Path) -> frozenset[str]:
     """Build a DaemonConfig and load keys -- replaces the deleted wrapper."""
     cfg = DaemonConfig(run_dir=_run_dir(), config_dir=config_dir, log_dir=_log_dir())
     return cfg.load_keys()
+
+
+class TestLogEnvironment:
+    """Startup diagnostics disclose environment presence, never values."""
+
+    @pytest.mark.parametrize("value", [None, "", "zqxprivate-identity-value"])
+    def test_environment_values_are_not_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        value: str | None,
+    ) -> None:
+        keys = (
+            "USER",
+            "LOGNAME",
+            "USERNAME",
+            "SUDO_USER",
+            "EMAIL",
+            "HOSTNAME",
+            "UID",
+            "GID",
+            "PATH",
+            "HOME",
+            "DBUS_SESSION_BUS_ADDRESS",
+        )
+        for key in keys:
+            if value is None:
+                monkeypatch.delenv(key, raising=False)
+            else:
+                monkeypatch.setenv(key, value)
+        config = DaemonConfig(tmp_path, tmp_path, tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.config"):
+            config.log_environment()
+
+        assert "voxd starting" in caplog.text
+        assert "voxd environment" in caplog.text
+        assert f"'USER': {value is not None}" in caplog.text
+        assert f"'PATH': {value is not None}" in caplog.text
+        assert f"'HOME': {value is not None}" in caplog.text
+        assert "zqxprivate-identity-value" not in caplog.text
+        assert "uid=" not in caplog.text
+        assert "gid=" not in caplog.text
 
 
 class TestVoxdPaths:
