@@ -264,7 +264,7 @@ reflect that shape, not a copy of biff's.
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
-| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` | Nightly/manual | 3 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/RC/manual | 24 |
 | `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
@@ -501,8 +501,12 @@ make coverage
 
 ### Stage five: playback capture
 
-`make test-playback-capture` selects the `playback` marker (excluded from default
-tests and combined coverage). A private headless PulseAudio null sink records
+`make test-playback-capture` selects `playback and not integration`, so it never
+spends provider quota even when credentials are present. Run
+`make test-playback-capture-live` for `playback and integration`; the live Polly
+and ElevenLabs cases carry both markers. CI explicitly selects `-m playback`
+to run both offline and live cases. Playback is excluded from default tests
+and combined coverage. A private headless PulseAudio null sink records
 its monitor while a real isolated `voxd` subprocess speaks. Pinned CPU/int8
 Whisper small.en transcribes that capture; WER must be at most 0.05 and unique
 marker words must occur exactly once in order. Install `pulseaudio`,

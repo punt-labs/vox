@@ -133,6 +133,7 @@ async def test_espeak_direct_sequential_order(
     )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "provider",
     ["polly", "elevenlabs"],
