@@ -515,6 +515,8 @@ ElevenLabs uses just over 5,000 characters with `eleven_v3`, forcing two real
 provider chunks with markers on opposite sides of the seam. Missing provider
 credentials or audio prerequisites skip locally; `VOX_PLAYBACK_REQUIRE=1`
 makes them failures in the nightly/manual `roundtrip-live.yml` playback job.
+The reusable workflow also runs this job against the installed candidate wheel
+when called by the release gate.
 Live cases need `ELEVENLABS_API_KEY` and the same `AWS_*` variables as roundtrip.
 Concurrent submission order is not asserted: FIFO applies to enqueued files,
 not to synthesis completion across independent client connections.
