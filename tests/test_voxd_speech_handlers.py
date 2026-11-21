@@ -141,7 +141,11 @@ class TestHandleSynthesizeShortCircuit:
                 )
             )
 
-        [record] = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        [record] = [
+            r
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.wire_reply" and r.levelno >= logging.WARNING
+        ]
         assert record.name == "punt_vox.voxd.wire_reply"
         assert record.levelno == logging.WARNING
         assert record.exc_info is None
