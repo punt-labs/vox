@@ -463,7 +463,8 @@ quiet, clipped, and truncated chimes must be rejected. Track change is
 rendered through mpv with voxd's player settings (`--gapless-audio=yes`,
 `--volume=60`, no crossfade) and passes with at most 1.0 s of silence at the
 boundary and at most 6 LU between the two tracks' integrated loudness;
-synthetic tones prove gaps and jumps fail. `make test-levels-live` generates two 20 s ElevenLabs tracks and checks
+synthetic tones prove gaps and jumps fail. `make test-levels-live` generates two 20 s ElevenLabs tracks, edge-trimmed as voxd
+stores them (`EdgeTrimmedMusic`), and checks
 each at -30 to -8 LUFS, true peak at or below 0 dBTP, at most 1 s of leading
 and 2 s of internal silence, then the change between them, and that chimes at
 playback gain (80%, linear) stay at least 3 LU above music at mpv volume 60

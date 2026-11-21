@@ -14,6 +14,7 @@ from levels.transition import Transition
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.chimes import ChimeResolver
+from punt_vox.voxd.programs.edge_trim import EdgeTrim, EdgeTrimmedMusic
 from punt_vox.voxd.programs.mpv.mpv_launcher import _MUSIC_VOLUME
 
 pytestmark = [pytest.mark.levels, pytest.mark.integration]
@@ -38,7 +39,7 @@ def tracks(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
             pytest.fail(reason)
         pytest.skip(reason)
     folder = tmp_path_factory.mktemp("music")
-    provider = ElevenLabsMusicProvider()
+    provider = EdgeTrimmedMusic(ElevenLabsMusicProvider(), EdgeTrim())
 
     async def generate() -> list[Path]:
         return list(
