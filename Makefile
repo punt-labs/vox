@@ -16,12 +16,15 @@ test-changed: ## Run default-tier tests importing staged Python modules (or REF)
 hooks: ## Install the repository's local quality gates
 	git config core.hooksPath .githooks
 
-.PHONY: test-roundtrip test-roundtrip-live test-levels test-levels-live
+.PHONY: test-roundtrip test-roundtrip-live test-agent test-levels test-levels-live
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
-	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not quarantine" -s
+	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not agent and not quarantine" -s
 
 test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration and not quarantine" -s
+
+test-agent: ## Headless Claude Code to vox plugin to CPU Whisper
+	uv run --group roundtrip pytest tests/roundtrip -m "agent and not quarantine" -s
 
 test-levels: ## Chime and synthetic-track loudness, silence, track-change checks (ffmpeg, mpv)
 	uv run pytest tests/levels -m "levels and not integration" -s
