@@ -6,12 +6,18 @@ help: ## Show available targets
 test: ## Run tests
 	uv run pytest
 
-.PHONY: test-roundtrip test-roundtrip-live
+.PHONY: test-roundtrip test-roundtrip-live test-roundtrip-auth test-roundtrip-say
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration" -s
 
 test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
-	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration" -s
+	uv run --group roundtrip pytest tests/roundtrip/test_live.py -m "roundtrip and integration" -s
+
+test-roundtrip-auth: ## Live cloud credential rejection (no valid keys needed)
+	uv run --group roundtrip pytest tests/roundtrip/test_live_auth.py -m integration
+
+test-roundtrip-say: ## Real macOS Say to CPU Whisper intelligibility check
+	uv run --group roundtrip pytest tests/roundtrip/test_say_roundtrip.py -m "roundtrip and integration" -s
 
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m e2e

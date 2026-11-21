@@ -1,8 +1,6 @@
 name: Live speech roundtrip
 
 on:
-  schedule:
-    - cron: "23 5 * * *"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -10,13 +8,31 @@ on:
         description: Wheel and sdist artifact from this release run (empty for nightly)
         type: string
         default: ""
+    secrets:
+      ELEVENLABS_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      AWS_SESSION_TOKEN:
+        required: false
+      AWS_DEFAULT_REGION:
+        required: false
 
 permissions:
   contents: read
 
 jobs:
   roundtrip-live:
-    runs-on: ubuntu-latest
+    name: Live speech (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 55
     env:
       HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
@@ -33,11 +49,15 @@ jobs:
           name: ${{ inputs.candidate-artifact }}
           path: candidate/
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep
+        if: runner.os == 'Linux'
+      - run: command -v ffmpeg || brew install ffmpeg
+        if: runner.os == 'macOS'
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
       - name: Install test dependencies and subject
+        id: dependencies
         env:
           CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
         run: |
@@ -51,15 +71,24 @@ jobs:
           fi
           printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
       - name: Installed candidate CLI and MCP
-        if: inputs.candidate-artifact != ''
+        if: runner.os == 'Linux' && inputs.candidate-artifact != ''
         run: |
           export VOX_E2E_BINARY="$UV_PROJECT_ENVIRONMENT/bin/vox"
           test -x "$VOX_E2E_BINARY"
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/e2e -m e2e
-      - name: Live speech roundtrip
-        # Do not use uv run: it can sync the editable checkout over the wheel.
+      # Use the selected interpreter directly: uv run can replace the candidate wheel.
+      - name: espeak-ng to Whisper
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip -m 'roundtrip and integration' -s
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_offline.py -m roundtrip -s
+      - name: Cloud credential rejection
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live_auth.py -m integration
+      - name: ElevenLabs, OpenAI, and Polly to Whisper and Scribe
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live.py -m 'roundtrip and integration' -s
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -67,3 +96,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: macOS Say to Whisper
+        if: runner.os == 'macOS'
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_say_roundtrip.py -m 'roundtrip and integration' -s

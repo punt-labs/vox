@@ -11,7 +11,6 @@ import pytest
 from punt_vox.providers.polly import (
     PollyProvider,
     VoiceConfig,
-    _bcp47_matches_iso,  # pyright: ignore[reportPrivateUsage]
     _best_engine,  # pyright: ignore[reportPrivateUsage]
     _infer_iso_from_bcp47,  # pyright: ignore[reportPrivateUsage]
 )
@@ -41,6 +40,10 @@ class TestVoiceConfig:
         cfg = VoiceConfig(voice_id="Joanna", language_code="en-US", engine="neural")
         with pytest.raises(AttributeError):
             cfg.voice_id = "Matthew"  # type: ignore[misc]
+
+    def test_rejects_incomplete_voice_metadata(self) -> None:
+        with pytest.raises(ValueError, match="voice catalog entry lacks"):
+            VoiceConfig.from_response({"Id": "Joanna"})
 
 
 class TestBestEngine:
@@ -104,6 +107,34 @@ class TestPollyProviderResolveVoice:
 
 
 class TestPollyProviderSynthesize:
+    def test_rejected_credentials_during_voice_lookup_leave_no_audio(
+        self, mock_boto_client: MagicMock, tmp_path: Path
+    ) -> None:
+        from botocore.exceptions import ClientError
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_boto_client.describe_voices.side_effect = ClientError(
+            error_response=cast(
+                "Any",
+                {
+                    "Error": {"Code": "UnrecognizedClientException"},
+                    "ResponseMetadata": {"HTTPStatusCode": 403},
+                },
+            ),
+            operation_name="DescribeVoices",
+        )
+        provider = PollyProvider(boto_client=mock_boto_client)
+        output = tmp_path / "audio.mp3"
+
+        with pytest.raises(ProviderAuthError) as rejected:
+            provider.synthesize(SynthesisRequest(text="Hello"), output)
+
+        assert rejected.value.provider_name == "polly"
+        assert rejected.value.status_code == 403
+        assert not output.exists()
+        mock_boto_client.synthesize_speech.assert_not_called()
+
     def test_synthesize_creates_file(
         self,
         polly_provider: PollyProvider,
@@ -310,24 +341,32 @@ class TestPollyProviderCheckHealth:
         assert "not configured" in checks[0].message
 
 
-class TestBcp47MatchesIso:
-    def test_standard_match(self) -> None:
-        assert _bcp47_matches_iso("en-US", "en") is True
-
-    def test_standard_no_match(self) -> None:
-        assert _bcp47_matches_iso("de-DE", "en") is False
-
-    def test_arabic_special(self) -> None:
-        assert _bcp47_matches_iso("arb", "ar") is True
-
-    def test_chinese_special(self) -> None:
-        assert _bcp47_matches_iso("cmn-CN", "zh") is True
-
-    def test_unmapped_prefix(self) -> None:
-        assert _bcp47_matches_iso("en-GB", "en") is True
-
-    def test_three_letter_no_match(self) -> None:
-        assert _bcp47_matches_iso("arb", "en") is False
+class TestPollyVoiceLanguageFiltering:
+    @pytest.mark.parametrize(
+        ("language", "voices"),
+        [
+            ("en", ["amy", "joanna"]),
+            ("ar", ["zeina"]),
+            ("zh", ["zhiyu"]),
+            ("de", ["hans"]),
+            ("cmn", []),
+            ("fr", []),
+        ],
+    )
+    def test_list_voices_filters_by_iso_language(
+        self, language: str, voices: list[str]
+    ) -> None:
+        client = MagicMock()
+        client.describe_voices.return_value = _make_describe_voices_response(
+            [
+                _voice_entry("Joanna", "en-US", ["neural"]),
+                _voice_entry("Amy", "en-GB", ["standard"]),
+                _voice_entry("Hans", "de-DE", ["standard"]),
+                _voice_entry("Zeina", "arb", ["standard"]),
+                _voice_entry("Zhiyu", "cmn-CN", ["standard"]),
+            ]
+        )
+        assert PollyProvider(boto_client=client).list_voices(language) == voices
 
 
 class TestInferIsoFromBcp47:

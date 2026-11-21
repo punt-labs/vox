@@ -40,8 +40,17 @@ class WhisperModel(Protocol):
 
 @cache
 def load_whisper() -> WhisperModel:
-    whisper = pytest.importorskip("faster_whisper", reason="install uv group roundtrip")
-    hub = pytest.importorskip("huggingface_hub", reason="install uv group roundtrip")
+    try:
+        whisper = pytest.importorskip(
+            "faster_whisper", reason="install uv group roundtrip"
+        )
+        hub = pytest.importorskip(
+            "huggingface_hub", reason="install uv group roundtrip"
+        )
+    except pytest.skip.Exception as exc:
+        if os.environ.get("VOX_ROUNDTRIP_REQUIRE_LIVE") == "1":
+            pytest.fail(str(exc))
+        raise
     model_path = hub.snapshot_download(
         "Systran/faster-whisper-small.en",
         revision="d1d751a5f8271d482d14ca55d9e2deeebbae577f",

@@ -197,23 +197,23 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,202 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,213 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
+| `roundtrip` | Real speech WER and cloud credential rejection; live cases also `integration` | See [Integration Tests](#integration-tests) | Offline PR/push; all providers nightly/manual | 39 |
+| `integration` | Cloud TTS × STT matrix, cloud credential rejection, and macOS Say | See [Integration Tests](#integration-tests) | Nightly/manual | 31 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,202 default / 9,453 collected across all markers. `slow` is cross-cutting,
+9,213 default / 9,471 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,202 of 9,453 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,213 of 9,471 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -274,9 +274,9 @@ problem repeated in a different domain, not a new marker.
 
 ### `integration` and `sdk`
 
-`integration` marks the credentialed speech roundtrip matrix, not mocked
-cross-component wiring. The nightly/manual workflow supplies provider secrets
-and fails when prerequisites are missing; local runs name and skip missing keys.
+`integration` marks live provider checks, not mocked cross-component wiring.
+The shared nightly/manual/RC suite supplies cloud provider secrets and fails when
+prerequisites are missing; local cloud roundtrips name and skip missing keys.
 
 `sdk` is reserved for a real paid Claude Agent SDK session and is not run in
 CI. Conversation mode already has default and subprocess coverage; that does
@@ -451,6 +451,13 @@ unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
 `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
 Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
+Run `make test-roundtrip-auth` to verify that the three cloud providers
+reject deliberately invalid credentials and do not write audio. This test
+contacts the real endpoints but does not need any valid keys.
+Run `make test-roundtrip-say` on macOS for native Say → Whisper using the same
+speech corpus. It needs `say` and `ffmpeg`, not cloud credentials. Say and
+espeak-ng do not have an authentication path.
+
 ## Dev box vs CI
 
 Every gap below has a concrete reason, not a permanent design choice unless
@@ -473,8 +480,14 @@ tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
 invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
-The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
-runs the credentialed matrix nightly or manually with strict prerequisites.
+The separate `roundtrip` job enforces offline speech WER. The shared
+`.github/workflows/roundtrip-live.yml` suite runs espeak-ng and cloud checks
+on Linux and Say on macOS. On release-candidate runs, both runners import
+the installed wheel for speech tests; Linux also exercises the installed CLI
+and MCP entry points. The scheduled caller (`.github/workflows/nightly.yml`) files
+a Linear Bug tagged `repo:vox` on failure, linking the exact run attempt.
+Set the `LINEAR_API_KEY` Actions secret to a Linear personal API key with
+issue-create permission for the Punt Labs team. Manual and RC runs do not file issues.
 
 ### Coverage policy
 
@@ -511,7 +524,7 @@ mapped back to source. Hooks are removed on exit. Processes that deliberately
 strip the environment or are killed before coverage can flush cannot contribute
 data; shell scripts themselves are not Python coverage. Live audio/hardware and
 human-judged tests remain outside automated CI. `sdk` remains empty; live
-`integration and roundtrip` checks run in the separate nightly/manual workflow.
+`integration and roundtrip` checks run in the shared nightly/manual/RC suite.
 
 ## Follow-ups
 

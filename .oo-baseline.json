@@ -1833,12 +1833,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/providers/polly.py": {
-    "method_ratio": 0.8,
+    "method_ratio": 0.812,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.88,
+    "avg_params": 0.78,
     "max_complexity": 8.0,
-    "avg_complexity": 2.88,
-    "module_size": 278.0,
+    "avg_complexity": 2.78,
+    "module_size": 266.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.4,
     "init_violations": 0.0,

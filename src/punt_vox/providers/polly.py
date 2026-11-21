@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -28,45 +30,14 @@ if TYPE_CHECKING:
         LanguageCodeType,
         VoiceIdType,
     )
+    from mypy_boto3_polly.type_defs import VoiceTypeDef
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["PollyProvider"]
 
-# ISO 639-1 -> Polly BCP 47 language code mapping.
-_LANGUAGE_MAP: dict[str, str] = {
-    "ar": "arb",
-    "ca": "ca-ES",
-    "cs": "cs-CZ",
-    "cy": "cy-GB",
-    "da": "da-DK",
-    "de": "de-DE",
-    "en": "en-US",
-    "es": "es-ES",
-    "fi": "fi-FI",
-    "fr": "fr-FR",
-    "hi": "hi-IN",
-    "id": "id-ID",
-    "it": "it-IT",
-    "ja": "ja-JP",
-    "ko": "ko-KR",
-    "ms": "ms-MY",
-    "nb": "nb-NO",
-    "nl": "nl-NL",
-    "pl": "pl-PL",
-    "pt": "pt-BR",
-    "ro": "ro-RO",
-    "ru": "ru-RU",
-    "sv": "sv-SE",
-    "th": "th-TH",
-    "tr": "tr-TR",
-    "uk": "uk-UA",
-    "vi": "vi-VN",
-    "zh": "cmn-CN",
-}
-
-# Reverse map: BCP 47 prefix -> ISO 639-1.
-_BCP47_TO_ISO: dict[str, str] = {v: k for k, v in _LANGUAGE_MAP.items()}
+# Polly codes that do not already start with their ISO 639-1 language.
+_BCP47_TO_ISO = {"arb": "ar", "cmn-CN": "zh"}
 
 # Default voice per language (ISO 639-1 -> lowercase Polly voice name).
 _DEFAULT_VOICES: dict[str, str] = {
@@ -93,16 +64,41 @@ _DEFAULT_VOICES: dict[str, str] = {
 }
 
 # Engine preference order: best quality first.
-_ENGINE_PREFERENCE: list[str] = ["neural", "generative", "long-form", "standard"]
+_ENGINE_PREFERENCE: tuple[EngineType, ...] = (
+    "neural",
+    "generative",
+    "long-form",
+    "standard",
+)
+
+_AUTH_ERROR_CODES = frozenset(
+    {
+        "InvalidSignatureException",
+        "SignatureDoesNotMatch",
+        "ExpiredToken",
+        "ExpiredTokenException",
+        "UnrecognizedClientException",
+        "InvalidClientTokenId",
+        "AuthFailure",
+        "AccessDeniedException",
+    }
+)
 
 
-def _bcp47_matches_iso(bcp47: str, iso: str) -> bool:
-    """Check if a BCP 47 language code corresponds to an ISO 639-1 code."""
-    mapped = _BCP47_TO_ISO.get(bcp47)
-    if mapped == iso:
-        return True
-    prefix = bcp47.split("-")[0]
-    return len(prefix) == 2 and prefix == iso
+@contextmanager
+def _translate_auth_errors() -> Generator[None]:
+    """Expose rejected AWS credential chains without masking other SDK faults."""
+    from botocore.exceptions import ClientError, NoCredentialsError
+
+    try:
+        yield
+    except NoCredentialsError as exc:
+        raise ProviderAuthError("polly", None) from exc
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in _AUTH_ERROR_CODES:
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            raise ProviderAuthError("polly", status) from exc
+        raise
 
 
 def _infer_iso_from_bcp47(bcp47: str) -> str | None:
@@ -129,16 +125,27 @@ class VoiceConfig:
     language_code: LanguageCodeType
     engine: EngineType
 
+    @classmethod
+    def from_response(cls, voice: VoiceTypeDef) -> Self:
+        """Require the metadata needed to make a Polly synthesis request."""
+        voice_id = voice.get("Id")
+        language_code = voice.get("LanguageCode")
+        engines = voice.get("SupportedEngines")
+        if voice_id is None or language_code is None or engines is None:
+            msg = "Polly voice catalog entry lacks an ID, language, or engine list"
+            raise ValueError(msg)
+        return cls(voice_id, language_code, _best_engine(engines))
 
-def _best_engine(supported: list[str]) -> EngineType:
+
+def _best_engine(supported: Sequence[EngineType]) -> EngineType:
     """Pick the best engine from a list of supported engines."""
     if not supported:
         msg = "Voice has no supported engines"
         raise ValueError(msg)
     for engine in _ENGINE_PREFERENCE:
         if engine in supported:
-            return engine  # type: ignore[return-value]
-    return supported[0]  # type: ignore[return-value]
+            return engine
+    return supported[0]
 
 
 class PollyProvider(TTSProvider):
@@ -200,19 +207,13 @@ class PollyProvider(TTSProvider):
         Raises:
             ProviderAuthError: If AWS credentials are missing, expired, or rejected.
         """
-        # Deferred so a base-only install (no botocore) keeps
-        # importing polly.py cheap; matches the pattern check_health
-        # already uses. Both credential-family errors surface at the
-        # first call to synthesize_speech below.
-        from botocore.exceptions import ClientError, NoCredentialsError
-
         text = strip_vibe_tags(request.text)
 
         resolved_voice = request.voice or self.default_voice
         voice_cfg = self._voices.resolve(resolved_voice)
         rate = request.rate if request.rate is not None else 100
         ssml_text = f'<speak><prosody rate="{rate}%">{text}</prosody></speak>'
-        try:
+        with _translate_auth_errors():
             response = self._client.synthesize_speech(
                 Text=ssml_text,
                 TextType="ssml",
@@ -222,33 +223,6 @@ class PollyProvider(TTSProvider):
                 Engine=voice_cfg.engine,
                 SampleRate="22050",
             )
-        except NoCredentialsError as exc:
-            # The readiness gate catches the credential-absent case at
-            # F2; NoCredentialsError here means the gate saw a chain
-            # (env, profile, config) but the SDK could not resolve one
-            # by call time -- most likely an SSO session that expired
-            # between the readiness check and the synthesize call.
-            # Cross the wire as a rejected credential (F3) not a
-            # missing one, since the caller HAS configured something.
-            raise ProviderAuthError("polly", None) from exc
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code in {
-                "InvalidSignatureException",
-                "SignatureDoesNotMatch",
-                "ExpiredToken",
-                "ExpiredTokenException",
-                "UnrecognizedClientException",
-                "InvalidClientTokenId",
-                "AuthFailure",
-                "AccessDeniedException",
-            }:
-                # 400/403 for a rejected credential; the exception
-                # carries its own status but the auth-family codes
-                # are the reliable discriminator.
-                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-                raise ProviderAuthError("polly", status) from exc
-            raise
 
         logger.info(
             "API call: provider=polly, voice=%s, chars=%d",
@@ -280,7 +254,10 @@ class PollyProvider(TTSProvider):
             ValueError: If the requested language conflicts with the voice language.
         """
         cfg = self._voices.resolve(name)
-        if language is not None and not _bcp47_matches_iso(cfg.language_code, language):
+        if (
+            language is not None
+            and _infer_iso_from_bcp47(cfg.language_code) != language
+        ):
             msg = (
                 f"Voice '{cfg.voice_id}' does not support language '{language}' "
                 f"(supports {cfg.language_code})"
@@ -359,7 +336,8 @@ class PollyProvider(TTSProvider):
         return sorted(
             name
             for name in all_names
-            if _bcp47_matches_iso(self._voices.resolve(name).language_code, language)
+            if _infer_iso_from_bcp47(self._voices.resolve(name).language_code)
+            == language
         )
 
     def infer_language_from_voice(self, voice: str) -> str | None:
@@ -377,20 +355,16 @@ class PollyProvider(TTSProvider):
         next_token: str | None = None
 
         while True:
-            kw: dict[str, Any] = {}  # pyright: ignore[reportExplicitAny]
-            if next_token is not None:
-                kw["NextToken"] = next_token
-
-            resp: dict[str, Any] = self._client.describe_voices(**kw)  # type: ignore[assignment]
+            with _translate_auth_errors():
+                resp = (
+                    self._client.describe_voices(NextToken=next_token)
+                    if next_token
+                    else self._client.describe_voices()
+                )
 
             for voice in resp["Voices"]:
-                key = voice["Id"].lower()
-                if key not in fresh:
-                    fresh[key] = VoiceConfig(
-                        voice_id=voice["Id"],
-                        language_code=voice["LanguageCode"],
-                        engine=_best_engine(voice["SupportedEngines"]),
-                    )
+                config = VoiceConfig.from_response(voice)
+                fresh.setdefault(config.voice_id.lower(), config)
 
             next_token = resp.get("NextToken")
             if not next_token:
