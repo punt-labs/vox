@@ -192,6 +192,29 @@ class TestRecordHandler:
         assert error["message"] == "operation failed"
         assert not store.root.exists() or not any(store.root.glob("*.mp3"))
 
+    def test_store_failure_sends_terminal_error_after_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed store write completes the acknowledged request with an error."""
+        source = tmp_path / "source.mp3"
+        source.write_bytes(b"audio")
+        store = _store(tmp_path)
+        place = MagicMock(side_effect=RuntimeError("private store failure"))
+        monkeypatch.setattr(RecordStore, "place", place)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "record", "id": "r1", "text": "hi"}
+        asyncio.run(_handler(store, source)(msg, ws))
+
+        assert [frame["type"] for frame in sent] == ["recording", "error"]
+        assert sent[-1] == {
+            "type": "error",
+            "id": "r1",
+            "message": "operation failed",
+        }
+        place.assert_called_once_with(source=source, text="hi", name=None, cached=False)
+        assert not store.root.exists()
+
     @pytest.mark.parametrize(
         "rejection",
         [
