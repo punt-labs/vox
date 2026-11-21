@@ -140,9 +140,12 @@ class TestEdgeTrim:
     ) -> None:
         track = _track(tmp_path / "t.mp3", lead_ms=500, tone_ms=5, tail_ms=495)
         before = track.read_bytes()
+
+        def _past_middle(*_: object, **__: object) -> int:
+            return 600
+
         monkeypatch.setattr(
-            "punt_vox.voxd.programs.edge_trim.detect_leading_silence",
-            lambda *_, **__: 600,
+            "punt_vox.voxd.programs.edge_trim.detect_leading_silence", _past_middle
         )
 
         EdgeTrim().apply(track)
