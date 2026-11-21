@@ -370,10 +370,28 @@ jobs:
           BASE="$(git merge-base "origin/$BASE_REF" HEAD)"
           test -n "$BASE"
           echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          # Cached coverage is comparable only under the same measurement policy.
+          uv run python - "$BASE" >> "$GITHUB_OUTPUT" <<'PY'
+          import subprocess
+          import sys
+          import tomllib
+
+          configs = [
+              tomllib.loads(subprocess.check_output(
+                  ["git", "show", f"{ref}:pyproject.toml"], text=True
+              )).get("tool", {}).get("coverage", {})
+              for ref in (sys.argv[1], "HEAD")
+          ]
+          harness_unchanged = subprocess.run([
+              "git", "diff", "--quiet", sys.argv[1], "HEAD", "--",
+              "tools/run_coverage.py",
+          ]).returncode == 0
+          print(f"reuse={str(configs[0] == configs[1] and harness_unchanged).lower()}")
+          PY
           mkdir -p "$RUNNER_TEMP/vox-coverage-head"
           cp coverage.json "$RUNNER_TEMP/vox-coverage-head/coverage.json"
       - name: Restore exact merge-base coverage
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.coverage-base.outputs.reuse == 'true'
         id: coverage-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -390,7 +408,7 @@ jobs:
           fi
           cp "$RUNNER_TEMP/vox-coverage-head/coverage.json" coverage.json
       - name: Measure PR merge base with the same coverage harness
-        if: github.event_name == 'pull_request' && steps.coverage-restore.outputs.cache-hit != 'true'
+        if: github.event_name == 'pull_request' && (steps.coverage-base.outputs.reuse != 'true' || steps.coverage-restore.outputs.cache-hit != 'true')
         env:
           BASE: ${{ steps.coverage-base.outputs.sha }}
         run: |
