@@ -26,6 +26,10 @@ test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m "e2e and not quarantine"
 
+.PHONY: qa
+qa: ## Record the installed release-candidate flight (VOX_QA_WHEEL=/path/to/wheel)
+	bash scripts/release-qa.sh
+
 lint: check-comments check-docstrings ## Lint and format check (Python + shell)
 	uv run ruff check .
 	uv run ruff format --check .
