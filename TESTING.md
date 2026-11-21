@@ -259,25 +259,26 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,274 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,288 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
-| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) and live music levels (also `levels`) | `make test-roundtrip-live` / `make test-levels-live` | Nightly/manual | 28 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/RC/manual | 20 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`), live music levels (also `levels`), and live playback capture (also `playback`) | `make test-roundtrip-live` / `make test-levels-live` / `make test-playback-capture-live` | Nightly/RC/manual | 30 |
 | `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,274 default / 9,552 collected across all markers. Cross-cutting markers
+9,288 default / 9,569 collected across all markers. Cross-cutting markers
 overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,274 of 9,552 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,288 of 9,569 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -463,9 +464,9 @@ verify:
 
 ## Markers
 
-The [named-tier table](#testing-pyramid) lists every marker, its command,
+The [named-tier table](#testing-pyramid) lists the core markers, their commands,
 CI coverage, and collected count. The default selection excludes `slow`,
-`subprocess`, `e2e`, `integration`, `sdk`, and `roundtrip`. An explicit `-m`
+`subprocess`, `e2e`, `integration`, `sdk`, `roundtrip`, and `playback`. An explicit `-m`
 expression overrides that selection. Live audio has no pytest marker.
 
 ## Running Tests
@@ -498,6 +499,32 @@ make coverage
 ```
 
 ## Integration Tests
+
+### Stage five: playback capture
+
+`make test-playback-capture` selects `playback and not integration`, so it never
+spends provider quota even when credentials are present. Run
+`make test-playback-capture-live` for `playback and integration`; the live Polly
+and ElevenLabs cases carry both markers. CI explicitly selects `-m playback`
+to run both offline and live cases. Playback is excluded from default tests
+and combined coverage. A private headless PulseAudio null sink records
+its monitor while a real isolated `voxd` subprocess speaks. Pinned CPU/int8
+Whisper small.en transcribes that capture; WER must be at most 0.05 and unique
+marker words must occur exactly once in order. Install `pulseaudio`,
+`pulseaudio-utils`, `ffmpeg`, and `espeak-ng`, then sync the `roundtrip` group.
+
+The offline case covers sequential espeak direct-device requests. Neither
+espeak record nor Polly synthesis chunks text, so no offline chunking claim is
+made. Live Polly covers file synthesis and ffplay queue playback. Live
+ElevenLabs uses just over 5,000 characters with `eleven_v3`, forcing two real
+provider chunks with markers on opposite sides of the seam. Missing provider
+credentials or audio prerequisites skip locally; `VOX_PLAYBACK_REQUIRE=1`
+makes them failures in the nightly/manual `roundtrip-live.yml` playback job.
+The reusable workflow also runs this job against the installed candidate wheel
+when called by the release gate.
+Live cases need `ELEVENLABS_API_KEY` and the same `AWS_*` variables as roundtrip.
+Concurrent submission order is not asserted: FIFO applies to enqueued files,
+not to synthesis completion across independent client connections.
 
 Speech intelligibility checks live in `tests/roundtrip/`. Run
 `make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and

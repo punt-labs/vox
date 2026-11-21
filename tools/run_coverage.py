@@ -64,8 +64,8 @@ def run_coverage(rcfile: Path | None = None, workers: str = "auto") -> int:
                 workers,
                 "-m",
                 (
-                    "not integration and not sdk and not roundtrip"
-                    " and not levels and not quarantine"
+                    "not integration and not sdk and not roundtrip and not quarantine "
+                    "and not playback and not levels"
                 ),
                 "--cov=punt_vox",
                 f"--cov-config={config_file}",
