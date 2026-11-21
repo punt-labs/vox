@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Daemon DEBUG startup diagnostics report environment-variable presence rather
+  than values and omit numeric user/group IDs, preventing account identity leaks.
+
 - Local-provider caller rejections emit only the request-ID-stamped warning,
   with a fixed reason code instead of private voice or rejection details and
   without an additional direct-play error traceback. Synthesis and record start
