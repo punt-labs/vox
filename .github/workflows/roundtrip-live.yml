@@ -56,24 +56,12 @@ jobs:
           export VOX_E2E_BINARY="$UV_PROJECT_ENVIRONMENT/bin/vox"
           test -x "$VOX_E2E_BINARY"
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/e2e -m e2e
-      - name: Live speech roundtrip
-        # Do not use uv run: it can sync the editable checkout over the wheel.
+      - name: Gap diagnostic
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip -m 'roundtrip and integration' -s
+          "$UV_PROJECT_ENVIRONMENT/bin/python" tests/levels/diag_gap.py "$RUNNER_TEMP/levels/diag"
+          false
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      - name: Chime and music signal levels
-        if: ${{ !cancelled() }}
-        run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/levels -m levels -s --basetemp="$RUNNER_TEMP/levels"
-        env:
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          VOX_LEVELS_REQUIRE_LIVE: "1"
       - name: Upload measured audio
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
