@@ -58,7 +58,7 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/e2e -m e2e
       - name: Gap diagnostic
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" tests/levels/diag_gap.py "$RUNNER_TEMP/levels/diag"
+          PYTHONPATH=tests "$UV_PROJECT_ENVIRONMENT/bin/python" tests/levels/diag_gap.py "$RUNNER_TEMP/levels/diag"
           false
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
