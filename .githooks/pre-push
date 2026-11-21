@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+started=$SECONDS
+finish() { echo "pre-push: $((SECONDS - started))s"; }
+trap finish EXIT
+make lint type test-push

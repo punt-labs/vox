@@ -13,7 +13,7 @@ from pathlib import Path
 import coverage
 
 
-def run_coverage(rcfile: Path | None = None) -> int:
+def run_coverage(rcfile: Path | None = None, workers: str = "auto") -> int:
     """Install startup hooks, run pytest-cov, and combine reports."""
     root = Path.cwd()
     config_file = str((rcfile or root / "pyproject.toml").resolve())
@@ -60,8 +60,10 @@ def run_coverage(rcfile: Path | None = None) -> int:
                 sys.executable,
                 "-m",
                 "pytest",
+                "-n",
+                workers,
                 "-m",
-                "not integration and not sdk and not roundtrip and not levels",
+                "not integration and not sdk and not roundtrip and not levels and not quarantine",
                 "--cov=punt_vox",
                 f"--cov-config={config_file}",
                 "--cov-report=",
@@ -86,7 +88,11 @@ def main() -> int:
     """Run coverage with an explicit optional configuration path."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rcfile", type=Path, help="Coverage configuration file")
-    return run_coverage(parser.parse_args().rcfile)
+    parser.add_argument(
+        "--workers", default="auto", help="xdist workers (0 for serial)"
+    )
+    args = parser.parse_args()
+    return run_coverage(args.rcfile, args.workers)
 
 
 if __name__ == "__main__":

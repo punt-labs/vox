@@ -8,12 +8,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.core import TTSClient
-from punt_vox.log_sanitize import SANITIZER
 from punt_vox.voxd.output_discard import OutputDiscard
 
 if TYPE_CHECKING:
     from punt_vox.types import AudioRequest, TTSProvider
-    from punt_vox.types_synthesis import SynthesisSpec
 
 __all__ = ["TempFileSynthesis"]
 
@@ -30,10 +28,9 @@ class TempFileSynthesis:
     after the cancel lands.
     """
 
-    __slots__ = ("_chars_in", "_client", "_request", "_spec")
+    __slots__ = ("_chars_in", "_client", "_request")
     _client: TTSClient
     _request: AudioRequest
-    _spec: SynthesisSpec
     # The caller's text length, before normalization: what an operator sent.
     _chars_in: int
 
@@ -41,14 +38,12 @@ class TempFileSynthesis:
         cls,
         provider: TTSProvider,
         request: AudioRequest,
-        spec: SynthesisSpec,
         chars_in: int,
     ) -> Self:
         """Create a temp file synthesis."""
         self = super().__new__(cls)
         self._client = TTSClient(provider)
         self._request = request
-        self._spec = spec
         self._chars_in = chars_in
         return self
 
@@ -84,13 +79,8 @@ class TempFileSynthesis:
             synth_size = -1
         if synth_size > 0:
             return
-        # Provider and voice are caller text, and the daemon logs this message;
-        # escaped, a newline in either cannot start a forged record.
-        provider = SANITIZER.escape(self._spec.provider or "")
-        voice = SANITIZER.escape(self._spec.voice or "")
         msg = (
             f"synthesis produced missing or empty output file: {output_path} "
-            f"(provider={provider}, voice={voice}, "
-            f"size={synth_size}, chars_in={self._chars_in})"
+            f"(size={synth_size}, chars_in={self._chars_in})"
         )
         raise RuntimeError(msg)

@@ -75,7 +75,7 @@ class TestErrorLogging:
             "message": "name must not be absolute",
         }
 
-    def test_wire_message_is_verbatim_but_log_has_no_raw_control_chars(
+    def test_wire_message_is_verbatim_but_log_omits_private_detail(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ws, sent = _capturing_ws()
@@ -84,23 +84,33 @@ class TestErrorLogging:
             asyncio.run(WireReply(ws, "r1").error(hostile))
         # The client frame carries the message verbatim; nothing is stripped.
         assert sent[-1]["message"] == hostile
-        # The log line escapes the control characters -- no injection into vox.log.
         logged = _warnings(caplog)[-1].getMessage()
         assert "\n" not in logged
         assert "\r" not in logged
         assert "\t" not in logged
-        assert "\\n" in logged
+        assert logged == "rejected op id='r1': invalid_request"
+        assert "INJECTED" not in caplog.text
 
-    def test_long_message_is_capped_in_the_log(
+    def test_long_message_is_omitted_from_the_log(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ws, _sent = _capturing_ws()
         with caplog.at_level(logging.WARNING):
             asyncio.run(WireReply(ws, "r1").error("A" * 500))
         logged = _warnings(caplog)[-1].getMessage()
-        assert logged.endswith("...")
-        # A bounded (~120 char) field plus the id prefix, never the full 500.
-        assert len(logged) < 200
+        assert logged == "rejected op id='r1': invalid_request"
+        assert "A" * 500 not in caplog.text
+
+    def test_empty_message_still_logs_fixed_code(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "empty").error(""))
+        assert _warnings(caplog)[0].getMessage() == (
+            "rejected op id='empty': invalid_request"
+        )
+        assert sent[-1]["message"] == ""
 
     def test_logs_even_when_peer_gone(self, caplog: pytest.LogCaptureFixture) -> None:
         ws = MagicMock()

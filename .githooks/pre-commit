@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+started=$SECONDS
+finish() { echo "pre-commit: $((SECONDS - started))s"; }
+trap finish EXIT
+files=()
+while IFS= read -r -d '' file; do
+  files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py')
+if ! git diff --cached --quiet -- '*.py'; then
+  if ((${#files[@]})); then
+    uv run ruff format --check -- "${files[@]}"
+    uv run ruff check -- "${files[@]}"
+  fi
+  uv run mypy src/ tests/
+  if ((${#files[@]})); then
+    uv run pyright "${files[@]}"
+  fi
+  make test-changed
+fi

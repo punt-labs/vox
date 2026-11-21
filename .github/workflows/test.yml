@@ -24,8 +24,9 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Includes apt's 17m ceiling and two full instrumented suites on PRs.
-    timeout-minutes: 70
+    # Normally under 10m. A cold miss can need apt's 17m ceiling, a ~14m
+    # serial base measurement, and head coverage plus build/sync overhead.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -350,20 +351,78 @@ jobs:
           key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
       - run: make coverage
-      - name: Measure PR merge base with the same coverage harness
+      - name: Save main coverage baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A rerun finds the key already saved; a PR that misses falls back to
+        # measuring its merge base, so a failed save never weakens the gate.
+        continue-on-error: true
+        with:
+          path: coverage.json
+          key: coverage-baseline-${{ github.sha }}
+      - name: Resolve PR merge base
         if: github.event_name == 'pull_request'
+        id: coverage-base
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch --no-tags origin "$BASE_REF"
           BASE="$(git merge-base "origin/$BASE_REF" HEAD)"
           test -n "$BASE"
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          # Cached coverage is comparable only under the same measurement policy.
+          uv run python - "$BASE" >> "$GITHUB_OUTPUT" <<'PY'
+          import subprocess
+          import sys
+          import tomllib
+
+          configs = [
+              tomllib.loads(subprocess.check_output(
+                  ["git", "show", f"{ref}:pyproject.toml"], text=True
+              )).get("tool", {}).get("coverage", {})
+              for ref in (sys.argv[1], "HEAD")
+          ]
+          harness_unchanged = subprocess.run([
+              "git", "diff", "--quiet", sys.argv[1], "HEAD", "--",
+              "tools/run_coverage.py",
+          ]).returncode == 0
+          print(f"reuse={str(configs[0] == configs[1] and harness_unchanged).lower()}")
+          PY
+          mkdir -p "$RUNNER_TEMP/vox-coverage-head"
+          cp coverage.json "$RUNNER_TEMP/vox-coverage-head/coverage.json"
+      - name: Restore exact merge-base coverage
+        if: github.event_name == 'pull_request' && steps.coverage-base.outputs.reuse == 'true'
+        id: coverage-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: coverage.json
+          key: coverage-baseline-${{ steps.coverage-base.outputs.sha }}
+      - name: Preserve restored baseline and current report
+        if: github.event_name == 'pull_request'
+        env:
+          CACHE_HIT: ${{ steps.coverage-restore.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = true ]; then
+            mkdir -p "$RUNNER_TEMP/vox-coverage-base"
+            cp coverage.json "$RUNNER_TEMP/vox-coverage-base/coverage.json"
+          fi
+          cp "$RUNNER_TEMP/vox-coverage-head/coverage.json" coverage.json
+      - name: Measure PR merge base with the same coverage harness
+        if: github.event_name == 'pull_request' && (steps.coverage-base.outputs.reuse != 'true' || steps.coverage-restore.outputs.cache-hit != 'true')
+        env:
+          BASE: ${{ steps.coverage-base.outputs.sha }}
+        run: |
+          test -n "$BASE"
           git worktree add --detach "$RUNNER_TEMP/vox-coverage-base" "$BASE"
           cd "$RUNNER_TEMP/vox-coverage-base"
           uv sync --frozen --all-extras
+          # The current harness uses xdist even when the base predates it.
+          uv pip install pytest-xdist==3.8.0
           make install
+          # Measure the unchanged base in serial: it may contain tests whose
+          # order dependence is fixed only by this PR, not by the harness.
           uv run python "$GITHUB_WORKSPACE/tools/run_coverage.py" \
-            --rcfile "$GITHUB_WORKSPACE/pyproject.toml"
+            --rcfile "$GITHUB_WORKSPACE/pyproject.toml" --workers 0
       - name: Publish coverage and enforce merge-base ratchet
         if: always()
         env:

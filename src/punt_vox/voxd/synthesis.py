@@ -9,7 +9,6 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Self
 
 from punt_vox import usage
@@ -18,11 +17,15 @@ from punt_vox.providers import get_provider
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
-    DirectPlayProvider,
     TTSProvider,
 )
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
+from punt_vox.voxd.direct_play import (
+    DirectPlayFailure,
+    DirectPlayInvocation,
+    DirectPlayResult,
+)
 from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
@@ -205,15 +208,14 @@ class SynthesisPipeline:
                     provider = get_provider(provider_name, model=model)
                     request = self._build_audio_request(normalized, spec)
                     output_path = await TempFileSynthesis(
-                        provider, request, spec, len(text)
+                        provider, request, len(text)
                     ).run()
 
                     # Report caching only when the anonymous write succeeds.
                     cached_path = lookup.store(output_path)
                     logger.info(
-                        "synthesized %d chars with %s%s",
+                        "synthesized %d chars%s",
                         len(text),
-                        provider_name or "system",
                         ", cached" if cached_path else "",
                     )
                     return SynthesisOutcome(path=output_path, cached=False)
@@ -260,36 +262,19 @@ class SynthesisPipeline:
                     )
                 )
         except Exception as exc:
-            # provider_name is a raw client field -- %r so an embedded newline
-            # cannot forge a second log line at this sink.
-            logger.exception("Direct-play raised for provider=%r", provider_name)
+            if DirectPlayFailure(exc).unexpected:
+                logger.exception("Direct-play raised")
             return exc
 
         if rc is None:
             return None
 
-        elapsed = time.monotonic() - start
-        record_result(
-            path=Path(f"<direct:{provider_name}>"),
+        DirectPlayResult(
+            provider=provider_name,
+            chars=len(text),
+            elapsed=time.monotonic() - start,
             rc=rc,
-            elapsed=elapsed,
-            stderr="" if rc == 0 else f"play_directly rc={rc}",
-        )
-        if rc == 0:
-            logger.info(
-                "spoke %d chars with %s (%.1fs)",
-                len(text),
-                provider_name or "system",
-                elapsed,
-            )
-        else:
-            logger.error(
-                "Direct-play FAILED: provider=%r voice=%r elapsed=%.3fs rc=%d",
-                provider_name,
-                spec.voice or "",
-                elapsed,
-                rc,
-            )
+        ).publish(record_result)
         return rc
 
     async def _run_direct_play(
@@ -308,60 +293,9 @@ class SynthesisPipeline:
         """
         provider_name = spec.provider or ""
         key_env = ApiKeyEnv(provider_name, spec.api_key)
+        invocation = DirectPlayInvocation(provider_name, key_env, factory, request)
         if key_env.injects:
             async with self._env_lock, self._playback_mutex:
-                return await asyncio.to_thread(
-                    self._play_directly_sync, provider_name, key_env, factory, request
-                )
+                return await asyncio.to_thread(invocation.run)
         async with self._playback_mutex:
-            return await asyncio.to_thread(
-                self._play_directly_sync, provider_name, key_env, factory, request
-            )
-
-    @staticmethod
-    def _play_directly_sync(
-        provider_name: str,
-        key_env: ApiKeyEnv,
-        provider_factory: Callable[[], TTSProvider],
-        request: AudioRequest,
-    ) -> int | None:
-        """Construct provider and call ``play_directly`` on a worker thread.
-
-        Returns ``None`` if the provider does not implement the
-        ``DirectPlayProvider`` protocol -- the caller will fall back to the
-        synthesize-and-queue path. For local providers (say, espeak) whose
-        direct play has been extracted to ``local_play.py``, constructs the
-        appropriate direct player sharing the provider's VoiceResolver.
-        """
-        with key_env.applied():
-            provider = provider_factory()
-
-            # Local providers have extracted direct players that share
-            # the same VoiceResolver instance as the synthesis provider.
-            if provider_name == "say":
-                from punt_vox.providers.say import SayProvider
-
-                if isinstance(provider, SayProvider):
-                    from punt_vox.providers.local_play import SayDirectPlayer
-
-                    say_player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
-                    return say_player.play_directly(request)
-
-            if provider_name == "espeak":
-                from punt_vox.providers.espeak import EspeakProvider
-
-                if isinstance(provider, EspeakProvider):
-                    from punt_vox.providers.local_play import EspeakDirectPlayer
-
-                    espeak_player = EspeakDirectPlayer(
-                        binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
-                        voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
-                    )
-                    return espeak_player.play_directly(request)
-
-            # Cloud providers and any other provider that implements
-            # DirectPlayProvider directly.
-            if isinstance(provider, DirectPlayProvider):
-                return provider.play_directly(request)
-
-            return None
+            return await asyncio.to_thread(invocation.run)

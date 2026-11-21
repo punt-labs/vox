@@ -12,6 +12,8 @@ Install the development tools:
 uv sync
 ```
 
+Run `make hooks` once after cloning to install the local commit and push gates.
+
 Also install the optional `call` extra, which live microphone capture in `vox call start` needs:
 
 ```bash

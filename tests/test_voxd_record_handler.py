@@ -192,6 +192,29 @@ class TestRecordHandler:
         assert error["message"] == "operation failed"
         assert not store.root.exists() or not any(store.root.glob("*.mp3"))
 
+    def test_store_failure_sends_terminal_error_after_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed store write completes the acknowledged request with an error."""
+        source = tmp_path / "source.mp3"
+        source.write_bytes(b"audio")
+        store = _store(tmp_path)
+        place = MagicMock(side_effect=RuntimeError("private store failure"))
+        monkeypatch.setattr(RecordStore, "place", place)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "record", "id": "r1", "text": "hi"}
+        asyncio.run(_handler(store, source)(msg, ws))
+
+        assert [frame["type"] for frame in sent] == ["recording", "error"]
+        assert sent[-1] == {
+            "type": "error",
+            "id": "r1",
+            "message": "operation failed",
+        }
+        place.assert_called_once_with(source=source, text="hi", name=None, cached=False)
+        assert not store.root.exists()
+
     @pytest.mark.parametrize(
         "rejection",
         [
@@ -400,8 +423,7 @@ class TestRecordHandler:
     ) -> None:
         """A newline-bearing name is refused, audit-logged, and never echoed raw.
 
-        The rejection emits one WARNING; the sanitizer escapes the newline so no
-        raw control character reaches the log record (log-injection defense).
+        The rejection emits one WARNING without private name details.
         """
         src = tmp_path / "src.mp3"
         src.write_bytes(b"\x00")
@@ -419,7 +441,8 @@ class TestRecordHandler:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert "rej-nl" in warnings[0].getMessage()
-        assert "\n" not in warnings[0].getMessage()  # sanitized, no raw newline
+        assert "INJECTED" not in caplog.text
+        assert "invalid_request" in warnings[0].getMessage()
         assert sent[-1]["type"] == "error"
         assert "non-printable" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
@@ -432,10 +455,20 @@ class TestRecordHandler:
         src.write_bytes(b"\xff\xfb\x90\x00" * 8)
         ws, _sent = _capturing_ws()
 
-        msg: dict[str, object] = {"type": "record", "id": "r1", "text": "hi"}
-        with caplog.at_level(logging.INFO):
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "voice": "private-voice-marker",
+            "provider": "private-provider-marker",
+            "name": "private-name-marker",
+        }
+        with caplog.at_level(logging.DEBUG, logger="punt_vox"):
             asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
 
+        assert "private-voice-marker" not in caplog.text
+        assert "private-provider-marker" not in caplog.text
+        assert "private-name-marker" not in caplog.text
         assert any(
             r.levelno == logging.INFO and "Record:" in r.getMessage()
             for r in caplog.records

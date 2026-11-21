@@ -130,7 +130,7 @@ class TestChimeReply:
             chimes=ChimeResolver(), chime_dedup=ChimeDedup(), playback=PlaybackQueue()
         )
         ws = _CollectingWs()
-        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+        with caplog.at_level(logging.DEBUG, logger="punt_vox"):
             await handler(
                 {"id": "c9", "signal": "no-such-chime"}, cast("WebSocket", ws)
             )
@@ -139,6 +139,10 @@ class TestChimeReply:
         assert ws.sent[-1]["id"] == "c9"
         assert "unknown chime" in str(ws.sent[-1]["message"])
         assert any("rejected op" in r.getMessage() for r in caplog.records)
+        assert "no-such-chime" not in caplog.text
+        [record] = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert record.getMessage() == "rejected op id='c9': invalid_request"
+        assert record.exc_info is None
 
     @pytest.mark.asyncio
     async def test_gone_peer_during_reply_does_not_raise(self) -> None:

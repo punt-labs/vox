@@ -2,6 +2,68 @@
 
 The default suite needs no API keys, network, or audio hardware, but relies on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng). Opt-in roundtrip checks use a downloaded Whisper model; live integration checks call credentialed APIs.
 
+## Local and CI feedback stages
+
+Run `make hooks` once after cloning. Hooks print their elapsed time, stop on the
+first failure, and use the working tree for checks; stage the intended changes
+before committing. `--no-verify` is for emergencies only, never a way to land
+failing checks.
+
+| Stage | Trigger | Commands | Budget |
+| --- | --- | --- | --- |
+| Pre-commit | Staged Python changes | Ruff format/check on staged files, `uv run mypy src/ tests/`, Pyright on staged files, `make test-changed` | <30s for a typical one-file change with warm type caches |
+| Pre-push | Every local push | `make lint type test-push` | <3 min |
+| Required PR checks | Pull request | Parallel `make coverage` (includes default, slow, subprocess and installed-wheel e2e), offline `make test-roundtrip`, packaging `make test-e2e`, no-drop coverage comparison | <10 min normally |
+| Main verification | Push to main | Same CI suite; save successful coverage as `coverage-baseline-<sha>` | <10 min normally |
+
+`make test` runs the default tier with `-n auto`. `make test-push` includes slow
+and subprocess tests but excludes integration, SDK, e2e, roundtrip, and quarantine.
+`make test-changed` selects changed test files and tests directly importing staged
+`src/punt_vox` modules. Use `make test-changed REF=origin/main` to compare HEAD
+against a merge base. Package `__init__.py` or `conftest.py` changes require the
+whole default tier, which can exceed the pre-commit budget. Selection is a fast
+direct-import heuristic, not a substitute for the full pre-push suite.
+
+PR coverage compares against the exact merge-base SHA's cached report, never a
+nearby commit. A cache miss reruns that base serially with the current coverage harness;
+missing or invalid reports fail closed. Main publishes the baseline only after
+successful coverage. Cold apt setup or a baseline cache miss can exceed the
+normal CI budget; the test job has a 40-minute safety timeout to accommodate
+both apt's 17-minute ceiling and the measured 14-minute serial fallback.
+
+Initial measurements on an 8-vCPU Linux VM: default tier 587.38s serial versus
+34.51s with auto workers (64.78s with four); slow/subprocess 31.77s serial versus
+21.61s auto (18.97s with four). The parallel default runs exposed three
+ambient-key-dependent tests, now given explicit fake keys. Warm mypy took 1.08s,
+Pyright 20.54s, and Ruff check plus format check 0.20s. These are local timings,
+not guarantees about GitHub runner capacity.
+
+After implementation, the actual pre-commit hook on the single changed
+`tests/test_elevenlabs_client.py` took **9.59s** (68 selected tests); the full
+pre-push hook took **61.00s** (9,455 passed, four platform/tool skips). Both
+measurements include their lint and type gates and use warm type caches.
+
+Coverage of the same source tree was identical with serial and auto workers:
+**97.00% lines**, **92.66% branches** (96.49% combined). The serial harness
+(`uv run python tools/run_coverage.py --workers 0`) took **823.84s**; parallel
+`make coverage`, including build/install, took **68.21s**. Both ran 9,461 tests
+with four skips and retained installed-wheel subprocess coverage.
+
+## Flake policy
+
+A flaky test discovered on main or a PR must be fixed or quarantined **the same
+day**. Quarantine requires a Linear issue and a named owner, with a deadline no
+more than **14 days** away; record the owner and deadline in the issue and name
+the owner in the mark's reason. Fix or delete the quarantined test by that
+deadline. Review the quarantine list daily with
+`uv run pytest --collect-only -m quarantine`.
+
+Use `@pytest.mark.quarantine(reason="PL-1234: owner Jim")` (or the corresponding
+Linear issue URL containing its `PL-` identifier). Collection rejects missing or untracked reasons, including inherited
+marks. Default, pre-push, and coverage runs deselect quarantine; explicitly run
+`uv run pytest -m quarantine` when investigating. Quarantine does not silently
+retry a failure: never retry-until-green, and do not add rerun plugins.
+
 ## Philosophy
 
 Vox has five TTS providers (ElevenLabs, OpenAI, Polly, macOS Say, espeak-ng), a plugin hook system, an MCP server, and a CLI. All of these talk to external services. The test suite proves correctness without ever calling them.
