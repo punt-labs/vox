@@ -140,7 +140,11 @@ def test_handle_terminates_a_real_process(tmp_path: Path) -> None:
     proc = subprocess.Popen([str(voxd), "-c", "import time; time.sleep(30)"])
     try:
         handle = DaemonProcess(SystemClock(), ProcessManager().identity).open(proc.pid)
-        assert handle is not None
+        assert handle is not None, (
+            proc.poll(),
+            ProcessManager().identity(proc.pid),
+            os.environ.get("COLUMNS"),
+        )
         assert handle.terminate(7.0) is Termination.EXITED
         assert handle.exited() is True
     finally:
