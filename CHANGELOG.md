@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Parallel local and coverage test loops, changed-module pre-commit selection,
+  opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
+  time-bounded flaky-test quarantine policy.
+
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
   a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
   and normalization fault checks, non-silence gates, offline PR checks, and a

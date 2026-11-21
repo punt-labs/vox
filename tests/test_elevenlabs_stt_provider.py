@@ -294,6 +294,7 @@ class TestElevenLabsSTTProviderOffTheLoop:
     async def test_first_sdk_build_runs_off_the_event_loop(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
         loop_thread = threading.get_ident()
         build_threads: list[int] = []
 

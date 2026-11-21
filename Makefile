@@ -3,23 +3,33 @@
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
-test: ## Run tests
-	uv run pytest
+test: ## Run the default tier in parallel
+	uv run pytest -n auto
+
+.PHONY: test-push test-changed hooks
+test-push: ## Run all local credential-free tiers in parallel
+	uv run pytest -n auto -m "not integration and not sdk and not e2e and not roundtrip and not quarantine"
+
+test-changed: ## Run default-tier tests importing staged Python modules (or REF)
+	uv run python tools/test_changed.py $(if $(REF),--ref "$(REF)")
+
+hooks: ## Install the repository's local quality gates
+	git config core.hooksPath .githooks
 
 .PHONY: test-roundtrip test-roundtrip-live
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
-	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration" -s
+	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not quarantine" -s
 
 test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
-	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration" -s
+	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration and not quarantine" -s
 
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
-	uv run pytest tests/e2e -v -m e2e
+	uv run pytest tests/e2e -v -m "e2e and not quarantine"
 
 lint: check-comments check-docstrings ## Lint and format check (Python + shell)
 	uv run ruff check .
 	uv run ruff format --check .
-	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
+	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh .githooks/pre-commit .githooks/pre-push
 	bash scripts/check-plugin-surface.sh
 	uv run python scripts/check-logging-sources.py
 
