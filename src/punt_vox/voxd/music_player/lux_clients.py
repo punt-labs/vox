@@ -51,7 +51,7 @@ class VoxLuxClients:
         Raises ``HubUnavailableError`` when luxd is down, so callers invoke it
         lazily (the publisher) or under a retry (the menu), never at import.
         """
-        _trace.info("connecting REST client at %s", self._endpoint())
+        _trace.debug("connecting REST client at %s", self._endpoint())
         return LuxClient.for_identity(self._identity)
 
     def hub(
@@ -70,7 +70,7 @@ class VoxLuxClients:
         Raises ``HubUnavailableError`` when luxd is down at construction; the
         subscription's run loop retries, so a late-starting luxd is picked up.
         """
-        _trace.info("connecting hub client at %s", self._endpoint())
+        _trace.debug("connecting hub client at %s", self._endpoint())
         return LuxClient.for_identity(self._identity).listener(
             on_callback=on_callback,
             on_event=on_event,

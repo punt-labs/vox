@@ -21,18 +21,14 @@ one bad frame can never drop the connection.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import HubUnavailableError
-
 from punt_vox.lux_common import HubOutageLog, MenuEntry
+from punt_vox.voxd.music_player.lux_fault_boundary import LuxFaultBoundary
+from punt_vox.voxd.music_player.lux_receive_retry import LuxReceiveRetry
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
-from punt_vox.voxd.music_player.player_event_codec import (
-    AnchorUnresolvedError,
-    PlayerEventCodec,
-)
+from punt_vox.voxd.music_player.music_event_receiver import MusicEventReceiver
 from punt_vox.voxd.music_player.wire import MusicTopic
 
 if TYPE_CHECKING:
@@ -43,7 +39,6 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.music_player.command_ports import ProgramSeam
     from punt_vox.voxd.music_player.hub_ports import HubListener, MenuRegistrar
-    from punt_vox.voxd.music_player.player_events import PlayerEvent
     from punt_vox.voxd.music_player.presenter_ports import ScenePresenter
 
 __all__ = ["LuxSubscription"]
@@ -59,21 +54,19 @@ class LuxSubscription:
     """Own voxd's one hub connection, the ``Music`` menu, and event dispatch."""
 
     __slots__ = (
-        "_codec",
         "_connect_hub",
         "_entry",
+        "_events",
         "_menu",
-        "_outage",
         "_presenter",
-        "_service",
+        "_retry",
     )
-    _service: ProgramSeam
     _presenter: ScenePresenter
     _menu: MenuRegistrar
     _entry: MenuEntry
     _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
-    _codec: PlayerEventCodec
-    _outage: HubOutageLog
+    _events: MusicEventReceiver
+    _retry: LuxReceiveRetry
 
     def __new__(
         cls,
@@ -90,13 +83,14 @@ class LuxSubscription:
     ) -> Self:
         """Create a lux subscription."""
         self = super().__new__(cls)
-        self._service = service
         self._presenter = presenter
         self._menu = menu
         self._entry = MenuEntry("music", "Music", presenter.frame_id())
         self._connect_hub = connect_hub
-        self._codec = PlayerEventCodec()
-        self._outage = outage if outage is not None else HubOutageLog(logger)
+        self._events = MusicEventReceiver(service, presenter)
+        self._retry = LuxReceiveRetry(
+            outage if outage is not None else HubOutageLog(logger)
+        )
         return self
 
     async def run(self) -> None:
@@ -108,123 +102,28 @@ class LuxSubscription:
         outer loop. ``listen`` returns only when the daemon requests a stop, so a
         clean return ends the leg. A down luxd is retried with a warning; any other
         fault -- notably a protocol frame that fails validation deep inside
-        ``listen`` -- is logged with its traceback to the persistent daemon log and
+        ``listen`` -- is logged without frame details to the persistent daemon log and
         the cycle restarts after a backoff, so a transient or protocol error can
         never leave the receive leg silently dead (invariants I, III). Cancellation
         on shutdown is a ``BaseException`` that propagates cleanly out.
         """
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                _trace.info("music receive leg connecting (attempt %d)", attempt)
-                await self._connect_and_listen()
-                _trace.info("music receive leg stopped cleanly")
-                return
-            except HubUnavailableError:
-                # HubOutageLog throttles the retry storm: the first tick lands as
-                # WARNING, later ticks as DEBUG, with an INFO restatement every 30s
-                # -- so a long luxd outage stays legible without spamming the log.
-                self._outage.note(
-                    f"[lux] luxd down; retrying the music receive leg in "
-                    f"{_RETRY_SECONDS:.1f}s"
-                )
-                await asyncio.sleep(_RETRY_SECONDS)
-            except Exception:
-                logger.exception(
-                    "[lux] music receive leg failed; restarting in %.1fs (attempt %d)",
-                    _RETRY_SECONDS,
-                    attempt,
-                )
-                await asyncio.sleep(_RETRY_SECONDS)
 
-    async def _connect_and_listen(self) -> None:
-        """Build one fresh connection, subscribe, and listen.
+        async def listen() -> None:
+            listener = self._connect_hub(
+                self.on_event, self.on_callback, self.on_connect
+            )
+            listener.subscribe(*MusicTopic)
+            _trace.debug(
+                "subscribed to topics %s; listening",
+                ", ".join(topic.value for topic in MusicTopic),
+            )
+            await listener.listen()
 
-        The ``Music`` menu registration and the scene re-push no longer live here:
-        they ride the ``on_connect`` hook (:meth:`on_connect`) the hub client fires
-        after *every* handshake, so an internal reconnect that ``listen`` rides out
-        -- the one a >30s outage triggers after luxd sweeps the lease -- re-registers
-        without an outer fault (Z model register-fresh, §6.11). At most one live
-        connection exists at a time -- a new one is built only after the prior
-        ``listen`` has returned or raised (invariant I).
-        """
-        listener = self._connect_hub(self.on_event, self.on_callback, self.on_connect)
-        # Subscribe to every topic the scene can publish -- the album-list play/stop
-        # AND the transport bar's prev/pause/resume/next -- so a new topic added to
-        # MusicTopic is delivered without a second edit here (the bug this replaced:
-        # only play/stop were subscribed, so the transport buttons reached no one).
-        listener.subscribe(*MusicTopic)
-        _trace.info(
-            "subscribed to topics %s; listening",
-            ", ".join(topic.value for topic in MusicTopic),
-        )
-        await listener.listen()
+        await self._retry.run(listen, _RETRY_SECONDS)
 
     async def on_event(self, topic: str, payload: Mapping[str, object]) -> None:
-        """Decode and apply one inbound event exactly once; never drop the leg.
-
-        The receive boundary splits three failure modes. A malformed frame the codec
-        cannot decode -- empty payload, unknown topic, non-string anchor -- is logged
-        and dropped silently: there is no album to name, so nothing surfaces. A
-        well-formed anchor that names no catalogued album (``AnchorUnresolvedError``,
-        a vanished album or a stale row-cache click) is logged AND surfaced as a
-        transient warning naming the anchor text -- unlike a malformed frame, the
-        user clicked something real and the drop must not look silent. A play or
-        stop whose ``apply`` is *refused* (the resolved album has no ready tracks)
-        is logged AND surfaced by the event itself. Either way one bad event can
-        never tear down the single hub connection (invariants I, II, V).
-        """
-        _trace.info("received %s %r; applying", topic, dict(payload))
-        try:
-            # Fresh catalog: a music.play anchor resolves against the albums as they
-            # stand now, not a subscribe-time snapshot (codec owns the resolution).
-            event = self._codec.decode(topic, payload, self._service.catalog_albums())
-        except AnchorUnresolvedError as exc:
-            # Well-formed click; the album vanished between paint and click.
-            logger.warning(
-                "[lux] anchor %r on %s names no catalogued album; surfacing",
-                exc.anchor,
-                topic,
-            )
-            self._surface_resolve_failure(exc.anchor)
-            return
-        except Exception:
-            logger.exception("[lux] dropping music event on %s: %r", topic, payload)
-            return
-        self._apply(event)
-
-    def _apply(self, event: PlayerEvent) -> None:
-        """Apply the decoded event; on a refusal, log AND surface a scene warning."""
-        try:
-            event.apply(self._service)
-        except Exception:
-            logger.exception("[lux] %r could not play; showing it in the scene", event)
-            self._surface_failure(event)
-
-    def _surface_failure(self, event: PlayerEvent) -> None:
-        """Re-push the scene with the event's own warning; never raise (boundary).
-
-        A refused play/stop left daemon state unchanged, so no change signal fires;
-        surfacing the warning is what keeps the failure client-observable.
-        """
-        try:
-            event.surface_failure(self._presenter)
-        except Exception:
-            logger.exception("[lux] could not surface the playback failure")
-
-    def _surface_resolve_failure(self, anchor: str) -> None:
-        """Re-push the scene with a resolve-failure warning; never raise (boundary).
-
-        Mirrors :meth:`_surface_failure` but for the case where nothing resolved:
-        the codec produced no event, so the anchor text (the clicked cell) carries
-        the message instead of an album id. Failing to surface is logged, not
-        propagated -- one bad frame can never tear down the connection.
-        """
-        try:
-            self._presenter.present_resolve_failure(anchor)
-        except Exception:
-            logger.exception("[lux] could not surface the resolve failure")
+        """Deliver a frame to the privacy-safe event boundary."""
+        self._events.receive(topic, payload)
 
     async def on_callback(self, callback_id: str) -> None:
         """Install the music scene when the ``Music`` menu entry is clicked.
@@ -236,10 +135,8 @@ class LuxSubscription:
         if not self._entry.owns(callback_id):
             return
         _trace.info("Music menu clicked; installing the scene")
-        try:
+        with LuxFaultBoundary(logger, "music menu open failed"):
             await self._presenter.install()
-        except Exception:
-            logger.exception("[lux] music menu open failed for %r", callback_id)
 
     async def on_connect(self) -> None:
         """Re-register the ``Music`` menu and install the scene after every handshake.
@@ -256,12 +153,9 @@ class LuxSubscription:
         The push installs rather than refreshes: this connection carries nothing
         yet, so there is no installed tree for a patch to write onto.
         """
-        _trace.info("hub handshake complete; re-registering menu and installing scene")
         # The handshake is the ground-truth "luxd is back" signal for both legs,
         # so it closes the shared outage window before the menu register runs.
-        self._outage.clear()
+        self._retry.connected()
         await self._menu.register(self._entry)
-        try:
+        with LuxFaultBoundary(logger, "music scene projection on connect failed"):
             await self._presenter.install()
-        except Exception:
-            logger.exception("[lux] music scene projection on connect failed")
