@@ -653,6 +653,41 @@ class TestSynthesizeHandlerTypedErrorRouting:
         assert sent[-1] == {"type": "error", "id": "req-1", "message": str(rejection)}
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct_play", [True, False])
+    async def test_local_rejection_logs_once_and_allows_retry(
+        self, direct_play: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rejection = ProviderAuthError("espeak", 401)
+        synthesis = MagicMock(spec=SynthesisPipeline)
+        synthesis.try_direct_play = AsyncMock(
+            return_value=rejection if direct_play else None
+        )
+        synthesis.synthesize_to_file = AsyncMock(side_effect=rejection)
+        dedup = OnceDedup()
+        handler = _make_synthesize_handler(synthesis=synthesis, once_dedup=dedup)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "local-rejection",
+            "text": "private speech content",
+            "provider": "espeak",
+            "once": 30,
+        }
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await handler(msg, websocket)
+
+        records = [r for r in caplog.records if "local-rejection" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert str(rejection) in records[0].getMessage()
+        assert "private speech content" not in caplog.text
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "local-rejection", "message": str(rejection)}
+        )
+        assert dedup.check_and_record("private speech content", 30) is None
+
+    @pytest.mark.asyncio
     async def test_reject_log_escapes_newlines_in_caller_supplied_strings(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
