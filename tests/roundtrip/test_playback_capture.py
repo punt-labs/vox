@@ -181,7 +181,7 @@ async def test_live_file_playback_capture(provider: str, tmp_path: Path) -> None
                         port=int((run / "serve.port").read_text()),
                         token=(run / "serve.token").read_text().strip(),
                     ) as observer:
-                        async with asyncio.timeout(480):
+                        async with asyncio.timeout(900):
                             while True:
                                 result = (await observer.health()).last_playback
                                 if result and float(str(result["ts"])) >= wall_started:

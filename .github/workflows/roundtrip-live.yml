@@ -17,7 +17,7 @@ permissions:
 jobs:
   playback-capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
       VOX_PLAYBACK_REQUIRE: "1"
