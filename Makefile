@@ -16,6 +16,10 @@ test-changed: ## Run default-tier tests importing staged Python modules (or REF)
 hooks: ## Install the repository's local quality gates
 	git config core.hooksPath .githooks
 
+.PHONY: test-playback-capture
+test-playback-capture: ## Real daemon to PulseAudio monitor to Whisper
+	uv run --group roundtrip pytest tests/roundtrip/test_playback_capture.py -m playback -s
+
 .PHONY: test-roundtrip test-roundtrip-live test-agent
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not agent and not quarantine" -s

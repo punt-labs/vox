@@ -264,6 +264,7 @@ reflect that shape, not a copy of biff's.
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` | Nightly/manual | 3 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/RC/manual | 24 |
 | `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
@@ -462,9 +463,9 @@ verify:
 
 ## Markers
 
-The [named-tier table](#testing-pyramid) lists every marker, its command,
+The [named-tier table](#testing-pyramid) lists the core markers, their commands,
 CI coverage, and collected count. The default selection excludes `slow`,
-`subprocess`, `e2e`, `integration`, `sdk`, and `roundtrip`. An explicit `-m`
+`subprocess`, `e2e`, `integration`, `sdk`, `roundtrip`, and `playback`. An explicit `-m`
 expression overrides that selection. Live audio has no pytest marker.
 
 ## Running Tests
@@ -497,6 +498,26 @@ make coverage
 ```
 
 ## Integration Tests
+
+### Stage five: playback capture
+
+`make test-playback-capture` selects the `playback` marker (excluded from default
+tests and combined coverage). A private headless PulseAudio null sink records
+its monitor while a real isolated `voxd` subprocess speaks. Pinned CPU/int8
+Whisper small.en transcribes that capture; WER must be at most 0.05 and unique
+marker words must occur exactly once in order. Install `pulseaudio`,
+`pulseaudio-utils`, `ffmpeg`, and `espeak-ng`, then sync the `roundtrip` group.
+
+The offline case covers sequential espeak direct-device requests. Neither
+espeak record nor Polly synthesis chunks text, so no offline chunking claim is
+made. Live Polly covers file synthesis and ffplay queue playback. Live
+ElevenLabs uses just over 5,000 characters with `eleven_v3`, forcing two real
+provider chunks with markers on opposite sides of the seam. Missing provider
+credentials or audio prerequisites skip locally; `VOX_PLAYBACK_REQUIRE=1`
+makes them failures in the nightly/manual `roundtrip-live.yml` playback job.
+Live cases need `ELEVENLABS_API_KEY` and the same `AWS_*` variables as roundtrip.
+Concurrent submission order is not asserted: FIFO applies to enqueued files,
+not to synthesis completion across independent client connections.
 
 Speech intelligibility checks live in `tests/roundtrip/`. Run
 `make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and
