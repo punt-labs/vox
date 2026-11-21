@@ -4,19 +4,17 @@ on:
   schedule:
     - cron: "23 5 * * *"
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   roundtrip-live:
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/roundtrip-live.yml
     secrets:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
 
   report-failure:
     needs: roundtrip-live

@@ -13,21 +13,15 @@ on:
         required: false
       OPENAI_API_KEY:
         required: false
-      AWS_ACCESS_KEY_ID:
-        required: false
-      AWS_SECRET_ACCESS_KEY:
-        required: false
-      AWS_SESSION_TOKEN:
-        required: false
-      AWS_DEFAULT_REGION:
-        required: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   roundtrip-live:
     name: Live speech (${{ matrix.os }})
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +79,16 @@ jobs:
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live_auth.py -m integration
+      - name: Assume the Polly QA role
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
+          allowed-account-ids: "579096219769"
+          aws-region: us-east-1
+          role-session-name: vox-qa-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 900
+          retry-max-attempts: 3
       - name: ElevenLabs, OpenAI, and Polly to Whisper and Scribe
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
@@ -92,10 +96,6 @@ jobs:
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
       - name: macOS Say to Whisper
         if: runner.os == 'macOS'
         run: |

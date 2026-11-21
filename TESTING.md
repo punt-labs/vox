@@ -445,11 +445,11 @@ Real synthesized drop, swap, identity-normalizer, and wrong-text faults must
 all be rejected. Identifier references are independent of the normalizer.
 
 Run `make test-roundtrip-live` for ElevenLabs/OpenAI/Polly TTS crossed with
-Whisper/Scribe (also marked `integration`). Missing keys produce named skips
-unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
-`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
-Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
+Whisper/Scribe (also marked `integration`). Missing credentials produce named
+skips unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. ElevenLabs and
+Scribe use `ELEVENLABS_API_KEY`; OpenAI uses `OPENAI_API_KEY`. For Polly on a
+dev box, export temporary AWS SSO credentials as environment variables and
+set `AWS_DEFAULT_REGION`. Neither tier runs by default.
 
 Run `make test-roundtrip-auth` to verify that the three cloud providers
 reject deliberately invalid credentials and do not write audio. This test
@@ -488,6 +488,14 @@ and MCP entry points. The scheduled caller (`.github/workflows/nightly.yml`) fil
 a Linear Bug tagged `repo:vox` on failure, linking the exact run attempt.
 Set the `LINEAR_API_KEY` Actions secret to a Linear personal API key with
 issue-create permission for the Punt Labs team. Manual and RC runs do not file issues.
+
+The Linux live job assumes the Non-Production `vox-polly-qa` IAM role via
+GitHub OIDC and uses Polly in `us-east-1`. Provision the role using
+[the CloudFormation template](.github/vox-polly-oidc.yml) in account
+`579096219769`, with the GitHub OIDC provider and audience `sts.amazonaws.com`.
+By default only runs on `main` and release tags (`v*`) can assume the role.
+Use `ProofBranch` only for a temporary, exact branch to verify a change before
+merge; clear it after the proof run. No AWS key secrets are passed to the suite.
 
 ### Coverage policy
 

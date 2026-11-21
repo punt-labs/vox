@@ -71,10 +71,13 @@ jobs:
     needs: build
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/roundtrip-live.yml
     with:
       candidate-artifact: ${{ needs.build.outputs.artifact }}
-    secrets: inherit
+    secrets:
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   candidate-signoff:
     name: Jim’s installed-candidate QA sign-off (voice and music)
