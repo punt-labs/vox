@@ -118,12 +118,6 @@ class _SpeechRequest:
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except CALLER_ERRORS as exc:
-            # ``%r`` on ``str(exc)`` escapes newlines: caller-supplied strings
-            # travel inside the message (a voice name, a provider name), and an
-            # unescaped newline in one would forge a second audit line.
-            logger.warning(
-                "Rejected synthesis for id=%r: %r", self.request_id, str(exc)
-            )
             on_failure()
             await self.reject(str(exc))
         except Exception as exc:
