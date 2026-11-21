@@ -354,6 +354,9 @@ jobs:
       - name: Save main coverage baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A rerun finds the key already saved; a PR that misses falls back to
+        # measuring its merge base, so a failed save never weakens the gate.
+        continue-on-error: true
         with:
           path: coverage.json
           key: coverage-baseline-${{ github.sha }}
