@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Release candidates run the nightly suite on the exact wheel to be published.
+  `make qa` records installed-candidate voice and music checks before release
+  approval, and a PyPI smoke test round-trips one line after publishing.
+
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
   a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
   and normalization fault checks, non-silence gates, offline PR checks, and a
