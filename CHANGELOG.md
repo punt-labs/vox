@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Local-provider caller rejections emit only the request-ID-stamped warning,
+  with a fixed reason code instead of private voice or rejection details and
+  without an additional direct-play error traceback. Synthesis and record start
+  logs omit caller-supplied voice, provider and recording names; all wire
+  rejections (including chimes) omit rejection details from logs. Unexpected
+  direct-play failures retain their error tracebacks.
+
 - Daemon synthesis rejections emit one sanitized, request-ID-stamped warning
   instead of duplicate warning records.
 

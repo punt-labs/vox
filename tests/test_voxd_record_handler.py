@@ -400,8 +400,7 @@ class TestRecordHandler:
     ) -> None:
         """A newline-bearing name is refused, audit-logged, and never echoed raw.
 
-        The rejection emits one WARNING; the sanitizer escapes the newline so no
-        raw control character reaches the log record (log-injection defense).
+        The rejection emits one WARNING without private name details.
         """
         src = tmp_path / "src.mp3"
         src.write_bytes(b"\x00")
@@ -419,7 +418,8 @@ class TestRecordHandler:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert "rej-nl" in warnings[0].getMessage()
-        assert "\n" not in warnings[0].getMessage()  # sanitized, no raw newline
+        assert "INJECTED" not in caplog.text
+        assert "invalid_request" in warnings[0].getMessage()
         assert sent[-1]["type"] == "error"
         assert "non-printable" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
@@ -432,10 +432,20 @@ class TestRecordHandler:
         src.write_bytes(b"\xff\xfb\x90\x00" * 8)
         ws, _sent = _capturing_ws()
 
-        msg: dict[str, object] = {"type": "record", "id": "r1", "text": "hi"}
-        with caplog.at_level(logging.INFO):
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "voice": "private-voice-marker",
+            "provider": "private-provider-marker",
+            "name": "private-name-marker",
+        }
+        with caplog.at_level(logging.DEBUG, logger="punt_vox"):
             asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
 
+        assert "private-voice-marker" not in caplog.text
+        assert "private-provider-marker" not in caplog.text
+        assert "private-name-marker" not in caplog.text
         assert any(
             r.levelno == logging.INFO and "Record:" in r.getMessage()
             for r in caplog.records

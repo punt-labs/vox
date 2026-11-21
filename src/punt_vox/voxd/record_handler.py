@@ -65,15 +65,12 @@ class RecordHandler(MessageHandler):
             name = parse_present_str(msg, "name")
             self._validate_name(name, req.text)
         except ValueError as exc:
-            await reply.error(str(exc))
+            await reply.error(exc)
             return
 
         logger.info(
-            "Record: id=%r name=%r provider=%r voice=%r chars=%d",
+            "Record: id=%r chars=%d",
             req.request_id,
-            name,
-            req.spec.provider,
-            req.spec.voice,
             len(req.text),
         )
 
