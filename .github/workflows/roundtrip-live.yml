@@ -59,9 +59,15 @@ jobs:
       - name: Gap diagnostic
         run: |
           PYTHONPATH=tests "$UV_PROJECT_ENVIRONMENT/bin/python" tests/levels/diag_gap.py "$RUNNER_TEMP/levels/diag"
-          false
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      - name: Chime and music signal levels
+        if: ${{ !cancelled() }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/levels -m levels -s --basetemp="$RUNNER_TEMP/levels/pytest"
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          VOX_LEVELS_REQUIRE_LIVE: "1"
       - name: Upload measured audio
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
