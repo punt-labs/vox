@@ -15,7 +15,13 @@ jobs = [(s, m, ms, i) for (s, m) in [("lofi", "focused"), ("ambient", "calm"), (
 
 async def main() -> None:
     p = ElevenLabsMusicProvider()
-    paths = await asyncio.gather(*(p.generate_track(PromptSet.fallback(s, m).prompt_for(0), ms, out / f"{s}-{ms}-{i}.mp3") for s, m, ms, i in jobs))
+    gate = asyncio.Semaphore(3)
+
+    async def one(s: str, m: str, ms: int, i: int) -> Path:
+        async with gate:
+            return await p.generate_track(PromptSet.fallback(s, m).prompt_for(0), ms, out / f"{s}-{ms}-{i}.mp3")
+
+    paths = await asyncio.gather(*(one(*j) for j in jobs))
     for path in paths:
         spans = meter.silences(path, 0.05)
         print(f"{path.name}: dur {meter.duration(path):.2f} lead {meter.leading_silence(path):.2f} tail {meter.trailing_silence(path):.2f} lufs {meter.loudness(path).integrated_lufs} internal {[(round(x.start,2), round(x.duration,2)) for x in spans]}")
