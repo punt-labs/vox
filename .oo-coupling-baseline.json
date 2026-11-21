@@ -139,6 +139,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/cli_json_request.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/cli_music.py": {
     "efferent_coupling": 14.0,
     "public_names": 1.0,
@@ -520,6 +527,13 @@
   "src/punt_vox/logging_config.py": {
     "efferent_coupling": 6.0,
     "public_names": 7.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/logging_role.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -1581,6 +1595,13 @@
     "max_lcom": 0.3,
     "avg_lcom": 0.3
   },
+  "src/punt_vox/usage.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 8.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.476,
+    "avg_lcom": 0.476
+  },
   "src/punt_vox/vibe.py": {
     "efferent_coupling": 0.0,
     "public_names": 2.0,
@@ -2072,7 +2093,7 @@
     "avg_lcom": 0.714
   },
   "src/punt_vox/voxd/daemon.py": {
-    "efferent_coupling": 14.0,
+    "efferent_coupling": 12.0,
     "public_names": 6.0,
     "circular_imports": 0.0,
     "max_lcom": 0.333,
@@ -2449,6 +2470,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/programs/edge_trim.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.667,
+    "avg_lcom": 0.334
+  },
   "src/punt_vox/voxd/programs/filesystem_store.py": {
     "efferent_coupling": 8.0,
     "public_names": 2.0,
@@ -2696,6 +2724,13 @@
   },
   "src/punt_vox/voxd/programs/player_directory.py": {
     "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/programs/playlist_music.py": {
+    "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
