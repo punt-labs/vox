@@ -197,17 +197,18 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,202 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,211 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 19 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) and live music levels (also `levels`) | `make test-roundtrip-live` / `make test-levels-live` | Nightly/manual | 28 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,202 default / 9,453 collected across all markers. `slow` is cross-cutting,
+9,211 default / 9,481 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
@@ -451,6 +452,24 @@ unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
 `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
 Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
+Signal-level checks live in `tests/levels/` and judge what speech-to-text
+cannot: loudness, silence, and the change between music tracks. ffmpeg's
+`ebur128` (BS.1770 integrated loudness, true peak) and `silencedetect`
+(-50 dBFS) are the oracle. `make test-levels` needs ffmpeg and mpv, no keys:
+every bundled chime sounds within 20 ms, lasts 0.2-1.5 s, sits at -21 to
+-13 LUFS with true peak at or below -1 dBTP, and chimes differ by at most
+3 LU (measured: done -16.3 LUFS / -10.4 dBTP, prompt -18.5 / -12.4). Late,
+quiet, clipped, and truncated chimes must be rejected. Track change is
+rendered through mpv with voxd's player settings (`--gapless-audio=yes`,
+`--volume=60`, no crossfade) and passes with at most 1.0 s of silence and a
+6 LU loudness step across the boundary; synthetic tones prove gaps and jumps
+fail. `make test-levels-live` generates two 20 s ElevenLabs tracks and checks
+each at -30 to -8 LUFS, true peak at or below 0 dBTP, at most 1 s of leading
+and 2 s of internal silence, then the change between them, and that chimes at
+playback gain (80%, linear) stay at least 3 LU above music at mpv volume 60
+(cubic, about -13.3 dB). Missing `ELEVENLABS_API_KEY` skips unless
+`VOX_LEVELS_REQUIRE_LIVE=1`, as in nightly CI.
+
 ## Dev box vs CI
 
 Every gap below has a concrete reason, not a permanent design choice unless
@@ -474,7 +493,8 @@ invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
 The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
-runs the credentialed matrix nightly or manually with strict prerequisites.
+runs the credentialed matrix and the `levels` checks nightly or manually with
+strict prerequisites.
 
 ### Coverage policy
 

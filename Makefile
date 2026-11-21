@@ -6,12 +6,18 @@ help: ## Show available targets
 test: ## Run tests
 	uv run pytest
 
-.PHONY: test-roundtrip test-roundtrip-live
+.PHONY: test-roundtrip test-roundtrip-live test-levels test-levels-live
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration" -s
 
 test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration" -s
+
+test-levels: ## Chime and synthetic-track loudness, silence, track-change checks (ffmpeg, mpv)
+	uv run pytest tests/levels -m "levels and not integration" -s
+
+test-levels-live: ## Live ElevenLabs music loudness, silence, track change, chime headroom
+	uv run pytest tests/levels -m "levels and integration" -s
 
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m e2e
