@@ -56,17 +56,9 @@ class EdgeTrim:
         one the encoder fails on: the trim is written beside the track and only
         replaces it once it is complete.
         """
-        try:
-            audio = AudioSegment.from_mp3(str(path))
-        except CouldntDecodeError:
+        kept = self._kept(path)
+        if kept is None:
             return
-        lead = self._silence(audio)
-        if lead >= len(audio):
-            return
-        tail = self._silence(audio.reverse())
-        if lead + tail < _MIN_CUT_MS:
-            return
-        kept = audio[lead : len(audio) - tail].fade_in(_FADE_MS).fade_out(_FADE_MS)
         trimmed = path.with_name(f".{path.name}.trim")
         try:
             kept.export(str(trimmed), format="mp3", bitrate=_BITRATE)
@@ -74,6 +66,18 @@ class EdgeTrim:
             trimmed.unlink(missing_ok=True)
             return
         trimmed.replace(path)
+
+    def _kept(self, path: Path) -> AudioSegment | None:
+        """Return the audio of ``path`` between its dead air, or None if none goes."""
+        try:
+            audio = AudioSegment.from_mp3(str(path))
+        except CouldntDecodeError:
+            return None
+        lead = self._silence(audio)
+        tail = self._silence(audio.reverse())
+        if lead + tail >= len(audio) or lead + tail < _MIN_CUT_MS:
+            return None
+        return audio[lead : len(audio) - tail].fade_in(_FADE_MS).fade_out(_FADE_MS)
 
     def _silence(self, audio: AudioSegment) -> int:
         """Milliseconds of silence at the start of ``audio``."""

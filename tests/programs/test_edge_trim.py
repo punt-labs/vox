@@ -134,3 +134,17 @@ class TestEdgeTrim:
 
         assert track.read_bytes() == before
         assert list(tmp_path.iterdir()) == [track]
+
+    def test_edges_that_overlap_keep_the_original_track(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        track = _track(tmp_path / "t.mp3", lead_ms=500, tone_ms=5, tail_ms=495)
+        before = track.read_bytes()
+        monkeypatch.setattr(
+            "punt_vox.voxd.programs.edge_trim.detect_leading_silence",
+            lambda *_, **__: 600,
+        )
+
+        EdgeTrim().apply(track)
+
+        assert track.read_bytes() == before
