@@ -59,8 +59,7 @@ class SynthesisCache:
         if cached is None:
             return None
         logger.info(
-            "served %d chars from cache (%s)",
+            "served %d chars from cache",
             self._chars_in,
-            self._key.provider or "system",
         )
         return SynthesisOutcome(path=cached, cached=True)

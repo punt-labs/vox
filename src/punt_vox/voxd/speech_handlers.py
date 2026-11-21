@@ -119,7 +119,7 @@ class _SpeechRequest:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except CALLER_ERRORS as exc:
             on_failure()
-            await self.reject(str(exc))
+            await self.reject(exc)
         except Exception as exc:
             logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
@@ -147,8 +147,8 @@ class _SpeechRequest:
         """
         await WireReply(self.websocket, self.request_id).fault(fault)
 
-    async def reject(self, message: str) -> None:
-        """Audit a client-side rejection and send the *message* verbatim.
+    async def reject(self, cause: ValueError) -> None:
+        """Audit a client-side rejection and send the cause's message verbatim.
 
         A synthesis whose named provider has no credentials, whose voice
         the provider does not offer, or whose credentials the provider
@@ -160,7 +160,7 @@ class _SpeechRequest:
         F2/F3/F5 promise (design §3.5) is that a diagnosable failure
         reaches the caller with a message they can act on.
         """
-        await WireReply(self.websocket, self.request_id).error(message)
+        await WireReply(self.websocket, self.request_id).error(cause)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -195,7 +195,7 @@ class SynthesizeHandler(MessageHandler):
             once = parse_optional_int(msg, "once")
         except ValueError as exc:
             # WireReply makes a gone-peer send a clean no-op, matching the siblings.
-            await WireReply(websocket, str(msg.get("id", ""))).error(str(exc))
+            await WireReply(websocket, str(msg.get("id", ""))).error(exc)
             return
 
         dedup_recorded = await self._respond_if_deduped(req, once)
@@ -203,10 +203,8 @@ class SynthesizeHandler(MessageHandler):
             return
 
         logger.info(
-            "Synthesize: id=%r provider=%r voice=%r chars=%d",
+            "Synthesize: id=%r chars=%d",
             req.request_id,
-            req.spec.provider or "",
-            req.spec.voice or "",
             len(req.text),
         )
         await self._dispatch(req, dedup_recorded=dedup_recorded)
@@ -270,7 +268,7 @@ class SynthesizeHandler(MessageHandler):
             # rejects: route verbatim through error() so the sentence crosses
             # the wire rather than getting laundered to "operation failed" by
             # fault(). See design §3.5, F2/F5.
-            await req.reject(str(result))
+            await req.reject(result)
         elif isinstance(result, Exception):
             await req.fault(SafeFault.from_exception(result))
         else:

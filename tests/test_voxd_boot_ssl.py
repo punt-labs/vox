@@ -104,7 +104,9 @@ def test_build_programs_reads_the_key_variable_credentials_names(
         keys.append(api_key)
         return ElevenLabsMusicProvider(api_key=api_key)
 
-    monkeypatch.setattr("punt_vox.voxd.daemon.ElevenLabsMusicProvider", _record)
+    monkeypatch.setattr(
+        "punt_vox.voxd.programs.playlist_music.ElevenLabsMusicProvider", _record
+    )
 
     VoxDaemon.build_programs()
 
