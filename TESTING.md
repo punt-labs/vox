@@ -419,8 +419,8 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# All local tiers except the separately run speech oracle
-uv run pytest -m "not integration and not sdk and not roundtrip"
+# All local tiers except the separately run speech oracle and signal levels
+uv run pytest -m "not integration and not sdk and not roundtrip and not levels"
 
 # Packaging e2e separately, against the installed wheel
 make install
@@ -498,8 +498,8 @@ strict prerequisites.
 
 ### Coverage policy
 
-Combined coverage excludes `roundtrip` explicitly, so its selection does not
-depend on whether Whisper is installed. The dedicated speech job enforces WER;
+Combined coverage excludes `roundtrip` and `levels` explicitly, so its selection
+does not depend on whether Whisper or mpv is installed. The dedicated speech job enforces WER;
 the coverage ratchet covers default, slow, subprocess, and packaging tiers.
 
 Coverage is measured, not subject to an absolute percentage floor (punt-kit
