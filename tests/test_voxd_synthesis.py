@@ -203,16 +203,14 @@ class TestTryDirectPlay:
         assert isinstance(result, ValueError)
         assert "unknown provider" in str(result)
         assert "Direct-play raised" in caplog.text
+        [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert record.exc_info is not None
+        assert isinstance(record.exc_info[1], ValueError)
 
-    def test_newline_in_provider_cannot_forge_a_log_line(
+    def test_unexpected_failure_log_omits_raw_provider(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A newline in the raw provider field is escaped at the raised sink.
-
-        ``provider`` is a client-controlled wire value; logged with ``%r`` an
-        embedded newline renders as ``\\n`` inside quotes, so the record stays a
-        single physical line and cannot smuggle a forged second entry.
-        """
+        """Even unexpected faults must not echo the caller's provider field."""
         pipeline = _make_pipeline()
         results: list[dict[str, object]] = []
         spec = _default_spec(provider="espeak\nFATAL forged entry")
@@ -233,8 +231,8 @@ class TestTryDirectPlay:
         raised = [r for r in caplog.records if "Direct-play raised" in r.getMessage()]
         assert len(raised) == 1
         message = raised[0].getMessage()
-        assert "\n" not in message, "the provider newline must be escaped, not raw"
-        assert "\\n" in message  # rendered visibly by %r
+        assert "forged entry" not in caplog.text
+        assert "\n" not in message
         assert message.splitlines() == [message]  # exactly one physical line
 
     def test_no_api_key_skips_env_lock(self) -> None:
@@ -1158,7 +1156,7 @@ class TestSynthesizeCacheObservability:
 
         assert outcomes[0].cached is False
         infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-        assert infos == ["synthesized 5 chars with openai, cached"]
+        assert infos == ["synthesized 5 chars, cached"]
 
     def test_non_anonymous_miss_is_not_marked_cached(
         self,
@@ -1173,7 +1171,7 @@ class TestSynthesizeCacheObservability:
 
         assert outcomes[0].cached is False
         infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-        assert infos == ["synthesized 5 chars with openai"]
+        assert infos == ["synthesized 5 chars"]
         assert not any("cached" in m for m in infos)
 
 

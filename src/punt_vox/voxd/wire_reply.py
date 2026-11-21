@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Self
 
 from punt_vox.log_sanitize import SANITIZER
 from punt_vox.voxd._parse import safe_send
+from punt_vox.voxd.rejection_reason import RejectionReason
 from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
@@ -58,8 +59,8 @@ class WireReply:
         """
         return await safe_send(self._websocket, {**payload, "id": self._request_id})
 
-    async def error(self, message: str) -> bool:
-        """Audit a rejected CLIENT request at WARNING (sanitized) and send its frame.
+    async def error(self, message: str | ValueError) -> bool:
+        """Audit a rejected CLIENT request with a fixed code and send its frame.
 
         A rejection means the daemon refused a malformed or hostile request --
         a hostile record name, a play/fetch ref that escapes the store or names
@@ -67,17 +68,14 @@ class WireReply:
         store write broke) use :meth:`fault` instead, so the audit trail does
         not blame the client for a daemon-side error.
 
-        *message* may embed an attacker-controlled name or ref, so it is
-        sanitized before it reaches the log -- newlines and control characters
-        are escaped and the length is capped -- which closes a log-injection
-        vector into vox.log. The wire frame carries *message* verbatim. The
+        *message* may embed private caller input, so only the exception type's
+        fixed reason code reaches the log. The wire frame carries it verbatim. The
         rejection is logged even when the peer has gone, so the audit trail does
         not depend on the client still being there to receive the frame.
         """
-        logger.warning(
-            "rejected op id=%r: %s", self._request_id, self._sanitize(message)
-        )
-        return await self.send({"type": "error", "message": message})
+        reason = RejectionReason.for_exception(message).value
+        logger.warning("rejected op id=%r: %s", self._request_id, reason)
+        return await self.send({"type": "error", "message": str(message)})
 
     async def fault(self, fault: SafeFault) -> bool:
         """Audit a server-side OPERATIONAL failure at ERROR and send a safe frame.
@@ -120,7 +118,7 @@ class WireReply:
         explicitly instead of using this helper.
         """
         if isinstance(exc, ValueError):
-            return await self.error(str(exc))
+            return await self.error(exc)
         return await self.fault(SafeFault.from_exception(exc))
 
     @staticmethod

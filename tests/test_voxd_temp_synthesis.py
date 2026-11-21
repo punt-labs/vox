@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
 
 if TYPE_CHECKING:
@@ -42,10 +41,9 @@ def _synthesis_running(
     synthesize: Callable[[object, Path], None], voice: str = "matilda"
 ) -> TempFileSynthesis:
     """Return a synthesis whose client runs *synthesize* in the worker thread."""
-    spec = SynthesisSpec(provider="elevenlabs", voice=voice)
     with patch("punt_vox.voxd.temp_synthesis.TTSClient") as client_cls:
         client_cls.return_value.synthesize.side_effect = synthesize
-        return TempFileSynthesis(MagicMock(), MagicMock(), spec, 5)
+        return TempFileSynthesis(MagicMock(), MagicMock(voice=voice), 5)
 
 
 class _UnprintableError(Exception):
@@ -64,7 +62,7 @@ def test_returns_the_written_file() -> None:
 
 def test_empty_output_raises_and_leaves_no_file(temp_dir: Path) -> None:
     """Caching an empty file would poison every identical request."""
-    with pytest.raises(RuntimeError, match=r"provider=elevenlabs, voice=matilda"):
+    with pytest.raises(RuntimeError, match="missing or empty output file"):
         asyncio.run(_synthesis(b"").run())
 
     assert list(temp_dir.iterdir()) == []
@@ -75,16 +73,16 @@ def test_empty_output_names_the_caller_s_length() -> None:
         asyncio.run(_synthesis(b"").run())
 
 
-def test_empty_output_error_cannot_forge_a_log_line() -> None:
-    """The caller's voice name rides into the error the daemon logs; a raw
-    newline in it would start a forged record, so it is escaped onto one line."""
+def test_empty_output_error_omits_private_voice() -> None:
+    """The error the daemon logs must not include the caller's voice."""
     with pytest.raises(RuntimeError) as caught:
         asyncio.run(_synthesis(b"", voice="x\nERROR forged record\ry").run())
 
     message = str(caught.value)
     assert "\n" not in message
     assert "\r" not in message
-    assert "voice=x\\nERROR forged record\\ry" in message
+    assert "forged record" not in message
+    assert "voice=" not in message
 
 
 @pytest.mark.parametrize("level", [logging.DEBUG, logging.WARNING])
