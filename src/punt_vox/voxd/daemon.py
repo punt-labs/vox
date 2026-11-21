@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -24,8 +23,6 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
-from punt_vox.providers.credentials import ProviderCredentials
-from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
 from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import (
     DaemonConfig,
@@ -38,7 +35,7 @@ from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music_player import MusicPlayerSubsystem
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.port_file import PortFile
-from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
+from punt_vox.voxd.programs.playlist_music import PlaylistMusic
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.synthesis import SynthesisPipeline
@@ -228,21 +225,13 @@ class VoxDaemon:
 
     @staticmethod
     def build_programs() -> ProgramSubsystem:
-        """Build the Programs subsystem with the production ElevenLabs producer.
+        """Build the Programs subsystem with the production playlist producer.
 
         The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
-        drive the subsystem with a fake; the ElevenLabs default is applied here, at
-        the daemon composition root.
-
-        The key is read here, from the variable the readiness gate names, and
-        passed explicitly. Boot calls this after the keys file is loaded and
-        before any request runs, so the long-lived music client holds the
-        daemon's own key -- never one a synthesis request has swapped into the
-        environment for its own duration.
+        drive the subsystem with a fake; the production recipe is
+        :class:`PlaylistMusic`, applied here at the daemon composition root.
         """
-        key_var = ProviderCredentials().api_key_env_vars()["elevenlabs"]
-        music = ElevenLabsMusicProvider(api_key=os.environ.get(key_var))
-        producer = MusicProducer(music, LengthPolicy())
+        producer = PlaylistMusic.producer()
         mpv_socket = _run_dir() / "mpv.sock"
         return ProgramSubsystem(VoxDaemon._programs_root(), producer, mpv_socket)
 

@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Daemon synthesis rejections emit one sanitized, request-ID-stamped warning
+  instead of duplicate warning records.
+
 - Tightened the live speech roundtrip WER limit from 0.25 to 0.05 after all
   24 provider/backend/passage cases measured zero WER, so one wrong word in
   the shortest passage fails the gate.
