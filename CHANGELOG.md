@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Release candidates run the nightly suite on the exact wheel to be published.
+  `make qa` records installed-candidate voice and music checks before release
+  approval, and a PyPI smoke test round-trips one line after publishing.
+
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
   a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
   and normalization fault checks, non-silence gates, offline PR checks, and a
@@ -32,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without changing executable code or any other OO metric.
 
 ### Fixed
+
+- Daemon synthesis rejections emit one sanitized, request-ID-stamped warning
+  instead of duplicate warning records.
 
 - Tightened the live speech roundtrip WER limit from 0.25 to 0.05 after all
   24 provider/backend/passage cases measured zero WER, so one wrong word in
