@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Parallel local and coverage test loops, changed-module pre-commit selection,
+  opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
+  time-bounded flaky-test quarantine policy.
+
 - Release candidates run the nightly suite on the exact wheel to be published.
   `make qa` records installed-candidate voice and music checks before release
   approval, and a PyPI smoke test round-trips one line after publishing.

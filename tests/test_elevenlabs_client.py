@@ -105,6 +105,7 @@ class TestBuild:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """With no SSL_CERT_FILE set, an OSError is not ours to rename."""
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
         monkeypatch.delenv("SSL_CERT_FILE", raising=False)
         cause = PermissionError("denied")
 
@@ -131,6 +132,7 @@ class TestBuild:
         assert client.call(_identity) is not None
 
     def test_builds_the_sdk_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
         built: list[object] = []
 
         def _fake(**_kwargs: object) -> object:
