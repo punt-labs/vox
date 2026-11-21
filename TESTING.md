@@ -259,18 +259,19 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,202 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,274 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 24 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/RC/manual | 24 |
+| `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,202 default / 9,453 collected across all markers. `slow` is cross-cutting,
-so marker counts need not be disjoint in future revisions.
+9,274 default / 9,532 collected across all markers. Cross-cutting markers
+overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
@@ -334,11 +335,15 @@ default tier. The pi-side secret guard extension runs under real `node` in
 `test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
 problem repeated in a different domain, not a new marker.
 
-### `integration` and `sdk`
+### `integration`, `agent`, and `sdk`
 
 `integration` marks the credentialed speech roundtrip matrix, not mocked
 cross-component wiring. The nightly/manual workflow supplies provider secrets
 and fails when prerequisites are missing; local runs name and skip missing keys.
+
+`agent` exercises the real Claude Code CLI and the plugin's MCP server, not
+the Claude Agent SDK. It is excluded from default, PR, and offline roundtrip
+runs. It does not replace playback capture or manual listening.
 
 `sdk` is reserved for a real paid Claude Agent SDK session and is not run in
 CI. Conversation mode already has default and subprocess coverage; that does
@@ -513,6 +518,14 @@ unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
 `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
 Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
+Run `make test-agent` with Claude Code on `PATH` and `ANTHROPIC_API_KEY` set.
+The test launches a private `voxd` on a fresh loopback port. Headless Haiku
+calls the plugin's `mic:rec` tool, which writes real eSpeak speech to the
+daemon's recordings store without playing it. The same CPU Whisper oracle
+requires WER ≤ **0.02** and rejects a reference with one word changed. The
+session is limited to two turns, 90 seconds, and a $0.05 API budget. Missing
+CLI or key skips locally; `VOX_AGENT_REQUIRE=1` makes it fail in CI.
+
 ## Dev box vs CI
 
 Every gap below has a concrete reason, not a permanent design choice unless
@@ -525,7 +538,8 @@ default tier during development, `subprocess` when changing scripts or their
 process boundaries, and `slow` when changing concurrent logging or other
 heavy local operations. Run `make install` then `make test-e2e` to verify
 the installed wheel. Run `make test-roundtrip` for the offline speech oracle and
-`make test-roundtrip-live` for the credentialed matrix. The reserved `sdk`
+`make test-roundtrip-live` for the credentialed matrix. Run `make test-agent`
+to test the Claude Code plugin. The reserved `sdk`
 command currently selects no tests. Live audio requires manual listening, not packaging smoke.
 
 ### In CI
@@ -536,7 +550,10 @@ invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
 The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
-runs the credentialed matrix nightly or manually with strict prerequisites.
+runs the credentialed matrix and agent tier as separate jobs with strict
+prerequisites. The release gate uses the same workflow with the installed
+candidate wheel. For standalone runs, the failure reporter uses the
+`LINEAR_API_KEY` Actions secret to file a `repo:vox` bug linking the failed run.
 
 ### Coverage policy
 
@@ -572,8 +589,8 @@ both the test venv and the installed wheel's tool environment, and exports
 mapped back to source. Hooks are removed on exit. Processes that deliberately
 strip the environment or are killed before coverage can flush cannot contribute
 data; shell scripts themselves are not Python coverage. Live audio/hardware and
-human-judged tests remain outside automated CI. `sdk` remains empty; live
-`integration and roundtrip` checks run in the separate nightly/manual workflow.
+human-judged tests remain outside automated CI. `sdk` remains empty; the
+live provider and agent checks run in the shared nightly/RC workflow.
 
 ## Follow-ups
 
