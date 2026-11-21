@@ -129,22 +129,24 @@ def test_pidfd_permission_denied_reports_not_exited(
     assert handle.terminate(7.0) is Termination.REFUSED
 
 
-def test_handle_terminates_a_real_process(tmp_path: Path) -> None:
+@pytest.mark.parametrize("columns", ["80", "200"])
+def test_handle_terminates_a_real_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, columns: str
+) -> None:
     """End to end on this host: open the strongest handle, terminate, reap.
 
     The pidfd handle where this interpreter has ``os.pidfd_open``; the
     start-time handle otherwise (macOS, or a Python built without it).
     """
+    monkeypatch.setenv("COLUMNS", columns)
     voxd = tmp_path / "voxd"
     voxd.symlink_to(sys.executable)
-    proc = subprocess.Popen([str(voxd), "-c", "import time; time.sleep(30)"])
+    proc = subprocess.Popen(
+        ["./voxd", "-c", "import time; time.sleep(30)"], cwd=tmp_path
+    )
     try:
         handle = DaemonProcess(SystemClock(), ProcessManager().identity).open(proc.pid)
-        assert handle is not None, (
-            proc.poll(),
-            ProcessManager().identity(proc.pid),
-            os.environ.get("COLUMNS"),
-        )
+        assert handle is not None
         assert handle.terminate(7.0) is Termination.EXITED
         assert handle.exited() is True
     finally:
