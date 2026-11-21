@@ -202,13 +202,13 @@ reflect that shape, not a copy of biff's.
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 32 |
-| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 19 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) and live music levels (also `levels`) | `make test-roundtrip-live` / `make test-levels-live` | Nightly/manual | 28 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,211 default / 9,481 collected across all markers. `slow` is cross-cutting,
+9,211 default / 9,482 collected across all markers. `slow` is cross-cutting,
 so marker counts need not be disjoint in future revisions.
 
 ### Default/unmarked: unit and mocked cross-component tests
@@ -461,9 +461,9 @@ every bundled chime sounds within 20 ms, lasts 0.2-1.5 s, sits at -21 to
 3 LU (measured: done -16.3 LUFS / -10.4 dBTP, prompt -18.5 / -12.4). Late,
 quiet, clipped, and truncated chimes must be rejected. Track change is
 rendered through mpv with voxd's player settings (`--gapless-audio=yes`,
-`--volume=60`, no crossfade) and passes with at most 1.0 s of silence and a
-6 LU loudness step across the boundary; synthetic tones prove gaps and jumps
-fail. `make test-levels-live` generates two 20 s ElevenLabs tracks and checks
+`--volume=60`, no crossfade) and passes with at most 1.0 s of silence at the
+boundary and at most 6 LU between the two tracks' integrated loudness;
+synthetic tones prove gaps and jumps fail. `make test-levels-live` generates two 20 s ElevenLabs tracks and checks
 each at -30 to -8 LUFS, true peak at or below 0 dBTP, at most 1 s of leading
 and 2 s of internal silence, then the change between them, and that chimes at
 playback gain (80%, linear) stay at least 3 LU above music at mpv volume 60

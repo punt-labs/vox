@@ -47,7 +47,8 @@ class Silence:
 def require(binary: str) -> str:
     path = shutil.which(binary)
     if path is None:
-        pytest.skip(f"signal check prerequisite missing: {binary}")
+        # Opt-in tier: a missing binary is a broken run, not a pass.
+        pytest.fail(f"signal check prerequisite missing: {binary}")
     return path
 
 
@@ -125,6 +126,14 @@ def leading_silence(path: Path) -> float:
     spans = silences(path, 0.001)
     first = spans[0] if spans else None
     return first.end if first is not None and first.start <= 0.0 else 0.0
+
+
+def trailing_silence(path: Path) -> float:
+    """Seconds after the last sound, using a 1 ms detection floor."""
+    spans = silences(path, 0.001)
+    last = spans[-1] if spans else None
+    end = duration(path)
+    return end - last.start if last is not None and last.end >= end - 0.001 else 0.0
 
 
 def render(sources: list[Path], output: Path, volume: int) -> Path:

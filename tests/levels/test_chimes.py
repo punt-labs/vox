@@ -57,7 +57,7 @@ def test_chimes_match_in_loudness() -> None:
 @pytest.mark.parametrize(
     ("fault", "audio_filter", "message"),
     [
-        ("late", "adelay=200", "silence before the chime"),
+        ("late", "adelay=200:all=1", "silence before the chime"),
         ("quiet", "volume=-20dB", "LUFS"),
         ("clipped", "volume=15dB,alimiter=limit=1:level=false", "clips"),
         ("truncated", "atrim=0:0.1", "duration"),

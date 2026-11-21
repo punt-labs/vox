@@ -61,7 +61,8 @@ def tracks(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
 def test_track_signal(tracks: list[Path], index: int) -> None:
     track = tracks[index]
     level = meter.loudness(track)
-    print(f"music {STYLES[index]}: {level}")
+    tail = meter.trailing_silence(track)
+    print(f"music {STYLES[index]}: {level}, trailing silence {tail:.2f}s")
     assert level.true_peak_dbtp <= MAX_TRUE_PEAK_DBTP, f"{level} clips"
     low, high = LOUDNESS_LUFS
     assert low <= level.integrated_lufs <= high, f"{level.integrated_lufs} LUFS"

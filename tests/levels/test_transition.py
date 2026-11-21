@@ -55,3 +55,9 @@ def test_render_applies_music_volume(tmp_path: Path) -> None:
     )
     # mpv's volume is cubic: 60 plays at 0.6**3, about 13.3 dB down.
     assert 12.0 <= drop <= 14.5
+
+
+def test_trailing_silence_measures_dead_air_after_the_track(tmp_path: Path) -> None:
+    assert meter.trailing_silence(track(tmp_path, "a", -12)) == 0.0
+    padded = meter.trailing_silence(track(tmp_path, "b", -12, tail=2.0))
+    assert 1.9 <= padded <= 2.1

@@ -1,7 +1,9 @@
 """Judge the change from one music track to the next as the listener hears it.
 
-voxd's player starts mpv with ``--gapless-audio=yes`` and no crossfade, so a
-good change has no dead air and no loudness jump across the boundary.
+voxd loads one track at a time into mpv with no crossfade, so a good change
+has no dead air at the boundary and no loudness step from one track's body to
+the next. The step compares whole tracks: a window at the boundary would
+measure a fade, not the level the listener settles into.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ MAX_JUMP_LU = 6.0
 """Largest loudness step between the end of one track and the next."""
 
 WINDOW_S = 3.0
-"""Span measured on each side of the boundary (ebur128 needs at least 0.4 s)."""
+"""Span searched for silence on each side of the boundary."""
 
 _DETECT_S = 0.05
 
@@ -29,6 +31,8 @@ class Transition:
 
     rendered: Path
     boundary: float
+    first: Path
+    second: Path
 
     @classmethod
     def between(
@@ -36,7 +40,7 @@ class Transition:
     ) -> Transition:
         """Render ``first`` then ``second`` through mpv and mark the change."""
         meter.render([first, second], rendered, volume)
-        return cls(rendered=rendered, boundary=meter.duration(first))
+        return cls(rendered, meter.duration(first), first, second)
 
     def gap(self) -> float:
         """Seconds of silence touching the boundary, or 0 when there is none."""
@@ -48,12 +52,10 @@ class Transition:
         )
 
     def jump(self) -> float:
-        """Loudness difference, in LU, across the boundary."""
-        before = meter.loudness(
-            self.rendered, (max(self.boundary - WINDOW_S, 0.0), WINDOW_S)
-        )
-        after = meter.loudness(self.rendered, (self.boundary, WINDOW_S))
-        return abs(before.integrated_lufs - after.integrated_lufs)
+        """Integrated loudness difference, in LU, between the two tracks."""
+        before = meter.loudness(self.first).integrated_lufs
+        after = meter.loudness(self.second).integrated_lufs
+        return abs(before - after)
 
     def assert_smooth(self) -> None:
         gap = self.gap()
