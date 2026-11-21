@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Final, Self, final
 
-from pydub.exceptions import CouldntDecodeError
+from pydub.exceptions import CouldntDecodeError, CouldntEncodeError
 from pydub.silence import detect_leading_silence
 
 from punt_vox._audio import AudioSegment
@@ -52,7 +52,9 @@ class EdgeTrim:
         """Rewrite ``path`` without its dead air; leave it alone if there is none.
 
         An all-silent track is left as is: there is no sound to keep. So is one
-        that does not decode, for the playback loop to skip as a bad file.
+        that does not decode, for the playback loop to skip as a bad file, and
+        one the encoder fails on: the trim is written beside the track and only
+        replaces it once it is complete.
         """
         try:
             audio = AudioSegment.from_mp3(str(path))
@@ -64,10 +66,14 @@ class EdgeTrim:
         tail = self._silence(audio.reverse())
         if lead + tail < _MIN_CUT_MS:
             return
-        kept = audio[lead : len(audio) - tail]
-        kept.fade_in(_FADE_MS).fade_out(_FADE_MS).export(
-            str(path), format="mp3", bitrate=_BITRATE
-        )
+        kept = audio[lead : len(audio) - tail].fade_in(_FADE_MS).fade_out(_FADE_MS)
+        trimmed = path.with_name(f".{path.name}.trim")
+        try:
+            kept.export(str(trimmed), format="mp3", bitrate=_BITRATE)
+        except CouldntEncodeError:
+            trimmed.unlink(missing_ok=True)
+            return
+        trimmed.replace(path)
 
     def _silence(self, audio: AudioSegment) -> int:
         """Milliseconds of silence at the start of ``audio``."""

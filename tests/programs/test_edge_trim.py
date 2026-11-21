@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, final
 
 from mutagen.id3 import ID3
+from pydub.exceptions import CouldntEncodeError
 from pydub.generators import Sine
 from pydub.silence import detect_leading_silence
 
@@ -15,7 +17,7 @@ from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.producer import PartSpec
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import pytest
 
 
 def _track(path: Path, lead_ms: int, tone_ms: int, tail_ms: int) -> Path:
@@ -115,3 +117,20 @@ class TestEdgeTrim:
         EdgeTrim().apply(track)
 
         assert track.read_bytes() == b"not audio"
+
+    def test_an_encoder_failure_keeps_the_original_track(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        track = _track(tmp_path / "t.mp3", lead_ms=2000, tone_ms=1500, tail_ms=2000)
+        before = track.read_bytes()
+
+        def _fail(self: AudioSegment, out_f: str, **_: object) -> object:
+            Path(out_f).write_bytes(b"partial")
+            raise CouldntEncodeError("ffmpeg could not encode")
+
+        monkeypatch.setattr(AudioSegment, "export", _fail)
+
+        EdgeTrim().apply(track)
+
+        assert track.read_bytes() == before
+        assert list(tmp_path.iterdir()) == [track]
