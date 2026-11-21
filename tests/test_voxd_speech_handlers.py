@@ -629,21 +629,33 @@ class TestSynthesizeHandlerTypedErrorRouting:
         ), "a CA bundle failure must never route through fault()"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "rejection",
+        [
+            ProviderAuthError("elevenlabs", 401),
+            VoiceNotFoundError("bella", ["alloy"]),
+        ],
+    )
+    async def test_synthesis_rejection_logs_once(
+        self, rejection: ValueError, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler, _ = self._handler_that_raises(rejection)
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            sent = await self._drive(handler)
+
+        records = [r for r in caplog.records if "req-1" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert records[0].name == "punt_vox.voxd.wire_reply"
+        assert str(rejection) in records[0].getMessage()
+        assert "hi" not in records[0].getMessage()
+        assert sent[-1] == {"type": "error", "id": "req-1", "message": str(rejection)}
+
+    @pytest.mark.asyncio
     async def test_reject_log_escapes_newlines_in_caller_supplied_strings(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # The reject-path WARNING interpolates the exception message
-        # through ``%r`` on ``str(exc)`` so a caller-supplied string
-        # in the message (a voice name that carries a newline, a
-        # hostile provider name in a hand-edited vox.md) cannot forge
-        # a second audit line. Same discipline
-        # AwsRequirement.satisfied uses on the boto3 exception it
-        # swallows, and the shape this test pins so a future change
-        # cannot regress it back to ``%s``.
-        #
-        # VoiceNotFoundError renders the voice name verbatim into
-        # str(exc), so a forged newline in the voice name would land
-        # directly at the log sink without the ``%r`` escape.
         handler, _ = self._handler_that_raises(
             VoiceNotFoundError("b\nFATAL forged audit line", ["alloy"])
         )
@@ -651,11 +663,9 @@ class TestSynthesizeHandlerTypedErrorRouting:
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
             await self._drive(handler)
 
-        rejected = [r for r in caplog.records if "Rejected synthesis" in r.getMessage()]
+        rejected = [r for r in caplog.records if "req-1" in r.getMessage()]
         assert len(rejected) == 1
         message = rejected[0].getMessage()
-        # The raw newline is escaped as ``\n`` inside the quoted repr;
-        # never a literal newline character at the log sink.
         assert "\n" not in message
         assert "\\n" in message
         assert message.splitlines() == [message]
