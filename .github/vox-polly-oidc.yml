@@ -2,6 +2,11 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Scoped GitHub Actions role for Vox Polly QA in Punt Labs Non-Production
 
 Parameters:
+  EnableReleaseTags:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: Enable only after GitHub restricts creation, updates, and deletion of Vox v* tags to release maintainers.
   ProofBranch:
     Type: String
     Default: ""
@@ -9,6 +14,7 @@ Parameters:
     Description: Exact temporary QA branch without refs/heads/; clear after validation.
 
 Conditions:
+  AllowReleaseTags: !Equals [!Ref EnableReleaseTags, "true"]
   AllowProofBranch: !Not [!Equals [!Ref ProofBranch, ""]]
 
 Resources:
@@ -27,10 +33,16 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              # IAM can match slashes; the GitHub v* tag ruleset cannot.
+              StringNotLike:
+                token.actions.githubusercontent.com:sub: "repo:punt-labs/vox:ref:refs/tags/v*/*"
               StringLike:
                 token.actions.githubusercontent.com:sub:
                   - "repo:punt-labs/vox:ref:refs/heads/main"
-                  - "repo:punt-labs/vox:ref:refs/tags/v*"
+                  - !If
+                    - AllowReleaseTags
+                    - "repo:punt-labs/vox:ref:refs/tags/v*"
+                    - !Ref AWS::NoValue
                   - !If
                     - AllowProofBranch
                     - !Sub "repo:punt-labs/vox:ref:refs/heads/${ProofBranch}"

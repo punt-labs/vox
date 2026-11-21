@@ -493,9 +493,13 @@ The Linux live job assumes the Non-Production `vox-polly-qa` IAM role via
 GitHub OIDC and uses Polly in `us-east-1`. Provision the role using
 [the CloudFormation template](.github/vox-polly-oidc.yml) in account
 `579096219769`, with the GitHub OIDC provider and audience `sts.amazonaws.com`.
-By default only runs on `main` and release tags (`v*`) can assume the role.
-Use `ProofBranch` only for a temporary, exact branch to verify a change before
-merge; clear it after the proof run. No AWS key secrets are passed to the suite.
+By default only runs on `main` can assume the role. Before merging, protect
+`v*` tags in the [Vox rulesets](https://github.com/punt-labs/vox/settings/rules)
+by restricting their creation, updates, and deletion to release maintainers,
+then set `EnableReleaseTags=true` so release candidates can use the role.
+Use `ProofBranch` only for a temporary, exact branch to verify a change
+before merge; clear it after the proof run. No AWS key secrets are passed
+to the suite.
 
 ### Coverage policy
 
