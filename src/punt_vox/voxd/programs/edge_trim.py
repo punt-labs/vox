@@ -11,6 +11,7 @@ milliseconds of fade so the cut does not click.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import TYPE_CHECKING, Final, Self, final
 
 from pydub.exceptions import CouldntDecodeError, CouldntEncodeError
@@ -65,6 +66,7 @@ class EdgeTrim:
         except CouldntEncodeError:
             trimmed.unlink(missing_ok=True)
             return
+        shutil.copymode(path, trimmed)
         trimmed.replace(path)
 
     def _kept(self, path: Path) -> AudioSegment | None:

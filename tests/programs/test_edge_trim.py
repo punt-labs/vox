@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, final
 
@@ -151,3 +153,14 @@ class TestEdgeTrim:
         EdgeTrim().apply(track)
 
         assert track.read_bytes() == before
+
+    def test_a_trimmed_track_keeps_its_permissions(self, tmp_path: Path) -> None:
+        track = _track(tmp_path / "t.mp3", lead_ms=2000, tone_ms=1500, tail_ms=2000)
+        track.chmod(0o600)
+        old_umask = os.umask(0o022)
+        try:
+            EdgeTrim().apply(track)
+        finally:
+            os.umask(old_umask)
+
+        assert stat.S_IMODE(track.stat().st_mode) == 0o600
