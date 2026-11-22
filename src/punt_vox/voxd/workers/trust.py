@@ -24,7 +24,7 @@ class ClaudeTrust:
         self = super().__new__(cls)
         directory = os.environ.get("CLAUDE_CONFIG_DIR")
         self._path = (
-            Path(directory) / ".claude.json"
+            Path(directory).resolve() / ".claude.json"
             if directory
             else Path.home() / ".claude.json"
         )

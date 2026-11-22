@@ -37,11 +37,14 @@ class ClaudeProfile:
 
     def environment(self, parent: Mapping[str, str]) -> dict[str, str]:
         """Admit base process variables and explicitly named Claude credentials."""
-        return {
+        environment = {
             k: v
             for k, v in parent.items()
             if ProcessEnv.admits(k) or k in self.ENV_NAMES
         }
+        if directory := environment.get("CLAUDE_CONFIG_DIR"):
+            environment["CLAUDE_CONFIG_DIR"] = str(Path(directory).resolve())
+        return environment
 
     def prepare(self, worktree: Path) -> None:
         """Accept trust only for this exact absolute worktree."""
