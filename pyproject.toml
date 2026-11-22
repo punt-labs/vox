@@ -336,6 +336,7 @@ entry = [
     "punt_vox.voxd.daemon",
     "punt_vox.voxd.programs.wiring",
     "punt_vox.voxd.music_player.composition",
+    "punt_vox.hook_context_relay",
 ]
 adapters = [
     "punt_vox.api_key_file",
@@ -443,6 +444,10 @@ adapters = [
     "punt_vox.voxd.programs.mpv",
     "punt_vox.voxd.programs.mpv.*",
     "punt_vox.voxd.programs.music_producer",
+    "punt_vox.hook_context_client",
+    "punt_vox.hook_context_stage",
+    "punt_vox.hook_sequence",
+    "punt_vox.hook_speech",
 ]
 application = [
     "punt_vox.audible_notify",
@@ -628,6 +633,11 @@ domain = [
     "punt_vox.voxd.programs.suspension",
     "punt_vox.voxd.programs.switch_signal",
     "punt_vox.voxd.programs.track_end",
+    "punt_vox.hook_context_event",
+    "punt_vox.voxd.hook_context_projection",
+    "punt_vox.voxd.hook_context_store",
+    "punt_vox.voxd.hook_failures",
+    "punt_vox.voxd.hook_gaps",
 ]
 
 [tool.pytest.ini_options]

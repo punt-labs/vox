@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Upgrade the quality-gate dev dependency to `punt-oo-ratchet==0.4.0` without
   changing existing gate policies or baselines.
 
+- `vox call context --session <id>` displays a session's in-memory hook
+  snapshot and sender sequence gaps. The Vox plugin feeds it live Claude Code
+  hooks from enabled projects.
+
 - Daemon-side ElevenLabs Conversational AI transport and lazy agent provisioning.
 
 - Parallel local and coverage test loops, changed-module pre-commit selection,

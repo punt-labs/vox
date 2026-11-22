@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Self, cast, final
 
 import typer
 
+from punt_vox.commands.call_context import CallContextCommand
 from punt_vox.commands.call_options import (
     ContextOpt as _ContextOpt,
     ScriptOpt as _ScriptOpt,
@@ -92,6 +93,7 @@ class CallCli:
         )
         app.command("start")(cli.start)
         app.command("stop")(cli.stop)
+        app.command("context")(CallContextCommand.show)
         return app
 
     def start(
