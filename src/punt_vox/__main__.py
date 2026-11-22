@@ -27,7 +27,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
-from punt_vox.config import ConfigStore
+from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
@@ -451,7 +451,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
     Raises:
         typer.Exit: If mode is not y or n.
     """
-    if mode not in ("y", "n"):
+    if not SpeakMode.accepts(mode):
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 

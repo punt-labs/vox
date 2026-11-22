@@ -10,6 +10,7 @@ missing.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -26,6 +27,7 @@ __all__ = [
     "DURABLE_KEYS",
     "EPHEMERAL_KEYS",
     "ConfigStore",
+    "SpeakMode",
     "VoxConfig",
     "find_config_dir",
 ]
@@ -138,6 +140,20 @@ class VoxConfig:
             return max(0, int(raw))
         except ValueError:
             return 0
+
+
+class SpeakMode:
+    """Admit voice/chime toggles and durably record safe rejection metadata."""
+
+    @staticmethod
+    def accepts(mode: str) -> bool:
+        """Reject unsupported modes without recording caller-controlled text."""
+        if mode in ("y", "n"):
+            return True
+        logger.warning(
+            "speak rejected reason=invalid_mode id=%s", uuid.uuid4().hex[:12]
+        )
+        return False
 
 
 class ConfigStore:
