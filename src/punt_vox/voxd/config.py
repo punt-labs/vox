@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import secrets
 from pathlib import Path
 from typing import Self
@@ -62,7 +61,7 @@ def _run_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Uvicorn access-log token redaction (logging is owned by ``logging_config``)
+# Uvicorn access-log privacy (logging is owned by ``logging_config``)
 # ---------------------------------------------------------------------------
 
 _STARTUP_ENV_KEYS: tuple[str, ...] = (
@@ -77,35 +76,38 @@ _STARTUP_ENV_KEYS: tuple[str, ...] = (
     "LANG",
 )
 
-_TOKEN_RE = re.compile(r"\?token=[^\s\"']+")
 _KEYS_UNREADABLE = "Could not read %s: %s -- daemon will use system TTS only"
+_ACCESS_FORMAT = '%s - "%s %s HTTP/%s" %d'
+_ROUTE_LABELS = {"/health": "/health", "/ws": "/ws"}
 
 
-class _TokenRedactFilter(logging.Filter):
-    """Strip auth tokens from access log messages."""
+class _AccessLogFilter(logging.Filter):
+    """Replace request targets with fixed labels before any handler sees them."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Redact authentication tokens from the record and allow it to be logged."""
-        if isinstance(getattr(record, "msg", None), str):
-            record.msg = _TOKEN_RE.sub("?token=REDACTED", record.msg)
-        if record.args and isinstance(record.args, tuple):
-            record.args = tuple(
-                _TOKEN_RE.sub("?token=REDACTED", a) if isinstance(a, str) else a
-                for a in record.args
+        """Retain method and status, but never a caller's path or query."""
+        args = record.args
+        if record.msg == _ACCESS_FORMAT and isinstance(args, tuple) and len(args) == 5:
+            client, method, target, version, status = args
+            path = str(target).partition("?")[0]
+            record.args = (
+                client,
+                method,
+                _ROUTE_LABELS.get(path, "<unmatched>"),
+                version,
+                status,
             )
+        else:
+            record.msg = "HTTP access: outcome=unclassified"
+            record.args = ()
         return True
 
 
 def _install_token_redact_filter() -> None:
-    """Apply token redaction to uvicorn's access logger.
-
-    Uvicorn sets the access logger level to match log_level (WARNING),
-    but access entries are logged at INFO.  Override to INFO so access
-    logs actually fire, with the redact filter stripping tokens.
-    """
+    """Install the daemon's privacy-safe INFO access records."""
     uvicorn_access = logging.getLogger("uvicorn.access")
     uvicorn_access.setLevel(logging.INFO)
-    uvicorn_access.addFilter(_TokenRedactFilter())
+    uvicorn_access.addFilter(_AccessLogFilter())
 
 
 # ---------------------------------------------------------------------------
