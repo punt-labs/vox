@@ -259,25 +259,26 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,274 |
-| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,288 |
+| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
 | `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/RC/manual | 24 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/RC/manual | 20 |
+| `integration` | Credentialed TTS × STT matrix (also `roundtrip`), live music levels (also `levels`), and live playback capture (also `playback`) | `make test-roundtrip-live` / `make test-levels-live` / `make test-playback-capture-live` | Nightly/RC/manual | 30 |
 | `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,274 default / 9,532 collected across all markers. Cross-cutting markers
+9,288 default / 9,569 collected across all markers. Cross-cutting markers
 overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,202 of 9,453 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,288 of 9,569 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -486,8 +487,8 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# All local tiers except the separately run speech oracle
-uv run pytest -m "not integration and not sdk and not roundtrip"
+# All local tiers except the separately run speech oracle and signal levels
+uv run pytest -m "not integration and not sdk and not roundtrip and not levels"
 
 # Packaging e2e separately, against the installed wheel
 make install
@@ -545,6 +546,25 @@ unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
 `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
 Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
 
+Signal-level checks live in `tests/levels/` and judge what speech-to-text
+cannot: loudness, silence, and the change between music tracks. ffmpeg's
+`ebur128` (BS.1770 integrated loudness, true peak) and `silencedetect`
+(-50 dBFS) are the oracle. `make test-levels` needs ffmpeg and mpv, no keys:
+every bundled chime sounds within 20 ms, lasts 0.2-1.5 s, sits at -21 to
+-13 LUFS with true peak at or below -1 dBTP, and chimes differ by at most
+3 LU (measured: done -16.3 LUFS / -10.4 dBTP, prompt -18.5 / -12.4). Late,
+quiet, clipped, and truncated chimes must be rejected. Track change is
+rendered through mpv with voxd's player settings (`--gapless-audio=yes`,
+`--volume=60`, no crossfade) and passes with at most 1.0 s of silence at the
+boundary and at most 6 LU between the two tracks' integrated loudness;
+synthetic tones prove gaps and jumps fail. `make test-levels-live` generates two 20 s ElevenLabs tracks, edge-trimmed as voxd
+stores them (`EdgeTrimmedMusic`), and checks
+each at -30 to -8 LUFS, true peak at or below 0 dBTP, at most 1 s of leading
+and 2 s of internal silence, then the change between them, and that chimes at
+playback gain (80%, linear) stay at least 3 LU above music at mpv volume 60
+(cubic, about -13.3 dB). Missing `ELEVENLABS_API_KEY` skips unless
+`VOX_LEVELS_REQUIRE_LIVE=1`, as in nightly CI.
+
 Run `make test-agent` with Claude Code on `PATH` and `ANTHROPIC_API_KEY` set.
 The test launches a private `voxd` on a fresh loopback port. Headless Haiku
 calls the plugin's `mic:rec` tool, which writes real eSpeak speech to the
@@ -577,15 +597,15 @@ invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
 The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
-runs the credentialed matrix and agent tier as separate jobs with strict
-prerequisites. The release gate uses the same workflow with the installed
+runs the credentialed matrix, the `levels` checks, and the agent tier with
+strict prerequisites. The release gate uses the same workflow with the installed
 candidate wheel. For standalone runs, the failure reporter uses the
 `LINEAR_API_KEY` Actions secret to file a `repo:vox` bug linking the failed run.
 
 ### Coverage policy
 
-Combined coverage excludes `roundtrip` explicitly, so its selection does not
-depend on whether Whisper is installed. The dedicated speech job enforces WER;
+Combined coverage excludes `roundtrip` and `levels` explicitly, so its selection
+does not depend on whether Whisper or mpv is installed. The dedicated speech job enforces WER;
 the coverage ratchet covers default, slow, subprocess, and packaging tiers.
 
 Coverage is measured, not subject to an absolute percentage floor (punt-kit

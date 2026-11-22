@@ -23,7 +23,7 @@ test-playback-capture: ## Real daemon to PulseAudio monitor to Whisper
 test-playback-capture-live: ## Credentialed daemon playback capture
 	uv run --group roundtrip pytest tests/roundtrip/test_playback_capture.py -m "playback and integration" -s
 
-.PHONY: test-roundtrip test-roundtrip-live test-agent
+.PHONY: test-roundtrip test-roundtrip-live test-agent test-levels test-levels-live
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not agent and not quarantine" -s
 
@@ -32,6 +32,12 @@ test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
 
 test-agent: ## Headless Claude Code to vox plugin to CPU Whisper
 	uv run --group roundtrip pytest tests/roundtrip -m "agent and not quarantine" -s
+
+test-levels: ## Chime and synthetic-track loudness, silence, track-change checks (ffmpeg, mpv)
+	uv run pytest tests/levels -m "levels and not integration" -s
+
+test-levels-live: ## Live ElevenLabs music loudness, silence, track change, chime headroom
+	uv run pytest tests/levels -m "levels and integration" -s
 
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m "e2e and not quarantine"

@@ -78,7 +78,7 @@ jobs:
         with:
           name: ${{ inputs.candidate-artifact }}
           path: candidate/
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep mpv
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.HF_HUB_CACHE }}
@@ -114,6 +114,21 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: Chime and music signal levels
+        if: ${{ !cancelled() }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/levels -m levels -s --basetemp="$RUNNER_TEMP/levels"
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          VOX_LEVELS_REQUIRE_LIVE: "1"
+      - name: Upload measured audio
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: levels-audio
+          path: ${{ runner.temp }}/levels/**/*.*
+          if-no-files-found: ignore
+          retention-days: 14
 
   agent:
     runs-on: ubuntu-latest

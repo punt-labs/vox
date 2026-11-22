@@ -42,7 +42,7 @@ def test_runner_reports_and_preserves_exit(
         if "pytest" in args:
             assert args[args.index("-m", args.index("pytest")) + 1] == (
                 "not integration and not sdk and not roundtrip and not quarantine "
-                "and not playback"
+                "and not playback and not levels"
             )
             assert args[args.index("-n") + 1] == "auto"
             assert (
