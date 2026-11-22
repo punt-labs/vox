@@ -19,16 +19,20 @@ def test_catalog_names_the_six_boss_tools() -> None:
     }
 
 
+def _tools(workers: FakeWorkers) -> BossTools:
+    return BossTools(workers, workers)
+
+
 async def test_start_defaults_to_the_only_allowlisted_repo() -> None:
     workers = FakeWorkers()
-    result, error = await BossTools(workers).answer("start_worker", {"task": "fix x"})
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
     assert not error
     assert json.loads(result)["state"] == "ready"
     assert workers.started == [("fix x", "/repo")]
 
 
 async def test_start_without_project_needs_one_repo() -> None:
-    tools = BossTools(FakeWorkers(("/a", "/b")))
+    tools = _tools(FakeWorkers(("/a", "/b")))
     result, error = await tools.answer("start_worker", {"task": "fix x"})
     assert error
     assert "/a" in json.loads(result)["error"]
@@ -37,7 +41,7 @@ async def test_start_without_project_needs_one_repo() -> None:
 async def test_reask_during_a_slow_start_starts_one_worker() -> None:
     workers = FakeWorkers()
     workers.gate.clear()
-    tools = BossTools(workers)
+    tools = _tools(workers)
     first = asyncio.create_task(tools.answer("start_worker", {"task": "fix x"}))
     await asyncio.sleep(0)
     first.cancel()  # barge-in: the agent abandons the pending call
@@ -53,7 +57,7 @@ async def test_reask_during_a_slow_start_starts_one_worker() -> None:
 async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234"), payload("ef567890")]
-    result, error = await BossTools(workers).answer(
+    result, error = await _tools(workers).answer(
         "steer_worker", {"worker_id": "abcd", "words": "use tabs;", "urgent": True}
     )
     assert not error
@@ -64,7 +68,7 @@ async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> Non
 async def test_ambiguous_or_short_ids_are_refused() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234"), payload("abcd9999")]
-    tools = BossTools(workers)
+    tools = _tools(workers)
     for wanted in ("abcd", "a"):
         _, error = await tools.answer("stop_worker", {"worker_id": wanted})
         assert error
@@ -74,16 +78,14 @@ async def test_ambiguous_or_short_ids_are_refused() -> None:
 async def test_status_reports_curated_progress_only() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", goal="ship it", gaps={"x": 1})]
-    result, _ = await BossTools(workers).answer(
-        "worker_status", {"worker_id": "abcd1234"}
-    )
+    result, _ = await _tools(workers).answer("worker_status", {"worker_id": "abcd1234"})
     assert json.loads(result)["progress"] == {"goal": "ship it"}
 
 
 async def test_list_stop_and_silence() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234")]
-    tools = BossTools(workers)
+    tools = _tools(workers)
     listed, _ = await tools.answer("list_workers", {})
     assert [w["worker_id"] for w in json.loads(listed)] == ["abcd1234"]
     stopped, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
@@ -92,7 +94,7 @@ async def test_list_stop_and_silence() -> None:
 
 
 async def test_unknown_tool_and_bad_arguments_are_errors() -> None:
-    tools = BossTools(FakeWorkers())
+    tools = _tools(FakeWorkers())
     assert (await tools.answer("rm_rf", {}))[1]
     assert (await tools.answer("start_worker", {"task": " "}))[1]
     assert (await tools.answer("steer_worker", {"worker_id": "x", "urgent": 1}))[1]

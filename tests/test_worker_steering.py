@@ -13,6 +13,7 @@ from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.handlers import WorkerHandlers
@@ -393,7 +394,7 @@ async def test_receipt_wait_releases_hook_ingest_lock(heard: bool) -> None:
     registry.steer.return_value = 4
     registry.receipt.return_value = None
     store = HookContextStore()
-    handler = WorkerHandlers(registry)
+    handler = WorkerHandlers(WorkerActor(registry))
     ws = AsyncMock(spec=WebSocket)
     handlers = WorkerHandlers.build(registry, store)
     hook_ws = AsyncMock(spec=WebSocket)

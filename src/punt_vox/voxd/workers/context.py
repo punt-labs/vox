@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_call.handlers import CallHandlers
+from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
@@ -23,8 +24,9 @@ class WorkerContext:
     def handlers(playback: PlaybackQueue) -> dict[str, MessageHandler]:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
-        workers = WorkerSubsystem.actor(store)
+        policy = WorkerSubsystem.policy()
+        actor = WorkerSubsystem.actor(store, policy)
         return {
-            **workers.handlers(store),
-            **CallHandlers(workers, playback).handlers(),
+            **WorkerHandlers(actor).handlers(store),
+            **CallHandlers(actor, policy, playback).handlers(),
         }

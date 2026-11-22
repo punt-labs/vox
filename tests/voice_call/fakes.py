@@ -41,7 +41,7 @@ class FakeWorkers:
         self.gate = asyncio.Event()
         self.gate.set()
 
-    def projects(self) -> tuple[str, ...]:
+    def repos(self) -> tuple[str, ...]:
         return self.allowed
 
     async def start(self, task: str, project: str) -> WorkerPayload:

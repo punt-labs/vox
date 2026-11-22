@@ -18,6 +18,7 @@ from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
@@ -179,7 +180,7 @@ async def test_call_side_refuses_unallowlisted_project(tmp_path: Path) -> None:
         {"test": TrivialProfile()},
     )
     ws = AsyncMock(spec=WebSocket)
-    await WorkerHandlers(registry).handle(
+    await WorkerHandlers(WorkerActor(registry)).handle(
         {
             "id": "bad",
             "type": "worker_start",

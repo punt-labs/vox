@@ -16,6 +16,7 @@ from punt_vox.hook_context_relay import HookContextRelay, main
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
@@ -257,7 +258,7 @@ async def test_admission_path_errors_are_wire_errors(tmp_path: Path) -> None:
 async def test_unknown_worker_commands_are_wire_errors(tmp_path: Path) -> None:
     registry = _registry(tmp_path, FakeWorkerProvider())
     socket = AsyncMock()
-    await WorkerHandlers(registry).handle({"type": "unknown"}, socket)
+    await WorkerHandlers(WorkerActor(registry)).handle({"type": "unknown"}, socket)
     assert socket.send_json.call_args.args[0]["type"] == "error"
 
 

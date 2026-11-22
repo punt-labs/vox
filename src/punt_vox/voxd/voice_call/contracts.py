@@ -10,15 +10,11 @@ if TYPE_CHECKING:
     from punt_vox.voxd.workers.steering_types import SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
-__all__ = ["CallInput", "WorkerControl"]
+__all__ = ["CallInput", "ProjectAllowlist", "WorkerControl"]
 
 
 class WorkerControl(Protocol):
     """The provider-neutral worker surface the boss tools may call."""
-
-    def projects(self) -> tuple[str, ...]:
-        """Return the allowlisted repositories a worker may be started in."""
-        ...
 
     async def start(self, task: str, project: str) -> WorkerPayload:
         """Start one persistent worker on the default provider and harness."""
@@ -34,6 +30,14 @@ class WorkerControl(Protocol):
 
     async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
+        ...
+
+
+class ProjectAllowlist(Protocol):
+    """The repositories a worker may be started in."""
+
+    def repos(self) -> tuple[str, ...]:
+        """Return the allowlisted repository paths in a stable order."""
         ...
 
 

@@ -97,6 +97,7 @@ async def test_call_barge_in_reask_starts_one_worker(tmp_path: Path) -> None:
         port = server.sockets[0].getsockname()[1]
         handlers = CallHandlers(
             workers,
+            workers,
             cast("PlaybackQueue", playback),
             connector=_Connector(
                 f"ws://127.0.0.1:{port}/convai?conversation_signature=s"
@@ -146,8 +147,10 @@ async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
     pcm.write_bytes(bytes(640))
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
+        workers = FakeWorkers()
         handlers = CallHandlers(
-            FakeWorkers(),
+            workers,
+            workers,
             cast("PlaybackQueue", FakePlayback()),
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
             trace_dir=tmp_path,
@@ -166,8 +169,9 @@ async def test_start_without_a_key_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    workers = FakeWorkers()
     handlers = CallHandlers(
-        FakeWorkers(), cast("PlaybackQueue", FakePlayback()), trace_dir=tmp_path
+        workers, workers, cast("PlaybackQueue", FakePlayback()), trace_dir=tmp_path
     )
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))

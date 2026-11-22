@@ -13,7 +13,7 @@ from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from punt_vox.voxd.voice_call.contracts import WorkerControl
+    from punt_vox.voxd.voice_call.contracts import ProjectAllowlist, WorkerControl
     from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["BossTools"]
@@ -82,14 +82,15 @@ class BossTools:
         {"start_worker", "steer_worker", "stop_worker"}
     )
 
-    __slots__ = ("_cache", "_workers")
+    __slots__ = ("_cache", "_projects", "_workers")
     _workers: WorkerControl
+    _projects: ProjectAllowlist
     _cache: ToolResultCache
 
-    def __new__(cls, workers: WorkerControl) -> Self:
-        """Bind the worker surface and a fresh per-call result cache."""
+    def __new__(cls, workers: WorkerControl, projects: ProjectAllowlist) -> Self:
+        """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
-        self._workers = workers
+        self._workers, self._projects = workers, projects
         self._cache = ToolResultCache()
         return self
 
@@ -135,7 +136,7 @@ class BossTools:
         task = self._text(arguments, "task")
         project = arguments.get("project")
         if project is None:
-            projects = self._workers.projects()
+            projects = self._projects.repos()
             if len(projects) != 1:
                 raise ValueError(f"name a project; allowlisted: {list(projects)}")
             project = projects[0]

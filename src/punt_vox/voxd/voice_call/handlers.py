@@ -30,7 +30,11 @@ if TYPE_CHECKING:
     from punt_vox.voxd.types import MessageHandler
     from punt_vox.voxd.voice_agent.contracts import ClientTool
     from punt_vox.voxd.voice_call.call import Opener
-    from punt_vox.voxd.voice_call.contracts import CallInput, WorkerControl
+    from punt_vox.voxd.voice_call.contracts import (
+        CallInput,
+        ProjectAllowlist,
+        WorkerControl,
+    )
 
 __all__ = ["CallHandlers"]
 
@@ -68,10 +72,12 @@ class CallHandlers:
         "_lock",
         "_opener",
         "_playback",
+        "_projects",
         "_trace_dir",
         "_workers",
     )
     _workers: WorkerControl
+    _projects: ProjectAllowlist
     _playback: PlaybackQueue
     _connector: AgentConnector | None
     _trace_dir: Path
@@ -82,15 +88,17 @@ class CallHandlers:
     def __new__(
         cls,
         workers: WorkerControl,
+        projects: ProjectAllowlist,
         playback: PlaybackQueue,
         *,
         connector: AgentConnector | None = None,  # None: ElevenLabs, from the env key.
         trace_dir: Path | None = None,
         opener: Opener = Conversation.open,
     ) -> Self:
-        """Bind the worker surface, the speaker's playback queue and the agent."""
+        """Bind the workers, their allowlist, the playback queue and the agent."""
         self = super().__new__(cls)
-        self._workers, self._playback, self._connector = workers, playback, connector
+        self._workers, self._projects = workers, projects
+        self._playback, self._connector = playback, connector
         self._trace_dir = (
             trace_dir if trace_dir is not None else user_state_dir() / "calls"
         )
@@ -129,7 +137,7 @@ class CallHandlers:
         audio: CallInput = (
             ScriptInput.from_wire(msg["script"]) if "script" in msg else MicInput()
         )
-        prompt = CallSeed(self._workers.projects(), await self._workers.workers())
+        prompt = CallSeed(self._projects.repos(), await self._workers.workers())
         url, tool_ids = await asyncio.to_thread(
             self._agent().connection, BossTools.CATALOG
         )
@@ -139,7 +147,7 @@ class CallHandlers:
             os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
         )
         call = VoiceAgentCall(
-            BossTools(self._workers),
+            BossTools(self._workers, self._projects),
             audio,
             AgentSpeaker(self._playback),
             trace=EventTrace(stream),
