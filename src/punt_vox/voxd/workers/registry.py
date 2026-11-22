@@ -190,6 +190,7 @@ class WorkerRegistry:
         )
         return previous.seq if previous is not None else 0
 
+    # PY-TS-14: absence means no later input matches this steering request yet.
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
         """Recognize a later matching input without inferring turn completion."""
         profile = self._profiles[self._get(worker_id).harness]

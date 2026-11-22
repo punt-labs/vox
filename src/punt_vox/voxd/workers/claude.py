@@ -55,6 +55,7 @@ class ClaudeProfile:
         """Accept trust only for this exact absolute worktree."""
         self._trust.update(worktree, accepted=True)
 
+    # PY-TS-14: no receipt exists before the first UserPromptSubmit observation.
     def last_input(self, worker_id: str) -> WorkerInput | None:
         """Use UserPromptSubmit only; Escape need not produce a Stop hook."""
         seq, text = self._store.last_input(worker_id)

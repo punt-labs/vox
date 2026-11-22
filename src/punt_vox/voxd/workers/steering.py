@@ -84,6 +84,7 @@ class WorkerSteering:
             "urgent": urgent,
         }
 
+    # PY-TS-14: timeout without a matching input has no receipt sequence.
     async def _receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
         receipt = None
         try:

@@ -52,6 +52,7 @@ class HarnessProfile(Protocol):
         """Return the largest input whose receipt text remains untruncated."""
         ...
 
+    # PY-TS-14: absence means this worker has no observed input yet.
     def last_input(self, worker_id: str) -> WorkerInput | None:
         """Return the latest observed input, if any."""
         ...
