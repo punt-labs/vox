@@ -1068,10 +1068,10 @@
   "src/punt_vox/mcp_lifecycle.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
+    "avg_params": 0.0,
     "max_complexity": 5.0,
     "avg_complexity": 5.0,
-    "module_size": 34.0,
+    "module_size": 36.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
