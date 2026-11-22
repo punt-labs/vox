@@ -36,7 +36,7 @@ class ClaudeConfigLease:
                 with suppress(FileNotFoundError):
                     info = self._path.stat(follow_symlinks=False)
                     if not stat.S_ISDIR(info.st_mode):
-                        raise ValueError("Claude config lease must be a directory")
+                        raise ValueError("Claude lease must be a directory") from None
                     if info.st_mtime < time.time() - 60:
                         self._path.rmdir()
                         continue
