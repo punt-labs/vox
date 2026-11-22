@@ -19,6 +19,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
+from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
@@ -249,6 +250,7 @@ def test_tmux_urgent_keys_and_safe_launch_error(tmp_path: Path) -> None:
         ("send-keys", "-t", "=worker:", "Enter"),
     ]
     with (
+        patch.object(WorkerCommand, "_scoped", return_value=False),
         patch(
             "punt_vox.voxd.workers.tmux.subprocess.run",
             side_effect=subprocess.CalledProcessError(1, ["secret-value"]),

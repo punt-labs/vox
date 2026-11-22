@@ -35,13 +35,21 @@ class WorkerCommand:
             raise RuntimeError("Cannot identify the worker service cgroup") from None
 
     def run(self, *, check: bool) -> subprocess.CompletedProcess[str]:
-        """Run a bounded client; a missing user manager fails launch closed."""
+        """Run a client; service scopes require systemd 254+ and a user manager."""
         argv = ["tmux", "-L", "vox-workers", "-f", "/dev/null", *self._args]
         environment = {k: v for k, v in os.environ.items() if ProcessEnv.admits(k)}
+        scoped = self._scoped()
         try:
-            if self._scoped():
+            if scoped:
                 environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-                argv[:0] = self._scope(environment)
+                argv[:0] = [
+                    "systemd-run",
+                    "--user",
+                    "--scope",
+                    "--quiet",
+                    "--expand-environment=no",
+                    "--",
+                ]
             return subprocess.run(
                 argv,
                 env=environment,
@@ -51,19 +59,9 @@ class WorkerCommand:
                 timeout=15,
             )
         except subprocess.SubprocessError:
+            if scoped:
+                raise RuntimeError(
+                    "Worker scope launch failed: requires systemd 254+ with "
+                    "--expand-environment=no and a running user manager"
+                ) from None
             raise RuntimeError("Worker tmux operation failed") from None
-
-    @staticmethod
-    def _scope(environment: dict[str, str]) -> list[str]:
-        options = subprocess.run(
-            ["systemd-run", "--help"],
-            env=environment,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        argv = ["systemd-run", "--user", "--scope", "--quiet"]
-        if "--expand-environment=" in options.stdout:
-            argv.append("--expand-environment=no")
-        return [*argv, "--"]
