@@ -25,9 +25,9 @@ def test_worker_environment_values_never_enter_tmux_argv(tmp_path: Path) -> None
     environment = {"PATH": os.defpath, "CLAUDE_CODE_OAUTH_TOKEN": "fake-private-token"}
     original = TmuxWorkerProvider._run
 
-    def run(*args: str, **kwargs: bool) -> object:
+    def run(*args: str, check: bool = True) -> object:
         assert all(value not in arg for value in environment.values() for arg in args)
-        return original(*args, **kwargs)
+        return original(*args, check=check)
 
     try:
         with (

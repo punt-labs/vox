@@ -16,6 +16,7 @@ class HookInputHistory:
     LIMIT = 32
 
     def __new__(cls) -> Self:
+        """Create an empty receipt window."""
         self = super().__new__(cls)
         self._inputs = {}
         return self

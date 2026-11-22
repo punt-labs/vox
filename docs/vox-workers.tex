@@ -164,7 +164,7 @@ settling are abstracted by this admission; this model does not bound arbitrary
 backend execution time. Receipt polling has a separate 10,000 ms budget.
 
 \begin{zed}
-  [STEER, WORDS] \\
+  [STEER, WORDS, DIRECTORY] \\
   SteerPhase ::= queued | locked | sent | acknowledged | unheard | refused
 \end{zed}
 
@@ -314,13 +314,39 @@ does not promise unbounded delivery history.
   \forall w : WORKER @ recent~w = \emptyset
 \end{schema}
 
+Admission is a server-side registry decision: the session must name an active
+registered worker and cwd must equal its canonical worktree. The advisory
+worker-only wire flag never establishes provenance. This is the existing
+metadata admission boundary, not cryptographic authentication of a hook
+process. Unmanaged context events cannot populate receipt history, even if
+they reuse a worker session or sequence. Receipt retention deduplicates its
+own admitted inputs independently of general context deduplication.
+
+\begin{schema}{WorkerAdmission}
+  Workers \\
+  worktree : WORKER \pfun DIRECTORY \\
+  launchFailed : \power WORKER
+\where
+  \dom worktree = \dom phase \\
+  launchFailed \subseteq \dom phase
+\end{schema}
+
+\begin{schema}{UnmanagedInput}
+  \Xi InputHistory
+\end{schema}
+
 \begin{schema}{ObserveInput}
   \Delta InputHistory \\
+  \Xi WorkerAdmission \\
   worker? : WORKER \\
+  cwd? : DIRECTORY \\
   sequence? : \nat \\
   text? : WORDS \\
   entries, retained! : \nat \pfun WORDS
 \where
+  worker? \in (\dom phase) \setminus launchFailed \\
+  phase~worker? \in \{starting, ready\} \\
+  cwd? = worktree~worker? \\
   sequence? > 0 \\
   sequence? \notin \dom (recent~worker?) \\
   entries = (recent~worker?) \cup \{sequence? \mapsto text?\} \\

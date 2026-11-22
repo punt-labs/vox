@@ -144,12 +144,15 @@ def test_profile_receipts_latest_prompt_and_clipping(
     def last_input(worker_id: str) -> WorkerInput | None:
         return profile.last_input("w")
 
+    def inputs_since(worker_id: str, baseline: int) -> list[WorkerInput]:
+        return profile.inputs_since("w", baseline)
+
     with (
         patch.object(TrivialProfile, "last_input", side_effect=last_input),
         patch.object(
             TrivialProfile,
             "inputs_since",
-            side_effect=lambda worker, baseline: profile.inputs_since("w", baseline),
+            side_effect=inputs_since,
         ),
         patch.object(
             TrivialProfile, "matches_input", side_effect=profile.matches_input
@@ -162,7 +165,8 @@ def test_profile_receipts_latest_prompt_and_clipping(
                     "hook_event_name": "UserPromptSubmit",
                     "relay_seq": seq,
                     "prompt": text,
-                }
+                },
+                worker_input=True,
             )
             expected = 7 if seq == 7 and length <= 1000 else None
             assert registry.receipt(worker.id, words, 5) == expected
@@ -174,7 +178,8 @@ def test_profile_receipts_latest_prompt_and_clipping(
                 "hook_event_name": "UserPromptSubmit",
                 "relay_seq": 8,
                 "prompt": "",
-            }
+            },
+            worker_input=True,
         )
         assert profile.last_input("w") == WorkerInput(8, "")
 
@@ -196,7 +201,8 @@ def test_intermediate_input_remains_a_receipt_after_newer_prompt(
                 "hook_event_name": "UserPromptSubmit",
                 "relay_seq": sequence,
                 "prompt": text,
-            }
+            },
+            worker_input=True,
         )
     with (
         patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),

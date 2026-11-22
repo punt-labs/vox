@@ -43,8 +43,8 @@ class HookContextStore:
         self._sessions = OrderedDict()
         return self
 
-    def ingest(self, payload: dict[str, object]) -> None:
-        """Validate a live sender-stamped event and fold it into its session."""
+    def ingest(self, payload: dict[str, object], *, worker_input: bool = False) -> None:
+        """Fold context, reserving receipts for server-admitted worker hooks."""
         identity = HookIdentity.parse(payload)
         sequence = payload.get("relay_seq")
         if type(sequence) is not int or not 1 <= sequence <= MAX_SEQUENCE:
@@ -55,7 +55,7 @@ class HookContextStore:
         if context is None:
             context = SessionContext()
             self._sessions[identity.session] = context
-        context.ingest(sequence, identity.event, sanitized)
+        context.ingest(sequence, identity.event, sanitized, worker_input=worker_input)
         self._sessions.move_to_end(identity.session)
         if len(self._sessions) > _MAX_SESSIONS:
             self._sessions.popitem(last=False)
@@ -102,15 +102,23 @@ class SessionContext:
         self._tools = HookToolHistory()
         return self
 
-    def ingest(self, sequence: int, event: str, payload: dict[str, object]) -> None:
+    def ingest(
+        self,
+        sequence: int,
+        event: str,
+        payload: dict[str, object],
+        *,
+        worker_input: bool = False,
+    ) -> None:
         """Fold a fresh event; duplicates must not change the projection."""
+        if worker_input and event == "UserPromptSubmit":
+            self._input.ingest(sequence, payload.get("prompt"))
         if not self._gaps.observe(sequence):
             return
         match event:
             case "SessionStart":
                 self._started = True
             case "UserPromptSubmit":
-                self._input.ingest(sequence, payload.get("prompt"))
                 self._goal = self._newest(
                     self._goal, sequence, HookText.clip(payload.get("prompt"))
                 )
