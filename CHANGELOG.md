@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Upgrade the quality-gate dev dependency to `punt-oo-ratchet==0.4.0` without
   changing existing gate policies or baselines.
 
+- Daemon-side ElevenLabs Conversational AI transport and lazy agent provisioning.
+
 - Parallel local and coverage test loops, changed-module pre-commit selection,
   opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
   time-bounded flaky-test quarantine policy.

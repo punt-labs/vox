@@ -33,6 +33,7 @@ def test_full_report_includes_non_gating_design_scan() -> None:
         ("punt_vox.client", "adapters"),
         ("punt_vox.client_errors", "domain"),
         ("punt_vox.core", "application"),
+        ("punt_vox.voxd.voice_agent.session", "adapters"),
         ("punt_vox.undeclared", None),
     ],
 )

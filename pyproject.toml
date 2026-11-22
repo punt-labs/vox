@@ -412,6 +412,8 @@ adapters = [
     "punt_vox.voxd.port_file",
     "punt_vox.voxd.record_store",
     "punt_vox.voxd.synthesis_cache",
+    "punt_vox.voxd.voice_agent",
+    "punt_vox.voxd.voice_agent.*",
     "punt_vox.voxd.wire_fault",
     "punt_vox.voxd.wire_reply",
     "punt_vox.voxd.wire_text",
