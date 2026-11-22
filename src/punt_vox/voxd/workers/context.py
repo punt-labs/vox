@@ -1,12 +1,17 @@
-"""Compose worker readiness and hook ingestion around one context store."""
+"""Compose workers, hook ingestion and Mode B calls around one context store."""
 
 from __future__ import annotations
 
-from typing import final
+from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.hook_context_store import HookContextStore
-from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.voice_call.handlers import CallHandlers
+from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.playback import PlaybackQueue
+    from punt_vox.voxd.types import MessageHandler
 
 
 @final
@@ -16,6 +21,12 @@ class WorkerContext:
     __slots__ = ()
 
     @staticmethod
-    def handlers() -> dict[str, MessageHandler]:
-        """Wire ingestion and workers with the same daemon-local hook store."""
-        return WorkerSubsystem.build(HookContextStore())
+    def handlers(playback: PlaybackQueue) -> dict[str, MessageHandler]:
+        """Wire ingestion, workers and calls with one store and one worker actor."""
+        store = HookContextStore()
+        policy = WorkerSubsystem.policy()
+        actor = WorkerSubsystem.actor(store, policy)
+        return {
+            **WorkerHandlers(actor).handlers(store),
+            **CallHandlers(actor, policy, playback).handlers(),
+        }

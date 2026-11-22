@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import asyncio
+import json
+
+from punt_vox.voxd.voice_call.boss_tools import BossTools
+
+from .fakes import FakeWorkers, payload
+
+
+def test_catalog_names_the_six_boss_tools() -> None:
+    assert {tool.name for tool in BossTools.CATALOG} == {
+        "start_worker",
+        "steer_worker",
+        "worker_status",
+        "list_workers",
+        "stop_worker",
+        "remain_silent",
+    }
+
+
+def _tools(workers: FakeWorkers) -> BossTools:
+    return BossTools(workers, workers)
+
+
+async def test_start_defaults_to_the_only_allowlisted_repo() -> None:
+    workers = FakeWorkers()
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
+    assert not error
+    assert json.loads(result)["state"] == "ready"
+    assert workers.started == [("fix x", "/repo")]
+
+
+async def test_start_without_project_needs_one_repo() -> None:
+    tools = _tools(FakeWorkers(("/a", "/b")))
+    result, error = await tools.answer("start_worker", {"task": "fix x"})
+    assert error
+    assert "/a" in json.loads(result)["error"]
+
+
+async def test_reask_during_a_slow_start_starts_one_worker() -> None:
+    workers = FakeWorkers()
+    workers.gate.clear()
+    tools = _tools(workers)
+    first = asyncio.create_task(tools.answer("start_worker", {"task": "fix x"}))
+    await asyncio.sleep(0)
+    first.cancel()  # barge-in: the agent abandons the pending call
+    reask = asyncio.create_task(tools.answer("start_worker", {"task": "fix x"}))
+    await asyncio.sleep(0)
+    workers.gate.set()
+    assert (await reask)[1] is False
+    assert await tools.answer("start_worker", {"task": "fix x"}) == await reask
+    assert workers.started == [("fix x", "/repo")]
+    assert tools.replayed == 2
+
+
+async def test_reask_spelling_out_defaults_replays_the_first_answer() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    tools = _tools(workers)
+    first = await tools.answer("start_worker", {"task": "fix x"})
+    spelled: dict[str, object] = {"task": "fix x", "project": "/repo"}
+    assert await tools.answer("start_worker", spelled) == first
+    steer: dict[str, object] = {"worker_id": "abcd", "words": "go"}
+    await tools.answer("steer_worker", steer)
+    await tools.answer("steer_worker", {**steer, "urgent": False})
+    assert workers.started == [("fix x", "/repo")]
+    assert workers.steered == [("abcd1234", "go", False)]
+
+
+async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234"), payload("ef567890")]
+    result, error = await _tools(workers).answer(
+        "steer_worker", {"worker_id": "abcd", "words": "use tabs;", "urgent": True}
+    )
+    assert not error
+    assert json.loads(result)["heard"] is True
+    assert workers.steered == [("abcd1234", "use tabs;", True)]
+
+
+async def test_ambiguous_or_short_ids_are_refused() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234"), payload("abcd9999")]
+    tools = _tools(workers)
+    for wanted in ("abcd", "a"):
+        _, error = await tools.answer("stop_worker", {"worker_id": wanted})
+        assert error
+    assert workers.stopped == []
+
+
+async def test_status_reports_curated_progress_only() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", goal="ship it", gaps={"x": 1})]
+    result, _ = await _tools(workers).answer("worker_status", {"worker_id": "abcd1234"})
+    assert json.loads(result)["progress"] == {"goal": "ship it"}
+
+
+async def test_list_stop_and_silence() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    tools = _tools(workers)
+    listed, _ = await tools.answer("list_workers", {})
+    assert [w["worker_id"] for w in json.loads(listed)] == ["abcd1234"]
+    stopped, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
+    assert json.loads(stopped)["state"] == "stopped"
+    assert await tools.answer("remain_silent", {}) == ('{"silent": true}', False)
+
+
+async def test_unknown_tool_and_bad_arguments_are_errors() -> None:
+    tools = _tools(FakeWorkers())
+    assert (await tools.answer("rm_rf", {}))[1]
+    assert (await tools.answer("start_worker", {"task": " "}))[1]
+    assert (await tools.answer("steer_worker", {"worker_id": "x", "urgent": 1}))[1]
+
+
+async def test_bad_repository_settings_fail_the_tool_not_the_call() -> None:
+    class Unreadable(FakeWorkers):
+        def repos(self) -> tuple[str, ...]:
+            raise ValueError("worker_repos is not a list")
+
+    workers = Unreadable()
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
+    assert error
+    assert "not a list" in json.loads(result)["error"]
+
+
+async def test_start_refuses_a_project_that_is_not_a_path() -> None:
+    result, error = await _tools(FakeWorkers()).answer(
+        "start_worker", {"task": "fix x", "project": 3}
+    )
+    assert error
+    assert "string" in json.loads(result)["error"]

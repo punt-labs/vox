@@ -1,0 +1,198 @@
+%
+% mode-b-call.tex
+%
+% Z specification of the Mode B voice call in voxd
+% (src/punt_vox/voxd/voice_call/, PL-1371): the call lifecycle that
+% call_start, call_stop and call_status drive, the playback ownership of
+% AgentSpeaker, and the per-call tool result cache. The tests in
+% tests/voice_call/ assert the named properties.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+
+\title{The Mode B Voice Call: A Z Specification}
+\author{Punt Labs, for PL-1371}
+\date{November 2026}
+\maketitle
+
+\section{Introduction}
+
+voxd runs at most one Mode B call. \texttt{call\_start} creates it in
+\emph{connecting}; the call task provisions the ElevenLabs agent and opens
+the conversation, which makes it \emph{live}. A remote hang-up, a
+\texttt{call\_stop} or a connect timeout ends it; any other error fails it.
+While a call holds the output, it owns the playback mutex across replies;
+an interruption ends the current reply only. Each tool call is keyed by its
+canonical arguments; a durable key runs its operation at most once per call.
+
+The model names six properties, and the tests carry the same names:
+
+\begin{enumerate}
+  \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
+    call is connecting or live (\texttt{test\_call\_barge\_in\_reask\_starts\_one\_worker}
+    asserts it through the handlers).
+  \item[C2] \emph{Stoppable at once}: \texttt{call\_stop} ends a call that is
+    still provisioning or connecting
+    (\texttt{test\_stop\_cancels\_a\_call\_still\_provisioning},
+    \texttt{test\_stop\_cancels\_a\_call\_still\_connecting}).
+  \item[C3] \emph{Terminal states stay}: an ended or failed call never
+    becomes live again.
+  \item[C4] \emph{Output held across a cut}: an interruption ends the reply
+    but not the call's hold on playback
+    (\texttt{test\_the\_call\_keeps\_the\_output\_across\_a\_cut}).
+  \item[C5] \emph{Output released at the end}: no ended or failed call holds
+    playback.
+  \item[C6] \emph{Durable once}: a re-asked durable tool call replays and
+    never runs its operation a second time
+    (\texttt{test\_reask\_during\_a\_slow\_start\_starts\_one\_worker}).
+\end{enumerate}
+
+\section{Types}
+
+\begin{zed}
+  [KEY] \\
+  CALL ::= idle | connecting | live | ended | failed \\
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\texttt{idle} is the handlers' state before the first call.
+
+\section{State}
+
+\begin{schema}{Call}
+  call : CALL \\
+  holding, replying : ZBOOL \\
+  durable, ran : \power KEY
+\where
+  call \in \{ idle, ended, failed \} \implies holding = zfalse \\
+  replying = ztrue \implies holding = ztrue \\
+  ran \subseteq durable
+\end{schema}
+
+The first predicate is C5. \texttt{durable} is the set of durable keys whose
+operation has run or is in flight; \texttt{ran} those that finished.
+
+\begin{schema}{InitCall}
+  Call'
+\where
+  call' = idle \\
+  holding' = zfalse \\
+  replying' = zfalse \\
+  durable' = \emptyset \\
+  ran' = \emptyset
+\end{schema}
+
+\section{Lifecycle}
+
+\begin{schema}{Start}
+  \Delta Call
+\where
+  call \in \{ idle, ended, failed \} \\
+  call' = connecting \\
+  holding' = zfalse \\
+  replying' = zfalse \\
+  durable' = \emptyset \\
+  ran' = \emptyset
+\end{schema}
+
+\texttt{Start} is refused from \emph{connecting} or \emph{live} (C1), and a
+new call gets a fresh cache.
+
+\begin{schema}{Connect}
+  \Delta Call
+\where
+  call = connecting \\
+  call' = live \\
+  holding' = holding \\
+  replying' = replying \\
+  durable' = durable \\
+  ran' = ran
+\end{schema}
+
+\begin{schema}{End}
+  \Delta Call \\
+  failure? : ZBOOL
+\where
+  call \in \{ connecting, live \} \\
+  failure? = ztrue \implies call' = failed \\
+  failure? = zfalse \implies call' = ended \\
+  holding' = zfalse \\
+  replying' = zfalse \\
+  durable' = durable \\
+  ran' = ran
+\end{schema}
+
+\texttt{End} covers hang-up, stop, timeout and failure. Its precondition
+admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
+\emph{failed} except a new \texttt{Start}, which is C3.
+
+\section{Playback}
+
+\begin{schema}{Speak}
+  \Delta Call
+\where
+  call = live \\
+  holding' = ztrue \\
+  replying' = ztrue \\
+  call' = call \\
+  durable' = durable \\
+  ran' = ran
+\end{schema}
+
+\begin{schema}{Interrupt}
+  \Delta Call
+\where
+  call = live \\
+  replying' = zfalse \\
+  holding' = holding \\
+  call' = call \\
+  durable' = durable \\
+  ran' = ran
+\end{schema}
+
+\texttt{Interrupt} leaves \texttt{holding} as it was: C4.
+
+\section{Tool results}
+
+\begin{schema}{RunDurable}
+  \Delta Call \\
+  k? : KEY
+\where
+  call = live \\
+  k? \notin durable \\
+  durable' = durable \cup \{ k? \} \\
+  ran' = ran \\
+  call' = call \\
+  holding' = holding \\
+  replying' = replying
+\end{schema}
+
+\begin{schema}{Replay}
+  \Xi Call \\
+  k? : KEY
+\where
+  call = live \\
+  k? \in durable
+\end{schema}
+
+\begin{schema}{Finish}
+  \Delta Call \\
+  k? : KEY
+\where
+  k? \in durable \setminus ran \\
+  ran' = ran \cup \{ k? \} \\
+  durable' = durable \\
+  call' = call \\
+  holding' = holding \\
+  replying' = replying
+\end{schema}
+
+A key enters \texttt{durable} only through \texttt{RunDurable}, whose
+precondition is $k? \notin durable$; a re-ask finds it there and replays,
+whether the first run finished or is still in flight under the shield: C6.
+
+\end{document}

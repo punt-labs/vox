@@ -80,6 +80,6 @@ class HandlerRegistry:
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
             "provider_status": ProviderStatusHandler(),
-            **WorkerContext.handlers(),
+            **WorkerContext.handlers(self._playback),
             **self._programs.handlers(),
         }
