@@ -41,7 +41,7 @@ class WorkerHooks:
                     self._registry.admits_hook, msg.get("session_id"), msg.get("cwd")
                 )
         except (OSError, ValueError, RuntimeError) as exc:
-            await reply.error(exc)
+            await reply.error(str(exc))
             return
         await reply.send({"type": "worker_hook_admission", "admitted": admitted})
 

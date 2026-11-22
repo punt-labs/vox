@@ -69,7 +69,7 @@ class HookContextHandlers:
             await reply.error("hook payload nesting exceeds the limit")
             return
         except (ValueError, OSError, RuntimeError) as exc:
-            await reply.error(exc)
+            await reply.error(str(exc))
             return
         await reply.send({"type": "hook_event_accepted"})
 

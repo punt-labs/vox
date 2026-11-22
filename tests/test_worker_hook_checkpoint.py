@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,6 +18,13 @@ from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.records import WorkerRecords
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.workers.contracts import HarnessProfile
+
+
+def _profile_progress(worker: str, harness: HarnessProfile) -> dict[str, object]:
+    return harness.progress(worker)
 
 
 def test_hook_sender_does_not_open_the_worker_registry(tmp_path: Path) -> None:
@@ -45,7 +53,7 @@ async def test_delivered_session_start_is_durable_without_list(tmp_path: Path) -
         patch.object(
             FakeWorkerProvider,
             "progress",
-            side_effect=lambda worker, harness: harness.progress(worker),
+            side_effect=_profile_progress,
         ),
         patch.object(TrivialProfile, "progress", side_effect=profile.progress),
     ):
@@ -84,7 +92,11 @@ async def test_delivered_session_start_is_durable_without_list(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_unadmitted_worker_events_never_leave_the_client() -> None:
-    payload = {"session_id": "unknown", "cwd": "/repo", "prompt": "private prompt"}
+    payload: dict[str, object] = {
+        "session_id": "unknown",
+        "cwd": "/repo",
+        "prompt": "private prompt",
+    }
     with patch.object(
         HookContextClient,
         "_request",
@@ -100,7 +112,7 @@ async def test_unadmitted_worker_events_never_leave_the_client() -> None:
 
 @pytest.mark.asyncio
 async def test_admitted_event_retains_server_side_revalidation() -> None:
-    payload = {"session_id": "worker", "cwd": "/repo"}
+    payload: dict[str, object] = {"session_id": "worker", "cwd": "/repo"}
     with patch.object(
         HookContextClient,
         "_request",
