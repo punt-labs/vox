@@ -19,6 +19,7 @@ holds is still heard.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import time
@@ -232,7 +233,12 @@ class PcmStreamSink:
             msg = f"cannot open a PCM sink that is {self._phase}"
             raise ValueError(msg)
         self._opened_at = time.monotonic()
-        self._stream = await asyncio.to_thread(self._start_device, factory)
+        starting = asyncio.ensure_future(asyncio.to_thread(self._start_device, factory))
+        try:
+            self._stream = await asyncio.shield(starting)
+        except asyncio.CancelledError:
+            await self._release_cancelled_open(starting)
+            raise
         logger.info("PCM stream open in %.1f ms", self._since_open_ms())
 
     def feed(self, pcm: bytes) -> None:
@@ -240,8 +246,12 @@ class PcmStreamSink:
 
         After a flush, audio still in flight from the interrupted response is
         counted as dropped and never queued. Feeding a finished or closed
-        sink is a caller bug and raises :class:`ValueError`.
+        sink is a caller bug and raises :class:`ValueError`; feeding after
+        the device stopped on its own raises :class:`OutputDeviceLostError`.
         """
+        if self._device_lost:
+            msg = "output device stopped; the PCM stream cannot play more audio"
+            raise OutputDeviceLostError(msg)
         if self._phase not in {"streaming", "interrupted"}:
             msg = f"cannot feed a PCM sink that is {self._phase}"
             raise ValueError(msg)
@@ -307,8 +317,8 @@ class PcmStreamSink:
 
         A stream that played out is stopped, so its last block is heard;
         anything else (flushed, or closed early) is aborted at once. The
-        device is closed even when stopping it fails, and waiters are
-        released.
+        device is closed even when stopping it fails or the caller is
+        cancelled, and waiters are released.
         """
         if self._phase == "closed":
             msg = "PCM sink is already closed"
@@ -318,14 +328,30 @@ class PcmStreamSink:
         self._dropped += pending
         self._done.set()
         stream, self._stream = self._stream, None
-        if stream is not None:
-            drain = ending == "finished" and not pending
-            await asyncio.to_thread(self._release_device, stream, drain=drain)
+        try:
+            if stream is not None:
+                drain = ending == "finished" and not pending
+                releasing = asyncio.ensure_future(
+                    asyncio.to_thread(self._release_device, stream, drain=drain)
+                )
+                try:
+                    await asyncio.shield(releasing)
+                except asyncio.CancelledError:
+                    # Hold the caller (and the playback mutex) until the device is free.
+                    with contextlib.suppress(Exception):
+                        await releasing
+                    raise
+        finally:
+            report = self._report(interrupted=ending == "interrupted")
+        return report
+
+    def _report(self, *, interrupted: bool) -> StreamReport:
+        """Build and log the closing report, at WARNING if playback degraded."""
         report = StreamReport(
             fed=PcmDuration(self._fed),
             played=PcmDuration(self._played),
             dropped=PcmDuration(self._dropped),
-            interrupted=ending == "interrupted",
+            interrupted=interrupted,
             underflows=self._underflows,
             device_flags=self._device_flags,
             device_lost=self._device_lost,
@@ -345,6 +371,17 @@ class PcmStreamSink:
             report.device_lost,
         )
         return report
+
+    @classmethod
+    async def _release_cancelled_open(
+        cls, starting: asyncio.Future[OutputStream]
+    ) -> None:
+        """Close the device a cancelled :meth:`open` was still starting."""
+        try:
+            stream = await starting
+            await asyncio.to_thread(cls._release_device, stream, drain=False)
+        except Exception:
+            logger.exception("releasing the PCM device after a cancelled open")
 
     def _start_device(self, factory: OutputStreamFactory) -> OutputStream:
         """Worker thread: create and start the stream, closing it on failure."""
@@ -379,16 +416,29 @@ class PcmStreamSink:
         return (time.monotonic() - self._opened_at) * 1000
 
     def _device_stopped(self) -> None:
-        """Device thread: the stream went inactive; flag it unless we closed it."""
-        if self._phase == "closed":
+        """Device thread: the stream went inactive; flag it unless it was expected.
+
+        A stream voxd closed, or one whose audio already played out, ended
+        normally. At daemon shutdown the loop may already be closed.
+        """
+        if self._phase == "closed" or self._drained:
             return
         self._device_lost = True
-        self._loop.call_soon_threadsafe(self._done.set)
+        with contextlib.suppress(RuntimeError):
+            self._loop.call_soon_threadsafe(self._done.set)
 
     def _callback(
         self, outdata: Buffer, frames: int, _time: object, status: object
     ) -> None:
-        """PortAudio thread: fill one block, padding with silence."""
+        """PortAudio thread: fill one block, logging any failure before PortAudio."""
+        try:
+            self._fill(outdata, frames, status)
+        except BaseException:
+            logger.exception("PCM output callback failed; the device will stop")
+            raise
+
+    def _fill(self, outdata: Buffer, frames: int, status: object) -> None:
+        """Fill one block, padding with silence, and track the utterance's end."""
         out = memoryview(outdata).cast("B")
         wanted = frames * _BYTES_PER_FRAME
         block = self._buffer.pull(wanted)

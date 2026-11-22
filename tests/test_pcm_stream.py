@@ -8,6 +8,7 @@ check invariants that hold under every interleaving rather than one order.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -35,6 +36,7 @@ class FakeOutputStream:
 
     __slots__ = (
         "_callback",
+        "abort_gate",
         "aborted",
         "closed",
         "finished_callback",
@@ -46,6 +48,7 @@ class FakeOutputStream:
     )
 
     _callback: OutputCallback
+    abort_gate: threading.Event | None
     aborted: bool
     closed: bool
     finished_callback: Callable[[], None]
@@ -67,6 +70,7 @@ class FakeOutputStream:
         self.stopped = False
         self.start_error = None
         self.stop_error = None
+        self.abort_gate = None
         self.heard = bytearray()
         return self
 
@@ -90,6 +94,8 @@ class FakeOutputStream:
         self.finished_callback()
 
     def abort(self) -> None:
+        if self.abort_gate is not None:
+            self.abort_gate.wait(timeout=5)
         self.aborted = True
         self.finished_callback()
 
@@ -385,6 +391,89 @@ class TestSinkPhases:
             await asyncio.wait_for(waiter, timeout=1)
         report = await sink.close()
         assert report.device_lost
+
+
+class TestDeviceFailures:
+    async def test_cancelled_open_closes_the_device_it_was_starting(self) -> None:
+        device = FakeDevice()
+        sink = PcmStreamSink(asyncio.get_running_loop())
+        release = threading.Event()
+
+        def slow(
+            *,
+            samplerate: int,
+            blocksize: int,
+            callback: OutputCallback,
+            finished_callback: Callable[[], None],
+        ) -> FakeOutputStream:
+            release.wait(timeout=5)
+            return device(
+                samplerate=samplerate,
+                blocksize=blocksize,
+                callback=callback,
+                finished_callback=finished_callback,
+            )
+
+        opening = asyncio.create_task(sink.open(slow))
+        await asyncio.sleep(0.01)
+        opening.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opening
+        assert device.opened.started
+        assert device.opened.closed
+
+    async def test_cancelled_close_waits_for_the_device_release(self) -> None:
+        sink, device = await open_sink()
+        release = threading.Event()
+        device.opened.abort_gate = release
+        sink.feed(ms_of(OLD, 100))
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.01)
+        closing.cancel()
+        await asyncio.sleep(0.01)
+        assert not closing.done(), "close returned before the device was released"
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert device.opened.closed
+
+    async def test_feed_after_device_lost_raises(self) -> None:
+        sink, device = await open_sink()
+        device.opened.finished_callback()
+        with pytest.raises(OutputDeviceLostError):
+            sink.feed(ms_of(OLD, 10))
+        await sink.close()
+
+    async def test_device_stopping_after_play_out_is_not_a_loss(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 20))
+        sink.finish()
+        device.opened.pull(2)
+        device.opened.finished_callback()
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        assert not (await sink.close()).device_lost
+
+    async def test_callback_failure_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sink, device = await open_sink()
+        with pytest.raises(TypeError, match="read-only"):
+            device.opened._callback(b"read-only", BLOCK, None, None)  # pyright: ignore[reportPrivateUsage]
+        assert "PCM output callback failed" in caplog.text
+        await sink.close()
+
+    async def test_failed_close_still_reports(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
+        sink, device = await open_sink()
+        sink.finish()
+        device.opened.stop_error = OSError("device unplugged")
+        with pytest.raises(OSError, match="unplugged"):
+            await sink.close()
+        assert "PCM stream closed" in caplog.text
 
 
 @final
