@@ -259,26 +259,26 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,288 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,305 |
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `roundtrip` | Real TTS → Whisper/Scribe WER; includes the provider and agent tiers | `make test-roundtrip` / `make test-roundtrip-live` / `make test-agent` | Offline PR/push; live nightly/RC/manual | 33 |
-| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/RC/manual | 40 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/RC/manual | 3 |
 | `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/RC/manual | 20 |
-| `integration` | Credentialed TTS × STT matrix (also `roundtrip`), live music levels (also `levels`), and live playback capture (also `playback`) | `make test-roundtrip-live` / `make test-levels-live` / `make test-playback-capture-live` | Nightly/RC/manual | 30 |
+| `integration` | Live provider speech and credential rejection, music levels, and playback capture | See [Integration Tests](#integration-tests) | Nightly/RC/manual | 37 |
 | `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,288 default / 9,569 collected across all markers. Cross-cutting markers
+9,305 default / 9,593 collected across all markers. Cross-cutting markers
 overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,288 of 9,569 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,305 of 9,593 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -339,9 +339,9 @@ problem repeated in a different domain, not a new marker.
 
 ### `integration`, `agent`, and `sdk`
 
-`integration` marks the credentialed speech roundtrip matrix, not mocked
-cross-component wiring. The nightly/manual workflow supplies provider secrets
-and fails when prerequisites are missing; local runs name and skip missing keys.
+`integration` marks live provider checks, not mocked cross-component wiring.
+The shared nightly/manual/RC suite fails when prerequisites are missing;
+local runs report and skip missing credentials.
 
 `agent` exercises the real Claude Code CLI and the plugin's MCP server, not
 the Claude Agent SDK. It is excluded from default, PR, and offline roundtrip
@@ -540,11 +540,16 @@ Real synthesized drop, swap, identity-normalizer, and wrong-text faults must
 all be rejected. Identifier references are independent of the normalizer.
 
 Run `make test-roundtrip-live` for ElevenLabs/OpenAI/Polly TTS crossed with
-Whisper/Scribe (also marked `integration`). Missing keys produce named skips
-unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. Secrets are
-`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`; `AWS_SESSION_TOKEN` is optional.
-Scribe also needs `ELEVENLABS_API_KEY`. Neither tier runs by default.
+Whisper/Scribe (also marked `integration`). Missing credentials produce named
+skips unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. ElevenLabs and
+Scribe use `ELEVENLABS_API_KEY`; OpenAI uses `OPENAI_API_KEY`. For Polly on a
+dev box, export temporary AWS SSO credentials and set `AWS_DEFAULT_REGION`.
+
+Run `make test-roundtrip-auth` to verify that the three cloud providers reject
+deliberately invalid credentials without writing audio. The test contacts the
+real endpoints without valid keys. Run `make test-roundtrip-say` on macOS for
+native Say → Whisper. It needs `say` and `ffmpeg`, not cloud credentials. Say
+and espeak-ng have no authentication path. These commands do not run by default.
 
 Signal-level checks live in `tests/levels/` and judge what speech-to-text
 cannot: loudness, silence, and the change between music tracks. ffmpeg's
@@ -596,11 +601,25 @@ tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
 invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
-The separate `roundtrip` job enforces offline speech WER; `roundtrip-live.yml`
-runs the credentialed matrix, the `levels` checks, and the agent tier with
-strict prerequisites. The release gate uses the same workflow with the installed
-candidate wheel. For standalone runs, the failure reporter uses the
-`LINEAR_API_KEY` Actions secret to file a `repo:vox` bug linking the failed run.
+The separate `roundtrip` job enforces offline speech WER on PRs. The shared
+`roundtrip-live.yml` suite runs espeak-ng, cloud providers, playback capture,
+signal levels, and the Claude agent on Linux, and Say on macOS. The release
+gate runs the same suite with the installed candidate wheel; Linux also
+exercises the wheel's CLI and MCP entry points. The scheduled caller
+(`.github/workflows/nightly.yml`) uses the `LINEAR_API_KEY` Actions secret
+to file a `repo:vox` Bug linking the failed run attempt. Manual dispatch and
+release-candidate runs do not file issues.
+
+The Linux provider and playback jobs assume the Non-Production `vox-polly-qa`
+IAM role via GitHub OIDC to use Polly in `us-east-1`. Provision the role using
+[the CloudFormation template](.github/vox-polly-oidc.yml) in account
+`579096219769`, with the GitHub OIDC provider and audience `sts.amazonaws.com`.
+By default only runs on `main` can assume the role. Before merging, protect
+`v*` tags in the [Vox rulesets](https://github.com/punt-labs/vox/settings/rules)
+by restricting their creation, updates, and deletion to release maintainers,
+then set `EnableReleaseTags=true` so release candidates can use the role.
+Use `ProofBranch` only as temporary exact trust for a pre-merge proof; clear
+it afterward. No AWS key secrets are passed to the suite.
 
 ### Coverage policy
 

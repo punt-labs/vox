@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Scoped GitHub Actions role for Vox Polly QA in Punt Labs Non-Production
+
+Parameters:
+  EnableReleaseTags:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: Enable only after GitHub restricts creation, updates, and deletion of Vox v* tags to release maintainers.
+  ProofBranch:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^devin/[A-Za-z0-9_-]+$"
+    Description: Exact temporary QA branch without refs/heads/; clear after validation.
+
+Conditions:
+  AllowReleaseTags: !Equals [!Ref EnableReleaseTags, "true"]
+  AllowProofBranch: !Not [!Equals [!Ref ProofBranch, ""]]
+
+Resources:
+  VoxPollyQaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: vox-polly-qa
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              # IAM can match slashes; the GitHub v* tag ruleset cannot.
+              StringNotLike:
+                token.actions.githubusercontent.com:sub: "repo:punt-labs/vox:ref:refs/tags/v*/*"
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - "repo:punt-labs/vox:ref:refs/heads/main"
+                  - !If
+                    - AllowReleaseTags
+                    - "repo:punt-labs/vox:ref:refs/tags/v*"
+                    - !Ref AWS::NoValue
+                  - !If
+                    - AllowProofBranch
+                    - !Sub "repo:punt-labs/vox:ref:refs/heads/${ProofBranch}"
+                    - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: synthesize-qa-speech
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - polly:DescribeVoices
+                  - polly:SynthesizeSpeech
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-1
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt VoxPollyQaRole.Arn

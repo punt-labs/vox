@@ -1,8 +1,6 @@
 name: Live speech roundtrip
 
 on:
-  schedule:
-    - cron: "23 5 * * *"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -10,12 +8,21 @@ on:
         description: Wheel and sdist artifact from this release run (empty for nightly)
         type: string
         default: ""
+    secrets:
+      ELEVENLABS_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   playback-capture:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -38,6 +45,7 @@ jobs:
           path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
       - name: Install playback dependencies and subject
+        id: playback-dependencies
         env:
           CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
         run: |
@@ -50,18 +58,37 @@ jobs:
             uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps candidate/*.whl
           fi
           printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
-      - name: Capture real daemon playback
-        # Keep the installed candidate wheel instead of syncing the checkout.
+      - name: Capture eSpeak and ElevenLabs playback
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -s
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -k 'not polly' -s
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: Assume the Polly QA role
+        id: playback-role
+        if: ${{ !cancelled() && steps.playback-dependencies.outcome == 'success' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with: &polly-role
+          role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
+          allowed-account-ids: "579096219769"
+          aws-region: us-east-1
+          role-session-name: vox-qa-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 900
+          retry-max-attempts: 3
+      - name: Capture Polly playback
+        if: ${{ !cancelled() && steps.playback-role.outcome == 'success' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -k polly -s
+
   roundtrip-live:
-    runs-on: ubuntu-latest
+    name: Live speech (${{ matrix.os }})
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 55
     env:
       HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
@@ -79,12 +106,16 @@ jobs:
           name: ${{ inputs.candidate-artifact }}
           path: candidate/
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep mpv
+        if: runner.os == 'Linux'
+      - run: command -v ffmpeg || brew install ffmpeg
+        if: runner.os == 'macOS'
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
       - &install-subject
         name: Install test dependencies and subject
+        id: dependencies
         env:
           CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
         run: |
@@ -98,31 +129,44 @@ jobs:
           fi
           printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
       - name: Installed candidate CLI and MCP
-        if: inputs.candidate-artifact != ''
+        if: runner.os == 'Linux' && inputs.candidate-artifact != ''
         run: |
           export VOX_E2E_BINARY="$UV_PROJECT_ENVIRONMENT/bin/vox"
           test -x "$VOX_E2E_BINARY"
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/e2e -m e2e
-      - name: Live speech roundtrip
-        # Do not use uv run: it can sync the editable checkout over the wheel.
+      # Use the selected interpreter directly: uv run can replace the candidate wheel.
+      - name: espeak-ng to Whisper
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip -m 'roundtrip and integration' -s
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_offline.py -m roundtrip -s
+      - name: Cloud credential rejection
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live_auth.py -m integration
+      - name: Assume the Polly QA role
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with: *polly-role
+      - name: ElevenLabs, OpenAI, and Polly to Whisper and Scribe
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live.py -m 'roundtrip and integration' -s
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      - name: macOS Say to Whisper
+        if: runner.os == 'macOS'
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_say_roundtrip.py -m 'roundtrip and integration' -s
       - name: Chime and music signal levels
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/levels -m levels -s --basetemp="$RUNNER_TEMP/levels"
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           VOX_LEVELS_REQUIRE_LIVE: "1"
       - name: Upload measured audio
-        if: ${{ failure() }}
+        if: ${{ failure() && runner.os == 'Linux' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: levels-audio
@@ -131,6 +175,8 @@ jobs:
           retention-days: 14
 
   agent:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -160,55 +206,3 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip -m agent -s
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  report-failure:
-    needs: [roundtrip-live, agent]
-    if: failure() && inputs.candidate-artifact == ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-      PROVIDER_RESULT: ${{ needs.roundtrip-live.result }}
-      AGENT_RESULT: ${{ needs.agent.result }}
-    steps:
-      - name: File a Linear issue for the failed suite
-        run: |
-          node --input-type=module <<'JS'
-          const { LINEAR_API_KEY, GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID,
-            PROVIDER_RESULT, AGENT_RESULT } = process.env;
-          if (!LINEAR_API_KEY) throw new Error('Set LINEAR_API_KEY to report nightly failures');
-          const teamId = 'c1dfbb2c-985e-40cf-b004-5127646efc9d';
-          const labels = ['repo:vox', 'Bug'];
-          async function linear(query, variables) {
-            const response = await fetch('https://api.linear.app/graphql', {
-              method: 'POST',
-              headers: { Authorization: LINEAR_API_KEY, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query, variables }),
-              signal: AbortSignal.timeout(15_000),
-            });
-            if (!response.ok) throw new Error(`Linear returned HTTP ${response.status}`);
-            const { data, errors } = await response.json();
-            if (errors?.length) throw new Error(errors.map(error => error.message).join('; '));
-            return data;
-          }
-          const { issueLabels } = await linear(`query($names: [String!]!) {
-            issueLabels(filter: { name: { in: $names } }) { nodes { id name team { id } } }
-          }`, { names: labels });
-          const labelIds = labels.map(name => {
-            const candidates = issueLabels.nodes.filter(label => label.name === name);
-            const label = candidates.find(label => label.team?.id === teamId)
-              ?? candidates.find(label => !label.team);
-            if (!label) throw new Error(`Linear label not found: ${name}`);
-            return label.id;
-          });
-          const { issueCreate } = await linear(`mutation($input: IssueCreateInput!) {
-            issueCreate(input: $input) { success issue { url } }
-          }`, { input: {
-            teamId, labelIds, priority: 3,
-            title: 'Vox live speech suite failed',
-            description: `Provider round-trip: ${PROVIDER_RESULT}\nAgent round-trip: ${AGENT_RESULT}\n\n`
-              + `[Actions run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})`,
-          } });
-          if (!issueCreate.success) throw new Error('Linear did not create the issue');
-          console.log(issueCreate.issue.url);
-          JS

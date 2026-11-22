@@ -1,0 +1,68 @@
+name: Vox nightly QA
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+
+permissions: {}
+
+jobs:
+  roundtrip-live:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/roundtrip-live.yml
+    secrets:
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  report-failure:
+    needs: roundtrip-live
+    if: >-
+      ${{ !cancelled() && github.event_name == 'schedule' &&
+          github.repository == 'punt-labs/vox' &&
+          (needs.roundtrip-live.result == 'failure' || needs.roundtrip-live.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: File a Linear issue
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          SUITE_RESULT: ${{ needs.roundtrip-live.result }}
+        run: |
+          node --input-type=module <<'JS'
+          const { LINEAR_API_KEY, GITHUB_SERVER_URL, GITHUB_REPOSITORY,
+                  GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_SHA, SUITE_RESULT } = process.env;
+          if (!LINEAR_API_KEY) {
+            throw new Error('Configure the LINEAR_API_KEY Actions secret to report nightly failures');
+          }
+          const run = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}`;
+          const response = await fetch('https://api.linear.app/graphql', {
+            method: 'POST',
+            headers: { Authorization: LINEAR_API_KEY, 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(20_000),
+            body: JSON.stringify({
+              query: 'mutation ReportNightly($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier url } } }',
+              variables: { input: {
+                teamId: 'c1dfbb2c-985e-40cf-b004-5127646efc9d', // Punt Labs
+                labelIds: [
+                  '85e03ece-aa04-4730-9b13-dae246b9bc4e', // repo:vox
+                  '0134e885-edff-48d8-896c-9bb5957f885e', // Bug
+                ],
+                priority: 3,
+                title: `Investigate Vox nightly test failure (run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT})`,
+                description: `The [nightly GitHub Actions suite](${run}) ended with status \`${SUITE_RESULT}\` at commit \`${GITHUB_SHA}\`.`,
+              } },
+            }),
+          });
+          if (!response.ok) {
+            throw new Error(`Linear issue creation returned HTTP ${response.status}`);
+          }
+          const result = await response.json();
+          if (result.errors?.length || !result.data?.issueCreate?.success || !result.data.issueCreate.issue?.url) {
+            throw new Error('Linear did not create the nightly failure issue; check team/label IDs and key permissions');
+          }
+          console.log(`Filed ${result.data.issueCreate.issue.identifier}: ${result.data.issueCreate.issue.url}`);
+          JS

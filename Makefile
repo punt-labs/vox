@@ -23,12 +23,19 @@ test-playback-capture: ## Real daemon to PulseAudio monitor to Whisper
 test-playback-capture-live: ## Credentialed daemon playback capture
 	uv run --group roundtrip pytest tests/roundtrip/test_playback_capture.py -m "playback and integration" -s
 
-.PHONY: test-roundtrip test-roundtrip-live test-agent test-levels test-levels-live
+.PHONY: test-roundtrip test-roundtrip-live test-roundtrip-auth test-roundtrip-say
+.PHONY: test-agent test-levels test-levels-live
 test-roundtrip: ## Offline real espeak-ng to CPU Whisper intelligibility check
 	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and not integration and not agent and not quarantine" -s
 
 test-roundtrip-live: ## Credentialed TTS to Scribe/Whisper matrix
-	uv run --group roundtrip pytest tests/roundtrip -m "roundtrip and integration and not quarantine" -s
+	uv run --group roundtrip pytest tests/roundtrip/test_live.py -m "roundtrip and integration and not quarantine" -s
+
+test-roundtrip-auth: ## Live cloud credential rejection (no valid keys needed)
+	uv run --group roundtrip pytest tests/roundtrip/test_live_auth.py -m "integration and not quarantine"
+
+test-roundtrip-say: ## Real macOS Say to CPU Whisper intelligibility check
+	uv run --group roundtrip pytest tests/roundtrip/test_say_roundtrip.py -m "roundtrip and integration and not quarantine" -s
 
 test-agent: ## Headless Claude Code to vox plugin to CPU Whisper
 	uv run --group roundtrip pytest tests/roundtrip -m "agent and not quarantine" -s
