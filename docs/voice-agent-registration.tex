@@ -1,0 +1,180 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage{fuzz}
+
+\begin{document}
+\title{Vox ElevenLabs Voice Agent Registration}
+\maketitle
+
+\section{Scope}
+
+Vox owns one registration per configuration path. A lock serializes local
+registration changes. The model describes the records and remote IDs that
+are known to Vox, not the existence of unknown resources after a lost
+creation response. The registration may be absent, under active provisioning,
+ready for reuse, or being cleaned up. A partial record read after a restart
+always enters cleanup, never provisioning in place. The planned tool count
+comes from the input catalog; the record checkpoints only IDs already known.
+For finite ProB exploration, bound the \texttt{BeginProvision} input
+\texttt{count?} to \(0 \upto 2\). The implementation has no two-tool limit.
+
+\begin{zed}
+  [AGENTID, TOOLID, CREDENTIAL, FINGERPRINT] \\
+  Phase ::= vaAbsent | vaProvisioning | vaReady | vaCleaning
+\end{zed}
+
+\begin{schema}{Registration}
+  phase : Phase \\
+  agent : \finset AGENTID \\
+  tools : \seq TOOLID \\
+  planned : \nat \\
+  deleted : \power TOOLID \\
+  owner : \finset CREDENTIAL \\
+  config : \finset FINGERPRINT
+\where
+  \# agent \leq 1 \land \# owner \leq 1 \land \# config \leq 1 \\
+  phase = vaReady \iff \# agent = 1 \\
+  phase = vaAbsent \iff owner = \emptyset \\
+  phase = vaAbsent \iff config = \emptyset \\
+  phase = vaAbsent \implies tools = \langle \rangle \\
+  phase = vaAbsent \implies planned = 0 \\
+  \# tools \leq planned \\
+  phase = vaReady \implies \# tools = planned \\
+  deleted \subseteq \ran tools \\
+  phase \neq vaCleaning \implies deleted = \emptyset
+\end{schema}
+
+\texttt{deleted} represents successful or already-absent remote deletions,
+not a field in the file. Vox retains the original tool IDs on disk until
+every deletion succeeds; a retry may repeat a deletion and accept a 404.
+
+\begin{schema}{InitRegistration}
+  Registration'
+\where
+  phase' = vaAbsent
+\end{schema}
+
+\begin{schema}{BeginProvision}
+  \Delta Registration \\
+  caller? : CREDENTIAL \\
+  fingerprint? : FINGERPRINT \\
+  count? : \nat
+\where
+  phase = vaAbsent \land phase' = vaProvisioning \\
+  owner' = \{caller?\} \land config' = \{fingerprint?\} \\
+  planned' = count? \\
+  agent' = agent \land tools' = tools \land deleted' = deleted
+\end{schema}
+
+\begin{schema}{RecordTool}
+  \Delta Registration \\
+  caller? : CREDENTIAL \\
+  tool? : TOOLID
+\where
+  phase = vaProvisioning \land phase' = phase \\
+  caller? \in owner \land owner' = owner \land config' = config \\
+  \# tools < planned \land planned' = planned \\
+  tools' = tools \cat \langle tool? \rangle \\
+  agent' = agent \land deleted' = deleted
+\end{schema}
+
+\begin{schema}{RecordAgent}
+  \Delta Registration \\
+  caller? : CREDENTIAL \\
+  agentId? : AGENTID
+\where
+  phase = vaProvisioning \land phase' = vaReady \\
+  caller? \in owner \land owner' = owner \land config' = config \\
+  \# tools = planned \land planned' = planned \\
+  agent' = \{agentId?\} \land tools' = tools \land deleted' = deleted
+\end{schema}
+
+\begin{schema}{Reuse}
+  \Xi Registration \\
+  caller? : CREDENTIAL \\
+  fingerprint? : FINGERPRINT \\
+  agentId! : AGENTID \\
+  toolIds! : \seq TOOLID
+\where
+  phase = vaReady \land caller? \in owner \land fingerprint? \in config \\
+agentId! \in agent \land toolIds! = tools
+\end{schema}
+
+\begin{schema}{RecoverPartial}
+  \Delta Registration \\
+  caller? : CREDENTIAL
+\where
+  phase = vaProvisioning \land phase' = vaCleaning \\
+  caller? \in owner \land owner' = owner \land config' = config \\
+  planned' = planned \\
+  agent' = agent \land tools' = tools \land deleted' = deleted
+\end{schema}
+
+\begin{schema}{RecordAgentDeleted}
+  \Delta Registration \\
+  caller? : CREDENTIAL
+\where
+  phase = vaReady \land phase' = vaCleaning \\
+  caller? \in owner \land owner' = owner \land config' = config \\
+  planned' = planned \\
+  agent' = \emptyset \land tools' = tools \land deleted' = deleted
+\end{schema}
+
+\begin{schema}{RecordToolDeleted}
+  \Delta Registration \\
+  caller? : CREDENTIAL \\
+  tool? : TOOLID
+\where
+  phase = vaCleaning \land phase' = phase \\
+  caller? \in owner \land owner' = owner \land config' = config \\
+  planned' = planned \\
+  tool? \in \ran tools \land deleted' = deleted \cup \{tool?\} \\
+  agent' = agent \land tools' = tools
+\end{schema}
+
+\begin{schema}{FinishCleanup}
+  \Delta Registration \\
+  caller? : CREDENTIAL
+\where
+  phase = vaCleaning \land phase' = vaAbsent \\
+  caller? \in owner \land deleted = \ran tools
+\end{schema}
+
+\begin{schema}{TeardownAbsent}
+  \Xi Registration
+\where
+  phase = vaAbsent
+\end{schema}
+
+\begin{schema}{RejectOtherOwner}
+  \Xi Registration \\
+  caller? : CREDENTIAL
+\where
+  phase \neq vaAbsent \land caller? \notin owner
+\end{schema}
+
+\begin{schema}{RejectChangedConfiguration}
+  \Xi Registration \\
+  caller? : CREDENTIAL \\
+  fingerprint? : FINGERPRINT
+\where
+  phase = vaReady \land caller? \in owner \land fingerprint? \notin config
+\end{schema}
+
+\begin{schema}{RetainOnFailure}
+  \Xi Registration \\
+  caller? : CREDENTIAL
+\where
+  phase \neq vaAbsent \land caller? \in owner
+\end{schema}
+
+\section{Correspondence}
+
+The localhost tests in \texttt{tests/voice\_agent/test\_agent.py} check
+WSS credentials are fetched anew on reuse, registered settings do not
+change in place, a different credential cannot change the record, a
+partial provision is cleaned before retry, and failed deletion keeps
+the record retryable. The checkpoint-failure test covers the external
+exception to the model: if a new ID cannot be recorded or deleted, Vox
+reports the untracked ID instead of representing it as owned.
+
+\end{document}
