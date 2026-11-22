@@ -69,6 +69,9 @@ class HookContextStage:
             "session_id": identity.session,
             "hook_event_name": identity.event,
         }
+        cwd = staged.get("cwd")
+        if isinstance(cwd, str):
+            compact["cwd"] = cwd
         if identity.event in HOOK_TOOL_EVENTS:
             compact.update(cls._tool_fields(staged))
         elif identity.event == "UserPromptSubmit":
