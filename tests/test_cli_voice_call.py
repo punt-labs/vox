@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -231,3 +232,22 @@ async def test_daemon_control_checks_the_reply_family() -> None:
     ):
         await DaemonControl("call").request("status", timeout=1)
     transport.close.assert_awaited_once()
+
+
+def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A wrapped line would strand rows the next in-place rewrite cannot reach."""
+    with (
+        patch("punt_vox.commands.voice_call.sys.stdout.isatty", return_value=True),
+        patch(
+            "punt_vox.commands.voice_call.shutil.get_terminal_size",
+            return_value=os.terminal_size((40, 24)),
+        ),
+    ):
+        VoiceCall._show("call live | 1 tool calls | agent: " + "word " * 20)
+
+    written = capsys.readouterr().out
+    assert written.startswith("\r\x1b[K")
+    assert len(written.removeprefix("\r\x1b[K")) == 39
+    assert written.endswith("...")

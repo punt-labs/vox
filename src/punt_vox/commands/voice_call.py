@@ -8,6 +8,7 @@ the call, shows one live status line until it ends, and stops it on Ctrl-C.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -103,8 +104,15 @@ class VoiceCall:
 
     @staticmethod
     def _show(line: str) -> None:
-        """Rewrite the status line in place on a terminal, else print it."""
+        """Rewrite the status line in place on a terminal, else print it.
+
+        On a terminal the line is clipped to its width: a wrapped line would
+        leave its first rows behind when the next one rewrites only the last.
+        """
         if sys.stdout.isatty():
+            width = shutil.get_terminal_size().columns - 1
+            if len(line) > width:
+                line = line[: max(width - 3, 0)] + "..."
             typer.echo(f"\r\x1b[K{line}", nl=False)
         else:
             typer.echo(line)
