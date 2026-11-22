@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import subprocess
 import textwrap
+import tomllib
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,31 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/lint.yml"
 STEP = "Design ratchet (shadow, report only)"
+
+
+@pytest.mark.parametrize(
+    ("module", "expected"),
+    [
+        ("punt_vox.cli_music", "entry"),
+        ("punt_vox.client", "adapters"),
+        ("punt_vox.client_errors", "domain"),
+        ("punt_vox.core", "application"),
+        ("punt_vox.undeclared", None),
+    ],
+)
+def test_design_layer_boundaries(module: str, expected: str | None) -> None:
+    layers = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["oo-ratchet"][
+        "layers"
+    ]
+    actual = next(
+        (
+            layer
+            for layer, patterns in layers.items()
+            if any(fnmatchcase(module, pattern) for pattern in patterns)
+        ),
+        None,
+    )
+    assert actual == expected
 
 
 def shadow_step() -> str:

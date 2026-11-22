@@ -327,7 +327,7 @@ reportUnknownMemberType = false
 entry = [
     "punt_vox",
     "punt_vox.__main__",
-    "punt_vox.cli*",
+    "punt_vox.cli_*",
     "punt_vox.server*",
     "punt_vox.hooks",
     "punt_vox.mcp_lifecycle",
