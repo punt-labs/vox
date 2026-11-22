@@ -368,7 +368,7 @@ def test_provisioning_compensates_after_checkpoint_failure(
         original_replace(file, text, mode=mode)
 
     monkeypatch.setattr(AtomicFile, "replace", fail_checkpoint)
-    wire.delete_tool_status = wire.delete_agent_status = 403 if cleanup_fails else 204
+    wire.delete_tool_status = wire.delete_agent_status = 403 if cleanup_fails else 200
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
         if cleanup_fails:

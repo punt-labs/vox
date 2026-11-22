@@ -14,6 +14,8 @@ creation response. The registration may be absent, under active provisioning,
 ready for reuse, or being cleaned up. A partial record read after a restart
 always enters cleanup, never provisioning in place. The planned tool count
 comes from the input catalog; the record checkpoints only IDs already known.
+For finite ProB exploration, bound the \texttt{BeginProvision} input
+\texttt{count?} to \(0 \upto 2\). The implementation has no two-tool limit.
 
 \begin{zed}
   [AGENTID, TOOLID, CREDENTIAL, FINGERPRINT] \\
