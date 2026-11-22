@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bare `vox call` talks to voxd's Mode B call agent: it starts the call, shows
+  a live status line, and prints the transcript, worker tool calls and trace
+  path when the call ends. `vox call --script greet.jsonl` feeds recorded PCM
+  caller turns instead of the microphone, `vox call status` shows the call,
+  and `vox call stop` or Ctrl-C hangs it up. `/call` in the plugin does the
+  same; `vox call start --context` and `/call start <topic>` keep the pi call.
+
 - `vox worker steer WORKER_ID WORDS [--urgent]` sends literal input to ready
   workers with harness-defined paste settling. Replies acknowledge a later
   matching input receipt, or report `heard: false` after a bounded wait;

@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import pytest
 import typer
 import typer.core
 from typer.testing import CliRunner
 
 from punt_vox.commands.call import CallCli
+from punt_vox.daemon_control import DaemonControl
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock
 
@@ -43,6 +45,15 @@ def _context_file(tmp_path: Path, text: str = "Topic: the music loop") -> Path:
     return path
 
 
+@pytest.fixture
+def idle_voxd() -> Iterator[object]:
+    """voxd answers that no Mode B call is running."""
+    with patch.object(
+        DaemonControl, "request", new_callable=AsyncMock, return_value={"state": "idle"}
+    ) as request:
+        yield request
+
+
 def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
     CallLock(tmp_path / "call.lock").acquire("conversation mode call active")
     with _call_lock_at(tmp_path), _call_control_at(tmp_path):
@@ -54,14 +65,16 @@ def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
     assert request.kind == "stop"
 
 
-def test_stop_refuses_when_no_call_is_active(tmp_path: Path) -> None:
+def test_stop_refuses_when_no_call_is_active(tmp_path: Path, idle_voxd: object) -> None:
     with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(CallCli.build_app(), ["stop"])
     assert result.exit_code != 0
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
-def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
+def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(
+    tmp_path: Path, idle_voxd: object
+) -> None:
     """Regression: a killed `vox call start` leaves a lock file behind with a
     now-dead pid. `vox call stop` against that stale lock must refuse the
     same as "no call is active" -- not succeed and write a stop request
@@ -80,10 +93,10 @@ def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> No
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
-def test_the_verbs_are_start_stop_and_context() -> None:
+def test_the_verbs_are_start_stop_status_and_context() -> None:
     """Context is inspectable without starting or transferring a call."""
     group = cast("typer.core.TyperGroup", typer.main.get_command(CallCli.build_app()))
-    assert set(group.commands) == {"start", "stop", "context"}
+    assert set(group.commands) == {"start", "stop", "status", "context"}
 
 
 def _start_command() -> typer.core.TyperCommand:
@@ -147,24 +160,24 @@ def test_start_with_trace_turns_echoes_the_turn_timer_to_console(
     trace also prints live, never whether it reaches vox.log (that's
     unconditional).
     """
-    from punt_vox.commands import call as call_module
+    from punt_vox.commands import pi_call_cli as call_module
 
     with (
         patch.object(call_module, "configure_turn_timer_logging") as mock_configure,
         patch("asyncio.run", side_effect=_close_coro),
     ):
-        call_module.CallCli().start(_context_file(tmp_path), trace_turns=True)
+        call_module.PiCallCli().start(_context_file(tmp_path), trace_turns=True)
     mock_configure.assert_called_once_with(echo_to_console=True)
 
 
 def test_start_without_trace_turns_does_not_echo_the_turn_timer_to_console(
     tmp_path: Path,
 ) -> None:
-    from punt_vox.commands import call as call_module
+    from punt_vox.commands import pi_call_cli as call_module
 
     with (
         patch.object(call_module, "configure_turn_timer_logging") as mock_configure,
         patch("asyncio.run", side_effect=_close_coro),
     ):
-        call_module.CallCli().start(_context_file(tmp_path))
+        call_module.PiCallCli().start(_context_file(tmp_path))
     mock_configure.assert_called_once_with(echo_to_console=False)

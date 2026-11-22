@@ -1,6 +1,6 @@
 ---
-description: "Start or stop a Conversation Mode call with a read-only call agent"
-argument-hint: "start <topic> [--script <path>] | stop"
+description: "Talk to voxd's call agent, which delegates coding to workers; or start the read-only pi call"
+argument-hint: "[--script <path>] | status | stop | start <topic> [--script <path>]"
 allowed-tools: ["Bash(vox call:*)", "Read", "mcp__quarry__find", "mcp__plugin_quarry_quarry__find"]
 ---
 
@@ -71,12 +71,14 @@ tool yet -- every verb shells out to the `vox call` CLI.
 
 ### stop
 
-Run `vox call stop`. It is a fire-and-forget signal to the running
-`vox call start`, through the cross-process control file
+Run `vox call stop`. With a pi call live, it is a fire-and-forget signal to
+the running `vox call start`, through the cross-process control file
 (`src/punt_vox/voxd/conversation_mode/call_control.py`); the call then ends
-cleanly and writes its summary.
+cleanly and writes its summary. Otherwise it asks `voxd` to hang up its call;
+the background `vox call` then exits with the transcript. Workers the call
+started keep running.
 
-## What the call agent is
+## What the pi call agent is
 
 One `pi --mode rpc` process, spawned when the call starts and held until it
 ends, so each turn reuses the warm context of the last. It runs read-only for
@@ -104,6 +106,6 @@ ever ran anyway, the call ends before a word of the reply is spoken.
 Summaries are written to `~/.punt-labs/vox/calls/<call-id>-summary.md`; the
 newest 50 are kept.
 
-While a call is active, `plugin/hooks/call-lock.sh` blocks the human's own
+While a pi call is active, `plugin/hooks/call-lock.sh` blocks the human's own
 interactive prompts, self-clearing if the holding process has died.
 `/call stop` passes the lock unconditionally.

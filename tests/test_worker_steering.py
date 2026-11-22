@@ -452,7 +452,7 @@ async def test_client_preserves_boolean() -> None:
         return {"type": "worker_result", "id": msg["id"], "result": {"heard": False}}
 
     transport.send_and_recv.side_effect = reply
-    with patch("punt_vox.worker_client.VoxdTransport", return_value=transport):
+    with patch("punt_vox.daemon_control.VoxdTransport", return_value=transport):
         assert await WorkerClient.request(
             "steer", worker_id="w", words="literal", urgent=True
         ) == {"heard": False}
