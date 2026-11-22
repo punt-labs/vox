@@ -3261,6 +3261,13 @@
     "max_lcom": 0.733,
     "avg_lcom": 0.733
   },
+  "src/punt_vox/voxd/workers/command.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/workers/context.py": {
     "efferent_coupling": 4.0,
     "public_names": 1.0,
@@ -3318,7 +3325,7 @@
     "avg_lcom": 0.321
   },
   "src/punt_vox/voxd/workers/tmux.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,

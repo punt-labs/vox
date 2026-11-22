@@ -11,6 +11,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import final
 
+from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile
 from punt_vox.voxd.workers.environment import WorkerEnvironment
 
@@ -23,16 +24,7 @@ class TmuxWorkerProvider:
 
     @staticmethod
     def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        try:
-            return subprocess.run(
-                ["tmux", "-L", "vox-workers", "-f", "/dev/null", *args],
-                check=check,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-        except subprocess.SubprocessError:
-            raise RuntimeError("Worker tmux operation failed") from None
+        return WorkerCommand(*args).run(check=check)
 
     def start(
         self,

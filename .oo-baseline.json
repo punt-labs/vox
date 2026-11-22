@@ -6005,6 +6005,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/workers/command.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.33,
+    "max_complexity": 5.0,
+    "avg_complexity": 3.33,
+    "module_size": 40.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/workers/context.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -6114,8 +6127,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 2.29,
     "max_complexity": 5.0,
-    "avg_complexity": 2.71,
-    "module_size": 103.0,
+    "avg_complexity": 2.57,
+    "module_size": 95.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
