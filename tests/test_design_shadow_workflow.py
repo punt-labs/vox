@@ -16,6 +16,16 @@ WORKFLOW = ROOT / ".github/workflows/lint.yml"
 STEP = "Design ratchet (shadow, report only)"
 
 
+def test_full_report_includes_non_gating_design_scan() -> None:
+    report = (
+        (ROOT / "Makefile")
+        .read_text()
+        .split("\nreport:", 1)[1]
+        .split("\nformat:", 1)[0]
+    )
+    assert "\t-uv run oo-ratchet design src/punt_vox/\n" in report
+
+
 @pytest.mark.parametrize(
     ("module", "expected"),
     [
