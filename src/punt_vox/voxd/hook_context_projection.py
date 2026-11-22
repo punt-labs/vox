@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import cast
@@ -63,11 +64,8 @@ class ToolUpdate:
         raw = payload.get("tool_input")
         tool_input = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
         file = HookText.clip(tool_input.get("file_path"))
-        subject = (
-            file
-            or HookText.clip(tool_input.get("command"))
-            or HookText.clip(tool_input.get("path"))
-        )
+        identity = json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
+        subject = hashlib.sha256(identity.encode("ascii")).hexdigest()
         failed = event == "PostToolUseFailure"
         if failed:
             result = HookText.clip(payload.get("error"), tail=True) or "tool failed"

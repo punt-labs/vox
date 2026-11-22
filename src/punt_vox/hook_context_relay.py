@@ -84,13 +84,15 @@ class HookContextRelay:
             msg = "refusing to stamp an already stamped hook payload"
             raise ValueError(msg)
         stamped = HookRedaction.clean(self._payload)
-        counter = HookSequence(user_state_dir() / "hook-sequences", identity.session)
+        state_dir = user_state_dir()
+        counter = HookSequence(state_dir / "hook-sequences", identity.session)
         stamped["relay_seq"] = counter.next()
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as source:
             json.dump(stamped, source, ensure_ascii=True, allow_nan=False)
             source.seek(0)
             subprocess.Popen(
-                [sys.executable, "-m", "punt_vox.hook_context_relay"],
+                [sys.executable, "-E", "-P", "-m", "punt_vox.hook_context_relay"],
+                cwd=state_dir,
                 stdin=source,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -107,10 +109,14 @@ def main() -> int:
     except (
         ValueError,
         OSError,
+        RecursionError,
         VoxdConnectionError,
         VoxdProtocolError,
     ) as exc:
-        logger.warning("hook context delivery failed: %s", type(exc).__name__)
+        logger.warning(
+            "hook context delivery failed: %s; check vox daemon status and logs",
+            type(exc).__name__,
+        )
         return 1
     return 0
 

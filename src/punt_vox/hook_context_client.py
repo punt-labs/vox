@@ -21,7 +21,7 @@ class HookContextClient:
 
     @classmethod
     async def snapshot(cls, session: str) -> dict[str, object]:
-        """Fetch the curated context for an explicit Claude Code session ID."""
+        """Fetch the curated context for an explicit hook session ID."""
         reply = await cls._request(
             {"type": "hook_context", "session_id": session}, expected="hook_context"
         )

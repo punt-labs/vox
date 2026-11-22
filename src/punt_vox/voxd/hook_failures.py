@@ -1,4 +1,4 @@
-"""Bounded tracking of unresolved Claude tool failures."""
+"""Bounded tracking of unresolved tool failures."""
 
 from __future__ import annotations
 

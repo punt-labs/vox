@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TextIO, cast
@@ -15,7 +16,7 @@ from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 from punt_vox.commands.call import CallCli
-from punt_vox.hook_context_relay import HookContextCommand, HookContextRelay
+from punt_vox.hook_context_relay import HookContextCommand, HookContextRelay, main
 from punt_vox.hook_sequence import HookSequence
 from punt_vox.voxd.daemon import build_app
 from punt_vox.voxd.hook_context_store import HookContextStore
@@ -49,8 +50,9 @@ def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
     staged: list[object] = []
 
     def capture(args: list[str], **kwargs: object) -> None:
-        assert args[-1] == "punt_vox.hook_context_relay"
+        assert args[1:] == ["-E", "-P", "-m", "punt_vox.hook_context_relay"]
         assert kwargs["start_new_session"] is True
+        assert kwargs["cwd"] == tmp_path
         source = cast("TextIO", kwargs["stdin"])
         with os.fdopen(os.dup(source.fileno()), encoding="utf-8") as stream:
             staged.append(json.load(stream))
@@ -90,6 +92,33 @@ def test_stamping_failure_is_on_stderr(capfd: pytest.CaptureFixture[str]) -> Non
     assert "stamping or staging failed: OSError" in stderr
 
 
+def test_corrupt_counter_recovery_does_not_reset_the_sequence(tmp_path: Path) -> None:
+    """An invalid counter cannot restart sequence numbering silently."""
+    counter = HookSequence(tmp_path, "a")
+    assert counter.next() == 1
+    (path,) = tmp_path.glob("*.seq")
+    path.write_bytes(b"\xff")
+    with pytest.raises(ValueError, match="start a new session instead of resuming"):
+        counter.next()
+    assert path.read_bytes() == b"\xff"
+
+
+def test_detached_relay_logs_nesting_failure_without_input(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The detached child records a failure without logging hook content."""
+    with (
+        patch("punt_vox.hook_context_relay.configure_client_logging"),
+        patch(
+            "punt_vox.hook_context_relay.json.load",
+            side_effect=RecursionError("private"),
+        ),
+    ):
+        assert main() == 1
+    assert "hook context delivery failed: RecursionError" in caplog.text
+    assert "private" not in caplog.text
+
+
 def test_enabled_boundary(tmp_path: Path) -> None:
     """Global plugin registration cannot relay an event from an unenabled repo."""
     (tmp_path / ".git").mkdir()
@@ -121,6 +150,23 @@ def test_global_hook_ignores_empty_input() -> None:
     with patch.object(HookContextRelay, "submit") as submit:
         command.run(enabled_only=True)
     submit.assert_not_called()
+
+
+def test_shell_hook_delegates_before_stdin_closes(tmp_path: Path) -> None:
+    """The shell must invoke the CLI even when the harness leaves stdin open."""
+    vox = tmp_path / "vox"
+    vox.write_text("#!/bin/sh\nexit 42\n", encoding="utf-8")
+    vox.chmod(0o700)
+    script = Path(__file__).resolve().parents[1] / "plugin/hooks/context-event.sh"
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    with subprocess.Popen(
+        [str(script)], cwd=tmp_path, env=env, stdin=subprocess.PIPE
+    ) as hook:
+        try:
+            assert hook.wait(timeout=3) == 42
+        finally:
+            if hook.poll() is None:
+                hook.kill()
 
 
 def test_gap_heals_without_overwriting_newer_fields() -> None:
@@ -184,6 +230,22 @@ def test_projection_is_bounded_redacted_and_session_local() -> None:
     assert store.snapshot("session-b")["active_files"] == []
 
 
+def test_expired_gap_refuses_an_arrival_it_can_no_longer_deduplicate() -> None:
+    """Events in expired gaps must not be silently accepted or applied."""
+    store = HookContextStore()
+    for sequence in range(2, 260, 2):
+        store.ingest(_event("Notification", sequence))
+    assert (
+        cast("dict[str, object]", store.snapshot("session-a")["gaps"])[
+            "untracked_through"
+        ]
+        == 1
+    )
+    with pytest.raises(ValueError, match="expired gap history"):
+        store.ingest(_event("SessionStart", 1))
+    assert store.snapshot("session-a")["session_started"] is False
+
+
 def test_failure_survives_unrelated_success_but_not_retry() -> None:
     """A successful retry closes its failure even if the result is empty."""
     store = HookContextStore()
@@ -214,6 +276,38 @@ def test_pre_tool_use_updates_active_files_without_a_result() -> None:
     assert snapshot["active_files"] == ["in-flight.py"]
     assert snapshot["last_results"] == []
     assert snapshot["open_failure"] is None
+
+
+def test_same_tool_with_different_inputs_does_not_close_a_failure() -> None:
+    """Only the same canonical tool input can clear a matching failure."""
+    store = HookContextStore()
+    store.ingest(
+        _event(
+            "PostToolUseFailure",
+            1,
+            tool_name="Grep",
+            tool_input={"path": ".", "pattern": "first"},
+            error="unable to search",
+        )
+    )
+    store.ingest(
+        _event(
+            "PostToolUse",
+            2,
+            tool_name="Grep",
+            tool_input={"path": ".", "pattern": "second"},
+        )
+    )
+    assert store.snapshot("session-a")["open_failure"] is not None
+    store.ingest(
+        _event(
+            "PostToolUse",
+            3,
+            tool_name="Grep",
+            tool_input={"pattern": "first", "path": "."},
+        )
+    )
+    assert store.snapshot("session-a")["open_failure"] is None
 
 
 def test_open_failure_outlives_rolling_tool_results() -> None:
@@ -288,30 +382,43 @@ def test_context_cli_passes_session_and_prints_the_snapshot() -> None:
     assert json.loads(result.stdout) == snapshot
 
 
-@pytest.mark.parametrize(
-    "event",
-    [
+def test_context_cli_describes_session_without_naming_a_harness() -> None:
+    """The session selector is shared by hook sources."""
+    result = CliRunner().invoke(CallCli.build_app(), ["context", "--help"])
+    assert result.exit_code == 0
+    assert "Hook source's session ID." in result.stdout
+
+
+def test_dev_plugin_forwards_without_blocking() -> None:
+    """Each registered hook event has exactly one unrestricted relay."""
+    path = Path(__file__).resolve().parents[1] / "plugin/hooks/hooks.json"
+    hooks = json.loads(path.read_text(encoding="utf-8"))["hooks"]
+    assert {
         "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
         "PostToolUseFailure",
         "Stop",
-    ],
-)
-def test_dev_plugin_forwards_without_blocking(event: str) -> None:
-    """Each context-producing event has exactly one unrestricted relay."""
-    path = Path(__file__).resolve().parents[1] / "plugin/hooks/hooks.json"
-    hooks = json.loads(path.read_text(encoding="utf-8"))["hooks"]
-    assert [
-        hook
-        for group in hooks[event]
-        for hook in group["hooks"]
-        if hook["command"].endswith("/context-event.sh") and "matcher" not in group
-    ] == [
-        {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/context-event.sh",
-            "async": True,
-        }
-    ]
+        "Notification",
+        "PreCompact",
+        "SubagentStart",
+        "SubagentStop",
+        "SessionEnd",
+    } <= hooks.keys()
+    for event, groups in hooks.items():
+        assert [
+            (hook, "matcher" in group)
+            for group in groups
+            for hook in group["hooks"]
+            if hook["command"].endswith("/context-event.sh")
+        ] == [
+            (
+                {
+                    "type": "command",
+                    "command": "${CLAUDE_PLUGIN_ROOT}/hooks/context-event.sh",
+                    "async": True,
+                },
+                False,
+            )
+        ], event

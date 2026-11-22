@@ -24,7 +24,10 @@ class HookGaps:
         return self
 
     def observe(self, sequence: int) -> bool:
-        """Return whether this sequence is new; heal any late arrival."""
+        """Heal tracked gaps, ignore duplicates and refuse expired sequences."""
+        if sequence <= self._untracked_through:
+            msg = "hook sequence falls in expired gap history"
+            raise ValueError(msg)
         if sequence > self._high:
             if sequence > self._high + 1:
                 self._missing.append((self._high + 1, sequence - 1))

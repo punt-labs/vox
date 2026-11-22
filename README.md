@@ -593,6 +593,10 @@ arrive; drops after the last received hook are not visible yet. Gaps measure
 what the current snapshot has not seen, including history lost on a daemon
 restart or session eviction; they do not prove a transport drop. If older
 missing ranges expire, `untracked_through` marks that part of the history.
+Older arrivals in that expired portion are refused because the daemon can
+no longer distinguish them from duplicates.
+Small sender counter files persist so resumed sessions keep their
+sequence numbers. They do not contain hook payloads.
 
 In Claude Code, `/call start <topic>` writes the snapshot from the topic and the current work, then starts the call. `/call stop` hangs up. While a call is active, your own prompts to Claude Code are blocked until you run `/call stop` (or `/vox:call stop`), which still works. When a call ends normally, the agent writes a summary (decisions, action items, context gathered, open questions) to `~/.punt-labs/vox/calls/`, and `/call start` reads it back into your session. The newest 50 summaries are kept.
 

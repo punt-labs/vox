@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `vox call context --session <id>` displays the in-memory Claude Code hook
-  snapshot and sender sequence gaps for an enabled project.
+- `vox call context --session <id>` displays a session's in-memory hook
+  snapshot and sender sequence gaps. The Vox plugin feeds it live Claude Code
+  hooks from enabled projects.
 
 - Parallel local and coverage test loops, changed-module pre-commit selection,
   opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,

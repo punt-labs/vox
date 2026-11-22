@@ -48,7 +48,7 @@ class HookContextHandlers:
         await reply.send({"type": "hook_event_accepted"})
 
     async def snapshot(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Return a snapshot for just the requested Claude session."""
+        """Return a snapshot for just the requested hook session."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             snapshot = self._store.snapshot(parse_required_str(msg, "session_id"))

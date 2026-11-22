@@ -30,16 +30,16 @@ class HookSequence:
     def next(self) -> int:
         """Return the next sequence only after the counter has been fsynced."""
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with self._path.open("a+", encoding="ascii") as counter:
+        with self._path.open("a+", encoding="ascii", errors="replace") as counter:
             fcntl.flock(counter, fcntl.LOCK_EX)
             counter.seek(0)
             raw = counter.read()
             if raw and (not raw.isdecimal() or len(raw) > 19):
-                msg = "corrupt hook counter"
+                msg = "corrupt hook counter; start a new session instead of resuming"
                 raise ValueError(msg)
             previous = int(raw) if raw else 0
             if not 0 <= previous < MAX_SEQUENCE:
-                msg = "invalid hook counter value"
+                msg = "invalid hook counter; start a new session instead of resuming"
                 raise ValueError(msg)
             value = previous + 1
             counter.seek(0)

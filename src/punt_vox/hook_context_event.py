@@ -1,4 +1,4 @@
-"""Validation and recursive redaction for live Claude Code hook events."""
+"""Validation and recursive redaction for live hook events."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class HookIdentity:
 
     @classmethod
     def parse(cls, payload: dict[str, object]) -> HookIdentity:
-        """Reject ledger records and require the original Claude envelope."""
+        """Reject ledger records and require the live hook envelope."""
         if _LEDGER_FIELDS.intersection(payload):
             msg = "refusing to ingest a hook ledger record"
             raise ValueError(msg)

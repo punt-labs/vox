@@ -1,4 +1,4 @@
-"""Daemon-local rolling Claude Code context, isolated by session."""
+"""Daemon-local rolling hook context, isolated by session."""
 
 from __future__ import annotations
 

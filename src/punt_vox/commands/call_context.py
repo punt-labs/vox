@@ -17,7 +17,7 @@ class CallContextCommand:
 
     @staticmethod
     def show(
-        session: Annotated[str, typer.Option(help="Claude Code session ID.")],
+        session: Annotated[str, typer.Option(help="Hook source's session ID.")],
     ) -> None:
         """Print the session's curated hook snapshot and sequence-gap report."""
         try:
