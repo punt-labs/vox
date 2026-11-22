@@ -60,7 +60,10 @@ def test_counter_fsync_failure_preserves_last_committed_sequence(
     assert HookSequence(tmp_path, "a").next() == 2
 
 
-def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
+@pytest.mark.parametrize("worker_only", [False, True])
+def test_relay_stages_without_waiting_for_delivery(
+    tmp_path: Path, worker_only: bool
+) -> None:
     """The hook returns after allocating a sequence and starting a child."""
     staged: list[object] = []
 
@@ -82,13 +85,14 @@ def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
                 "hook_event_name": "Stop",
                 "nested": [{"Api-Key": "secret-value"}],
             }
-        ).submit()
+        ).submit(worker_only=worker_only)
     assert staged == [
         {
             "session_id": "a",
             "hook_event_name": "Stop",
             "relay_seq": 1,
             "nested": [{"Api-Key": "[redacted]"}],
+            **({"_vox_worker_only": True} if worker_only else {}),
         }
     ]
 

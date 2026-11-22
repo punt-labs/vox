@@ -13,11 +13,13 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextRelay, main
+from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.contracts import HarnessProfile
@@ -204,3 +206,87 @@ def test_detached_delivery_preserves_admission_metadata() -> None:
     send.assert_awaited_once_with(
         {"session_id": "worker", "cwd": "/repo"}, worker_only=True
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker_only", [False, True, "not a boolean"])
+async def test_standalone_hook_ingestion_validates_admission_flags(
+    worker_only: object,
+) -> None:
+    socket = AsyncMock()
+    await HookContextHandlers().ingest(
+        {
+            "worker_only": worker_only,
+            "payload": {
+                "session_id": "session",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            },
+        },
+        socket,
+    )
+    expected = "hook_event_accepted" if worker_only is False else "error"
+    assert socket.send_json.call_args.args[0]["type"] == expected
+
+
+@pytest.mark.asyncio
+async def test_recursive_envelopes_have_a_safe_ingestion_error() -> None:
+    store = HookContextStore()
+    socket = AsyncMock()
+    with patch.object(HookContextStore, "ingest", side_effect=RecursionError):
+        await HookContextHandlers(store).ingest({"payload": {}}, socket)
+    assert socket.send_json.call_args.args[0]["type"] == "error"
+    assert "nesting exceeds" in str(socket.send_json.call_args)
+
+
+@pytest.mark.asyncio
+async def test_admission_path_errors_are_wire_errors(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    socket = AsyncMock()
+    with patch.object(
+        WorkerRegistry, "admits_hook", side_effect=OSError("path unavailable")
+    ):
+        await WorkerHandlers.build(registry, HookContextStore())[
+            "worker_hook_admission"
+        ]({}, socket)
+    assert socket.send_json.call_args.args[0]["type"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_unknown_worker_commands_are_wire_errors(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    socket = AsyncMock()
+    await WorkerHandlers(registry).handle({"type": "unknown"}, socket)
+    assert socket.send_json.call_args.args[0]["type"] == "error"
+
+
+def test_missing_repository_identity_cannot_opt_in() -> None:
+    assert not HookContextRelay({}).enabled()
+
+
+def test_claude_profile_preparation_and_cleanup_use_the_native_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    profile = ClaudeProfile(HookContextStore())
+    worktree = tmp_path / "worktree"
+    profile.prepare(worktree)
+    path = tmp_path / ".claude.json"
+    assert (
+        json.loads(path.read_text())["projects"][str(worktree)][
+            "hasTrustDialogAccepted"
+        ]
+        is True
+    )
+    profile.cleanup(worktree)
+    assert str(worktree) not in json.loads(path.read_text())["projects"]
+
+
+def test_registry_steering_uses_its_selected_provider(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    with patch.object(FakeWorkerProvider, "steer") as steer:
+        registry.steer(record.id, "continue", urgent=True)
+    assert steer.call_args.args == (record.session, "continue")
+    assert steer.call_args.kwargs["urgent"] is True
