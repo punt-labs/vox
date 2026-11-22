@@ -21,7 +21,8 @@ jobs:
     needs: roundtrip-live
     if: >-
       ${{ !cancelled() && github.event_name == 'schedule' &&
-          github.repository == 'punt-labs/vox' && needs.roundtrip-live.result == 'failure' }}
+          github.repository == 'punt-labs/vox' &&
+          (needs.roundtrip-live.result == 'failure' || needs.roundtrip-live.result == 'cancelled') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -29,10 +30,11 @@ jobs:
       - name: File a Linear issue
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          SUITE_RESULT: ${{ needs.roundtrip-live.result }}
         run: |
           node --input-type=module <<'JS'
           const { LINEAR_API_KEY, GITHUB_SERVER_URL, GITHUB_REPOSITORY,
-                  GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_SHA } = process.env;
+                  GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_SHA, SUITE_RESULT } = process.env;
           if (!LINEAR_API_KEY) {
             throw new Error('Configure the LINEAR_API_KEY Actions secret to report nightly failures');
           }
@@ -51,7 +53,7 @@ jobs:
                 ],
                 priority: 3,
                 title: `Investigate Vox nightly test failure (run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT})`,
-                description: `The [nightly GitHub Actions run](${run}) failed at commit \`${GITHUB_SHA}\`. Open the failing job for details.`,
+                description: `The [nightly GitHub Actions suite](${run}) ended with status \`${SUITE_RESULT}\` at commit \`${GITHUB_SHA}\`.`,
               } },
             }),
           });
