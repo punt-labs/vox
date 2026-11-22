@@ -8,6 +8,7 @@ tests inject an in-memory device and voxd injects
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Buffer, Callable
 from typing import Protocol
 
@@ -16,6 +17,7 @@ __all__ = [
     "OutputDeviceLostError",
     "OutputStream",
     "OutputStreamFactory",
+    "run_device_call",
     "sounddevice_output_stream",
 ]
 
@@ -96,3 +98,25 @@ def sounddevice_output_stream(
         callback=callback,
         finished_callback=finished_callback,
     )
+
+
+async def run_device_call[**P, T](
+    func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
+) -> tuple[asyncio.Future[T], bool]:
+    """Run *func* in a worker thread and wait for it even through cancellation.
+
+    A device call cannot be abandoned half-way: the caller holds the playback
+    mutex, and freeing it early would let other audio open the device too.
+    Every cancellation is deferred until the thread returns. Returns the
+    finished future and whether the caller was cancelled meanwhile.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait((task,))
+        except asyncio.CancelledError:
+            cancelled = True
+    if task.cancelled():
+        raise asyncio.CancelledError
+    return task, cancelled
