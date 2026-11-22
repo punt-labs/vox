@@ -36,3 +36,31 @@ class RawInputStream:
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc_info: object) -> None: ...
     def close(self) -> None: ...
+
+# The CFFI buffer ``RawOutputStream``'s callback fills as *outdata* is writable
+# and satisfies the buffer protocol; the sink writes it through ``memoryview``.
+type RawOutputCallback = Callable[[Buffer, int, object, CallbackFlags], None]
+
+class RawOutputStream:
+    """PortAudio output stream on raw buffer objects -- no NumPy dependency.
+
+    Only what the streaming PCM sink calls is declared: callback mode,
+    ``start`` to begin pulling, ``stop`` to drain, ``abort`` to stop without
+    draining, and ``finished_callback`` for when the stream goes inactive.
+    """
+
+    def __init__(
+        self,
+        *,
+        samplerate: float,
+        blocksize: int,
+        channels: int,
+        dtype: str,
+        latency: str,
+        callback: RawOutputCallback,
+        finished_callback: Callable[[], None],
+    ) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def abort(self) -> None: ...
+    def close(self) -> None: ...

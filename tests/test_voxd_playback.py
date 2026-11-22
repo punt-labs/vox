@@ -14,7 +14,8 @@ import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.voxd import _PLAYBACK_TIMEOUT_DEFAULT_S
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.playback_result import PlaybackResult
 
 
 def _make_playback_queue() -> PlaybackQueue:
@@ -35,7 +36,7 @@ class TestConsumerResilience:
             if path.name == "bad.mp3":
                 raise RuntimeError("boom")
             # A clean, real-duration success for the following item.
-            self._record_result(path=path, rc=0, elapsed=1.0, stderr="")
+            self.record_result(path=path, rc=0, elapsed=1.0, stderr="")
 
         monkeypatch.setattr(PlaybackQueue, "play_audio", fake_play)
 
@@ -635,25 +636,3 @@ class TestAudioContext:
 
         monkeypatch.setattr(subprocess, "run", _fake_run)
         assert AudioContext._probe_launchctl_manager() == "unknown"
-
-
-class TestStderrTruncation:
-    """ffplay stderr can be unbounded; the truncator caps it but keeps both ends."""
-
-    def test_short_text_passes_through(self) -> None:
-        from punt_vox.voxd.playback import _truncate_stderr
-
-        assert _truncate_stderr("hello") == "hello"
-
-    def test_long_text_truncated_with_marker(self) -> None:
-        from punt_vox.voxd.playback import _MAX_STDERR_LEN, _truncate_stderr
-
-        text = "A" * 5000 + "B" * 5000
-        out = _truncate_stderr(text)
-
-        assert len(out) < len(text)
-        assert "truncated" in out
-        assert out.startswith("A")
-        assert out.endswith("B")
-        # Marker reports the dropped byte count.
-        assert str(len(text) - _MAX_STDERR_LEN) in out
