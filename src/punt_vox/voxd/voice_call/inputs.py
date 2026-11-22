@@ -30,7 +30,10 @@ class MicInput:
     __slots__ = ("_source",)
     _source: MicAudioSource
 
-    def __new__(cls, source: MicAudioSource | None = None) -> Self:
+    def __new__(
+        cls,
+        source: MicAudioSource | None = None,  # None: the default device.
+    ) -> Self:
         """Bind a microphone source; None selects the default input device."""
         self = super().__new__(cls)
         self._source = source if source is not None else MicAudioSource()

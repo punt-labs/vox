@@ -123,3 +123,11 @@ async def test_bad_repository_settings_fail_the_tool_not_the_call() -> None:
     result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
     assert error
     assert "not a list" in json.loads(result)["error"]
+
+
+async def test_start_refuses_a_project_that_is_not_a_path() -> None:
+    result, error = await _tools(FakeWorkers()).answer(
+        "start_worker", {"task": "fix x", "project": 3}
+    )
+    assert error
+    assert "string" in json.loads(result)["error"]

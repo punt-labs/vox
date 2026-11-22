@@ -148,11 +148,9 @@ class BossTools:
     async def _start(self, arguments: dict[str, object]) -> object:
         task = self._text(arguments, "task")
         project = arguments.get("project")
-        if project is None:
-            projects = self._projects.repos()
-            if len(projects) != 1:
-                raise ValueError(f"name a project; allowlisted: {list(projects)}")
-            project = projects[0]
+        if project is None:  # More than one repo, so no default was filled in.
+            allowlisted = list(self._projects.repos())
+            raise ValueError(f"name a project; allowlisted: {allowlisted}")
         if not isinstance(project, str):
             raise ValueError("project must be a string")
         return WorkerBrief.summary(await self._workers.start(task, project))
