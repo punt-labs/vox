@@ -248,8 +248,8 @@ ignore = [
 "src/punt_vox/voxd/conversation_mode/git_ignores.py" = ["S603"]
 "src/punt_vox/voxd/workers/policy.py" = ["S603", "S607"]
 "src/punt_vox/voxd/workers/command.py" = ["S603", "S607"]
-# Direct exec preserves the argv/environment boundary; the harness is intentional.
-"src/punt_vox/voxd/workers/bootstrap.py" = ["S606"]
+# The supervised harness argv is intentional; its environment is isolated.
+"src/punt_vox/voxd/workers/bootstrap.py" = ["S603"]
 "src/punt_vox/voices.py" = ["S311"]
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Self, final
 from uuid import uuid4
 
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
+from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -22,7 +21,15 @@ logger = logging.getLogger(__name__)
 class WorkerRegistry:
     """Resolve providers and harnesses by name, never by special-case branches."""
 
-    __slots__ = ("_policy", "_profiles", "_providers", "_records", "_workers")
+    __slots__ = (
+        "_lifecycle",
+        "_policy",
+        "_profiles",
+        "_providers",
+        "_records",
+        "_workers",
+    )
+    _lifecycle: WorkerLifecycle
     _policy: WorkerRepoPolicy
     _profiles: dict[str, HarnessProfile]
     _providers: dict[str, WorkerProvider]
@@ -40,7 +47,8 @@ class WorkerRegistry:
         self = super().__new__(cls)
         self._policy, self._records = policy, records
         self._providers, self._profiles = providers, profiles
-        self._workers = {r.id: r for r in records.load()}
+        self._lifecycle = WorkerLifecycle(providers, profiles)
+        self._workers = {r.id: r for r in records.load(strict=False)}
         self.list()
         return self
 
@@ -84,52 +92,46 @@ class WorkerRegistry:
             self._providers[provider].start(
                 WorkerLaunch(handle, worker_id, worktree, task), profile
             )
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-            self.stop(worker_id)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            self._rollback(record, exc)
             raise
-        return self._refresh(record)
+        return self._checkpoint(self._lifecycle.observe(record))
 
-    def _refresh(self, record: WorkerRecord) -> WorkerRecord:
-        if record.state not in ("stopped", "exited"):
-            provider = self._providers[record.provider]
-            profile = self._profiles[record.harness]
-            try:
-                alive = provider.status(record.session)
-            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-                logger.warning("Worker provider unavailable (%s)", type(exc).__name__)
-                return record
-            if not alive:
-                record = self._cleanup(replace(record, state="exited"))
-            else:
-                report = provider.progress(record.id, profile)
-                if record.state != "ready" or (
-                    report and report != {"session_started": False}
-                ):
-                    record = replace(
-                        record,
-                        last_report=report,
-                        state="ready"
-                        if report.get("session_started")
-                        else record.state,
-                    )
-            self._records.save(record)
-            self._workers[record.id] = record
+    def _checkpoint(self, record: WorkerRecord) -> WorkerRecord:
+        if self._workers.get(record.id) == record:
+            return record
+        self._records.save(record)
+        self._workers[record.id] = record
         return record
 
-    def _cleanup(self, record: WorkerRecord) -> WorkerRecord:
+    def _rollback(self, record: WorkerRecord, error: Exception) -> None:
+        record = self._lifecycle.rollback(record, error)
         try:
-            self._profiles[record.harness].cleanup(Path(record.worktree))
+            self._checkpoint(record)
         except (OSError, ValueError, RuntimeError) as exc:
-            record = replace(
-                record,
-                last_report={**record.last_report, "cleanup_error": type(exc).__name__},
-            )
-            logger.warning("Worker cleanup failed (%s)", type(exc).__name__)
-        return record
+            self._workers[record.id] = record
+            logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
         """Reconcile live state, including after a daemon restart."""
-        return [self._refresh(r) for r in self._workers.values()]
+        result: list[WorkerRecord] = []
+        for record in self._workers.values():
+            try:
+                result.append(self._checkpoint(self._lifecycle.observe(record)))
+            except (
+                KeyError,
+                OSError,
+                ValueError,
+                RuntimeError,
+                subprocess.SubprocessError,
+            ) as exc:
+                logger.warning(
+                    "Worker %s reconciliation unavailable (%s)",
+                    record.id,
+                    type(exc).__name__,
+                )
+                result.append(record)
+        return result
 
     def _get(self, worker_id: str) -> WorkerRecord:
         try:
@@ -139,14 +141,7 @@ class WorkerRegistry:
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        record = self._get(worker_id)
-        if record.state in ("stopped", "exited"):
-            return record
-        self._providers[record.provider].stop(record.session)
-        record = self._cleanup(replace(record, state="stopped"))
-        self._records.save(record)
-        self._workers[record.id] = record
-        return record
+        return self._checkpoint(self._lifecycle.stop(self._get(worker_id)))
 
     def steer(self, worker_id: str, words: str, *, urgent: bool = False) -> None:
         """Delegate steering without knowing the harness's keys or transport."""

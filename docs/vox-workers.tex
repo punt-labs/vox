@@ -27,8 +27,7 @@ a failed cleanup is durable and retried even when the lifecycle is terminal.
   \dom phase = \dom report \\
   readySeen \subseteq \dom phase \\
   pending \subseteq \dom phase \\
-  \forall w : \dom phase @ phase~w = ready \implies w \in readySeen \\
-  \forall w : pending @ phase~w \in \{exited, stopped\}
+  \forall w : \dom phase @ phase~w = ready \implies w \in readySeen
 \end{schema}
 
 Named invariants checked by implementation tests are:
@@ -109,9 +108,26 @@ neither supplies a fresh report nor a new liveness fact.
   pending' = pending \cup \{worker?\}
 \end{schema}
 
-Provider death and failed launch select exited; explicit stop selects stopped.
+Confirmed provider death selects exited; explicit stop and successful launch
+rollback select stopped. If rollback cannot confirm termination, starting is
+retained with a durable launch error and reconciliation retries termination.
 Cleanup success removes the pending marker. On failure it remains, and an error
 may be attached to the opaque report without changing process phase.
+
+\begin{schema}{FailedLaunch}
+  \Delta Workers \\
+  worker? : WORKER \\
+  failure? : REPORT \\
+  next? : Phase
+\where
+  worker? \in \dom phase \\
+  phase~worker? = starting \\
+  next? \in \{starting, stopped\} \\
+  phase' = phase \oplus \{worker? \mapsto next?\} \\
+  report' = report \oplus \{worker? \mapsto failure?\} \\
+  readySeen' = readySeen \\
+  pending' = pending \cup \{worker?\}
+\end{schema}
 
 \begin{schema}{RetryCleanup}
   \Delta Workers \\

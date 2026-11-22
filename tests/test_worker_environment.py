@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import signal
 import socket
 import stat
 from unittest.mock import patch
@@ -37,13 +38,35 @@ def test_bootstrap_rejects_non_string_environments(payload: str) -> None:
             WorkerBootstrap.run("private-socket", ["harness"])
 
 
-def test_bootstrap_credentials_are_environment_not_arguments() -> None:
-    with patch("socket.socket") as factory, patch("os.execvpe") as execute:
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_bootstrap_credentials_are_environment_not_arguments(interrupted: bool) -> None:
+    with (
+        patch("socket.socket") as factory,
+        patch("subprocess.Popen") as execute,
+        patch("os.getpgrp", return_value=123),
+        patch("os.getpid", return_value=123),
+        patch("os.killpg") as finish,
+    ):
         connection = factory.return_value.__enter__.return_value
         connection.makefile.return_value.__enter__.return_value = io.StringIO(
             '{"KEY": "fake-private-value"}'
         )
+        execute.return_value.wait.side_effect = (
+            [KeyboardInterrupt, 0] if interrupted else [0]
+        )
         WorkerBootstrap.run("private-socket", ["harness", "task"])
         execute.assert_called_once_with(
-            "harness", ["harness", "task"], {"KEY": "fake-private-value"}
+            ["harness", "task"], env={"KEY": "fake-private-value"}
         )
+        finish.assert_called_once_with(123, signal.SIGKILL)
+
+
+def test_bootstrap_cannot_signal_its_callers_process_group() -> None:
+    with (
+        patch("os.getpgrp", return_value=123),
+        patch("os.getpid", return_value=456),
+        patch("os.killpg") as finish,
+        pytest.raises(RuntimeError, match="own its process group"),
+    ):
+        WorkerBootstrap._supervise(["harness"], {})
+    finish.assert_not_called()

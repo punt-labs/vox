@@ -1,10 +1,12 @@
-"""Receive an isolated worker environment and exec its harness directly."""
+"""Receive an isolated environment and supervise one harness process group."""
 
 from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
+import subprocess
 import sys
 from typing import cast, final
 
@@ -19,7 +21,7 @@ class WorkerBootstrap:
 
     @staticmethod
     def run(address: str, argv: list[str]) -> None:
-        """Read the private broker, validate the environment, then replace self."""
+        """Read the private broker, validate the environment, and run the harness."""
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(15)
             connection.connect(address)
@@ -32,12 +34,28 @@ class WorkerBootstrap:
             isinstance(k, str) and isinstance(v, str) for k, v in fields.items()
         ):
             raise ValueError("Worker environment must contain strings")
-        os.execvpe(argv[0], argv, cast("dict[str, str]", fields))
+        WorkerBootstrap._supervise(argv, cast("dict[str, str]", fields))
+
+    @staticmethod
+    def _supervise(argv: list[str], environment: dict[str, str]) -> None:
+        group = os.getpgrp()
+        if group != os.getpid():
+            raise RuntimeError("Worker bootstrap must own its process group")
+        child = subprocess.Popen(argv, env=environment)
+        try:
+            while True:
+                try:
+                    child.wait()
+                    break
+                except KeyboardInterrupt:
+                    continue
+        finally:
+            os.killpg(group, signal.SIGKILL)
 
 
 if __name__ == "__main__":
     try:
         WorkerBootstrap.run(sys.argv[1], sys.argv[2:])
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError, RuntimeError):
         sys.stderr.write("Worker bootstrap failed\n")
         raise SystemExit(1) from None

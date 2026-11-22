@@ -35,10 +35,12 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
     provider.alive = False
     with patch.object(TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")):
         restored = _registry(tmp_path, provider)
-    record = restored.list()[0]
-    assert record.state == "exited"
-    assert record.last_report["cleanup_error"] == "ValueError"
-    assert WorkerRecords(tmp_path / "workers").load()[0] == record
+        record = restored.list()[0]
+        assert record.state == "exited"
+        assert record.last_report["cleanup_error"] == "ValueError"
+    cleaned = restored.list()[0]
+    assert "cleanup_error" not in cleaned.last_report
+    assert WorkerRecords(tmp_path / "workers").load()[0] == cleaned
 
 
 def test_provider_unavailable_cannot_block_registry_rebuild(tmp_path: Path) -> None:
@@ -88,7 +90,7 @@ def test_tmux_session_disappearing_during_control(operation: str) -> None:
         else:
             provider.stop("worker")
         if operation == "stop-kill":
-            finish.assert_called_once_with(123, 456)
+            finish.assert_called_once_with(456)
 
 
 def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:

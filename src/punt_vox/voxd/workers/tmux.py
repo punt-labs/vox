@@ -88,10 +88,10 @@ class TmuxWorkerProvider:
                 group = None
             self._run("kill-session", "-t", f"={handle}", check=False)
             if group is not None:
-                self._finish(pid, group)
+                self._finish(group)
 
     @staticmethod
-    def _finish(pid: int, group: int) -> None:
+    def _finish(group: int) -> None:
         if group == os.getpgrp():
             raise RuntimeError("Worker pane must have its own process group")
         with suppress(ProcessLookupError):
@@ -99,7 +99,7 @@ class TmuxWorkerProvider:
         deadline = time.monotonic() + 3
         while True:
             try:
-                os.kill(pid, 0)
+                os.killpg(group, 0)
             except ProcessLookupError:
                 return
             if time.monotonic() >= deadline:

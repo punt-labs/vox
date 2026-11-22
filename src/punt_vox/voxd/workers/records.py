@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Self, final
 from uuid import UUID
@@ -10,6 +11,8 @@ from uuid import UUID
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.model import WorkerRecord
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -55,12 +58,23 @@ class WorkerRecords:
         except (OSError, ValueError):
             return False
 
-    def load(self) -> list[WorkerRecord]:
-        """Read durable records; malformed records fail loudly, never vanish."""
+    @staticmethod
+    def _read(path: Path) -> WorkerRecord:
+        record = WorkerRecordCodec.decode(json.loads(path.read_text()))
+        if str(UUID(record.id)) != path.stem:
+            raise ValueError(f"Invalid worker record: {path}")
+        return record
+
+    def load(self, *, strict: bool = True) -> list[WorkerRecord]:
+        """Retain malformed records; optionally isolate them during daemon boot."""
         records: list[WorkerRecord] = []
         for path in sorted(self._root.glob("*.json")):
-            record = WorkerRecordCodec.decode(json.loads(path.read_text()))
-            if str(UUID(record.id)) != path.stem:
-                raise ValueError(f"Invalid worker record: {path}")
-            records.append(record)
+            try:
+                records.append(self._read(path))
+            except (OSError, ValueError) as exc:
+                if strict:
+                    raise
+                logger.warning(
+                    "Invalid worker record %s (%s)", path.name, type(exc).__name__
+                )
         return records
