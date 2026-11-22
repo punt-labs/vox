@@ -80,7 +80,7 @@ async def test_register_hands_lux_the_whole_entry(entry: MenuEntry) -> None:
     assert client.callback.calls == [(entry.callback_id, entry.label, entry.frame_id)]
 
 
-async def test_register_logs_the_success_with_the_callback_id(
+async def test_register_logs_success_without_entry_values(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.INFO):
@@ -91,7 +91,7 @@ async def test_register_logs_the_success_with_the_callback_id(
         if "[lux]" in r.getMessage() and "registered" in r.getMessage()
     ]
     assert registered
-    assert "'music'" in registered[-1].getMessage()  # the callback id is logged
+    assert registered[-1].getMessage() == "[lux] registered the menu entry"
 
 
 async def test_register_swallows_a_down_luxd(
@@ -172,4 +172,5 @@ async def test_register_logs_a_refused_registration(
         r.getMessage() for r in caplog.records if "rejected" in r.getMessage()
     ]
     assert len(rejections) == 1
-    assert "'vox.music'" in rejections[0]
+    assert "reason=hub_refused" in rejections[0]
+    assert "vox.music" not in rejections[0]

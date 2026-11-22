@@ -54,6 +54,9 @@ class TestLogEnvironment:
             else:
                 monkeypatch.setenv(key, value)
         config = DaemonConfig(tmp_path, tmp_path, tmp_path)
+        checkout = tmp_path / "private-checkout-name"
+        checkout.mkdir()
+        monkeypatch.chdir(checkout)
         with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd.config"):
             config.log_environment()
 
@@ -65,6 +68,8 @@ class TestLogEnvironment:
         assert "zqxprivate-identity-value" not in caplog.text
         assert "uid=" not in caplog.text
         assert "gid=" not in caplog.text
+        assert "private-checkout-name" not in caplog.text
+        assert "cwd=" not in caplog.text
 
 
 class TestVoxdPaths:

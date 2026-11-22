@@ -11,7 +11,6 @@ import logging
 import os
 import re
 import secrets
-import sys
 from pathlib import Path
 from typing import Self
 
@@ -251,12 +250,8 @@ class DaemonConfig:
         logger.info("voxd starting (pid %d, v%s)", os.getpid(), installed_version())
         env = {k: k in os.environ for k in _STARTUP_ENV_KEYS}
         logger.debug(
-            "voxd environment: pid=%d cwd=%s "
-            "voxd_binary=%s voxd_module=%s env_present=%s",
+            "voxd environment: pid=%d env_present=%s",
             os.getpid(),
-            Path.cwd(),
-            sys.executable,
-            __file__,
             env,
         )
 

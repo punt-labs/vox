@@ -63,7 +63,7 @@ def test_client_logs_the_connect_with_resolved_port(
     # The connecting audit line names the resolved port so a grep of vox.log shows
     # exactly where each leg reached luxd.
     monkeypatch.setattr("punt_lux.hub_paths.HubPaths.read_port", _port_8080)
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         VoxLuxClients().client()
     connecting = [
         r
@@ -85,7 +85,7 @@ def test_hub_logs_the_connect_with_resolved_port(
 
     async def on_connect() -> None: ...
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         VoxLuxClients().hub(on_event, on_callback, on_connect)
     connecting = [
         r
