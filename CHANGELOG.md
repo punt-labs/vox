@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-11-22
+
 ### Added
 
 - Provider-neutral background coding workers with a tmux launcher, Claude Code
@@ -31,10 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
   time-bounded flaky-test quarantine policy.
 
-- Release candidates run the nightly suite on the exact wheel to be published.
-  `make qa` records installed-candidate voice and music checks before release
-  approval, and a PyPI smoke test round-trips one line after publishing.
-
 - Opt-in real speech roundtrip oracle with CPU Whisper and ElevenLabs Scribe,
   a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
   and normalization fault checks, non-silence gates, offline PR checks, and a
@@ -58,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without changing executable code or any other OO metric.
 
 ### Fixed
+
+- Bump punt-observe to 0.1.1: diagnostic logs now mask bare bearer
+  credentials and home-directory prefixes, and URL query redaction keeps
+  prose punctuation.
 
 - Report AWS credential rejection during Polly voice discovery the same way
   as rejection during synthesis, including on a cold voice cache.

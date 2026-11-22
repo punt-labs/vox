@@ -278,10 +278,6 @@ See ethos docs for mission contract schema, worker prompt template, and the full
 
 Use `/punt:auto release [version=X.Y.Z]`. Vox is a CLI + Plugin Hybrid — releases publish to both PyPI (`punt-vox`) and the marketplace.
 
-The tag starts the [installed release candidate gate](docs/testing/manual-tests.md).
-Run `make qa` with that run's wheel and obtain Jim's voice/music sign-off in
-GitHub before publishing. The release workflow then smokes the PyPI install.
-
 ### Dev plugin testing
 
 The plugin uses dev/prod namespace isolation. Working tree has `"name": "vox-dev"` in `plugin/.claude-plugin/plugin.json`.
