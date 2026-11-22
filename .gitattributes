@@ -1,1 +1,4 @@
 .oo-audit.jsonl merge=union
+
+# Append only. Review merges manually if an existing coupling audit row was edited or deleted.
+/.oo-coupling-audit.jsonl merge=union
