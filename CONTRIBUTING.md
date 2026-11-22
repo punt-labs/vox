@@ -22,7 +22,8 @@ uv sync --extra call
 
 ## Quality Gates
 
-Run the full gate before every commit. It must finish with zero violations and all tests passing:
+Each commit must pass the commit hook's checks. Run the full gate at handoff
+or before opening a PR. It must finish with zero violations and all tests passing:
 
 ```bash
 make check

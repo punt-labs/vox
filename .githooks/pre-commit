@@ -21,4 +21,7 @@ fi
 ethos_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit"
 if [[ -x "$ethos_hook" && ! "$ethos_hook" -ef "${BASH_SOURCE[0]}" ]]; then
   "$ethos_hook"
+elif [[ -e "$(git rev-parse --show-toplevel)/.punt-labs/ethos/enabled" && ! -x "$ethos_hook" ]]; then
+  echo 'ethos is enabled but its pre-commit hook is not installed; run ethos enable' >&2
+  exit 1
 fi
