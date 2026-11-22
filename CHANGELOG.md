@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   omit event payloads and rejected values, quiet repeated connection failures to
   DEBUG, and summarize recovery or shutdown after an outage.
 
+- Logger-specific test assertions ignore unrelated captured records, preventing
+  asyncio DEBUG diagnostics from breaking single-record checks.
+
 - Daemon DEBUG startup diagnostics report environment-variable presence rather
   than values and omit numeric user/group IDs, preventing account identity leaks.
 

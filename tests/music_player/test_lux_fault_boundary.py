@@ -12,16 +12,16 @@ def test_success_has_no_diagnostic(caplog: pytest.LogCaptureFixture) -> None:
     with LuxFaultBoundary(logging.getLogger(__name__), "operation failed") as fault:
         pass
     assert not fault.failed()
-    assert not caplog.records
+    assert not [r for r in caplog.records if r.name == __name__]
 
 
 def test_fault_omits_exception_values(caplog: pytest.LogCaptureFixture) -> None:
     with LuxFaultBoundary(logging.getLogger(__name__), "operation failed") as fault:
         raise ValueError("private-value")
     assert fault.failed()
-    assert len(caplog.records) == 1
-    assert caplog.records[0].getMessage() == "[lux] operation failed"
-    assert caplog.records[0].exc_info is None
+    [record] = [r for r in caplog.records if r.name == __name__]
+    assert record.getMessage() == "[lux] operation failed"
+    assert record.exc_info is None
     assert "private-value" not in caplog.text
 
 
@@ -33,4 +33,4 @@ def test_cancellation_propagates_without_logging(
         LuxFaultBoundary(logging.getLogger(__name__), "operation failed"),
     ):
         raise asyncio.CancelledError
-    assert not caplog.records
+    assert not [r for r in caplog.records if r.name == __name__]

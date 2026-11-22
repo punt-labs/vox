@@ -203,7 +203,11 @@ class TestTryDirectPlay:
         assert isinstance(result, ValueError)
         assert "unknown provider" in str(result)
         assert "Direct-play raised" in caplog.text
-        [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        [record] = [
+            r
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.synthesis" and r.levelno >= logging.ERROR
+        ]
         assert record.exc_info is not None
         assert isinstance(record.exc_info[1], ValueError)
 
