@@ -26,6 +26,8 @@ _API_KEY = "localhost-test-key"
 @dataclass
 class Requests:
     calls: list[tuple[str, str, object]] = field(default_factory=list)
+    create_tool_id: str | None = "tool_clock"
+    disconnect_on_tool_creation: bool = False
     create_agent_status: int = 200
     signed_url_status: int = 200
     delete_tool_status: int = 404
@@ -42,7 +44,10 @@ def wire() -> Iterator[Requests]:
             length = int(self.headers["Content-Length"])
             self._observe(json.loads(self.rfile.read(length)))
             if self.path == "/v1/convai/tools":
-                self._reply(200, {"id": "tool_clock"})
+                if requests.disconnect_on_tool_creation:
+                    self.close_connection = True
+                    return
+                self._reply(200, {"id": requests.create_tool_id})
             elif self.path == "/v1/convai/agents/create":
                 self._reply(requests.create_agent_status, {"agent_id": "agent_vox"})
             else:
@@ -199,6 +204,32 @@ def test_existing_provisioning_lock_reports_retry(
         pytest.raises(ConvAIError, match="provisioning or teardown is in progress"),
     ):
         VoiceAgent(control, path=config).connection((_CLOCK,))
+
+
+def test_invalid_utf8_registration_is_unreadable(tmp_path: Path) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    config.write_bytes(b"\xff")
+    with (
+        ConvAIControl(_API_KEY) as control,
+        pytest.raises(ConvAIError, match="Unreadable Vox voice agent config"),
+    ):
+        VoiceAgent(control, path=config).teardown()
+
+
+@pytest.mark.parametrize("disconnect", [False, True])
+def test_unusable_create_response_warns_about_unrecorded_resource(
+    tmp_path: Path, wire: Requests, disconnect: bool
+) -> None:
+    wire.create_tool_id = "unusable/opaque-id"
+    wire.disconnect_on_tool_creation = disconnect
+    with (
+        ConvAIControl(_API_KEY, base_url=wire.url) as control,
+        pytest.raises(ConvAIError, match="workspace for an unrecorded") as error,
+    ):
+        VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION).connection(
+            (_CLOCK,)
+        )
+    assert "unusable/opaque-id" not in str(error.value)
 
 
 def test_partial_provision_is_cleaned_before_retry(

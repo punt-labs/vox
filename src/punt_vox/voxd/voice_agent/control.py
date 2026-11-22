@@ -20,6 +20,7 @@ _CONVAI = "/v1/convai"
 _SIGNED_URL = "/conversation/get-signed-url"
 _OVERRIDABLE = {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}}
 _RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,12 +68,19 @@ class ConvAIControl:
     def create_tool(self, tool: ClientTool) -> str:
         """Register a client tool without adding any remote execution capability."""
         response = self._request("POST", "/tools", self._tool_config(tool))
-        return self.resource_id(self._string_field(response, "id"))
+        return self._created_id(response, "id")
 
     def create_agent(self, tool_ids: tuple[str, ...]) -> str:
         """Provision an agent that requires a signed connection and PCM at 16 kHz."""
         response = self._request("POST", "/agents/create", self._agent_config(tool_ids))
-        return self.resource_id(self._string_field(response, "agent_id"))
+        return self._created_id(response, "agent_id")
+
+    @classmethod
+    def _created_id(cls, response: httpx.Response, field: str) -> str:
+        try:
+            return cls.resource_id(cls._string_field(response, field))
+        except ConvAIError as exc:
+            raise ConvAIError(f"{exc}{_UNKNOWN_CREATE}") from None
 
     @classmethod
     def registration_fingerprint(cls, tools: tuple[ClientTool, ...]) -> str:
@@ -157,6 +165,8 @@ class ConvAIControl:
             )
         except httpx.HTTPError as exc:
             msg = f"ElevenLabs {method} {path} failed ({type(exc).__name__})"
+            if method == "POST":
+                msg += _UNKNOWN_CREATE
             raise ConvAIError(msg) from None
         if response.is_success or (method == "DELETE" and response.status_code == 404):
             return response

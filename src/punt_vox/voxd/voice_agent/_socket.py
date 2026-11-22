@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -78,9 +79,12 @@ class Socket:
 
     @staticmethod
     async def send(socket: ClientConnection, payload: dict[str, object]) -> None:
-        """Write a text frame without exposing payloads in an error."""
+        """Write a text frame; close on cancellation since delivery is uncertain."""
         try:
             await socket.send(json.dumps(payload))
+        except asyncio.CancelledError:
+            await socket.close()
+            raise
         except WebSocketException as exc:
             raise Socket._transfer_error("send", exc) from None
 

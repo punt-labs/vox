@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import pytest
+from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.server import serve
 
 from punt_vox.voxd.voice_agent import (
@@ -247,6 +248,41 @@ async def test_normal_close_before_metadata_is_a_setup_failure() -> None:
                 f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
             ):
                 pytest.fail("closed handshake returned a conversation")
+
+
+async def test_cancelled_tool_result_closes_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(_tool("call_a"))
+        await socket.wait_closed()
+        closed.set()
+
+    async def stall_send(_socket: ClientConnection, _payload: str) -> None:
+        started.set()
+        await asyncio.Future[None]()
+
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        async with Conversation.open(
+            f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
+        ) as session:
+            assert isinstance(await session.receive(), ClientToolCall)
+            with monkeypatch.context() as patch:
+                patch.setattr(ClientConnection, "send", stall_send)
+                send = asyncio.create_task(session.send_tool_result("call_a", "utc"))
+                await started.wait()
+                send.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await send
+            await closed.wait()
+            with pytest.raises(EOFError, match="ended the conversation"):
+                await session.send_text("cannot reuse this conversation")
 
 
 async def test_missing_metadata_times_out_and_closes_socket(

@@ -143,6 +143,12 @@ class VoiceAgent:
             raw = self._file.path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
+        except (OSError, UnicodeDecodeError) as exc:
+            msg = f"Unreadable Vox voice agent config ({type(exc).__name__})"
+            raise ConvAIError(msg) from None
+        return self._parse_registration(raw)
+
+    def _parse_registration(self, raw: str) -> _Registration:
         try:
             data: object = json.loads(raw)
         except (ValueError, RecursionError):
