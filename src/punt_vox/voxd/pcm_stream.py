@@ -93,6 +93,10 @@ class OutputStream(Protocol):
         """Begin invoking the callback."""
         ...
 
+    def stop(self) -> None:
+        """Stop after the device has played every block already pulled."""
+        ...
+
     def abort(self) -> None:
         """Stop at once, discarding what the device has not yet played."""
         ...
@@ -191,6 +195,7 @@ class PcmStreamSink:
         "_buffer",
         "_done",
         "_drained",
+        "_dropped",
         "_fed",
         "_finished",
         "_interrupted",
@@ -203,6 +208,7 @@ class PcmStreamSink:
 
     _buffer: PcmBuffer
     _done: asyncio.Event
+    _dropped: int
     _drained: bool
     _fed: int
     _finished: bool
@@ -218,6 +224,7 @@ class PcmStreamSink:
         self = super().__new__(cls)
         self._buffer = PcmBuffer()
         self._done = asyncio.Event()
+        self._dropped = 0
         self._drained = False
         self._fed = 0
         self._finished = False
@@ -242,7 +249,11 @@ class PcmStreamSink:
             blocksize=_BLOCK_FRAMES,
             callback=self._callback,
         )
-        stream.start()
+        try:
+            stream.start()
+        except BaseException:
+            stream.close()
+            raise
         self._stream = stream
         self._opened_at = time.monotonic()
         logger.info("PCM stream open in %.1f ms", (self._opened_at - started) * 1000)
@@ -263,6 +274,7 @@ class PcmStreamSink:
         """
         started = time.monotonic()
         dropped = PcmDuration(self._buffer.clear())
+        self._dropped += dropped.nbytes
         first = not self._interrupted
         self._interrupted = True
         self._done.set()
@@ -287,25 +299,33 @@ class PcmStreamSink:
         await self._done.wait()
 
     def close(self) -> StreamReport:
-        """Stop the device at once and report how the utterance ended."""
+        """Release the device and report how the utterance ended.
+
+        A stream that played out is stopped, so its last block is heard;
+        anything else (flushed, or closed early) is aborted at once.
+        """
         stream, self._stream = self._stream, None
-        dropped = PcmDuration(self._buffer.clear())
+        self._dropped += self._buffer.clear()
         if stream is not None:
-            stream.abort()
+            if self._drained and not self._interrupted:
+                stream.stop()
+            else:
+                stream.abort()
             stream.close()
         report = StreamReport(
             fed=PcmDuration(self._fed),
             played=PcmDuration(self._played),
-            dropped=dropped,
+            dropped=PcmDuration(self._dropped),
             interrupted=self._interrupted,
             underflows=self._underflows,
         )
         logger.info(
             "PCM stream closed at %.0f ms: fed %.0f ms, played %.0f ms, "
-            "interrupted=%s, underflows=%d",
+            "dropped %.0f ms, interrupted=%s, underflows=%d",
             self._since_open_ms(),
             report.fed.ms,
             report.played.ms,
+            report.dropped.ms,
             report.interrupted,
             report.underflows,
         )

@@ -20,6 +20,7 @@ import os
 import struct
 import sys
 import time
+from collections.abc import Coroutine
 
 import httpx
 
@@ -72,22 +73,39 @@ async def feed_tone(sink: PcmStreamSink) -> None:
     )
 
 
+async def played_past(sink: PcmStreamSink, seconds: float) -> None:
+    while sink.played.ms < seconds * 1000:
+        await asyncio.sleep(0.005)
+
+
+async def play_out(sink: PcmStreamSink, feeding: Coroutine[None, None, None]) -> None:
+    await feeding
+    sink.finish()
+    await sink.wait()
+
+
 async def main(interrupt_after_s: float) -> None:
     key = os.environ.get("ELEVENLABS_API_KEY")
     async with PlaybackQueue().stream_pcm() as sink:
-        feeding = asyncio.create_task(
-            feed_elevenlabs(sink, key) if key else feed_tone(sink)
+        speech = asyncio.create_task(
+            play_out(sink, feed_elevenlabs(sink, key) if key else feed_tone(sink))
         )
-        while sink.played.ms < interrupt_after_s * 1000:
-            await asyncio.sleep(0.005)
-        logger.info("interruption at %.0f ms of audio played", sink.played.ms)
-        sink.flush()
-        await feeding
+        cue = asyncio.create_task(played_past(sink, interrupt_after_s))
+        await asyncio.wait({speech, cue}, return_when=asyncio.FIRST_COMPLETED)
+        if cue.done():
+            logger.info("interruption at %.0f ms of audio played", sink.played.ms)
+            sink.flush()
+        else:
+            cue.cancel()
+            logger.info("speech ended before the interruption point")
+        await speech
         await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Stream speech through the PCM sink and interrupt it."
+    )
     parser.add_argument("--interrupt-after", type=float, default=2.0)
     args = parser.parse_args()
     logging.basicConfig(

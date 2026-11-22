@@ -31,13 +31,23 @@ NEW = b"\x22\x22"
 class FakeOutputStream:
     """An output device whose callback the test pulls, block by block."""
 
-    __slots__ = ("_callback", "aborted", "closed", "heard", "started")
+    __slots__ = (
+        "_callback",
+        "aborted",
+        "closed",
+        "heard",
+        "start_error",
+        "started",
+        "stopped",
+    )
 
     _callback: OutputCallback
     aborted: bool
     closed: bool
     heard: bytearray
+    start_error: Exception | None
     started: bool
+    stopped: bool
 
     def __new__(cls, callback: OutputCallback) -> Self:
         self = super().__new__(cls)
@@ -45,6 +55,8 @@ class FakeOutputStream:
         self.aborted = False
         self.closed = False
         self.started = False
+        self.stopped = False
+        self.start_error = None
         self.heard = bytearray()
         return self
 
@@ -55,7 +67,12 @@ class FakeOutputStream:
             self.heard += out
 
     def start(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
         self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
 
     def abort(self) -> None:
         self.aborted = True
@@ -194,6 +211,43 @@ class TestPcmStreamSink:
         assert report.dropped.ms == pytest.approx(60.0)
         assert not report.interrupted
 
+    async def test_close_after_play_out_drains_the_last_block(self) -> None:
+        sink, device = open_sink(asyncio.get_running_loop())
+        sink.feed(ms_of(OLD, 30))
+        sink.finish()
+        device.opened.pull(2)
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        sink.close()
+        assert device.opened.stopped
+        assert not device.opened.aborted
+
+    async def test_close_report_counts_audio_the_flush_dropped(self) -> None:
+        sink, device = open_sink(asyncio.get_running_loop())
+        sink.feed(ms_of(OLD, 100))
+        device.opened.pull(1)
+        sink.flush()
+        report = sink.close()
+        assert device.opened.aborted
+        assert report.dropped.ms == pytest.approx(80.0)
+        assert report.interrupted
+
+    async def test_failed_device_start_closes_the_device(self) -> None:
+        device = FakeDevice()
+        sink = PcmStreamSink(asyncio.get_running_loop())
+
+        def failing(
+            *, samplerate: int, blocksize: int, callback: OutputCallback
+        ) -> FakeOutputStream:
+            stream = device(
+                samplerate=samplerate, blocksize=blocksize, callback=callback
+            )
+            stream.start_error = RuntimeError("device busy")
+            return stream
+
+        with pytest.raises(RuntimeError, match="device busy"):
+            sink.open(failing)
+        assert device.opened.closed
+
     async def test_underflow_counts_a_starved_partial_block(self) -> None:
         sink, device = open_sink(asyncio.get_running_loop())
         sink.feed(ms_of(OLD, 30))
@@ -264,10 +318,9 @@ class TestPcmStreamRaces:
             with DeviceThread(device.opened):
                 for _ in range(20):
                     sink.feed(ms_of(OLD, 10))
-                dropped = sink.flush().dropped.nbytes
+                sink.flush()
             report = sink.close()
-            total = report.played.nbytes + dropped + report.dropped.nbytes
-            assert total == report.fed.nbytes
+            assert report.played.nbytes + report.dropped.nbytes == report.fed.nbytes
 
     async def test_concurrent_flushes_drop_each_byte_once(self) -> None:
         """Stop during a stop: two flushers on two threads never double-count."""

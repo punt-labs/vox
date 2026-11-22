@@ -45,7 +45,8 @@ class RawOutputStream:
     """PortAudio output stream on raw buffer objects -- no NumPy dependency.
 
     Only what the streaming PCM sink calls is declared: callback mode,
-    ``start`` to begin pulling, ``abort`` to stop without draining.
+    ``start`` to begin pulling, ``stop`` to drain, ``abort`` to stop without
+    draining.
     """
 
     def __init__(
@@ -59,5 +60,6 @@ class RawOutputStream:
         callback: RawOutputCallback,
     ) -> None: ...
     def start(self) -> None: ...
+    def stop(self) -> None: ...
     def abort(self) -> None: ...
     def close(self) -> None: ...

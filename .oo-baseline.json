@@ -4394,12 +4394,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/pcm_stream.py": {
-    "method_ratio": 0.952,
+    "method_ratio": 0.955,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.71,
+    "avg_params": 0.68,
     "max_complexity": 6.0,
-    "avg_complexity": 1.48,
-    "module_size": 220.0,
+    "avg_complexity": 1.59,
+    "module_size": 234.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 0.833,
     "init_violations": 0.0,
