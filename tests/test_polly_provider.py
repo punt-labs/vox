@@ -356,16 +356,19 @@ class TestPollyVoiceLanguageFiltering:
     def test_list_voices_filters_by_iso_language(
         self, language: str, voices: list[str]
     ) -> None:
+        def describe_voices(**_kwargs: object) -> dict[str, Any]:
+            return _make_describe_voices_response(
+                [
+                    _voice_entry("Joanna", "en-US", ["neural"]),
+                    _voice_entry("Amy", "en-GB", ["standard"]),
+                    _voice_entry("Hans", "de-DE", ["standard"]),
+                    _voice_entry("Zeina", "arb", ["standard"]),
+                    _voice_entry("Zhiyu", "cmn-CN", ["standard"]),
+                ]
+            )
+
         client = MagicMock()
-        client.describe_voices.side_effect = lambda **_: _make_describe_voices_response(
-            [
-                _voice_entry("Joanna", "en-US", ["neural"]),
-                _voice_entry("Amy", "en-GB", ["standard"]),
-                _voice_entry("Hans", "de-DE", ["standard"]),
-                _voice_entry("Zeina", "arb", ["standard"]),
-                _voice_entry("Zhiyu", "cmn-CN", ["standard"]),
-            ]
-        )
+        client.describe_voices.side_effect = describe_voices
         assert PollyProvider(boto_client=client).list_voices(language) == voices
 
 
