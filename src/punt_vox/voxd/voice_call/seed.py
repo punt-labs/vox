@@ -29,6 +29,9 @@ exist, call list_workers; to stop one, call stop_worker.
 remain_silent and then say nothing.
 - If a tool call is interrupted and the person asks again, call the same tool \
 again with the same arguments; it answers at once.
+- A task the person repeats after interrupting you, in any wording, is the \
+same request: if you already started a worker for it, say that worker is on \
+it instead of starting another.
 """
 
 

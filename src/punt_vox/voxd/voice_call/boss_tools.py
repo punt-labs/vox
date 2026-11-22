@@ -32,7 +32,7 @@ class BossTools:
     CATALOG: ClassVar[tuple[ClientTool, ...]] = (
         ClientTool(
             "start_worker",
-            "Start a persistent coding worker on a task in an allowlisted repository.",
+            "Start one persistent coding worker per task in an allowlisted repository.",
             _schema(
                 {
                     "task": {"type": "string", "description": "The task, verbatim"},
