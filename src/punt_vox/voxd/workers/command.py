@@ -38,10 +38,10 @@ class WorkerCommand:
         """Run a bounded client; a missing user manager fails launch closed."""
         argv = ["tmux", "-L", "vox-workers", "-f", "/dev/null", *self._args]
         environment = {k: v for k, v in os.environ.items() if ProcessEnv.admits(k)}
-        if self._scoped():
-            argv[:0] = ["systemd-run", "--user", "--scope", "--quiet", "--"]
-            environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         try:
+            if self._scoped():
+                environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+                argv[:0] = self._scope(environment)
             return subprocess.run(
                 argv,
                 env=environment,
@@ -52,3 +52,18 @@ class WorkerCommand:
             )
         except subprocess.SubprocessError:
             raise RuntimeError("Worker tmux operation failed") from None
+
+    @staticmethod
+    def _scope(environment: dict[str, str]) -> list[str]:
+        options = subprocess.run(
+            ["systemd-run", "--help"],
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        argv = ["systemd-run", "--user", "--scope", "--quiet"]
+        if "--expand-environment=" in options.stdout:
+            argv.append("--expand-environment=no")
+        return [*argv, "--"]

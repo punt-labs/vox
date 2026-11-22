@@ -2220,7 +2220,7 @@
   },
   "src/punt_vox/voxd/hook_context_handlers.py": {
     "efferent_coupling": 3.0,
-    "public_names": 2.0,
+    "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.5,
     "avg_lcom": 0.5
@@ -2235,6 +2235,13 @@
   "src/punt_vox/voxd/hook_context_store.py": {
     "efferent_coupling": 4.0,
     "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/hook_context_types.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -3269,7 +3276,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/codec.py": {
-    "efferent_coupling": 1.0,
+    "efferent_coupling": 2.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -3314,8 +3321,8 @@
     "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.167,
-    "avg_lcom": 0.167
+    "max_lcom": 0.333,
+    "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/workers/lifecycle.py": {
     "efferent_coupling": 2.0,
@@ -3361,6 +3368,13 @@
   },
   "src/punt_vox/voxd/workers/trust.py": {
     "efferent_coupling": 3.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/workers/types.py": {
+    "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
