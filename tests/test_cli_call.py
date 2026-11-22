@@ -80,10 +80,10 @@ def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> No
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
-def test_the_verbs_are_start_and_stop() -> None:
-    """A call agent is attached to no session, so there is nothing to transfer."""
+def test_the_verbs_are_start_stop_and_context() -> None:
+    """Context is inspectable without starting or transferring a call."""
     group = cast("typer.core.TyperGroup", typer.main.get_command(CallCli.build_app()))
-    assert set(group.commands) == {"start", "stop"}
+    assert set(group.commands) == {"start", "stop", "context"}
 
 
 def _start_command() -> typer.core.TyperCommand:

@@ -6,17 +6,13 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.cache import cache_clear, cache_status
 from punt_vox.logging_config import apply_log_level
-from punt_vox.paths import recordings_dir
 from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
-from punt_vox.voxd.fetch_handler import FetchHandler
+from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.log_level_handler import LogLevelHandler
-from punt_vox.voxd.play_handler import PlayHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
-from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
-from punt_vox.voxd.record_handler import RecordHandler
-from punt_vox.voxd.record_store import RecordStore
+from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 
@@ -63,24 +59,16 @@ class HandlerRegistry:
         return self
 
     def build(self) -> dict[str, MessageHandler]:
-        """Return the canonical handler dispatch dict (speech + system + programs).
-
-        ``record``, ``play``, and ``fetch`` share one :class:`RecordStore` so the
-        containment root and its path checks are defined in exactly one place;
-        ``fetch`` also resolves music parts through the programs' catalog library.
-        """
-        store = RecordStore(recordings_dir())
+        """Return the canonical handler dispatch table."""
         return {
             "synthesize": SynthesizeHandler(
                 synthesis=self._synthesis,
                 playback=self._playback,
                 once_dedup=OnceDedup(),
             ),
-            "record": RecordHandler(synthesis=self._synthesis, store=store),
-            "play": PlayHandler(playback=self._playback, store=store),
-            "fetch": FetchHandler(store=store, music=self._programs.library),
-            "rec_list": RecListHandler(store),
-            "rec_remove": RecRemoveHandler(store),
+            **RecordingHandlers.build(
+                self._synthesis, self._playback, self._programs.library
+            ),
             "cache_status": CacheStatusHandler(cache_status),
             "cache_clear": CacheClearHandler(cache_clear),
             "set_log_level": LogLevelHandler(apply_log_level),
@@ -92,5 +80,6 @@ class HandlerRegistry:
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
             "provider_status": ProviderStatusHandler(),
+            **HookContextHandlers().handlers(),
             **self._programs.handlers(),
         }
