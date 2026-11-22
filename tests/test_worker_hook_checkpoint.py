@@ -15,6 +15,7 @@ from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextRelay, main
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
@@ -67,7 +68,7 @@ async def test_delivered_session_start_is_durable_without_list(tmp_path: Path) -
             patch("punt_vox.voxd.workers.wiring.WorkerRegistry", return_value=registry),
             patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
         ):
-            handlers = WorkerContext.handlers()
+            handlers = WorkerContext.handlers(PlaybackQueue())
         socket = AsyncMock()
         await handlers["hook_event"](
             {

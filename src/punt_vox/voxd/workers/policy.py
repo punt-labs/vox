@@ -36,6 +36,11 @@ class WorkerRepoPolicy:
             raise ValueError("worker_repos must be a list of repository paths")
         return {Path(str(p)).expanduser().resolve() for p in paths}
 
+    def repos(self) -> tuple[str, ...]:
+        """Return the allowlisted repository paths, sorted for a stable prompt."""
+        raw = self._config.read_field("worker_repos") or "[]"
+        return tuple(sorted(str(path) for path in self._allowed(raw)))
+
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""
         allowed = self._allowed(self._config.read_field("worker_repos") or "[]")

@@ -114,6 +114,10 @@ class WorkerRegistry:
             self._workers[record.id] = record
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
+    def projects(self) -> tuple[str, ...]:
+        """Return the repositories this registry may start workers in."""
+        return self._policy.repos()
+
     def list(self) -> list[WorkerRecord]:
         """Reconcile live state, including after a daemon restart."""
         result: list[WorkerRecord] = []

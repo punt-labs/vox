@@ -27,12 +27,16 @@ class WorkerSubsystem:
     @staticmethod
     def build(store: HookContextStore) -> dict[str, MessageHandler]:
         """Rehydrate the registry at daemon startup."""
-        return WorkerHandlers.build(
+        return WorkerSubsystem.actor(store).handlers(store)
+
+    @staticmethod
+    def actor(store: HookContextStore) -> WorkerHandlers:
+        """Return the one serialized worker actor bound to the hook store."""
+        return WorkerHandlers(
             WorkerRegistry(
                 WorkerRepoPolicy(ConfigStore(ConfigStore.global_dir())),
                 WorkerRecords(user_state_dir() / "workers"),
                 {"tmux": TmuxWorkerProvider()},
                 {"claude": ClaudeProfile(store)},
-            ),
-            store,
+            )
         )
