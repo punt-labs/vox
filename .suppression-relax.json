@@ -12,7 +12,7 @@
     "added_at": "2026-08-25T08:01:32Z"
   },
   {
-    "file": "src/punt_vox/voxd/pcm_stream.py",
+    "file": "src/punt_vox/voxd/pcm_output.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.",
     "added_at": "2026-11-22T07:34:00.284238Z"

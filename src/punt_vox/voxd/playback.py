@@ -17,11 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Self, final
 
-from punt_vox.voxd.pcm_stream import (
-    OutputStreamFactory,
-    PcmStreamSink,
-    sounddevice_output_stream,
-)
+from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
+from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
 
 logger = logging.getLogger(__name__)

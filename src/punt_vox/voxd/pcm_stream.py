@@ -22,23 +22,24 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Buffer, Callable
+from collections.abc import Buffer
 from dataclasses import dataclass
-from typing import Literal, Protocol, Self, final
+from typing import TYPE_CHECKING, Literal, Self, final
+
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.pcm_output import OutputStream, OutputStreamFactory
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "PCM_SAMPLE_RATE_HZ",
     "FlushReport",
-    "OutputDeviceLostError",
-    "OutputStream",
-    "OutputStreamFactory",
     "PcmBuffer",
     "PcmDuration",
     "PcmStreamSink",
     "StreamReport",
-    "sounddevice_output_stream",
 ]
 
 PCM_SAMPLE_RATE_HZ = 16_000
@@ -94,84 +95,6 @@ class StreamReport:
     def degraded(self) -> bool:
         """Return whether the device starved, flagged, or stopped on its own."""
         return bool(self.underflows or self.device_flags or self.device_lost)
-
-
-class OutputDeviceLostError(RuntimeError):
-    """The output device stopped before the stream ended."""
-
-
-class OutputStream(Protocol):
-    """The slice of a PortAudio raw output stream the sink drives."""
-
-    def start(self) -> None:
-        """Begin invoking the callback."""
-        ...
-
-    def stop(self) -> None:
-        """Stop after the device has played every block already pulled."""
-        ...
-
-    def abort(self) -> None:
-        """Stop at once, discarding what the device has not yet played."""
-        ...
-
-    def close(self) -> None:
-        """Release the device."""
-        ...
-
-
-type OutputCallback = Callable[[Buffer, int, object, object], None]
-
-
-class OutputStreamFactory(Protocol):
-    """Open a mono int16 output stream that pulls audio through *callback*.
-
-    *finished_callback* runs on the device thread once the stream stops,
-    whether voxd stopped it or the device went away.
-    """
-
-    def __call__(
-        self,
-        *,
-        samplerate: int,
-        blocksize: int,
-        callback: OutputCallback,
-        finished_callback: Callable[[], None],
-    ) -> OutputStream:
-        """Return an unstarted stream."""
-        ...
-
-
-def sounddevice_output_stream(
-    *,
-    samplerate: int,
-    blocksize: int,
-    callback: OutputCallback,
-    finished_callback: Callable[[], None],
-) -> OutputStream:
-    """Open the default PortAudio output device.
-
-    Imports ``sounddevice`` here, not at module scope: it is the optional
-    ``call`` extra, and every ``voxd`` start imports this module.
-    """
-    try:
-        from sounddevice import RawOutputStream
-    except (ImportError, OSError) as exc:
-        msg = (
-            "streaming playback needs the `call` extra and PortAudio: "
-            "install punt-vox[call] and libportaudio2"
-        )
-        raise RuntimeError(msg) from exc
-
-    return RawOutputStream(
-        samplerate=samplerate,
-        blocksize=blocksize,
-        channels=1,
-        dtype="int16",
-        latency="low",
-        callback=callback,
-        finished_callback=finished_callback,
-    )
 
 
 @final

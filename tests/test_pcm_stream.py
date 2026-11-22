@@ -15,10 +15,9 @@ from typing import Self, final
 
 import pytest
 
+from punt_vox.voxd.pcm_output import OutputCallback, OutputDeviceLostError
 from punt_vox.voxd.pcm_stream import (
     PCM_SAMPLE_RATE_HZ,
-    OutputCallback,
-    OutputDeviceLostError,
     PcmBuffer,
     PcmDuration,
     PcmStreamSink,
