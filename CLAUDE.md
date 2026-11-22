@@ -63,7 +63,7 @@ An agent (or human) calls an MCP tool or CLI command requesting speech. The requ
 
 ### Key architectural boundary: daemon vs. clients
 
-**`voxd`** is the persistent audio daemon — it owns the playback queue, provider connections, cache, and system service lifecycle. It has no MCP awareness, no session state, no project context. **Clients** (`VoxClient`/`VoxClientSync`) are lightweight WebSocket wrappers. The MCP server (`server.py`) and hook handlers (`hooks.py`) are both thin clients of `voxd` — they translate MCP/hook semantics into daemon RPC calls. No business logic in the client layer.
+**`voxd`** is the persistent audio daemon — it owns the playback queue, provider connections, cache, system service lifecycle, and a bounded, in-memory hook context store keyed by session. It has no MCP awareness and does not persist hook history. **Clients** (`VoxClient`/`VoxClientSync`) are lightweight WebSocket wrappers. The MCP server (`server.py`) and hook handlers (`hooks.py`) are both thin clients of `voxd` — they translate MCP/hook semantics into daemon RPC calls. No business logic in the client layer.
 
 This separation means: daemon bugs are about audio, providers, caching, and system paths. Client bugs are about session state, MCP protocol, and hook classification. They never overlap.
 

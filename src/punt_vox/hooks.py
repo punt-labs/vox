@@ -35,11 +35,13 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
+from punt_vox.hook_context_relay import HookContextCommand
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
     NotificationPayload,
     StopPayload,
 )
+from punt_vox.hook_speech import HookSpeech
 from punt_vox.nudge_hook import NudgeHook
 from punt_vox.quips import (
     ACKNOWLEDGE_PHRASES,
@@ -50,12 +52,6 @@ from punt_vox.quips import (
     STOP_PHRASES,
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
-)
-from punt_vox.session_spec import SessionSpec
-from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,43 +78,22 @@ usage.register(
 # Shared helpers
 
 
-def _warn_unexpected_read_error(exc: OSError) -> None:
-    """Log a genuine stdin read failure; stay quiet on a non-fd stdin.
-
-    A real empty or closed pipe returns ``b""`` and never raises, so any
-    ``OSError`` carrying an errno is a genuine failure worth logging.
-    ``errno`` is None only for a non-fd stdin (e.g. ``StringIO`` in tests).
-    """
-    if exc.errno is not None:
-        logger.warning("hook stdin read failed: errno %s (%s)", exc.errno, exc)
-
-
 def _read_hook_input() -> dict[str, object]:
     """Read JSON hook payload from stdin (non-blocking).
 
     Uses ``select`` + ``os.read`` to avoid blocking forever when
     Claude Code does not close the stdin pipe.
     """
-    raw_bytes = b""
     try:
-        fd = sys.stdin.fileno()
-        if not select.select([fd], [], [], 0.1)[0]:
-            return {}
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(fd, 65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if not select.select([fd], [], [], 0.05)[0]:
-                break
-        raw_bytes = b"".join(chunks)
-        if not raw_bytes.strip():
-            return {}
-        data: object = json.loads(raw_bytes.decode())
+        raw_bytes = _read_hook_bytes(sys.stdin.fileno())
     except OSError as exc:
-        _warn_unexpected_read_error(exc)
+        if exc.errno is not None:
+            logger.warning("hook stdin read failed: errno %s (%s)", exc.errno, exc)
         return {}
+    if not raw_bytes.strip():
+        return {}
+    try:
+        data: object = json.loads(raw_bytes.decode())
     except (json.JSONDecodeError, UnicodeDecodeError):
         # Byte count only, never the content -- an untrusted payload must not
         # forge a second log line or leak into the log.
@@ -130,6 +105,18 @@ def _read_hook_input() -> dict[str, object]:
     if not isinstance(data, dict):
         return {}
     return dict(data)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _read_hook_bytes(fd: int) -> bytes:
+    chunks: list[bytes] = []
+    timeout = 0.1
+    while select.select([fd], [], [], timeout)[0]:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        timeout = 0.05
+    return b"".join(chunks)
 
 
 def _emit(output: dict[str, object]) -> None:
@@ -166,31 +153,7 @@ def _make_client() -> VoxClientSync:
     return VoxClientSync()
 
 
-def _speak_via_voxd(text: str, config: VoxConfig) -> None:
-    """Synthesize and play a phrase via voxd.
-
-    Builds the wire spec through :class:`SessionSpec` so state -- not a
-    daemon-side probe -- is the sole authority on which provider voxd runs.
-    A hook has no caller to answer, so a client-side refusal
-    (:class:`ProviderNotConfiguredError` for empty provider state,
-    :class:`ModelNotAvailableError` for a hand-edited provider/model pair)
-    is logged as a WARNING in ``vox.log`` and no audio plays -- the F1
-    contract in ``docs/provider-authority.md`` §4. ``VoxdConnectionError``
-    and ``VoxdProtocolError`` are still caught so a missing daemon never
-    crashes a hook either.
-    """
-    try:
-        spec = SessionSpec(config).fill(SynthesisSpec(rate=90))
-    except ProviderNotConfiguredError:
-        logger.warning("hook speech skipped: no TTS provider configured for this repo")
-        return
-    except ModelNotAvailableError as exc:
-        logger.warning("hook speech skipped: %s", exc)
-        return
-    try:
-        _make_client().synthesize(text, spec)
-    except (VoxdConnectionError, VoxdProtocolError):
-        logger.warning("voxd not running, skipping speech")
+_speak_via_voxd = HookSpeech(_make_client, logger).speak
 
 
 def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
@@ -556,3 +519,6 @@ def chime_cmd(signal: str) -> None:  # pyright: ignore[reportUnusedFunction]
     """Play a chime in a detached process."""
     with usage.span("hook", "_chime"):
         _chime_via_voxd(signal)
+
+
+hook_app.command("context-event", hidden=True)(HookContextCommand(_read_hook_input).run)
