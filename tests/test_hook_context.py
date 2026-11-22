@@ -182,7 +182,7 @@ def test_shell_hook_delegates_before_stdin_closes(tmp_path: Path) -> None:
                 hook.kill()
 
 
-def test_gap_heals_without_overwriting_newer_fields() -> None:
+def test_advance_and_heal_gap_without_overwriting_newer_fields() -> None:
     """A late arrival repairs a gap; a duplicate cannot mutate the view."""
     store = HookContextStore()
     store.ingest(_event("UserPromptSubmit", 4, prompt="new"))
@@ -193,7 +193,9 @@ def test_gap_heals_without_overwriting_newer_fields() -> None:
         "untracked_through": 0,
     }
     store.ingest(_event("UserPromptSubmit", 2, prompt="old"))
+    before_duplicate = store.snapshot("session-a")
     store.ingest(_event("UserPromptSubmit", 4, prompt="duplicate"))
+    assert store.snapshot("session-a") == before_duplicate
     store.ingest(_event("SessionStart", 1))
     assert store.snapshot("session-a")["goal"] == "new"
     assert store.snapshot("session-a")["session_started"] is True
@@ -250,11 +252,12 @@ def test_projection_is_bounded_redacted_and_session_local() -> None:
     assert store.snapshot("session-b")["active_files"] == []
 
 
-def test_expired_gap_refuses_an_arrival_it_can_no_longer_deduplicate() -> None:
+def test_bounded_advance_expires_oldest_gap_and_refuses_expired_arrival() -> None:
     """Events in expired gaps must not be silently accepted or applied."""
     store = HookContextStore()
     for sequence in range(2, 260, 2):
         store.ingest(_event("Notification", sequence))
+    before_expired = store.snapshot("session-a")
     assert (
         cast("dict[str, object]", store.snapshot("session-a")["gaps"])[
             "untracked_through"
@@ -263,7 +266,22 @@ def test_expired_gap_refuses_an_arrival_it_can_no_longer_deduplicate() -> None:
     )
     with pytest.raises(ValueError, match="expired gap history"):
         store.ingest(_event("SessionStart", 1))
+    assert store.snapshot("session-a") == before_expired
     assert store.snapshot("session-a")["session_started"] is False
+
+
+def test_bounded_heal_split_expires_oldest_interval() -> None:
+    """Splitting the oldest range at capacity expires only its first half."""
+    store = HookContextStore()
+    for sequence in range(4, 259, 2):
+        store.ingest(_event("Notification", sequence))
+    store.ingest(_event("Notification", 2))
+    assert store.snapshot("session-a")["gaps"] == {
+        "highest_seen": 258,
+        "missing_count": 128,
+        "missing_ranges": [(n, n) for n in range(3, 258, 2)],
+        "untracked_through": 1,
+    }
 
 
 def test_failure_survives_unrelated_success_but_not_retry() -> None:

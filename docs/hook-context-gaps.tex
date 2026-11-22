@@ -1,0 +1,127 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+\title{Vox Hook Context Gaps: A Z Specification}
+\author{Punt Labs}
+\maketitle
+
+\section{State}
+
+The daemon tracks missing sequence numbers for a single live session. Each
+pair denotes an inclusive interval; the implementation stores the pairs in
+ascending order. The cutoff bounds what can be deduplicated: a sequence at
+or below it cannot be classified as either missing or seen. No gaps after
+the highest observed sequence are inferred.
+
+\begin{zed}
+  Interval == \nat_1 \cross \nat_1 \\
+  Outcome ::= accepted | duplicate | expired
+\end{zed}
+
+\begin{axdef}
+  maxRanges : \nat_1
+\where
+  maxRanges = 128
+\end{axdef}
+
+\begin{schema}{GapState}
+  highest, cutoff : \nat \\
+  missing : \finset Interval
+\where
+  cutoff \leq highest \\
+  \# missing \leq maxRanges \\
+  \forall lo, hi : \nat_1 | (lo, hi) \in missing @
+    cutoff < lo \land lo \leq hi \land hi < highest \\
+  \forall a, b, c, d : \nat_1 |
+    (a,b) \in missing \land (c,d) \in missing \land (a,b) \neq (c,d) @
+    b + 1 < c \lor d + 1 < a
+\end{schema}
+
+\begin{schema}{InitGaps}
+  GapState
+\where
+  highest = 0 \\
+  cutoff = 0 \\
+  missing = \emptyset
+\end{schema}
+
+\section{Transitions}
+
+An advancing arrival adds at most one interval. Healing removes the received
+number from its enclosing interval, leaving up to two nonempty intervals.
+Either can add at most one to the interval count. These operations use
+\textit{RetainCandidate} to keep the cutoff unchanged or expire exactly the
+oldest interval, including when a heal splits the oldest interval. The
+intermediate \textit{candidate} is not externally visible.
+
+\begin{schema}{RetainCandidate}
+  \Delta GapState \\
+  candidate : \finset Interval
+\where
+  \# candidate \leq maxRanges + 1 \\
+  \# candidate \leq maxRanges \implies
+    missing' = candidate \land cutoff' = cutoff \\
+  \# candidate = maxRanges + 1 \implies
+    (\exists lo, hi : \nat_1 | (lo, hi) \in candidate @ \\
+  \t1  (\forall a,b : \nat_1 | (a,b) \in candidate @ lo \leq a) \land
+    missing' = candidate \setminus \{(lo, hi)\} \land cutoff' = hi)
+\end{schema}
+
+\begin{schema}{AdvanceGaps}
+  RetainCandidate \\
+  sequence? : \nat_1 \\
+  outcome! : Outcome
+\where
+  sequence? > highest \\
+  highest' = sequence? \\
+  candidate = missing \cup
+    \{ l,h : \nat_1 | l = highest + 1 \land h = sequence? - 1 \land l \leq h \} \\
+  outcome! = accepted
+\end{schema}
+
+\begin{schema}{HealGap}
+  RetainCandidate \\
+  sequence? : \nat_1 \\
+  outcome! : Outcome
+\where
+  highest' = highest \\
+  \exists lo, hi : \nat_1 |
+    (lo,hi) \in missing \land lo \leq sequence? \land sequence? \leq hi @ \\
+  \t1 candidate = (missing \setminus \{(lo,hi)\}) \cup \\
+  \t2 \{ l,h : \nat_1 | l = lo \land h = sequence? - 1 \land l \leq h \} \cup \\
+  \t2 \{ l,h : \nat_1 | l = sequence? + 1 \land h = hi \land l \leq h \} \\
+  outcome! = accepted
+\end{schema}
+
+\begin{schema}{IgnoreDuplicate}
+  \Xi GapState \\
+  sequence? : \nat_1 \\
+  outcome! : Outcome
+\where
+  cutoff < sequence? \land sequence? \leq highest \\
+  \lnot (\exists lo,hi : \nat_1 |
+    (lo,hi) \in missing @ lo \leq sequence? \land sequence? \leq hi) \\
+  outcome! = duplicate
+\end{schema}
+
+\begin{schema}{RefuseExpired}
+  \Xi GapState \\
+  sequence? : \nat_1 \\
+  outcome! : Outcome
+\where
+  sequence? \leq cutoff \\
+  outcome! = expired
+\end{schema}
+
+\section{Implementation checks}
+
+\textbf{Advance and heal:} a jump exposes the skipped intervals; healing
+can split an interval without moving the high-water mark.
+\textbf{Duplicate framing:} replay cannot alter the gap report or projection.
+\textbf{Bounded expiry:} both advance and split may fill the range budget; the
+oldest interval expires and an arrival at or below that cutoff changes
+nothing. The distinction between duplicate and expired is observable.
+
+\end{document}
