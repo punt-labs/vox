@@ -132,6 +132,19 @@ def test_mcp_lifecycle_records_a_server_failure(
 
 
 @pytest.mark.usefixtures("lifecycle_logging")
+def test_mcp_lifecycle_records_an_interrupt(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch.object(server, "run_server", side_effect=KeyboardInterrupt),
+        caplog.at_level(logging.INFO),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        mcp_lifecycle.McpLifecycle().run()
+    assert _lifecycle_records(caplog) == [
+        (logging.INFO, "vox MCP server stopped: outcome=interrupted")
+    ]
+
+
+@pytest.mark.usefixtures("lifecycle_logging")
 def test_mcp_lifecycle_records_an_incompatible_sdk(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
