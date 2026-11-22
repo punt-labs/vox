@@ -140,7 +140,11 @@ class TestChimeReply:
         assert "unknown chime" in str(ws.sent[-1]["message"])
         assert any("rejected op" in r.getMessage() for r in caplog.records)
         assert "no-such-chime" not in caplog.text
-        [record] = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        [record] = [
+            r
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.wire_reply" and r.levelno >= logging.WARNING
+        ]
         assert record.getMessage() == "rejected op id='c9': invalid_request"
         assert record.exc_info is None
 

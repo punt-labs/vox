@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Logger-specific test assertions ignore unrelated captured records, preventing
+  asyncio DEBUG diagnostics from breaking single-record checks.
+
 - Daemon DEBUG startup diagnostics report environment-variable presence rather
   than values and omit numeric user/group IDs, preventing account identity leaks.
 

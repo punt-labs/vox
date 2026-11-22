@@ -204,7 +204,9 @@ def test_write_keys_env_empty_value_for_absent_key_is_reported(
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY" not in content
     assert "OPENAI_API_KEY=sk-o" in content
-    (message,) = [r.getMessage() for r in caplog.records]
+    (message,) = [
+        r.getMessage() for r in caplog.records if r.name == "punt_vox.service.keys_env"
+    ]
     assert message.startswith("ELEVENLABS_API_KEY: empty in the environment")
     assert "its provider has no credential" in message
 
