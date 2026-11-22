@@ -263,13 +263,13 @@ reflect that shape, not a copy of biff's.
 | `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/RC/manual | 40 |
-| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/RC/manual | 3 |
-| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/RC/manual | 20 |
-| `integration` | Live provider speech and credential rejection, music levels, and playback capture | See [Integration Tests](#integration-tests) | Nightly/RC/manual | 37 |
-| `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/manual | 40 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |
+| `integration` | Live provider speech and credential rejection, music levels, and playback capture | See [Integration Tests](#integration-tests) | Nightly/manual | 37 |
+| `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
-| Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
+| Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
 9,305 default / 9,593 collected across all markers. Cross-cutting markers
@@ -346,7 +346,7 @@ problem repeated in a different domain, not a new marker.
 ### `integration`, `agent`, and `sdk`
 
 `integration` marks live provider checks, not mocked cross-component wiring.
-The shared nightly/manual/RC suite fails when prerequisites are missing;
+The shared nightly/manual suite fails when prerequisites are missing;
 local runs report and skip missing credentials.
 
 `agent` exercises the real Claude Code CLI and the plugin's MCP server, not
@@ -526,8 +526,6 @@ ElevenLabs uses just over 5,000 characters with `eleven_v3`, forcing two real
 provider chunks with markers on opposite sides of the seam. Missing provider
 credentials or audio prerequisites skip locally; `VOX_PLAYBACK_REQUIRE=1`
 makes them failures in the nightly/manual `roundtrip-live.yml` playback job.
-The reusable workflow also runs this job against the installed candidate wheel
-when called by the release gate.
 Live cases need `ELEVENLABS_API_KEY` and the same `AWS_*` variables as roundtrip.
 Concurrent submission order is not asserted: FIFO applies to enqueued files,
 not to synthesis completion across independent client connections.
@@ -609,12 +607,10 @@ tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
 The separate `roundtrip` job enforces offline speech WER on PRs. The shared
 `roundtrip-live.yml` suite runs espeak-ng, cloud providers, playback capture,
-signal levels, and the Claude agent on Linux, and Say on macOS. The release
-gate runs the same suite with the installed candidate wheel; Linux also
-exercises the wheel's CLI and MCP entry points. The scheduled caller
+signal levels, and the Claude agent on Linux, and Say on macOS. The scheduled caller
 (`.github/workflows/nightly.yml`) uses the `LINEAR_API_KEY` Actions secret
-to file a `repo:vox` Bug linking the failed run attempt. Manual dispatch and
-release-candidate runs do not file issues.
+to file a `repo:vox` Bug linking the failed run attempt. Manual dispatch runs
+do not file issues.
 
 The Linux provider and playback jobs assume the Non-Production `vox-polly-qa`
 IAM role via GitHub OIDC to use Polly in `us-east-1`. Provision the role using
@@ -668,7 +664,7 @@ mapped back to source. Hooks are removed on exit. Processes that deliberately
 strip the environment or are killed before coverage can flush cannot contribute
 data; shell scripts themselves are not Python coverage. Live audio/hardware and
 human-judged tests remain outside automated CI. `sdk` remains empty; the
-live provider and agent checks run in the shared nightly/RC workflow.
+live provider and agent checks run in the shared nightly workflow.
 
 ## Follow-ups
 
