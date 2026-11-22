@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import time
 from contextlib import suppress
 from pathlib import Path
 from typing import final
 
 from punt_vox.voxd.workers.contracts import HarnessProfile
+from punt_vox.voxd.workers.environment import WorkerEnvironment
 
 
 @final
@@ -41,20 +43,29 @@ class TmuxWorkerProvider:
         profile: HarnessProfile,
     ) -> None:
         """Start with an explicitly empty environment, not tmux's server env."""
-        env = [f"{k}={v}" for k, v in profile.environment(os.environ).items()]
-        self._run(
-            "new-session",
-            "-d",
-            "-s",
-            handle,
-            "-c",
-            str(worktree),
-            "--",
-            "env",
-            "-i",
-            *env,
-            *profile.argv(worker_id, task),
-        )
+        environment = WorkerEnvironment()
+        try:
+            self._run(
+                "new-session",
+                "-d",
+                "-s",
+                handle,
+                "-c",
+                str(worktree),
+                "--",
+                "env",
+                "-i",
+                sys.executable,
+                "-E",
+                "-P",
+                "-m",
+                "punt_vox.voxd.workers.bootstrap",
+                str(environment.address),
+                *profile.argv(worker_id, task),
+            )
+            environment.send(profile.environment(os.environ))
+        finally:
+            environment.close()
 
     def steer(
         self, handle: str, words: str, *, urgent: bool, profile: HarnessProfile
