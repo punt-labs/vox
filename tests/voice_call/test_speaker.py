@@ -52,3 +52,11 @@ async def test_the_call_keeps_the_output_across_a_cut() -> None:
     await speaker.close()
     assert not playback.mutex.locked()
     assert [sink.fed for sink in playback.sinks] == [[b"a"], [b"b"]]
+
+
+async def test_an_interruption_before_any_audio_only_records_the_cut() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.interrupt(4)
+    await speaker.play(Audio(b"late", 4))
+    assert playback.sinks == []

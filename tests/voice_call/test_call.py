@@ -355,3 +355,16 @@ async def test_a_call_that_never_connects_times_out(
         reply = await _rpc(handlers, {"type": "call_start"})
         hold.set()
     assert "did not connect" in str(reply)
+
+
+async def test_stop_without_a_call_reports_idle(tmp_path: Path) -> None:
+    workers = FakeWorkers()
+    handlers = CallHandlers(
+        workers,
+        workers,
+        cast("PlaybackQueue", FakePlayback()),
+        connector=_Connector("ws://unused"),
+        trace_dir=tmp_path,
+        opener=_LOOPBACK,
+    )
+    assert (await _rpc(handlers, {"type": "call_stop"}))["result"] == {"state": "idle"}
