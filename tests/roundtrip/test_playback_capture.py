@@ -59,9 +59,20 @@ def elevenlabs_passage() -> str:
         "The sunlight falls across the tables while people read "
         "their favorite stories. "
     )
-    prefix = "The garden gate is open. " + filler * 60
-    ending = " The captain waits beside the window."
-    prefix += "quiet " * ((4990 - len(prefix) - len(ending)) // 6) + ending
+    # Distinct sentences, not a run of one repeated word, fill chunk one to
+    # the limit: the run's spoken or transcribed length drifts per take (31
+    # "quiet" came back 25 to 112 times), which alone moved WER .008 -> .098.
+    padding = (
+        "A small boat drifts past the harbor wall. "
+        "The baker sells warm bread near the old fountain. "
+        "Two children fly a bright red kite high above the green hill by the school."
+    )
+    prefix = (
+        "The garden gate is open. "
+        + filler * 60
+        + padding
+        + " The captain waits beside the window."
+    )
     text = (
         prefix
         + " The mountain stands above the village in the bright morning sunshine. "
