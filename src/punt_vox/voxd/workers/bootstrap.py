@@ -8,7 +8,10 @@ import signal
 import socket
 import subprocess
 import sys
-from typing import cast, final
+from typing import TYPE_CHECKING, cast, final
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 __all__ = ["WorkerBootstrap"]
 
@@ -37,12 +40,18 @@ class WorkerBootstrap:
         WorkerBootstrap._supervise(argv, cast("dict[str, str]", fields))
 
     @staticmethod
+    def _hangup(_signal: int, _frame: FrameType | None) -> None:
+        """Terminate the group while its owning supervisor is still alive."""
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+
+    @staticmethod
     def _supervise(argv: list[str], environment: dict[str, str]) -> None:
         group = os.getpgrp()
         if group != os.getpid():
             raise RuntimeError("Worker bootstrap must own its process group")
-        child = subprocess.Popen(argv, env=environment)
+        previous = signal.signal(signal.SIGHUP, WorkerBootstrap._hangup)
         try:
+            child = subprocess.Popen(argv, env=environment)
             while True:
                 try:
                     child.wait()
@@ -51,6 +60,7 @@ class WorkerBootstrap:
                     continue
         finally:
             os.killpg(group, signal.SIGKILL)
+            signal.signal(signal.SIGHUP, previous)
 
 
 if __name__ == "__main__":

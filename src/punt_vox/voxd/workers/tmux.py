@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
-from contextlib import suppress
 from typing import final
 
 from punt_vox.voxd.workers.command import WorkerCommand
@@ -94,8 +92,6 @@ class TmuxWorkerProvider:
     def _finish(group: int) -> None:
         if group == os.getpgrp():
             raise RuntimeError("Worker pane must have its own process group")
-        with suppress(ProcessLookupError):
-            os.killpg(group, signal.SIGKILL)
         deadline = time.monotonic() + 3
         while True:
             try:
