@@ -159,7 +159,7 @@ async def test_lifespan_starts_tasks_and_applies_a_command(
             # spawn fails -- but the daemon stays up and applies commands anyway,
             # proving the program tier's absence never takes the daemon down.
             assert any(
-                "control writer, loop, mpv, and scene up" in r.getMessage()
+                "mpv supervisor, scene tasks started" in r.getMessage()
                 for r in caplog.records
             )
             # (b) a posted command is applied end-to-end by the running writer.

@@ -64,7 +64,7 @@ class MpvLauncher:
                 start_new_session=True,
             )
         except OSError as exc:
-            logger.error("mpv spawn failed: %s", exc)
+            logger.debug("mpv spawn failed: %s", exc)
             return None
 
     async def connect(self, on_eof: Callable[[], None]) -> MpvClient | None:
@@ -78,7 +78,7 @@ class MpvLauncher:
             client = MpvClient(reader, writer, on_eof)
             client.start()
             return client
-        logger.error("mpv connect failed after %d attempts", _CONNECT_ATTEMPTS)
+        logger.debug("mpv connect failed after %d attempts", _CONNECT_ATTEMPTS)
         return None
 
     def _flags(self) -> list[str]:
