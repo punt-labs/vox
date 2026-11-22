@@ -58,7 +58,7 @@ same names:
 \where
   fed = played + dropped + pending \\
   phase \in \{ interrupted, closed \} \implies pending = 0 \\
-  drained = ztrue \implies phase \in \{ finished, closed \}
+  drained = ztrue \implies pending = 0
 \end{schema}
 
 The first predicate is P1. The second is the state half of P2 and P3.
@@ -122,8 +122,11 @@ can leave, so the stream can still play out.
   phase' = finished \\
   fed' = fed \\
   played' = played \\
-  drained' = drained
+  pending' = 0 \implies drained' = ztrue \\
+  pending' \neq 0 \implies drained' = drained
 \end{schema}
+
+A response that ends with nothing left to play is played out at once.
 
 \begin{schema}{Flush}
   \Delta Sink
@@ -186,7 +189,7 @@ never has: the operational half of P2.
 \begin{schema}{Drain}
   \Delta Sink
 \where
-  phase = finished \\
+  phase \in \{ finished, interrupted \} \\
   pending = 0 \\
   drained = zfalse \\
   drained' = ztrue \\
@@ -198,6 +201,10 @@ never has: the operational half of P2.
 \end{schema}
 
 \texttt{Drain} is the callback finding the buffer empty after
-\texttt{Finish}; it releases waiters.
+\texttt{Finish}; it releases waiters. The callback reads the phase without
+the loop's cooperation, so a \texttt{Flush} may land between that read and
+the drain: \texttt{Drain} is therefore allowed from \texttt{interrupted}
+too. Nothing is pending in either case, so the two orders end in the same
+counts; only the report's \texttt{interrupted} flag differs.
 
 \end{document}

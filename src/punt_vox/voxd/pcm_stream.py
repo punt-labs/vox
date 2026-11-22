@@ -300,6 +300,7 @@ class PcmStreamSink:
         self._dropped += self._buffer.trim_partial_frame()
         self._phase = "finished"
         if not self._buffer:
+            self._drained = True
             self._done.set()
 
     async def wait(self) -> None:

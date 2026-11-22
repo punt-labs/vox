@@ -36,11 +36,11 @@ class FakeOutputStream:
 
     __slots__ = (
         "_callback",
-        "abort_gate",
         "aborted",
         "closed",
         "finished_callback",
         "heard",
+        "release_gate",
         "start_error",
         "started",
         "stop_error",
@@ -48,7 +48,7 @@ class FakeOutputStream:
     )
 
     _callback: OutputCallback
-    abort_gate: threading.Event | None
+    release_gate: threading.Event | None
     aborted: bool
     closed: bool
     finished_callback: Callable[[], None]
@@ -70,7 +70,7 @@ class FakeOutputStream:
         self.stopped = False
         self.start_error = None
         self.stop_error = None
-        self.abort_gate = None
+        self.release_gate = None
         self.heard = bytearray()
         return self
 
@@ -88,14 +88,16 @@ class FakeOutputStream:
         self.started = True
 
     def stop(self) -> None:
+        if self.release_gate is not None:
+            self.release_gate.wait(timeout=5)
         if self.stop_error is not None:
             raise self.stop_error
         self.stopped = True
         self.finished_callback()
 
     def abort(self) -> None:
-        if self.abort_gate is not None:
-            self.abort_gate.wait(timeout=5)
+        if self.release_gate is not None:
+            self.release_gate.wait(timeout=5)
         self.aborted = True
         self.finished_callback()
 
@@ -359,6 +361,49 @@ class TestSinkPhases:
         assert device.opened.stopped
         assert report.dropped.nbytes == 1
 
+    async def test_phase_follows_the_lifecycle(self) -> None:
+        sink, _ = await open_sink()
+        phases = [sink.phase]
+        sink.finish()
+        phases.append(sink.phase)
+        await sink.close()
+        phases.append(sink.phase)
+        assert phases == ["streaming", "finished", "closed"]
+
+    async def test_second_open_is_rejected(self) -> None:
+        sink, device = await open_sink()
+        with pytest.raises(ValueError, match="cannot open"):
+            await sink.open(device)
+        await sink.close()
+
+    async def test_finish_after_flush_is_a_no_op(self) -> None:
+        sink, _ = await open_sink()
+        sink.flush()
+        sink.finish()
+        assert sink.phase == "interrupted"
+        await sink.close()
+
+    async def test_finish_after_close_is_rejected(self) -> None:
+        sink, _ = await open_sink()
+        await sink.close()
+        with pytest.raises(ValueError, match="cannot finish"):
+            sink.finish()
+
+    async def test_empty_response_is_played_out_not_interrupted(self) -> None:
+        """A stop after an empty response finished is a no-op (FlushNoOp)."""
+        sink, device = await open_sink()
+        sink.finish()
+        assert sink.flush().dropped.nbytes == 0
+        report = await sink.close()
+        assert not report.interrupted
+        assert device.opened.stopped
+
+    async def test_close_without_open_reports_nothing_played(self) -> None:
+        sink = PcmStreamSink(asyncio.get_running_loop())
+        sink.feed(ms_of(OLD, 10))
+        report = await sink.close()
+        assert report.dropped.nbytes == report.fed.nbytes
+
     async def test_second_close_is_rejected(self) -> None:
         sink, _ = await open_sink()
         await sink.close()
@@ -427,7 +472,7 @@ class TestDeviceFailures:
     async def test_cancelled_close_waits_for_the_device_release(self) -> None:
         sink, device = await open_sink()
         release = threading.Event()
-        device.opened.abort_gate = release
+        device.opened.release_gate = release
         sink.feed(ms_of(OLD, 100))
         closing = asyncio.create_task(sink.close())
         await asyncio.sleep(0.01)
@@ -438,6 +483,55 @@ class TestDeviceFailures:
         with pytest.raises(asyncio.CancelledError):
             await closing
         assert device.opened.closed
+
+    async def test_cancelled_close_with_a_failing_stop_still_closes(self) -> None:
+        sink, device = await open_sink()
+        release = threading.Event()
+        device.opened.release_gate = release
+        device.opened.stop_error = OSError("device unplugged")
+        sink.finish()
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.01)
+        closing.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert device.opened.closed
+
+    async def test_cancelled_open_whose_start_fails_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        device = FakeDevice()
+        sink = PcmStreamSink(asyncio.get_running_loop())
+        release = threading.Event()
+
+        def slow_failing(
+            *,
+            samplerate: int,
+            blocksize: int,
+            callback: OutputCallback,
+            finished_callback: Callable[[], None],
+        ) -> FakeOutputStream:
+            release.wait(timeout=5)
+            stream = device(
+                samplerate=samplerate,
+                blocksize=blocksize,
+                callback=callback,
+                finished_callback=finished_callback,
+            )
+            stream.start_error = RuntimeError("device busy")
+            return stream
+
+        opening = asyncio.create_task(sink.open(slow_failing))
+        await asyncio.sleep(0.01)
+        opening.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opening
+        assert device.opened.closed
+        assert "after a cancelled open" in caplog.text
 
     async def test_feed_after_device_lost_raises(self) -> None:
         sink, device = await open_sink()
