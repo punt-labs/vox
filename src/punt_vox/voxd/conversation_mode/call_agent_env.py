@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, final
 
+from punt_vox.process_env import ProcessEnv
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -35,14 +37,6 @@ class CallAgentEnv:
 
     NAMES = frozenset(
         {
-            "PATH",
-            "HOME",
-            "USER",
-            "LOGNAME",
-            "SHELL",
-            "LANG",
-            "TERM",
-            "TMPDIR",
             # pi's documented settings (docs/environment-variables.md) that
             # shape a headless RPC run: where its config and credentials
             # live, which model, and its offline/telemetry switches.
@@ -57,7 +51,6 @@ class CallAgentEnv:
             "PI_TELEMETRY",
         }
     )
-    PREFIXES = ("LC_", "XDG_")
 
     @classmethod
     def allowlisted(cls, parent: Mapping[str, str]) -> dict[str, str]:
@@ -67,4 +60,4 @@ class CallAgentEnv:
     @classmethod
     def admits(cls, name: str) -> bool:
         """Return whether *name* is allowlisted, by exact name or by prefix."""
-        return name in cls.NAMES or name.startswith(cls.PREFIXES)
+        return name in cls.NAMES or ProcessEnv.admits(name)

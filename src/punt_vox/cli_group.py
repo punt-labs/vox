@@ -12,6 +12,7 @@ from typer.core import TyperGroup
 
 from punt_vox import usage
 from punt_vox.cli_json_request import JsonRequest
+from punt_vox.commands.worker import WorkerCli
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
@@ -23,6 +24,11 @@ class VoxGroup(TyperGroup):
     """Report parser failures before command callbacks can apply output flags."""
 
     _json_requested: bool = False
+
+    @staticmethod
+    def register_workers(app: typer.Typer) -> None:
+        """Attach the hidden daemon worker control group."""
+        app.add_typer(WorkerCli.build_app(), name="worker", hidden=True)
 
     @classmethod
     def app(cls) -> typer.Typer:

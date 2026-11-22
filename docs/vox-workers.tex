@@ -1,0 +1,157 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+\title{Durable Coding Workers: A Z Specification}
+\author{Punt Labs}
+\maketitle
+
+\section{State and named invariants}
+
+The provider and harness are opaque names. A report is a curated progress
+snapshot, not a hook history. Pending cleanup is orthogonal to process lifecycle:
+a failed cleanup is durable and retried even when the lifecycle is terminal.
+
+\begin{zed}
+  [WORKER, REPORT] \\
+  Phase ::= starting | ready | exited | stopped \\
+  Event ::= sessionStart | update
+\end{zed}
+
+\begin{schema}{Workers}
+  phase : WORKER \pfun Phase \\
+  report : WORKER \pfun REPORT \\
+  readySeen, pending : \power WORKER
+\where
+  \dom phase = \dom report \\
+  readySeen \subseteq \dom phase \\
+  pending \subseteq \dom phase \\
+  \forall w : \dom phase @ phase~w = ready \implies w \in readySeen
+\end{schema}
+
+Named invariants checked by implementation tests are:
+\textbf{durable intent} (launch follows record persistence),
+\textbf{ready continuity} (a live ready worker never regresses),
+\textbf{report freshness} (a delivered report replaces the previous snapshot),
+\textbf{terminal stability} (repeated stop does not change a terminal phase),
+\textbf{retryable cleanup} (terminal does not imply cleanup succeeded), and
+\textbf{unknown identity refusal} (controls require an existing worker).
+Unavailability is not evidence of death. Every omitted state component is framed
+explicitly below. Provider termination and harness cleanup are attempted before
+the termination result is checkpointed; failure is represented by pending.
+Hook delivery receipts follow the curated report checkpoint; receipt is never
+issued for an uncommitted readiness transition.
+
+\begin{schema}{InitWorkers}
+  Workers
+\where
+  phase = \emptyset \\
+  report = \emptyset \\
+  readySeen = \emptyset \\
+  pending = \emptyset
+\end{schema}
+
+\section{Transitions}
+
+\begin{schema}{StartWorker}
+  \Delta Workers \\
+  worker? : WORKER \\
+  initial? : REPORT
+\where
+  worker? \notin \dom phase \\
+  phase' = phase \cup \{worker? \mapsto starting\} \\
+  report' = report \cup \{worker? \mapsto initial?\} \\
+  readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+\begin{schema}{ObserveLiveReport}
+  \Delta Workers \\
+  worker? : WORKER \\
+  fresh? : REPORT \\
+  event? : Event \\
+  next? : Phase
+\where
+  worker? \in \dom phase \\
+  phase~worker? \in \{starting, ready\} \\
+  next? \in \{starting, ready\} \\
+  (phase~worker? = ready \lor event? = sessionStart) \implies next? = ready \\
+  (phase~worker? = starting \land event? = update) \implies next? = starting \\
+  phase' = phase \oplus \{worker? \mapsto next?\} \\
+  report' = report \oplus \{worker? \mapsto fresh?\} \\
+  next? = ready \implies readySeen' = readySeen \cup \{worker?\} \\
+  next? = starting \implies readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+The ready value of next? requires either a previous ready phase or an observed
+SessionStart. Missing hook-store state and provider unavailability are no-ops;
+neither supplies a fresh report nor a new liveness fact.
+
+\begin{schema}{ObserveMissingOrUnavailable}
+  \Xi Workers \\
+  worker? : WORKER
+\where
+  worker? \in \dom phase
+\end{schema}
+
+\begin{schema}{TerminateWorker}
+  \Delta Workers \\
+  worker? : WORKER \\
+  terminal? : Phase
+\where
+  worker? \in \dom phase \\
+  phase~worker? \in \{starting, ready\} \\
+  terminal? \in \{exited, stopped\} \\
+  phase' = phase \oplus \{worker? \mapsto terminal?\} \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending \cup \{worker?\}
+\end{schema}
+
+Confirmed provider death selects exited; explicit stop and successful launch
+rollback select stopped. If rollback cannot confirm termination, starting is
+retained with a durable launch error and reconciliation retries termination.
+Cleanup success removes the pending marker. On failure it remains, and an error
+may be attached to the opaque report without changing process phase.
+
+\begin{schema}{FailedLaunch}
+  \Delta Workers \\
+  worker? : WORKER \\
+  failure? : REPORT \\
+  next? : Phase
+\where
+  worker? \in \dom phase \\
+  phase~worker? = starting \\
+  next? \in \{starting, stopped\} \\
+  phase' = phase \oplus \{worker? \mapsto next?\} \\
+  report' = report \oplus \{worker? \mapsto failure?\} \\
+  readySeen' = readySeen \\
+  pending' = pending \cup \{worker?\}
+\end{schema}
+
+\begin{schema}{RetryCleanup}
+  \Delta Workers \\
+  worker? : WORKER \\
+  remaining? : \power WORKER \\
+  result? : REPORT
+\where
+  worker? \in pending \\
+  remaining? \subseteq \{worker?\} \\
+  pending' = (pending \setminus \{worker?\}) \cup remaining? \\
+  report' = report \oplus \{worker? \mapsto result?\} \\
+  phase' = phase \\
+  readySeen' = readySeen
+\end{schema}
+
+\begin{schema}{RepeatTerminalStop}
+  \Xi Workers \\
+  worker? : WORKER
+\where
+  worker? \in \dom phase \\
+  phase~worker? \in \{exited, stopped\} \\
+  worker? \notin pending
+\end{schema}
+
+\end{document}

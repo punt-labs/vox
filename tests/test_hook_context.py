@@ -60,7 +60,10 @@ def test_counter_fsync_failure_preserves_last_committed_sequence(
     assert HookSequence(tmp_path, "a").next() == 2
 
 
-def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
+@pytest.mark.parametrize("worker_only", [False, True])
+def test_relay_stages_without_waiting_for_delivery(
+    tmp_path: Path, worker_only: bool
+) -> None:
     """The hook returns after allocating a sequence and starting a child."""
     staged: list[object] = []
 
@@ -82,13 +85,14 @@ def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
                 "hook_event_name": "Stop",
                 "nested": [{"Api-Key": "secret-value"}],
             }
-        ).submit()
+        ).submit(worker_only=worker_only)
     assert staged == [
         {
             "session_id": "a",
             "hook_event_name": "Stop",
             "relay_seq": 1,
             "nested": [{"Api-Key": "[redacted]"}],
+            **({"_vox_worker_only": True} if worker_only else {}),
         }
     ]
 
@@ -256,12 +260,14 @@ def test_detached_relay_logs_nesting_failure_without_input(
 
 
 def test_enabled_boundary(tmp_path: Path) -> None:
-    """Global plugin registration cannot relay an event from an unenabled repo."""
+    """An unenabled repository requires daemon admission before sending an event."""
     (tmp_path / ".git").mkdir()
-    command = HookContextCommand(lambda: {"cwd": str(tmp_path)})
+    command = HookContextCommand(
+        lambda: {"cwd": str(tmp_path), "session_id": "a", "hook_event_name": "Stop"}
+    )
     with patch.object(HookContextRelay, "submit") as submit:
         command.run(enabled_only=True)
-    submit.assert_not_called()
+    submit.assert_called_once_with(worker_only=True)
 
 
 def test_enabled_boundary_rejects_symlink(tmp_path: Path) -> None:

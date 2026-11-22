@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -50,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 app = VoxGroup.app()
 app.add_typer(hook_app, name="hook", hidden=True)
+VoxGroup.register_workers(app)
 
 # ---------------------------------------------------------------------------
 # cache subcommand group
@@ -650,7 +650,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 
     provider_name = cfg.provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
-    desktop_reg = _desktop_registration()
+    desktop_reg = DesktopInstaller.registration()
 
     info: dict[str, str | None] = {
         "daemon": daemon_status,
@@ -682,36 +682,6 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     if cfg.vibe_tags:
         text_lines.append(f"Tags:      {cfg.vibe_tags}")
     _formatter.emit(info, "\n".join(text_lines))
-
-
-def _desktop_registration() -> str:
-    """Return the Claude Desktop registration state as one operator-visible line.
-
-    Four states are surfaced so the operator sees exactly what
-    ``vox desktop uninstall`` would (or would not) clean up:
-
-    - ``"registered"`` -- a ``vox`` entry lives under ``mcpServers``.
-    - ``"not registered"`` -- config exists, no ``vox`` entry (or the top
-      level is not an object, so no ``mcpServers`` map can be present).
-    - ``"no config"`` -- the config file does not exist.
-    - ``"config unreadable"`` -- the file exists but is malformed or
-      permission-denied. Surfaced distinctly from ``not registered``
-      because the operator cannot conclude anything about the
-      registration from a file the CLI cannot parse.
-    """
-    config_path = DesktopInstaller.config_path()
-    if not config_path.exists():
-        return "no config"
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return "config unreadable"
-    if not isinstance(data, dict):
-        return "not registered"
-    servers = cast("dict[str, object]", data).get("mcpServers")
-    if isinstance(servers, dict) and "vox" in servers:
-        return "registered"
-    return "not registered"
 
 
 # ---------------------------------------------------------------------------

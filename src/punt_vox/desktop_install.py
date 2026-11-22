@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 from pathlib import Path
-from typing import ClassVar, Self, final
+from typing import ClassVar, Self, cast, final
 
 from punt_vox.keys import parse_keys_env
 from punt_vox.paths import keys_env_file
@@ -52,6 +53,36 @@ class DesktopInstaller:
         self._provider = provider
         self._audio_dir = audio_dir
         return self
+
+    @classmethod
+    def registration(cls) -> str:
+        """Return the Claude Desktop registration state as one operator-visible line.
+
+        Four states are surfaced so the operator sees exactly what
+        ``vox desktop uninstall`` would (or would not) clean up:
+
+        - ``"registered"`` -- a ``vox`` entry lives under ``mcpServers``.
+        - ``"not registered"`` -- config exists, no ``vox`` entry (or the top
+          level is not an object, so no ``mcpServers`` map can be present).
+        - ``"no config"`` -- the config file does not exist.
+        - ``"config unreadable"`` -- the file exists but is malformed or
+          permission-denied. Surfaced distinctly from ``not registered``
+          because the operator cannot conclude anything about the
+          registration from a file the CLI cannot parse.
+        """
+        config_path = cls.config_path()
+        if not config_path.exists():
+            return "no config"
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return "config unreadable"
+        if not isinstance(data, dict):
+            return "not registered"
+        servers = cast("dict[str, object]", data).get("mcpServers")
+        if isinstance(servers, dict) and "vox" in servers:
+            return "registered"
+        return "not registered"
 
     @classmethod
     def config_path(cls) -> Path:

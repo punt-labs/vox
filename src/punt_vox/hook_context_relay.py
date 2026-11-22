@@ -9,17 +9,15 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
-from typing import Self, cast
+from typing import Self, cast, final
 
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.deposited_files import VoxMarker
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.hook_context_admission import HookContextAdmission
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_event import HookIdentity
 from punt_vox.hook_context_stage import HookContextStage
-from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_sequence import HookSequence
 from punt_vox.logging_config import configure_client_logging
 from punt_vox.paths import user_state_dir
@@ -27,6 +25,7 @@ from punt_vox.paths import user_state_dir
 logger = logging.getLogger(__name__)
 
 
+@final
 class HookContextCommand:
     """Translate the live relay's stamping error into a visible CLI failure."""
 
@@ -43,10 +42,11 @@ class HookContextCommand:
         """Stamp and relay a live Claude Code hook payload."""
         read_payload = self._read
         try:
-            relay = HookContextRelay(read_payload())
-            if enabled_only and not relay.enabled():
+            payload = read_payload()
+            if enabled_only and not payload:
                 return
-            relay.submit()
+            relay = HookContextRelay(payload)
+            relay.submit(worker_only=enabled_only and not relay.enabled())
         except (OSError, ValueError, RecursionError) as exc:
             reason = str(exc) if type(exc) is ValueError else type(exc).__name__
             logger.error("hook context stamping or staging failed: %s", reason)
@@ -54,6 +54,7 @@ class HookContextCommand:
             raise typer.Exit(1) from None
 
 
+@final
 class HookContextRelay:
     """The sender-side hook command's context fanout."""
 
@@ -68,17 +69,9 @@ class HookContextRelay:
 
     def enabled(self) -> bool:
         """Honor the plugin's existing per-repo enable boundary."""
-        cwd = HookEnvelope.cwd_of(self._payload)
-        if cwd is None:
-            return False
-        root = find_repo_root(cwd)
-        roots = (root,) if root is not None else (cwd, *cwd.parents)
-        return any(
-            VoxMarker(path / DEFAULT_CONFIG_DIR / "enabled", path).is_present()
-            for path in roots
-        )
+        return HookContextAdmission(self._payload).enabled()
 
-    def submit(self) -> None:
+    def submit(self, *, worker_only: bool = False) -> None:
         """Validate and stamp synchronously; never wait for network delivery."""
         identity = HookIdentity.parse(self._payload)
         if "relay_seq" in self._payload:
@@ -89,6 +82,8 @@ class HookContextRelay:
         staged = HookContextStage.prepare(identity, self._payload, sequence_dir)
         counter = HookSequence(sequence_dir, identity.session)
         staged["relay_seq"] = counter.next()
+        if worker_only:
+            staged["_vox_worker_only"] = True
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as source:
             json.dump(staged, source, ensure_ascii=True, allow_nan=False)
             source.seek(0)
@@ -106,8 +101,14 @@ def main() -> int:
     """Deliver the staged payload; log failures without printing its content."""
     configure_client_logging(role="hook")
     try:
-        payload = cast("dict[str, object]", json.load(sys.stdin))
-        asyncio.run(HookContextClient.send_event(payload))
+        data: object = json.load(sys.stdin)
+        if not isinstance(data, dict):
+            raise ValueError("Staged hook must be an object")
+        payload = cast("dict[str, object]", data)
+        worker_only = payload.pop("_vox_worker_only", False)
+        if not isinstance(worker_only, bool):
+            raise ValueError("Staged worker admission flag must be boolean")
+        asyncio.run(HookContextClient.send_event(payload, worker_only=worker_only))
     except (
         ValueError,
         OSError,
