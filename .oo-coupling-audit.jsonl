@@ -707,3 +707,4 @@
 {"ts":"2026-11-22T17:01:27Z","commit":"da61fa1","source":null,"files_scored":476,"files_improved":0,"files_regressed":2,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-11-22T17:03:00Z","commit":"da61fa1","source":null,"files_scored":477,"files_improved":0,"files_regressed":2,"verdict":"fail","reason":null,"deltas":{},"backfilled":["src/punt_vox/voxd/workers/lifecycle.py"]}
 {"ts":"2026-11-22T17:06:09Z","commit":"da61fa1","source":"PL-1303","files_scored":2,"files_improved":0,"files_regressed":0,"verdict":"rebaseline-files","reason":"PL-1303 review: resilient loading adds a diagnostic logger, and the registry delegates lifecycle value transitions to a focused WorkerLifecycle collaborator. Resource failure handling no longer remains entangled with durable ownership.","deltas":{},"improved":{}}
+{"ts":"2026-11-22T17:19:57Z","commit":"d2dc7dd","source":null,"files_scored":477,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}

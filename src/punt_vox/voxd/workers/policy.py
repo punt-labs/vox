@@ -23,9 +23,8 @@ class WorkerRepoPolicy:
         self._config = config
         return self
 
-    def resolve(self, project: str) -> Path:
-        """Refuse subdirectories, unlisted repositories and malformed policy."""
-        raw = self._config.read_field("worker_repos") or "[]"
+    @staticmethod
+    def _allowed(raw: str) -> set[Path]:
         try:
             repos: object = ast.literal_eval(raw)
         except (ValueError, SyntaxError) as exc:
@@ -35,8 +34,12 @@ class WorkerRepoPolicy:
         paths = cast("list[object]", repos)
         if not all(isinstance(p, str) for p in paths):
             raise ValueError("worker_repos must be a list of repository paths")
+        return {Path(str(p)).expanduser().resolve() for p in paths}
+
+    def resolve(self, project: str) -> Path:
+        """Refuse subdirectories, unlisted repositories and malformed policy."""
+        allowed = self._allowed(self._config.read_field("worker_repos") or "[]")
         path = Path(project).expanduser().resolve(strict=True)
-        allowed = {Path(str(p)).expanduser().resolve() for p in paths}
         if path not in allowed:
             raise ValueError(
                 f"Worker project is not allowlisted in worker_repos: {path}"
@@ -46,6 +49,7 @@ class WorkerRepoPolicy:
             check=True,
             capture_output=True,
             text=True,
+            timeout=5,
         )
         if Path(result.stdout.strip()).resolve() != path:
             raise ValueError("Worker project must be a repository top level")
@@ -59,4 +63,5 @@ class WorkerRepoPolicy:
             check=True,
             capture_output=True,
             text=True,
+            timeout=20,
         )
