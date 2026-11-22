@@ -16,19 +16,25 @@ through the same lifecycle probe as ``start`` and ``stop``.
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import TYPE_CHECKING, Annotated, Self, final
+from typing import TYPE_CHECKING, Annotated, Literal, Self, final
 
 import typer
 
-from punt_vox.client_errors import VoxdRefusedError, VoxError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+    VoxError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service import (
     DaemonLifecycle,
     install as svc_install,
     uninstall as svc_uninstall,
 )
-from punt_vox.service.daemon_status import DaemonStatus
+from punt_vox.service.daemon_status import DaemonState, DaemonStatus
 from punt_vox.service.lifecycle_report import LifecycleRefusedError
 
 if TYPE_CHECKING:
@@ -39,6 +45,8 @@ if TYPE_CHECKING:
     from punt_vox.service.lifecycle_report import LifecycleReport
 
 __all__ = ["DaemonCli", "build_daemon_app"]
+
+logger = logging.getLogger(__name__)
 
 # Either one names a daemon other than the local service, so ``status`` asks
 # it through the client, as ``vox status`` and ``vox doctor`` do.
@@ -210,9 +218,34 @@ class DaemonCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         reading = self._read_status()
+        self._log_status("vox daemon status", reading.state)
         self._formatter.emit(reading.to_json(), reading.text())
         if reading.exit_code:
             raise typer.Exit(code=reading.exit_code)
+
+    @staticmethod
+    def probe_status(client: VoxClientSync) -> str:
+        """Read and record the top-level CLI's liveness-only daemon status."""
+        state = DaemonState.NOT_RUNNING
+        try:
+            client.health()
+            state = DaemonState.RUNNING
+        except (VoxdConnectionError, VoxdProtocolError):
+            pass
+        DaemonCli._log_status("vox status", state)
+        return state.value.replace("_", " ")
+
+    @staticmethod
+    def _log_status(
+        command: Literal["vox status", "vox daemon status"], state: DaemonState
+    ) -> None:
+        reason = {
+            DaemonState.RUNNING: "reachable",
+            DaemonState.NOT_RUNNING: "unreachable",
+            DaemonState.UNKNOWN: "indeterminate",
+            DaemonState.UNRESPONSIVE: "unresponsive",
+        }[state]
+        logger.info("%s: outcome=%s reason=%s", command, state.value, reason)
 
     @classmethod
     def _read_status(cls) -> DaemonStatus:
