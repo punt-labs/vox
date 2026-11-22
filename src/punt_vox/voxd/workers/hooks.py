@@ -1,4 +1,4 @@
-"""Serialize managed hook admission and durable reports with worker controls."""
+"""Admit managed hooks promptly and serialize their durable progress checkpoints."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ __all__ = ["WorkerHooks"]
 
 @final
 class WorkerHooks:
-    """Use one actor lock for lifecycle changes and accepted hook checkpoints."""
+    """Keep admission responsive while lifecycle and checkpoints share an actor."""
 
     __slots__ = ("_lock", "_registry", "_store")
     _store: HookContextStore
@@ -33,13 +33,12 @@ class WorkerHooks:
         return self
 
     async def admit(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Check metadata before the client sends an unenabled repository's event."""
+        """Check advisory metadata without waiting behind worker launches."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            async with self._lock:
-                admitted = await asyncio.to_thread(
-                    self._registry.admits_hook, msg.get("session_id"), msg.get("cwd")
-                )
+            admitted = await asyncio.to_thread(
+                self._registry.admits_hook, msg.get("session_id"), msg.get("cwd")
+            )
         except (OSError, ValueError, RuntimeError) as exc:
             await reply.error(str(exc))
             return
