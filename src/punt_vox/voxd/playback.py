@@ -12,12 +12,17 @@ import os
 import platform
 import subprocess
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Self, final
 
-from punt_vox.voxd.data_root_boundary import relativize_to_data_root
-from punt_vox.voxd.wire_text import SafeText
+from punt_vox.voxd.pcm_stream import (
+    OutputStreamFactory,
+    PcmStreamSink,
+    sounddevice_output_stream,
+)
+from punt_vox.voxd.playback_result import PlaybackResult as PlaybackResult
 
 logger = logging.getLogger(__name__)
 
@@ -43,81 +48,14 @@ _LINUX_AUDIO_ENV_KEYS: tuple[str, ...] = (
     "USER",
 )
 
-# Playback under 50ms is a "success" that almost certainly played nothing.
-_SUSPICIOUS_ELAPSED_S = 0.05
-
 _PLAYBACK_TIMEOUT_DEFAULT_S = 120.0
 _PLAYBACK_TIMEOUT_PADDING_S = 10.0
 _PROBE_TIMEOUT_S = 5.0
 
-# Cap on the stderr blob we keep per playback. ffplay without -loglevel
-# quiet can emit kilobytes of progress lines; we want enough for triage
-# without unbounded growth in memory or log files.
-_MAX_STDERR_LEN = 2000
-
 
 # ---------------------------------------------------------------------------
-# PlaybackResult / PlaybackItem dataclasses
+# PlaybackItem dataclass
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class PlaybackResult:
-    """Outcome of a single audio playback."""
-
-    path: Path
-    rc: int
-    elapsed_s: float
-    stderr: str
-    ts: float
-
-    @property
-    def ok(self) -> bool:
-        """True when the player exited cleanly and actually played something.
-
-        A clean exit that lasted under ``_SUSPICIOUS_ELAPSED_S`` almost
-        certainly played nothing (missing audio backend, silently dropped
-        output), so it is treated as a failure for the user-facing ``play``
-        command -- the same signal ``_log_result`` warns on.
-        """
-        return self.rc == 0 and self.elapsed_s >= _SUSPICIOUS_ELAPSED_S
-
-    def failure_detail(self) -> str:
-        """Raw one-line failure reason (absolute paths and all) for the log."""
-        if self.rc != 0:
-            base = f"player exited rc={self.rc}"
-        else:
-            base = f"played nothing (elapsed {self.elapsed_s:.3f}s)"
-        return f"{base}: {self.stderr}" if self.stderr else base
-
-    def wire_failure_detail(self) -> str:
-        """Prefix-free failure reason for the client frame.
-
-        The raw :meth:`failure_detail` with its host paths stripped: the rc and
-        elapsed verdict carry no path, so they pass through, while an in-jail
-        stderr token relativizes and an out-of-jail one strips via
-        :class:`SafeText`. The client learns why playback failed without seeing
-        an absolute prefix; the raw text stays in the host-local log.
-        """
-        return SafeText.of(self.failure_detail()).text
-
-    def to_health_dict(self) -> dict[str, object]:
-        """Serialize for the authenticated health payload with no host paths.
-
-        ``file`` is an in-jail recording or album path, so it crosses relativized
-        to its data root (``recordings/foo.mp3``) -- or ``None`` if it resolves
-        out of jail. ``stderr`` echoes absolute player paths, so its in-jail
-        tokens relativize and its out-of-jail ones strip via :class:`SafeText`.
-        ``rc``, ``elapsed_s``, and ``ts`` are service verdicts and cross as-is.
-        """
-        rel = relativize_to_data_root(self.path)
-        return {
-            "file": None if rel is None else str(rel.path),
-            "rc": self.rc,
-            "elapsed_s": self.elapsed_s,
-            "stderr": SafeText.of(self.stderr).text,
-            "ts": self.ts,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,15 +77,6 @@ class PlaybackItem:
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
-
-
-def _truncate_stderr(text: str) -> str:
-    """Return ``text`` clipped to ``_MAX_STDERR_LEN`` with head + tail kept."""
-    if len(text) <= _MAX_STDERR_LEN:
-        return text
-    half = _MAX_STDERR_LEN // 2
-    dropped = len(text) - _MAX_STDERR_LEN
-    return f"{text[:half]}\n... [truncated {dropped} bytes] ...\n{text[-half:]}"
 
 
 def _monotonic() -> float:
@@ -252,11 +181,6 @@ class AudioContext:
         return name or "unknown"
 
 
-def _snapshot_audio_context() -> dict[str, str]:
-    """Return the diagnostic snapshot recorded on every playback."""
-    return AudioContext().snapshot()
-
-
 def _player_command(path: Path) -> list[str]:
     """Return the argv for playing ``path`` on this platform.
 
@@ -318,18 +242,22 @@ async def _probe_duration(path: Path) -> float | None:
 class PlaybackQueue:
     """Own the playback queue, mutex, and last-result state for voxd."""
 
-    __slots__ = ("_last_result", "_mutex", "_queue")
+    __slots__ = ("_last_result", "_mutex", "_output_stream", "_queue")
 
     _last_result: PlaybackResult | None
     _mutex: asyncio.Lock
+    _output_stream: OutputStreamFactory
     _queue: asyncio.Queue[PlaybackItem]
 
-    def __new__(cls) -> Self:
-        """Create a playback queue."""
+    def __new__(
+        cls, output_stream: OutputStreamFactory = sounddevice_output_stream
+    ) -> Self:
+        """Create a playback queue that opens PCM streams with *output_stream*."""
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
+        self._output_stream = output_stream
         return self
 
     # -- Properties ----------------------------------------------------------
@@ -355,6 +283,23 @@ class PlaybackQueue:
         """Add an item to the playback queue."""
         await self._queue.put(item)
 
+    @contextlib.asynccontextmanager
+    async def stream_pcm(self) -> AsyncGenerator[PcmStreamSink]:
+        """Own the audio output for one streamed utterance.
+
+        Holds the playback mutex from open to close, so queued speech, chimes
+        and direct play wait behind the stream and resume after it, exactly
+        as they wait behind a file. The device stream is aborted on exit
+        whether the utterance drained, was flushed, or the caller raised.
+        """
+        async with self._mutex:
+            sink = PcmStreamSink(asyncio.get_running_loop())
+            sink.open(self._output_stream)
+            try:
+                yield sink
+            finally:
+                sink.close()
+
     def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""
         self._last_result = value
@@ -366,7 +311,7 @@ class PlaybackQueue:
         and result logging. Each concern is handled by a focused private method.
         """
         cmd = _player_command(path)
-        env_snapshot = _snapshot_audio_context()
+        env_snapshot = AudioContext().snapshot()
 
         size = self._validate_file(path)
         if size is None:
@@ -390,7 +335,7 @@ class PlaybackQueue:
         recorded = self._record_result(
             path=path, rc=rc, elapsed=elapsed, stderr=stderr_text
         )
-        self._log_result(recorded, size, cmd, env_snapshot)
+        recorded.log_outcome(size=size, cmd=cmd, env_snapshot=env_snapshot)
 
     def _validate_file(self, path: Path) -> int | None:
         """Return file size in bytes, or None after recording an error."""
@@ -503,57 +448,7 @@ class PlaybackQueue:
         elapsed = _monotonic() - start
         rc = proc.returncode if proc.returncode is not None else -1
         raw_stderr = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
-        return rc, elapsed, _truncate_stderr(raw_stderr)
-
-    def _log_result(
-        self,
-        result: PlaybackResult,
-        size: int,
-        cmd: list[str],
-        env_snapshot: dict[str, str],
-    ) -> None:
-        """Interpret a playback *result* and log at the appropriate level.
-
-        Takes the recorded :class:`PlaybackResult` -- which already bundles the
-        file, exit code, elapsed time, and stderr -- plus the spawn context
-        (``size``, ``cmd``, ``env_snapshot``) the result does not carry, so the
-        log line reproduces the exact invocation for triage.
-        """
-        name = result.path.name
-        if result.rc != 0:
-            logger.error(
-                "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
-                "cmd=%s audio_env=%s stderr=%r",
-                result.rc,
-                result.elapsed_s,
-                name,
-                size,
-                cmd,
-                env_snapshot,
-                result.stderr,
-            )
-            return
-
-        if result.elapsed_s < _SUSPICIOUS_ELAPSED_S:
-            logger.warning(
-                "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
-                "size=%d audio_env=%s stderr=%r -- probably played nothing",
-                result.elapsed_s,
-                _SUSPICIOUS_ELAPSED_S,
-                name,
-                size,
-                env_snapshot,
-                result.stderr,
-            )
-            return
-
-        logger.debug(
-            "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
-            result.elapsed_s,
-            name,
-            size,
-            result.stderr,
-        )
+        return rc, elapsed, PlaybackResult.truncate_stderr(raw_stderr)
 
     async def consumer(self) -> None:
         """Single consumer: play audio sequentially from the queue.
