@@ -16,7 +16,7 @@ import typer
 
 from punt_vox import __version__, commands as cmds
 from punt_vox.api_key_resolver import ApiKeyResolver
-from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.cli_daemon import DaemonCli, build_daemon_app
 from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_group import VoxGroup
@@ -646,12 +646,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Probe liveness only; provider selection comes from repo state.
-    daemon_status = "not running"
-    try:
-        VoxClientSync().health()
-        daemon_status = "running"
-    except (VoxdConnectionError, VoxdProtocolError):
-        pass
+    daemon_status = DaemonCli.probe_status(VoxClientSync())
 
     provider_name = cfg.provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)

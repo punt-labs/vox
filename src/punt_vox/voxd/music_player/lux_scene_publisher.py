@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.lux_common import LiveScene
+from punt_vox.lux_common.scene_push import NoPush
 from punt_vox.voxd.music_player.lux_fault_boundary import LuxFaultBoundary
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
@@ -117,7 +118,11 @@ class LuxScenePublisher:
             self._live.disarm()
             _trace.error("rejected scene: reason=hub_refused")
             return
-        _trace.info("%s", push.summary)
+        _trace.log(
+            logging.DEBUG if isinstance(push, NoPush) else logging.INFO,
+            "%s",
+            push.summary,
+        )
 
     def _plan(self, delivery: SceneDelivery) -> ScenePush:
         """Return the push this delivery asked for: a demanded install, or the plan."""
