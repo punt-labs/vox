@@ -4,6 +4,13 @@ The default suite needs no API keys, network, or audio hardware, but relies on l
 
 ## Local and CI feedback stages
 
+Releases run the shared nightly suite against the built wheel before publishing
+to TestPyPI, including Polly via OIDC and installed CLI/MCP checks. After the
+TestPyPI install check, PyPI publication uses plain `release` environment approval.
+The post-publish speech smoke installs the tagged version from PyPI in an isolated
+environment and checks OpenAI speech against its transcription word for word.
+It uses the offline oracle phrase, without brand words.
+
 Run `make hooks` once after cloning. Hooks print their elapsed time, stop on the
 first failure, and use the working tree for checks; stage the intended changes
 before committing. `--no-verify` is for emergencies only, never a way to land
