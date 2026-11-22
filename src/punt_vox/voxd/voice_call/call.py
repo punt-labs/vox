@@ -19,7 +19,7 @@ from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
     type Opener = Callable[..., AbstractAsyncContextManager[Conversation]]
+    # Provision the agent and return its signed URL and the session options.
+    type Dial = Callable[[], Awaitable[tuple[str, SessionOptions]]]
 
 __all__ = ["CallState", "VoiceAgentCall"]
 
@@ -64,8 +66,8 @@ class VoiceAgentCall:
     _trace: EventTrace
     _opener: Opener
     _state: CallState
-    _conversation_id: str | None
-    _error: str | None
+    _conversation_id: str | None  # None until ElevenLabs accepts the session.
+    _error: str | None  # None unless the call failed.
     _connected: asyncio.Event
     _transcript: deque[tuple[str | None, dict[str, str]]]  # (response_id, turn)
     _tool_calls: deque[dict[str, object]]
@@ -89,10 +91,11 @@ class VoiceAgentCall:
         self._tool_calls = deque(maxlen=_HISTORY)
         return self
 
-    async def run(self, signed_url: str, options: SessionOptions) -> None:
-        """Hold the call until ElevenLabs ends it, it fails, or it is cancelled."""
+    async def run(self, dial: Dial) -> None:
+        """Dial, then hold the call until it ends, fails, or is cancelled."""
         hung_up = False  # Only a remote hang-up lets the last reply play out.
         try:
+            signed_url, options = await dial()
             async with self._opener(signed_url, options, trace=self._trace) as conv:
                 self._conversation_id = conv.metadata.conversation_id
                 self._state = "live"

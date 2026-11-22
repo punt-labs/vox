@@ -4,6 +4,7 @@ import asyncio
 import base64
 import functools
 import json
+import threading
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,7 @@ from starlette.websockets import WebSocket
 from websockets.asyncio.server import serve
 
 from punt_vox.voxd.voice_agent import Conversation
+from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 
 from .fakes import FakePlayback, FakeWorkers
@@ -273,3 +275,83 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
         hold.set()
     assert cast("dict[str, object]", stopped)["state"] == "ended"
     assert cast("dict[str, object]", started)["state"] == "ended"
+
+
+class _SlowConnector:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
+        del tools
+        self.release.wait(5)
+        raise ConvAIError("agent provisioning failed")
+
+
+async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
+    connector = _SlowConnector()
+    workers = FakeWorkers()
+    handlers = CallHandlers(
+        workers,
+        workers,
+        cast("PlaybackQueue", FakePlayback()),
+        connector=connector,
+        trace_dir=tmp_path,
+        opener=_LOOPBACK,
+    )
+    async with asyncio.timeout(5):
+        start = asyncio.create_task(_rpc(handlers, {"type": "call_start"}))
+        while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
+            "state": "idle"
+        }:
+            await asyncio.sleep(0.01)
+        stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
+        connector.release.set()
+        await start
+    assert cast("dict[str, object]", stopped)["state"] == "ended"
+
+
+async def test_a_failed_provisioning_is_reported_to_the_caller(
+    tmp_path: Path,
+) -> None:
+    connector = _SlowConnector()
+    connector.release.set()
+    workers = FakeWorkers()
+    handlers = CallHandlers(
+        workers,
+        workers,
+        cast("PlaybackQueue", FakePlayback()),
+        connector=connector,
+        trace_dir=tmp_path,
+        opener=_LOOPBACK,
+    )
+    reply = await _rpc(handlers, {"type": "call_start"})
+    assert "provisioning failed" in str(reply)
+    status = (await _rpc(handlers, {"type": "call_status"}))["result"]
+    assert cast("dict[str, object]", status)["state"] == "failed"
+
+
+async def test_a_call_that_never_connects_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hold = asyncio.Event()
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await hold.wait()
+
+    monkeypatch.setattr("punt_vox.voxd.voice_call.handlers._CONNECT_TIMEOUT_S", 0.2)
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        workers = FakeWorkers()
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        assert set(handlers.handlers()) == {"call_start", "call_stop", "call_status"}
+        reply = await _rpc(handlers, {"type": "call_start"})
+        hold.set()
+    assert "did not connect" in str(reply)

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.types import MessageHandler
     from punt_vox.voxd.voice_agent.contracts import ClientTool
-    from punt_vox.voxd.voice_call.call import Opener
+    from punt_vox.voxd.voice_call.call import Dial, Opener
     from punt_vox.voxd.voice_call.contracts import (
         CallInput,
         ProjectAllowlist,
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 __all__ = ["CallHandlers"]
 
-_CONNECT_TIMEOUT_S: Final = 20.0
+_CONNECT_TIMEOUT_S: Final = 30.0  # Provisioning the agent and the handshake.
 
 
 class AgentConnector(Protocol):
@@ -80,9 +80,9 @@ class CallHandlers:
     _workers: WorkerControl
     _projects: ProjectAllowlist
     _playback: PlaybackQueue
-    _connector: AgentConnector | None
+    _connector: AgentConnector | None  # None until a call reads the env key.
     _trace_dir: Path
-    _active: _ActiveCall | None
+    _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
     _opener: Opener
 
@@ -93,7 +93,7 @@ class CallHandlers:
         playback: PlaybackQueue,
         *,
         connector: AgentConnector | None = None,  # None: ElevenLabs, from the env key.
-        trace_dir: Path | None = None,
+        trace_dir: Path | None = None,  # None: the user state directory.
         opener: Opener = Conversation.open,
     ) -> Self:
         """Bind the workers, their allowlist, the playback queue and the agent."""
@@ -141,19 +141,19 @@ class CallHandlers:
         except TimeoutError:
             await self._cancel(active)
             raise ConvAIError("the ElevenLabs conversation did not connect") from None
-        return active.status()
+        status = active.status()
+        if status["state"] == "failed":
+            raise ConvAIError(str(status["error"]))
+        return status
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
         if self._active is not None and not self._active.task.done():
             raise ValueError("a call is already running; stop it first")
+        agent = self._agent()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
             if "script" in msg
             else MicInput()
-        )
-        prompt = CallSeed(self._projects.repos(), await self._workers.workers())
-        url, tool_ids = await asyncio.to_thread(
-            self._agent().connection, BossTools.CATALOG
         )
         self._trace_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -168,17 +168,20 @@ class CallHandlers:
             trace=EventTrace(stream),
             opener=self._opener,
         )
-        options = SessionOptions(prompt.prompt(), tool_ids)
-        task = asyncio.create_task(self._run(call, url, options, stream))
+
+        async def dial() -> tuple[str, SessionOptions]:
+            prompt = CallSeed(self._projects.repos(), await self._workers.workers())
+            url, tool_ids = await asyncio.to_thread(agent.connection, BossTools.CATALOG)
+            return url, SessionOptions(prompt.prompt(), tool_ids)
+
+        task = asyncio.create_task(self._run(call, dial, stream))
         self._active = _ActiveCall(call, task, path)
         return self._active
 
     @staticmethod
-    async def _run(
-        call: VoiceAgentCall, url: str, options: SessionOptions, stream: TextIO
-    ) -> None:
+    async def _run(call: VoiceAgentCall, dial: Dial, stream: TextIO) -> None:
         try:
-            await call.run(url, options)
+            await call.run(dial)
         finally:
             stream.close()
 
