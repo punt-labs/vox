@@ -231,6 +231,32 @@ async def test_queued_steer_times_out_without_delivery() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
+    """No delivery after deadline: a held actor cannot defer a stale steer."""
+    registry = MagicMock(spec=WorkerRegistry)
+    actor = asyncio.Lock()
+    steering = WorkerSteering(registry, actor)
+    async with actor:
+        with patch.object(WorkerSteering, "TIMEOUT", 0.01):
+            with pytest.raises(ValueError, match="busy|deadline"):
+                await asyncio.wait_for(
+                    steering.handle(
+                        {"worker_id": "one", "words": "stale", "urgent": True}
+                    ),
+                    1,
+                )
+        registry.steer.assert_not_called()
+    registry.steer.assert_not_called()
+    registry.steer.return_value = 4
+    registry.receipt.return_value = 5
+    response = await asyncio.wait_for(
+        steering.handle({"worker_id": "one", "words": "fresh"}), 1
+    )
+    assert response["heard"] is True
+    registry.steer.assert_called_once_with("one", "fresh", urgent=False)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["timeout", "error"])
 async def test_failed_steer_releases_worker_lock(failure: str) -> None:
     registry = MagicMock(spec=WorkerRegistry)

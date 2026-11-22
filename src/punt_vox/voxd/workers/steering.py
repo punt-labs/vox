@@ -35,23 +35,38 @@ class WorkerSteering:
         urgent = msg.get("urgent", False)
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a bool")
+        deadline = asyncio.get_running_loop().time() + self.TIMEOUT
         worker_lock = self._workers.setdefault(worker_id, asyncio.Lock())
+        await self._acquire(worker_lock, deadline)
         try:
-            await asyncio.wait_for(worker_lock.acquire(), timeout=self.TIMEOUT)
-        except TimeoutError as exc:
-            raise ValueError("worker is busy with another steer") from exc
-        try:
-            return await self._deliver(worker_id, words, urgent=urgent)
+            return await self._deliver(
+                worker_id, words, urgent=urgent, deadline=deadline
+            )
         finally:
             worker_lock.release()
 
+    @staticmethod
+    async def _acquire(lock: asyncio.Lock, deadline: float) -> None:
+        remaining = deadline - asyncio.get_running_loop().time()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=remaining)
+        except TimeoutError as exc:
+            raise ValueError(
+                "worker is busy with another steer or control operation"
+            ) from exc
+
     async def _deliver(
-        self, worker_id: str, words: str, *, urgent: bool
+        self, worker_id: str, words: str, *, urgent: bool, deadline: float
     ) -> dict[str, object]:
-        async with self._lock:
+        await self._acquire(self._lock, deadline)
+        try:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise ValueError("steering deadline expired before delivery")
             baseline = await asyncio.to_thread(
                 self._registry.steer, worker_id, words, urgent=urgent
             )
+        finally:
+            self._lock.release()
         receipt = await self._receipt(worker_id, words, baseline)
         return {
             "worker_id": worker_id,
