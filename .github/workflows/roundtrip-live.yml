@@ -45,6 +45,7 @@ jobs:
           path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
       - name: Install playback dependencies and subject
+        id: playback-dependencies
         env:
           CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
         run: |
@@ -57,7 +58,14 @@ jobs:
             uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps candidate/*.whl
           fi
           printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
+      - name: Capture eSpeak and ElevenLabs playback
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -k 'not polly' -s
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       - name: Assume the Polly QA role
+        id: playback-role
+        if: ${{ !cancelled() && steps.playback-dependencies.outcome == 'success' }}
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with: &polly-role
           role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
@@ -66,12 +74,10 @@ jobs:
           role-session-name: vox-qa-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           role-duration-seconds: 900
           retry-max-attempts: 3
-      - name: Capture real daemon playback
-        # Keep the installed candidate wheel instead of syncing the checkout.
+      - name: Capture Polly playback
+        if: ${{ !cancelled() && steps.playback-role.outcome == 'success' }}
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -s
-        env:
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -k polly -s
 
   roundtrip-live:
     name: Live speech (${{ matrix.os }})
