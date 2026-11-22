@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Report-only design ratchet: `make design-shadow` compares against
+  `origin/main` (override `DESIGN_BASE`), and PR CI appends its advisory
+  verdict to the job summary even after a gate fails. Explicit architecture
+  layers cover every current module; the report never gates `make check` or CI.
+  Upgrade the quality-gate dev dependency to `punt-oo-ratchet==0.4.0` without
+  changing existing gate policies or baselines.
+
 - Parallel local and coverage test loops, changed-module pre-commit selection,
   opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
   time-bounded flaky-test quarantine policy.

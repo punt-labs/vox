@@ -87,6 +87,12 @@ docs: ## Lint markdown files (matches CI docs job)
 OO_BASE ?=
 COUPLING_BASE ?=
 SUPPRESSION_BASE ?=
+DESIGN_BASE ?= origin/main
+
+.PHONY: design-shadow
+
+design-shadow: ## Report advisory design changes; never part of check
+	uv run oo-ratchet design src/punt_vox --shadow-check "$(DESIGN_BASE)"
 
 check: lint type docs build-api-docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
