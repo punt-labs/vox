@@ -1,5 +1,7 @@
 """Typed record persistence and explicit worker control semantics."""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -29,6 +31,21 @@ def test_ready_survives_restart_until_provider_exits(tmp_path: Path) -> None:
     assert restored.list()[0] == ready
     provider.alive = False
     assert restored.list()[0]["state"] == "exited"
+
+
+def test_ready_worker_accepts_fresh_post_restart_report(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    ready = registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    provider.ready = False
+    restored = _registry(tmp_path, provider)
+    assert restored.list()[0] == ready
+    report = {"session_started": False, "last_assistant_message": "new completion"}
+    with patch.object(FakeWorkerProvider, "progress", return_value=report):
+        updated = restored.list()[0]
+    assert updated["state"] == "ready"
+    assert updated["last_report"] == report
 
 
 @pytest.mark.parametrize("exited", [False, True])

@@ -100,11 +100,12 @@ class WorkerRegistry:
                 self._cleanup(record)
             else:
                 report = provider.progress(record["id"], profile)
-                if report.get("session_started") or record["state"] != "ready":
+                if record["state"] != "ready" or (
+                    report and report != {"session_started": False}
+                ):
                     record["last_report"] = report
-                    record["state"] = (
-                        "ready" if report.get("session_started") else "starting"
-                    )
+                    if report.get("session_started"):
+                        record["state"] = "ready"
             self._records.save(record)
         return record.copy()
 
