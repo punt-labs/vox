@@ -112,3 +112,14 @@ async def test_unknown_tool_and_bad_arguments_are_errors() -> None:
     assert (await tools.answer("rm_rf", {}))[1]
     assert (await tools.answer("start_worker", {"task": " "}))[1]
     assert (await tools.answer("steer_worker", {"worker_id": "x", "urgent": 1}))[1]
+
+
+async def test_bad_repository_settings_fail_the_tool_not_the_call() -> None:
+    class Unreadable(FakeWorkers):
+        def repos(self) -> tuple[str, ...]:
+            raise ValueError("worker_repos is not a list")
+
+    workers = Unreadable()
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
+    assert error
+    assert "not a list" in json.loads(result)["error"]

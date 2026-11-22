@@ -185,10 +185,11 @@ async def test_start_without_a_key_is_refused(
 
 
 async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None:
-    said = {"agent_response": "Starting the worker now", "event_id": 4}
+    said = {"agent_response": "On it.", "event_id": 4, "response_id": "r4"}
+    again = {"agent_response": "On it.", "event_id": 5, "response_id": "r5"}
     fixed = {
-        "original_agent_response": "Starting the worker now",
-        "corrected_agent_response": "Starting the",
+        "original_agent_response": "On it.",
+        "corrected_agent_response": "On",
         "event_id": 4,
         "response_id": "r4",
     }
@@ -198,6 +199,9 @@ async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None
         await socket.send(json.dumps(_METADATA))
         await socket.send(
             json.dumps({"type": "agent_response", "agent_response_event": said})
+        )
+        await socket.send(
+            json.dumps({"type": "agent_response", "agent_response_event": again})
         )
         await socket.send(
             json.dumps(
@@ -230,7 +234,10 @@ async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None
             if status["state"] != "live":
                 break
             await asyncio.sleep(0.01)
-    assert status["transcript"] == [{"role": "agent", "text": "Starting the"}]
+    assert status["transcript"] == [
+        {"role": "agent", "text": "On"},
+        {"role": "agent", "text": "On it."},
+    ]
 
 
 async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:

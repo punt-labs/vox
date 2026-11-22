@@ -67,7 +67,7 @@ class VoiceAgentCall:
     _conversation_id: str | None
     _error: str | None
     _connected: asyncio.Event
-    _transcript: deque[dict[str, str]]
+    _transcript: deque[tuple[str | None, dict[str, str]]]  # (response_id, turn)
     _tool_calls: deque[dict[str, object]]
 
     def __new__(
@@ -130,7 +130,7 @@ class VoiceAgentCall:
             "conversation_id": self._conversation_id,
             "error": self._error,
             "replayed_tool_calls": self._tools.replayed,
-            "transcript": list(self._transcript),
+            "transcript": [turn for _, turn in self._transcript],
             "tool_calls": list(self._tool_calls),
         }
 
@@ -148,9 +148,11 @@ class VoiceAgentCall:
                 case ClientToolCall() as call:
                     group.create_task(self._answer(conv, call))
                 case UserTranscript(text=text):
-                    self._transcript.append({"role": "user", "text": text})
-                case AgentResponse(text=text):
-                    self._transcript.append({"role": "agent", "text": text})
+                    self._transcript.append((None, {"role": "user", "text": text}))
+                case AgentResponse(text=text, response_id=response_id):
+                    self._transcript.append(
+                        (response_id, {"role": "agent", "text": text})
+                    )
                 case AgentResponseCorrection() as correction:
                     self._correct(correction)
                 case _:
@@ -158,8 +160,8 @@ class VoiceAgentCall:
 
     def _correct(self, correction: AgentResponseCorrection) -> None:
         """Replace interrupted agent text with what the person actually heard."""
-        for turn in reversed(self._transcript):
-            if turn == {"role": "agent", "text": correction.original_text}:
+        for response_id, turn in reversed(self._transcript):
+            if response_id == correction.response_id:
                 turn["text"] = correction.corrected_text
                 return
 

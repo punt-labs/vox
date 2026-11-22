@@ -113,14 +113,14 @@ class BossTools:
         if operation is None:
             return json.dumps({"error": f"unknown tool {name}"}), True
 
-        arguments = self._with_defaults(name, arguments)
-
-        async def execute() -> str:
-            return json.dumps(await operation(arguments), ensure_ascii=False)
-
         try:
+            resolved = self._with_defaults(name, arguments)
+
+            async def execute() -> str:
+                return json.dumps(await operation(resolved), ensure_ascii=False)
+
             result = await self._cache.run(
-                ToolResultCache.key(name, arguments),
+                ToolResultCache.key(name, resolved),
                 execute,
                 durable=name in self._DURABLE,
             )
