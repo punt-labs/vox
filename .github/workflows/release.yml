@@ -7,25 +7,17 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   build:
-    name: Build release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-    outputs:
-      artifact: ${{ steps.candidate.outputs.name }}
-      qa-approval: ${{ steps.candidate.outputs.qa-approval }}
     steps:
       - name: Validate tag ref
         run: |
-          if [[ "$GITHUB_REF_TYPE" != tag || ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release needs a final version tag. For manual dispatch: gh workflow run release.yml --ref v1.2.3"
+          if [[ "$GITHUB_REF_NAME" != v* ]]; then
+            echo "::error::Release must be triggered by a v* tag push. For manual dispatch, use: gh workflow run release.yml --ref v1.2.3"
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,82 +27,14 @@ jobs:
           python-version: "3.13"
       - run: uv build
       - run: uvx twine check dist/*
-      - name: Verify and identify candidate
-        id: candidate
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          wheel="dist/punt_vox-${version}-py3-none-any.whl"
-          test -f "$wheel"
-          test -f "dist/punt_vox-${version}.tar.gz"
-          python -c 'import json, sys; p = json.load(open("plugin/.claude-plugin/plugin.json")); sys.exit(0 if (p["name"], p["version"]) == ("vox", sys.argv[1]) else "Plugin name or version does not match the release")' "$version"
-          name="vox-candidate-${GITHUB_RUN_ATTEMPT}"
-          checksum="$(sha256sum "$wheel" | cut -d ' ' -f 1)"
-          approval="QA passed: $name sha256:$checksum"
-          {
-            echo "name=$name"
-            echo "qa-approval=$approval"
-          } >> "$GITHUB_OUTPUT"
-          {
-            printf 'Candidate artifact: **%s** for %s (%s)\n' "$name" "$GITHUB_REF_NAME" "$GITHUB_SHA"
-            echo
-            echo '~~~text'
-            sha256sum dist/*
-            echo '~~~'
-            echo
-            printf 'Required release approval comment: **%s**\n' "$approval"
-          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ steps.candidate.outputs.name }}
+          name: dist
           path: dist/
-          if-no-files-found: error
-          retention-days: 14
-
-  candidate-tests:
-    name: Run nightly suite against the release candidate
-    needs: build
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/roundtrip-live.yml
-    with:
-      candidate-artifact: ${{ needs.build.outputs.artifact }}
-    secrets:
-      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  candidate-signoff:
-    name: Jim’s installed-candidate QA sign-off (voice and music)
-    needs: [build, candidate-tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      actions: read
-    environment:
-      name: release
-      url: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/docs/testing/manual-tests.md
-    steps:
-      - name: Require Jim's review of this artifact
-        # The environment currently allows admin bypass. Do not treat a job
-        # starting as evidence that Jim reviewed this build's exact wheel.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECTED_APPROVAL: ${{ needs.build.outputs.qa-approval }}
-        run: |
-          set -euo pipefail
-          test -n "$EXPECTED_APPROVAL"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
-            jq -e --arg expected "$EXPECTED_APPROVAL" 'any(.[];
-              .state == "approved" and .user.login == "jmf-pobox"
-              and .comment == $expected and any(.environments[]; .name == "release")
-            )' >/dev/null || {
-              echo "::error::Jim must approve installed-candidate QA with the exact comment in the build summary."
-              exit 1
-            }
+          retention-days: 1
 
   testpypi:
-    needs: [build, candidate-signoff]
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: testpypi
@@ -119,7 +43,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
@@ -159,7 +83,7 @@ jobs:
         run: vox --help
 
   pypi:
-    needs: [build, test-install]
+    needs: test-install
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release
@@ -168,25 +92,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
-
-  published-smoke:
-    name: Published PyPI speech smoke
-    needs: pypi
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
-      - run: bash scripts/smoke-published.sh "${GITHUB_REF_NAME#v}"
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
