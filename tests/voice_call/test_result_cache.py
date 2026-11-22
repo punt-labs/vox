@@ -85,3 +85,9 @@ def test_key_keeps_paths_and_ids_exact() -> None:
     dashed = ToolResultCache.key("start_worker", {"task": "t", "project": "/a/b-c"})
     nested = ToolResultCache.key("start_worker", {"task": "t", "project": "/a/b/c"})
     assert dashed != nested
+
+
+def test_key_keeps_signs_that_change_the_instruction() -> None:
+    negative = ToolResultCache.key("steer_worker", {"words": "set it to -5."})
+    positive = ToolResultCache.key("steer_worker", {"words": "Set it to 5"})
+    assert negative != positive

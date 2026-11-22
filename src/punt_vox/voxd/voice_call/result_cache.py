@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from typing import TYPE_CHECKING, Final, Self, final
 
 if TYPE_CHECKING:
@@ -13,7 +12,8 @@ if TYPE_CHECKING:
 __all__ = ["ToolResultCache"]
 
 
-_WORDS: Final = re.compile(r"\w+")
+# Sentence punctuation a transcript may put around a word; signs stay in.
+_EDGES: Final = ".,!?;:'\"()\u201c\u201d\u2018\u2019"
 # Free text the agent transcribes afresh on each ask; IDs and paths stay exact.
 _SPOKEN: Final = frozenset({"task", "words"})
 
@@ -52,15 +52,21 @@ class ToolResultCache:
         """Return a canonical key that argument order and spoken punctuation share.
 
         A re-ask after barge-in is transcribed afresh, so a task of "Hello,
-        world!" and one of "hello world." must name the same request.
+        world!" and one of "hello world." must name the same request, while
+        "-5" and "5" stay different instructions.
         """
         canonical = {
-            field: " ".join(_WORDS.findall(value.casefold()))
+            field: ToolResultCache._spoken(value)
             if field in _SPOKEN and isinstance(value, str)
             else value
             for field, value in arguments.items()
         }
         return json.dumps([name, canonical], sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _spoken(text: str) -> str:
+        words = (word.strip(_EDGES) for word in text.casefold().split())
+        return " ".join(word for word in words if word)
 
     async def run(
         self, key: str, execute: Callable[[], Awaitable[str]], *, durable: bool
