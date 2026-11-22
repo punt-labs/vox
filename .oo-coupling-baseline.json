@@ -358,7 +358,7 @@
   },
   "src/punt_vox/config.py": {
     "efferent_coupling": 3.0,
-    "public_names": 7.0,
+    "public_names": 8.0,
     "circular_imports": 0.0,
     "max_lcom": 0.267,
     "avg_lcom": 0.267

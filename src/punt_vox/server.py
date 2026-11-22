@@ -23,7 +23,7 @@ from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import ConfigStore
+from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.logging_config import (
     configure_client_logging,
     log_health,
@@ -125,7 +125,6 @@ mcp = _LoggingFastMCP(
 mcp._mcp_server.version = __version__  # pyright: ignore[reportPrivateUsage]
 
 _VALID_NOTIFY_MODES = frozenset({"y", "n", "c"})
-_VALID_SPEAK_MODES = frozenset({"y", "n"})
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +236,7 @@ class SessionConfig:
         Raises:
             ValueError: If mode is not y or n.
         """
-        if mode not in _VALID_SPEAK_MODES:
+        if not SpeakMode.accepts(mode):
             msg = f"invalid speak mode: {mode!r}"
             raise ValueError(msg)
         self._speak = mode
@@ -671,7 +670,7 @@ def speak(
     """
     _session.refresh_from_config()
 
-    if mode not in _VALID_SPEAK_MODES:
+    if not SpeakMode.accepts(mode):
         return _error(f"Invalid mode '{mode}'. Use y/n.")
 
     updates: dict[str, str] = {"speak": mode}
