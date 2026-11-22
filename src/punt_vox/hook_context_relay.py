@@ -17,7 +17,8 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.deposited_files import VoxMarker
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.hook_context_client import HookContextClient
-from punt_vox.hook_context_event import HookIdentity, HookRedaction
+from punt_vox.hook_context_event import HookIdentity
+from punt_vox.hook_context_stage import HookContextStage
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_sequence import HookSequence
 from punt_vox.logging_config import configure_client_logging
@@ -83,12 +84,13 @@ class HookContextRelay:
         if "relay_seq" in self._payload:
             msg = "refusing to stamp an already stamped hook payload"
             raise ValueError(msg)
-        stamped = HookRedaction.clean(self._payload)
         state_dir = user_state_dir()
-        counter = HookSequence(state_dir / "hook-sequences", identity.session)
-        stamped["relay_seq"] = counter.next()
+        sequence_dir = state_dir / "hook-sequences"
+        staged = HookContextStage.prepare(identity, self._payload, sequence_dir)
+        counter = HookSequence(sequence_dir, identity.session)
+        staged["relay_seq"] = counter.next()
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as source:
-            json.dump(stamped, source, ensure_ascii=True, allow_nan=False)
+            json.dump(staged, source, ensure_ascii=True, allow_nan=False)
             source.seek(0)
             subprocess.Popen(
                 [sys.executable, "-E", "-P", "-m", "punt_vox.hook_context_relay"],

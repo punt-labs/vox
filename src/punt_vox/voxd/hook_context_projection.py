@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from dataclasses import dataclass
+from string import hexdigits
 from typing import TypedDict, cast
 
 _TEXT_LIMIT = 1000
+HOOK_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure"})
 
 
 class HookToolResult(TypedDict):
@@ -16,6 +19,33 @@ class HookToolResult(TypedDict):
     relay_seq: int
     tool: str
     result: str
+
+
+class HookToolSubject:
+    """Match retries without exposing redacted input values."""
+
+    @staticmethod
+    def fingerprint(payload: dict[str, object], *, key: bytes | None = None) -> str:
+        """Hash canonical tool input, keying the hash if it contains secrets."""
+        raw = payload.get("tool_input")
+        canonical = json.dumps(
+            raw if isinstance(raw, dict) else {}, ensure_ascii=True, sort_keys=True
+        ).encode("ascii")
+        if key is not None:
+            return hmac.digest(key, canonical, "sha256").hex()
+        return hashlib.sha256(canonical).hexdigest()
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, object]) -> str:
+        """Prefer a valid sender fingerprint for clipped or redacted inputs."""
+        subject = payload.get("relay_tool_subject")
+        if (
+            isinstance(subject, str)
+            and len(subject) == 64
+            and all(char in hexdigits for char in subject)
+        ):
+            return subject.lower()
+        return cls.fingerprint(payload)
 
 
 class HookText:
@@ -72,8 +102,7 @@ class ToolUpdate:
         raw = payload.get("tool_input")
         tool_input = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
         file = HookText.clip(tool_input.get("file_path"))
-        identity = json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
-        subject = hashlib.sha256(identity.encode("ascii")).hexdigest()
+        subject = HookToolSubject.from_payload(payload)
         failed = event == "PostToolUseFailure"
         if failed:
             result = HookText.clip(payload.get("error"), tail=True) or "tool failed"

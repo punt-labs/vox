@@ -588,6 +588,7 @@ projects to voxd. Use `vox call context --session <id>` to inspect a session's
 goal, active files, recent tool results, open failure, and last assistant
 message without placing a call. Credential-shaped keys are redacted at
 every depth; this does not scrub secrets embedded in free-form text.
+Oversized hooks are reduced to the fields needed for context before delivery.
 Context is bounded and in memory only. Sequence gaps can close as late hooks
 arrive; drops after the last received hook are not visible yet. Gaps measure
 what the current snapshot has not seen, including history lost on a daemon

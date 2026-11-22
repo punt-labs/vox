@@ -6,7 +6,12 @@ from collections import OrderedDict
 from typing import Self, TypedDict, final
 
 from punt_vox.hook_context_event import MAX_SEQUENCE, HookIdentity, HookRedaction
-from punt_vox.voxd.hook_context_projection import HookText, HookToolResult, ToolUpdate
+from punt_vox.voxd.hook_context_projection import (
+    HOOK_TOOL_EVENTS,
+    HookText,
+    HookToolResult,
+    ToolUpdate,
+)
 from punt_vox.voxd.hook_failures import HookFailures
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
 
@@ -14,7 +19,6 @@ _MAX_SESSIONS = 64
 _MAX_TOOL_EVENTS = 48
 _MAX_FILES = 8
 _MAX_RESULTS = 5
-_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure"})
 
 
 class HookContextSnapshot(TypedDict):
@@ -105,7 +109,7 @@ class SessionContext:
             case "Stop":
                 text = HookText.clip(payload.get("last_assistant_message"))
                 self._assistant = self._newest(self._assistant, sequence, text)
-            case _ if event in _TOOL_EVENTS:
+            case _ if event in HOOK_TOOL_EVENTS:
                 update = ToolUpdate.from_payload(payload, event)
                 self._failures.observe(sequence, update)
                 self._tools[sequence] = update

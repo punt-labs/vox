@@ -8,14 +8,16 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TextIO, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import typer
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.commands.call import CallCli
+from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextCommand, HookContextRelay, main
 from punt_vox.hook_sequence import HookSequence
 from punt_vox.voxd.daemon import build_app
@@ -89,6 +91,127 @@ def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
             "nested": [{"Api-Key": "[redacted]"}],
         }
     ]
+
+
+def test_relay_compacts_a_large_tool_result_without_losing_retry_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The successful retry fits on the wire and clears the earlier failure."""
+    store = HookContextStore()
+    tool = {"tool_name": "Read", "tool_input": {"file_path": "large.txt"}}
+    store.ingest(_event("PostToolUseFailure", 1, **tool, error="missing file"))
+    assert HookSequence(tmp_path / "hook-sequences", "session-a").next() == 1
+
+    def capture(_args: list[str], **kwargs: object) -> None:
+        source = cast("TextIO", kwargs["stdin"])
+        encoded = source.read()
+        assert len(encoded) < 256 * 1024
+        store.ingest(json.loads(encoded))
+
+    monkeypatch.setattr("punt_vox.hook_context_relay.user_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.hook_context_relay.subprocess.Popen", capture)
+    HookContextRelay(
+        {
+            "session_id": "session-a",
+            "hook_event_name": "PostToolUse",
+            **tool,
+            "tool_response": {"stdout": "x" * (256 * 1024) + "finished"},
+        }
+    ).submit()
+    snapshot = store.snapshot("session-a")
+    assert snapshot["open_failure"] is None
+    assert snapshot["active_files"] == ["large.txt"]
+    assert snapshot["last_results"][-1]["result"].endswith("finished")
+    assert snapshot["gaps"]["missing_count"] == 0
+
+
+def test_relay_distinguishes_credential_inputs_without_retaining_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A different redacted credential cannot clear a failure."""
+    store = HookContextStore()
+
+    def capture(_args: list[str], **kwargs: object) -> None:
+        source = cast("TextIO", kwargs["stdin"])
+        encoded = source.read()
+        assert "first-example" not in encoded
+        assert "second-example" not in encoded
+        store.ingest(json.loads(encoded))
+
+    monkeypatch.setattr("punt_vox.hook_context_relay.user_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.hook_context_relay.subprocess.Popen", capture)
+    for event, password, has_failure in (
+        ("PostToolUseFailure", "first-example", True),
+        ("PostToolUse", "second-example", True),
+        ("PostToolUse", "first-example", False),
+    ):
+        HookContextRelay(
+            {
+                "session_id": "session-a",
+                "hook_event_name": event,
+                "tool_name": "Example",
+                "tool_input": {"password": password},
+            }
+        ).submit()
+        assert (store.snapshot("session-a")["open_failure"] is not None) is has_failure
+
+
+@pytest.mark.parametrize(
+    ("event", "field", "projected"),
+    [
+        ("UserPromptSubmit", "prompt", "goal"),
+        ("Stop", "last_assistant_message", "last_assistant_message"),
+        ("Notification", "message", None),
+    ],
+)
+def test_oversized_progress_preserves_context_and_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+    field: str,
+    projected: str | None,
+) -> None:
+    """Compaction keeps relevant text or just the progress envelope."""
+    store = HookContextStore()
+
+    def capture(_args: list[str], **kwargs: object) -> None:
+        source = cast("TextIO", kwargs["stdin"])
+        encoded = source.read()
+        assert len(encoded) < 256 * 1024
+        store.ingest(json.loads(encoded))
+
+    monkeypatch.setattr("punt_vox.hook_context_relay.user_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.hook_context_relay.subprocess.Popen", capture)
+    HookContextRelay(
+        {
+            "session_id": "session-a",
+            "hook_event_name": event,
+            field: "x" * (256 * 1024),
+        }
+    ).submit()
+    snapshot = store.snapshot("session-a")
+    assert snapshot["gaps"]["highest_seen"] == 1
+    assert snapshot["goal"] == ("x" * 1000 + "..." if projected == "goal" else None)
+    assert snapshot["last_assistant_message"] == (
+        "x" * 1000 + "..." if projected == "last_assistant_message" else None
+    )
+
+
+def test_relay_rejects_already_stamped_payload() -> None:
+    """A stamped event is never replayed as a new unstamped hook."""
+    with pytest.raises(ValueError, match="already stamped"):
+        HookContextRelay(_event("Stop", 1)).submit()
+
+
+def test_counter_exhaustion_does_not_wrap(tmp_path: Path) -> None:
+    """At the maximum relay sequence, stamping fails instead of reusing one."""
+    counter = HookSequence(tmp_path, "session-a")
+    assert counter.next() == 1
+    path = next(tmp_path.glob("*.seq"))
+    path.write_text(str(2**63 - 1), encoding="ascii")
+    with pytest.raises(ValueError, match="invalid hook counter"):
+        counter.next()
+    assert path.read_text(encoding="ascii") == str(2**63 - 1)
 
 
 def test_stamping_failure_is_on_stderr(capfd: pytest.CaptureFixture[str]) -> None:
@@ -422,6 +545,121 @@ def test_context_cli_describes_session_without_naming_a_harness() -> None:
     assert "Hook source's session ID." in result.stdout
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply_type", "snapshot", "error"),
+    [
+        ("hook_context", {"goal": "inspect"}, None),
+        ("hook_context", None, "no snapshot object"),
+        ("unexpected", None, "unexpected voxd hook context reply"),
+    ],
+)
+async def test_context_client_validates_reply_and_closes_connection(
+    reply_type: str, snapshot: object, error: str | None
+) -> None:
+    """The authenticated transport can return only the requested snapshot."""
+    transport = AsyncMock()
+
+    async def reply(request: dict[str, object], *, timeout: int) -> dict[str, object]:
+        assert timeout == 3
+        assert request["session_id"] == "session-a"
+        return {"id": request["id"], "type": reply_type, "snapshot": snapshot}
+
+    transport.send_and_recv.side_effect = reply
+    with patch("punt_vox.hook_context_client.VoxdTransport", return_value=transport):
+        if error is None:
+            assert await HookContextClient.snapshot("session-a") == snapshot
+        else:
+            with pytest.raises(VoxdProtocolError, match=error):
+                await HookContextClient.snapshot("session-a")
+    transport.connect.assert_awaited_once()
+    transport.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_event_requires_a_delivery_receipt() -> None:
+    """A detached relay succeeds only after its own event is acknowledged."""
+    transport = AsyncMock()
+    payload = _event("Stop", 1)
+
+    async def reply(request: dict[str, object], *, timeout: int) -> dict[str, object]:
+        assert timeout == 3
+        assert request["payload"] == payload
+        return {"id": request["id"], "type": "hook_event_accepted"}
+
+    transport.send_and_recv.side_effect = reply
+    with patch("punt_vox.hook_context_client.VoxdTransport", return_value=transport):
+        await HookContextClient.send_event(payload)
+    transport.close.assert_awaited_once()
+
+
+def test_context_cli_reports_a_missing_snapshot() -> None:
+    """A rejected query cannot be mistaken for an empty, successful result."""
+    with patch(
+        "punt_vox.commands.call_context.HookContextClient.snapshot",
+        side_effect=VoxdProtocolError("no context"),
+    ):
+        result = CliRunner().invoke(
+            CallCli.build_app(), ["context", "--session", "session-a"]
+        )
+    assert result.exit_code == 1
+    assert "Hook context unavailable: no context" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("rpc", "message"),
+    [
+        (
+            {"type": "hook_event", "payload": []},
+            "hook_event requires one hook payload object",
+        ),
+        (
+            {"type": "hook_context", "session_id": "unknown"},
+            "no hook context for that session",
+        ),
+        (
+            {"type": "hook_event", "payload": _event("Stop", 1, relay_seq=True)},
+            "hook payload requires a positive integer relay_seq",
+        ),
+        (
+            {"type": "hook_event", "payload": _event("Stop", 1, session_id="")},
+            "hook payload requires a valid session_id",
+        ),
+        (
+            {"type": "hook_event", "payload": _event("", 1)},
+            "hook payload requires a valid hook_event_name",
+        ),
+    ],
+)
+def test_daemon_rpc_rejects_invalid_hook_requests(
+    rpc: dict[str, object], message: str
+) -> None:
+    """Invalid events and absent sessions produce request-scoped errors."""
+    with (
+        TestClient(build_app()) as client,
+        client.websocket_connect("/ws") as ws,
+    ):
+        ws.send_json({**rpc, "id": "rejected"})
+        assert ws.receive_json() == {
+            "type": "error",
+            "id": "rejected",
+            "message": message,
+        }
+
+
+def test_context_store_evicts_least_recently_active_session() -> None:
+    """Only ingest refreshes a session's place in the bounded store."""
+    store = HookContextStore()
+    for n in range(64):
+        store.ingest(_event("Notification", 1, session_id=str(n)))
+    store.ingest(_event("SessionStart", 2, session_id="0"))
+    store.ingest(_event("Notification", 1, session_id="64"))
+    assert store.snapshot("0")["session_started"] is True
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot("1")
+
+
 def test_dev_plugin_forwards_without_blocking() -> None:
     """Each registered hook event has exactly one unrestricted relay."""
     path = Path(__file__).resolve().parents[1] / "plugin/hooks/hooks.json"
@@ -455,3 +693,26 @@ def test_dev_plugin_forwards_without_blocking() -> None:
                 False,
             )
         ], event
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["PreCompact", "SubagentStart", "SubagentStop", "SessionEnd", "Notification"],
+)
+def test_progress_only_plugin_events_advance_gaps_without_changing_projection(
+    event: str,
+) -> None:
+    """These events signal live progress without contributing curated fields."""
+    store = HookContextStore()
+    store.ingest(_event("UserPromptSubmit", 1, prompt="keep this goal"))
+    before = store.snapshot("session-a")
+    store.ingest(_event(event, 3, prompt="must not replace the goal"))
+    assert store.snapshot("session-a") == {
+        **before,
+        "gaps": {
+            "highest_seen": 3,
+            "missing_ranges": [(2, 2)],
+            "missing_count": 1,
+            "untracked_through": 0,
+        },
+    }
