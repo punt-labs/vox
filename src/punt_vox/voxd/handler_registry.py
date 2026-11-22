@@ -9,12 +9,12 @@ from punt_vox.logging_config import apply_log_level
 from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
-from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
+from punt_vox.voxd.workers.context import WorkerContext
 
 if TYPE_CHECKING:
     from punt_vox.voxd.health import DaemonHealth
@@ -80,6 +80,6 @@ class HandlerRegistry:
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
             "provider_status": ProviderStatusHandler(),
-            **HookContextHandlers().handlers(),
+            **WorkerContext.handlers(),
             **self._programs.handlers(),
         }

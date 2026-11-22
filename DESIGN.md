@@ -12,6 +12,27 @@ This file is the authoritative record of design decisions, prior approaches, and
 
 ## System Architecture
 
+### Coding workers: provider and harness boundaries
+
+The Mode B worker registry owns lifecycle and private atomic JSON records under
+`paths.user_state_dir()/workers`. Provider and harness catalogs are separate
+name lookups: `WorkerProvider` supplies start, steer, status, stop and progress;
+`HarnessProfile` supplies argv, environment names, keys, preparation, cleanup
+and the progress source. Registry and handlers contain no tmux or Claude cases.
+The first provider uses the dedicated `tmux -L vox-workers` server, surviving
+voxd restarts. The first profile runs interactive Claude Code with the worker
+UUID as `--session-id`; readiness requires SessionStart in the shared hook store.
+
+The global durable config accepts `worker_repos: "['/absolute/repo']"`, a list
+of repository paths using the config's existing scalar storage convention.
+Projects resolve to allowlisted git top levels before a fresh branch and
+worktree are created. Stop retains both as work product. All worker processes
+launch with `env -i` plus base process variables and profile-specific names.
+Claude inherits the user's normal configuration and permissions; vox writes
+only `projects[absolute_worktree].hasTrustDialogAccepted` in the existing
+Claude configuration, atomically and under a sibling lock, removing the flag
+on stop. It never installs a permission profile or adds an approval gate.
+
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │                        Claude Code UI                        │

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Provider-neutral background coding workers with a tmux launcher, Claude Code
+  profile, durable registry and hidden `vox worker start|list|stop` controls.
+  Workers use new git worktrees of repositories explicitly listed in the global
+  durable `worker_repos` setting and inherit the harness's own permissions.
+
 - `vox call context --session <id>` displays a session's in-memory hook
   snapshot and sender sequence gaps. The Vox plugin feeds it live Claude Code
   hooks from enabled projects.

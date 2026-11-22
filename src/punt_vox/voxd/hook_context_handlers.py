@@ -20,10 +20,10 @@ class HookContextHandlers:
     __slots__ = ("_store",)
     _store: HookContextStore
 
-    def __new__(cls) -> Self:
+    def __new__(cls, store: HookContextStore | None = None) -> Self:
         """Create a fresh store for this daemon."""
         self = super().__new__(cls)
-        self._store = HookContextStore()
+        self._store = store if store is not None else HookContextStore()
         return self
 
     def handlers(self) -> dict[str, MessageHandler]:

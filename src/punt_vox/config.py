@@ -41,6 +41,7 @@ DURABLE_KEYS: frozenset[str] = frozenset(
         "provider",
         "speak",
         "voice",
+        "worker_repos",
     }
 )
 
