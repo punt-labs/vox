@@ -16,7 +16,7 @@ class WorkerClient:
     __slots__ = ()
 
     @staticmethod
-    async def request(operation: str, **fields: str) -> object:
+    async def request(operation: str, **fields: str | bool) -> object:
         """Return a registry result or surface the daemon's refusal."""
         transport = VoxdTransport(None, None, None)
         request_id = uuid4().hex

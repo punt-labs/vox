@@ -14,6 +14,7 @@ from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.hooks import WorkerHooks
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.steering import WorkerSteering
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -45,7 +46,8 @@ class WorkerHandlers:
         """Construct one serialized actor and expose its worker control surface."""
         handler = cls(registry)
         result: dict[str, MessageHandler] = dict.fromkeys(
-            ("worker_start", "worker_list", "worker_stop"), handler.handle
+            ("worker_start", "worker_list", "worker_stop", "worker_steer"),
+            handler.handle,
         )
         if store is not None:
             hooks = WorkerHooks(store, registry, handler._lock)
@@ -73,6 +75,10 @@ class WorkerHandlers:
         """Return clear transport errors without exposing subprocess output."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
+            if msg.get("type") == "worker_steer":
+                receipt = await WorkerSteering(self._registry, self._lock).handle(msg)
+                await reply.send({"type": "worker_result", "result": receipt})
+                return
             async with self._lock:
                 result = await asyncio.to_thread(self._dispatch, msg)
         except (

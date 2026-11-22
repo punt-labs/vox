@@ -21,6 +21,14 @@ class WorkerLaunch:
     task: str
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerInput:
+    """An observed input receipt, never an idle/turn state (Stop is not required)."""
+
+    seq: int
+    text: str
+
+
 class HarnessProfile(Protocol):
     """Describe a harness without coupling its launcher to its implementation."""
 
@@ -32,6 +40,19 @@ class HarnessProfile(Protocol):
     @property
     def interrupt_key(self) -> str:
         """Return the key which interrupts current work."""
+        ...
+
+    @property
+    def settle_delay(self) -> float:
+        """Seconds needed after interrupt and literal input before submission."""
+        ...
+
+    def last_input(self, worker_id: str) -> WorkerInput | None:
+        """Return the latest observed input, if any."""
+        ...
+
+    def matches_input(self, receipt: WorkerInput, words: str) -> bool:
+        """Compare input using the harness's bounded representation."""
         ...
 
     def argv(self, worker_id: str, task: str) -> list[str]:

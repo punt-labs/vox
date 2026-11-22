@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vox worker steer WORKER_ID WORDS [--urgent]` sends literal input to ready
+  workers with harness-defined paste settling. Replies acknowledge a later
+  matching input receipt, or report `heard: false` after a bounded wait;
+  interruption and receipt never imply that a worker turn has ended.
+
 - Gate TestPyPI publication on the nightly suite against the exact release
   wheel, including Polly via OIDC, and smoke-test speech from published PyPI.
   PyPI publication retains plain `release` environment approval.

@@ -74,7 +74,7 @@ This separation means: daemon bugs are about audio, providers, caching, and syst
 | `types.py` | Domain types: `TTSProvider` protocol, `AudioProviderId`, `AudioRequest`, `AudioResult`, `HealthCheck`, `MergeStrategy` |
 | `core.py` | `TTSClient` — provider-agnostic orchestration: batching, pair stitching, audio merge, `split_text()` |
 | `voxd/` | Audio daemon (package). WebSocket server: synthesize, chime, record, voices, health. Playback queue, dedup, cache. System paths (Homebrew on macOS, FHS on Linux). |
-| `voxd/workers/` | Provider-neutral persistent coding worker registry, repository policy, harness profiles and tmux transport. RPCs and hidden CLI control workers without owning their permissions. |
+| `voxd/workers/` | Provider-neutral persistent coding worker registry, repository policy, harness profiles and tmux transport. RPCs and hidden CLI start/list/stop/steer workers; steering acknowledges input receipts without inferring turn completion or owning permissions. |
 | `client.py` | WebSocket client for `voxd`. `VoxClient` (async), `VoxClientSync` (sync). Lightweight — stdlib + websockets only. |
 | `config.py` | Two config files: `vox.md` (durable prefs) + `vox.local.md` (ephemeral state). Routes by `DURABLE_KEYS`/`EPHEMERAL_KEYS` frozensets. |
 | `hooks.py` | Hook handlers for Claude Code events — per-event dispatch (`handle_stop`, `handle_notification`, `handle_vibe_nudge`, `handle_pre_compact`, `handle_user_prompt_submit`, `handle_subagent_start`/`stop`, `handle_session_end`). Thin client of `voxd` via `VoxClientSync`. |

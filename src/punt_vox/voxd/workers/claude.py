@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.process_env import ProcessEnv
+from punt_vox.voxd.hook_context_projection import HookText
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.trust import ClaudeTrust
 
 
@@ -20,6 +22,7 @@ class ClaudeProfile:
     _trust: ClaudeTrust
     submit_key = "Enter"
     interrupt_key = "Escape"
+    settle_delay = 0.5
     ENV_NAMES = frozenset(
         {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
     )
@@ -31,7 +34,8 @@ class ClaudeProfile:
         self._trust = ClaudeTrust()
         return self
 
-    def argv(self, worker_id: str, task: str) -> list[str]:
+    @staticmethod
+    def argv(worker_id: str, task: str) -> list[str]:
         """Use interactive Claude, never a separate permission profile."""
         return ["claude", "--session-id", worker_id, "--", task]
 
@@ -49,6 +53,16 @@ class ClaudeProfile:
     def prepare(self, worktree: Path) -> None:
         """Accept trust only for this exact absolute worktree."""
         self._trust.update(worktree, accepted=True)
+
+    def last_input(self, worker_id: str) -> WorkerInput | None:
+        """Use UserPromptSubmit only; Escape need not produce a Stop hook."""
+        seq, text = self._store.last_input(worker_id)
+        return WorkerInput(seq, text) if seq else None
+
+    @staticmethod
+    def matches_input(receipt: WorkerInput, words: str) -> bool:
+        """Match the same clipping applied to the stored prompt."""
+        return receipt.text == HookText.clip(words)
 
     def cleanup(self, worktree: Path) -> None:
         """Remove the temporary trust flag, retaining work product."""

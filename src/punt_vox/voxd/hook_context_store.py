@@ -10,15 +10,11 @@ from punt_vox.voxd.hook_context_projection import (
     HOOK_TOOL_EVENTS,
     HookText,
     HookToolResult,
-    ToolUpdate,
 )
-from punt_vox.voxd.hook_failures import HookFailures
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
+from punt_vox.voxd.hook_tool_history import HookToolHistory
 
 _MAX_SESSIONS = 64
-_MAX_TOOL_EVENTS = 48
-_MAX_FILES = 8
-_MAX_RESULTS = 5
 
 
 class HookContextSnapshot(TypedDict):
@@ -71,28 +67,33 @@ class HookContextStore:
             raise ValueError(msg)
         return context.snapshot()
 
+    def last_input(self, session: str) -> tuple[int, str]:
+        """Return the newest submitted prompt without changing the snapshot schema."""
+        context = self._sessions.get(session)
+        return context.last_input() if context is not None else (0, "")
+
 
 @final
 class SessionContext:
     """Bounded per-session view, ordered by sender sequence rather than arrival."""
 
-    __slots__ = ("_assistant", "_failures", "_gaps", "_goal", "_started", "_tools")
+    __slots__ = ("_assistant", "_gaps", "_goal", "_input", "_started", "_tools")
+    _input: tuple[int, str]
     _assistant: tuple[int, str]
-    _failures: HookFailures
     _gaps: HookGaps
     _goal: tuple[int, str]
     _started: bool
-    _tools: dict[int, ToolUpdate]
+    _tools: HookToolHistory
 
     def __new__(cls) -> Self:
         """Create a new view for a session with at least one live event."""
         self = super().__new__(cls)
         self._assistant = (0, "")
-        self._failures = HookFailures()
         self._gaps = HookGaps()
         self._goal = (0, "")
+        self._input = (0, "")
         self._started = False
-        self._tools = {}
+        self._tools = HookToolHistory()
         return self
 
     def ingest(self, sequence: int, event: str, payload: dict[str, object]) -> None:
@@ -103,6 +104,8 @@ class SessionContext:
             case "SessionStart":
                 self._started = True
             case "UserPromptSubmit":
+                if sequence > self._input[0]:
+                    self._input = (sequence, HookText.clip(payload.get("prompt")))
                 self._goal = self._newest(
                     self._goal, sequence, HookText.clip(payload.get("prompt"))
                 )
@@ -110,11 +113,7 @@ class SessionContext:
                 text = HookText.clip(payload.get("last_assistant_message"))
                 self._assistant = self._newest(self._assistant, sequence, text)
             case _ if event in HOOK_TOOL_EVENTS:
-                update = ToolUpdate.from_payload(payload, event)
-                self._failures.observe(sequence, update)
-                self._tools[sequence] = update
-                if len(self._tools) > _MAX_TOOL_EVENTS:
-                    del self._tools[min(self._tools)]
+                self._tools.ingest(sequence, event, payload)
             case _:
                 pass
 
@@ -122,24 +121,19 @@ class SessionContext:
     def _newest(previous: tuple[int, str], sequence: int, text: str) -> tuple[int, str]:
         return (sequence, text) if sequence > previous[0] and text else previous
 
+    def last_input(self) -> tuple[int, str]:
+        """Input acknowledgement is independent of Stop and turn completion."""
+        return self._input
+
     def snapshot(self) -> HookContextSnapshot:
         """Project the newest goals, files, results, and still-open failure."""
-        files: dict[str, None] = {}
-        results: list[HookToolResult] = []
-        for sequence, update in sorted(self._tools.items()):
-            if update.file:
-                files.pop(update.file, None)
-                files[update.file] = None
-            if not update.completed:
-                continue
-            if update.result:
-                results.append(update.as_result(sequence))
+        files, results = self._tools.files_and_results()
         return {
             "session_started": self._started,
             "goal": self._goal[1] or None,
-            "active_files": list(files)[-_MAX_FILES:],
-            "last_results": results[-_MAX_RESULTS:],
-            "open_failure": self._failures.latest(),
+            "active_files": files,
+            "last_results": results,
+            "open_failure": self._tools.open_failure(),
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
         }

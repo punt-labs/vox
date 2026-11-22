@@ -66,6 +66,13 @@ class TrivialProfile:
 
     submit_key = "Enter"
     interrupt_key = "Escape"
+    settle_delay = 0.05
+
+    def last_input(self, worker_id: str) -> None:
+        return None
+
+    def matches_input(self, receipt: object, words: str) -> bool:
+        return False
 
     def argv(self, worker_id: str, task: str) -> list[str]:
         return [

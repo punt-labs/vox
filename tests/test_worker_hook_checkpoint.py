@@ -284,6 +284,7 @@ def test_claude_profile_preparation_and_cleanup_use_the_native_lease(
 
 def test_registry_steering_uses_its_selected_provider(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
+    provider.ready = True
     registry = _registry(tmp_path, provider)
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
     with patch.object(FakeWorkerProvider, "steer") as steer:

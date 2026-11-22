@@ -94,9 +94,11 @@ def test_real_tmux_literal_steering_clean_env_and_stop(
         environment = _until_file(tmp_path / "environment", "HOME=")
         assert "VOX_WORKER_SECRET_TEST" not in environment
         assert "must-not-leak" not in environment
+        before = time.monotonic()
         provider.steer(
             handle, "literal $(touch injected); end", urgent=False, profile=profile
         )
+        assert time.monotonic() - before >= profile.settle_delay
         assert "literal $(touch injected); end" in _until_file(
             tmp_path / "received", "end"
         )

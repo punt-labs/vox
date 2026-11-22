@@ -59,7 +59,9 @@ class TmuxWorkerProvider:
         """Send literal words followed by the harness's submission key."""
         if urgent:
             self._run("send-keys", "-t", f"={handle}:", profile.interrupt_key)
+            time.sleep(profile.settle_delay)
         self._run("send-keys", "-t", f"={handle}:", "-l", "--", words)
+        time.sleep(profile.settle_delay)
         self._run("send-keys", "-t", f"={handle}:", profile.submit_key)
 
     def status(self, handle: str) -> bool:
