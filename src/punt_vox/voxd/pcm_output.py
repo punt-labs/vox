@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Buffer, Callable
-from typing import Protocol
+from typing import Protocol, Self, final
 
 __all__ = [
+    "DeviceCall",
     "OutputCallback",
     "OutputDeviceLostError",
     "OutputStream",
     "OutputStreamFactory",
-    "run_device_call",
     "sounddevice_output_stream",
 ]
 
@@ -100,23 +100,53 @@ def sounddevice_output_stream(
     )
 
 
-async def run_device_call[**P, T](
-    func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
-) -> tuple[asyncio.Future[T], bool]:
-    """Run *func* in a worker thread and wait for it even through cancellation.
+@final
+class DeviceCall[T]:
+    """One blocking device call, run in a worker thread and never abandoned.
 
-    A device call cannot be abandoned half-way: the caller holds the playback
-    mutex, and freeing it early would let other audio open the device too.
-    Every cancellation is deferred until the thread returns. Returns the
-    finished future and whether the caller was cancelled meanwhile.
+    A device call cannot stop half-way: the caller holds the playback mutex,
+    and freeing it early would let other audio open the device too. So
+    :meth:`run` defers every cancellation until the thread returns, and
+    records whether the caller was cancelled meanwhile.
     """
-    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
-    cancelled = False
-    while not task.done():
-        try:
-            await asyncio.wait((task,))
-        except asyncio.CancelledError:
-            cancelled = True
-    if task.cancelled():
-        raise asyncio.CancelledError
-    return task, cancelled
+
+    __slots__ = ("_cancelled", "_task")
+
+    _task: asyncio.Future[T]
+    _cancelled: bool
+
+    def __new__(cls, task: asyncio.Future[T], *, cancelled: bool) -> Self:
+        """Wrap a finished worker-thread task."""
+        self = super().__new__(cls)
+        self._task = task
+        self._cancelled = cancelled
+        return self
+
+    @staticmethod
+    async def run[**P, R](
+        func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs
+    ) -> DeviceCall[R]:
+        """Run *func* in a worker thread and wait for it through cancellation."""
+        task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.wait((task,))
+            except asyncio.CancelledError:
+                cancelled = True
+        if task.cancelled():
+            raise asyncio.CancelledError
+        return DeviceCall(task, cancelled=cancelled)
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the caller was cancelled while the call ran."""
+        return self._cancelled
+
+    def error(self) -> BaseException | None:
+        """The exception the call raised, if any."""
+        return self._task.exception()
+
+    def result(self) -> T:
+        """The call's return value; re-raises its exception."""
+        return self._task.result()

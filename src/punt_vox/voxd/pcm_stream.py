@@ -32,7 +32,7 @@ from punt_vox.voxd.pcm_audio import (
     PcmBuffer,
     PcmDuration,
 )
-from punt_vox.voxd.pcm_output import OutputDeviceLostError, run_device_call
+from punt_vox.voxd.pcm_output import DeviceCall, OutputDeviceLostError
 
 if TYPE_CHECKING:
     from punt_vox.voxd.pcm_output import OutputStream, OutputStreamFactory
@@ -167,8 +167,8 @@ class PcmStreamSink:
             msg = f"cannot open a PCM sink that is {self._phase}"
             raise ValueError(msg)
         self._opened_at = time.monotonic()
-        starting, cancelled = await run_device_call(self._start_device, factory)
-        if cancelled:
+        starting = await DeviceCall.run(self._start_device, factory)
+        if starting.cancelled:
             await self._release_cancelled_open(starting)
             raise asyncio.CancelledError
         self._stream = starting.result()
@@ -265,11 +265,11 @@ class PcmStreamSink:
         try:
             if stream is not None:
                 drain = ending == "finished" and not pending
-                releasing, cancelled = await run_device_call(
+                releasing = await DeviceCall.run(
                     self._release_device, stream, drain=drain
                 )
-                error = releasing.exception()
-                if cancelled:
+                error = releasing.error()
+                if releasing.cancelled:
                     if error is not None:
                         logger.error(
                             "releasing the PCM device during a cancelled close",
@@ -310,16 +310,14 @@ class PcmStreamSink:
         return report
 
     @classmethod
-    async def _release_cancelled_open(
-        cls, starting: asyncio.Future[OutputStream]
-    ) -> None:
+    async def _release_cancelled_open(cls, starting: DeviceCall[OutputStream]) -> None:
         """Close the device a cancelled :meth:`open` was still starting."""
-        error = starting.exception()
+        error = starting.error()
         if error is None:
-            releasing, _ = await run_device_call(
+            releasing = await DeviceCall.run(
                 cls._release_device, starting.result(), drain=False
             )
-            error = releasing.exception()
+            error = releasing.error()
         if error is not None:
             logger.error(
                 "releasing the PCM device after a cancelled open", exc_info=error
