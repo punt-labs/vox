@@ -199,6 +199,45 @@ def test_failure_survives_unrelated_success_but_not_retry() -> None:
     assert store.snapshot("session-a")["open_failure"] is None
 
 
+def test_pre_tool_use_updates_active_files_without_a_result() -> None:
+    """An in-flight tool reports its file but does not invent an outcome."""
+    store = HookContextStore()
+    store.ingest(
+        _event(
+            "PreToolUse",
+            1,
+            tool_name="Read",
+            tool_input={"file_path": "in-flight.py"},
+        )
+    )
+    snapshot = store.snapshot("session-a")
+    assert snapshot["active_files"] == ["in-flight.py"]
+    assert snapshot["last_results"] == []
+    assert snapshot["open_failure"] is None
+
+
+def test_open_failure_outlives_rolling_tool_results() -> None:
+    """Unrelated work cannot close a failure when its result ages out."""
+    store = HookContextStore()
+    target = {"tool_name": "Read", "tool_input": {"file_path": "missing.py"}}
+    store.ingest(_event("PostToolUseFailure", 1, **target, error="missing file"))
+    for sequence in range(3, 60):
+        store.ingest(
+            _event(
+                "PostToolUse",
+                sequence,
+                tool_name="Read",
+                tool_input={"file_path": f"other-{sequence}.py"},
+                tool_response="ok",
+            )
+        )
+    failure = store.snapshot("session-a")["open_failure"]
+    assert failure == {"relay_seq": 1, "tool": "Read", "result": "missing file"}
+    store.ingest(_event("PostToolUse", 60, **target))
+    store.ingest(_event("PostToolUseFailure", 2, **target, error="late"))
+    assert store.snapshot("session-a")["open_failure"] is None
+
+
 def test_daemon_rpc_refuses_ledger_and_shares_store_across_connections() -> None:
     """The production dispatch entries share only live, per-daemon state."""
     with TestClient(build_app()) as client:

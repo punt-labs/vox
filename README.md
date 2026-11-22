@@ -589,7 +589,9 @@ goal, active files, recent tool results, open failure, and last assistant
 message without placing a call. Credential-shaped keys are redacted at
 every depth; this does not scrub secrets embedded in free-form text.
 Context is bounded and in memory only. Sequence gaps can close as late hooks
-arrive; drops after the last received hook are not visible yet. If older
+arrive; drops after the last received hook are not visible yet. Gaps measure
+what the current snapshot has not seen, including history lost on a daemon
+restart or session eviction; they do not prove a transport drop. If older
 missing ranges expire, `untracked_through` marks that part of the history.
 
 In Claude Code, `/call start <topic>` writes the snapshot from the topic and the current work, then starts the call. `/call stop` hangs up. While a call is active, your own prompts to Claude Code are blocked until you run `/call stop` (or `/vox:call stop`), which still works. When a call ends normally, the agent writes a summary (decisions, action items, context gathered, open questions) to `~/.punt-labs/vox/calls/`, and `/call start` reads it back into your session. The newest 50 summaries are kept.

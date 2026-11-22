@@ -7,6 +7,7 @@ from typing import Self, final
 
 from punt_vox.hook_context_event import MAX_SEQUENCE, HookIdentity, HookRedaction
 from punt_vox.voxd.hook_context_projection import HookText, ToolUpdate
+from punt_vox.voxd.hook_failures import HookFailures
 from punt_vox.voxd.hook_gaps import HookGaps
 
 _MAX_SESSIONS = 64
@@ -59,8 +60,9 @@ class HookContextStore:
 class SessionContext:
     """Bounded per-session view, ordered by sender sequence rather than arrival."""
 
-    __slots__ = ("_assistant", "_gaps", "_goal", "_started", "_tools")
+    __slots__ = ("_assistant", "_failures", "_gaps", "_goal", "_started", "_tools")
     _assistant: tuple[int, str]
+    _failures: HookFailures
     _gaps: HookGaps
     _goal: tuple[int, str]
     _started: bool
@@ -70,6 +72,7 @@ class SessionContext:
         """Create a new view for a session with at least one live event."""
         self = super().__new__(cls)
         self._assistant = (0, "")
+        self._failures = HookFailures()
         self._gaps = HookGaps()
         self._goal = (0, "")
         self._started = False
@@ -91,7 +94,9 @@ class SessionContext:
                 text = HookText.clip(payload.get("last_assistant_message"))
                 self._assistant = self._newest(self._assistant, sequence, text)
             case _ if event in _TOOL_EVENTS:
-                self._tools[sequence] = ToolUpdate.from_payload(payload, event)
+                update = ToolUpdate.from_payload(payload, event)
+                self._failures.observe(sequence, update)
+                self._tools[sequence] = update
                 if len(self._tools) > _MAX_TOOL_EVENTS:
                     del self._tools[min(self._tools)]
             case _:
@@ -105,26 +110,20 @@ class SessionContext:
         """Project the newest goals, files, results, and still-open failure."""
         files: dict[str, None] = {}
         results: list[dict[str, object]] = []
-        failures: dict[tuple[str, str], dict[str, object]] = {}
         for sequence, update in sorted(self._tools.items()):
             if update.file:
                 files.pop(update.file, None)
                 files[update.file] = None
             if not update.completed:
                 continue
-            result = update.as_result(sequence)
             if update.result:
-                results.append(result)
-            key = (update.tool, update.subject)
-            failures.pop(key, None)
-            if update.failed:
-                failures[key] = result
+                results.append(update.as_result(sequence))
         return {
             "session_started": self._started,
             "goal": self._goal[1] or None,
             "active_files": list(files)[-_MAX_FILES:],
             "last_results": results[-_MAX_RESULTS:],
-            "open_failure": next(reversed(failures.values()), None),
+            "open_failure": self._failures.latest(),
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
         }
