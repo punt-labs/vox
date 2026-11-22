@@ -40,7 +40,10 @@ class WorkerBootstrap:
         WorkerBootstrap._supervise(argv, cast("dict[str, str]", fields))
 
     @staticmethod
-    def _hangup(_signal: int, _frame: FrameType | None) -> None:
+    def _hangup(
+        _signal: int,
+        _frame: FrameType | None,  # PY-TS-14: callbacks can lack a Python frame.
+    ) -> None:
         """Terminate the group while its owning supervisor is still alive."""
         os.killpg(os.getpgrp(), signal.SIGKILL)
 

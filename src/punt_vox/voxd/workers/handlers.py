@@ -38,7 +38,9 @@ class WorkerHandlers:
 
     @classmethod
     def build(
-        cls, registry: WorkerRegistry, store: HookContextStore | None = None
+        cls,
+        registry: WorkerRegistry,
+        store: HookContextStore | None = None,  # PY-TS-14: absent omits hook RPCs.
     ) -> dict[str, MessageHandler]:
         """Construct one serialized actor and expose its worker control surface."""
         handler = cls(registry)

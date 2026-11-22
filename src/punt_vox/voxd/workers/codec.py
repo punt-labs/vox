@@ -3,27 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TypedDict, cast, final
+from typing import cast, final
 
-from punt_vox.voxd.workers.model import WorkerRecord, WorkerState
+from punt_vox.voxd.workers.model import WorkerRecord
+from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["WorkerPayload", "WorkerRecordCodec"]
-
-
-class WorkerPayload(TypedDict):
-    """Disk/wire memento, never a live mutable worker entity."""
-
-    id: str
-    provider: str
-    harness: str
-    session: str
-    project: str
-    worktree: str
-    branch: str
-    task: str
-    state: WorkerState
-    created_at: str
-    last_report: dict[str, object]  # PY-TS-14: extensible harness JSON at the edge.
 
 
 @final

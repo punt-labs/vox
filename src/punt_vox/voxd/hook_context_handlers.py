@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from typing import TYPE_CHECKING, Protocol, Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.hook_context_store import HookContextStore
@@ -12,18 +11,8 @@ from punt_vox.voxd.wire_reply import WireReply
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.hook_context_types import HookIngest
     from punt_vox.voxd.types import MessageHandler
-
-
-class HookIngest(Protocol):
-    """Accept a live JSON envelope for validation, redaction and checkpointing."""
-
-    # PY-TS-14: this JSON wire input is validated and redacted by the store.
-    def __call__(
-        self, payload: dict[str, object], *, worker_only: bool
-    ) -> Awaitable[None]:
-        """Ingest an envelope before returning a delivery receipt."""
-        ...
 
 
 @final
@@ -32,10 +21,12 @@ class HookContextHandlers:
 
     __slots__ = ("_ingest", "_store")
     _store: HookContextStore
-    _ingest: HookIngest | None
+    _ingest: HookIngest | None  # PY-TS-14: standalone stores have no worker actor.
 
     def __new__(
-        cls, store: HookContextStore | None = None, ingest: HookIngest | None = None
+        cls,
+        store: HookContextStore | None = None,  # PY-TS-14: absent creates a store.
+        ingest: HookIngest | None = None,  # PY-TS-14: absent uses unmanaged ingestion.
     ) -> Self:
         """Create a fresh store for this daemon."""
         self = super().__new__(cls)
