@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bump punt-observe to 0.1.1: diagnostic logs now mask bare bearer
+  credentials and home-directory prefixes, and URL query redaction keeps
+  prose punctuation.
+
 - Report AWS credential rejection during Polly voice discovery the same way
   as rejection during synthesis, including on a cold voice cache.
 
