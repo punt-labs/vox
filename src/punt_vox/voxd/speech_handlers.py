@@ -24,7 +24,8 @@ from punt_vox.voxd._parse import (
     parse_required_str,
 )
 from punt_vox.voxd.dedup import OnceDedup
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,

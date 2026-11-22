@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
-    from punt_vox.voxd.playback import PlaybackQueue, PlaybackResult
+    from punt_vox.voxd.playback import PlaybackQueue
+    from punt_vox.voxd.playback_result import PlaybackResult
     from punt_vox.voxd.record_store import RecordStore
 
 __all__ = ["PlayHandler"]

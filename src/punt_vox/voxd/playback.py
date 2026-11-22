@@ -22,7 +22,7 @@ from punt_vox.voxd.pcm_stream import (
     PcmStreamSink,
     sounddevice_output_stream,
 )
-from punt_vox.voxd.playback_result import PlaybackResult as PlaybackResult
+from punt_vox.voxd.playback_result import PlaybackResult
 
 logger = logging.getLogger(__name__)
 
@@ -289,16 +289,16 @@ class PlaybackQueue:
 
         Holds the playback mutex from open to close, so queued speech, chimes
         and direct play wait behind the stream and resume after it, exactly
-        as they wait behind a file. The device stream is aborted on exit
-        whether the utterance drained, was flushed, or the caller raised.
+        as they wait behind a file. The device is released on exit whether
+        the utterance played out, was flushed, or the caller raised.
         """
         async with self._mutex:
             sink = PcmStreamSink(asyncio.get_running_loop())
-            sink.open(self._output_stream)
+            await sink.open(self._output_stream)
             try:
                 yield sink
             finally:
-                sink.close()
+                await sink.close()
 
     def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""

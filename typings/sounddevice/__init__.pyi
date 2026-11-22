@@ -46,7 +46,7 @@ class RawOutputStream:
 
     Only what the streaming PCM sink calls is declared: callback mode,
     ``start`` to begin pulling, ``stop`` to drain, ``abort`` to stop without
-    draining.
+    draining, and ``finished_callback`` for when the stream goes inactive.
     """
 
     def __init__(
@@ -58,6 +58,7 @@ class RawOutputStream:
         dtype: str,
         latency: str,
         callback: RawOutputCallback,
+        finished_callback: Callable[[], None],
     ) -> None: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...

@@ -24,13 +24,14 @@ import threading
 import time
 from collections.abc import Buffer, Callable
 from dataclasses import dataclass
-from typing import Protocol, Self, final
+from typing import Literal, Protocol, Self, final
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "PCM_SAMPLE_RATE_HZ",
     "FlushReport",
+    "OutputDeviceLostError",
     "OutputStream",
     "OutputStreamFactory",
     "PcmBuffer",
@@ -76,7 +77,9 @@ class StreamReport:
     """How one utterance's stream ended: audio fed, heard and discarded.
 
     ``underflows`` counts blocks the device asked for while the response was
-    still arriving but only part of the block had come in.
+    still arriving and that came up short or empty after audio had started.
+    ``device_flags`` counts callbacks PortAudio flagged (under/overflow,
+    priming), and ``device_lost`` is set when the device stopped on its own.
     """
 
     fed: PcmDuration
@@ -84,6 +87,17 @@ class StreamReport:
     dropped: PcmDuration
     interrupted: bool
     underflows: int
+    device_flags: int
+    device_lost: bool
+
+    @property
+    def degraded(self) -> bool:
+        """Return whether the device starved, flagged, or stopped on its own."""
+        return bool(self.underflows or self.device_flags or self.device_lost)
+
+
+class OutputDeviceLostError(RuntimeError):
+    """The output device stopped before the stream ended."""
 
 
 class OutputStream(Protocol):
@@ -110,24 +124,44 @@ type OutputCallback = Callable[[Buffer, int, object, object], None]
 
 
 class OutputStreamFactory(Protocol):
-    """Open a mono int16 output stream that pulls audio through *callback*."""
+    """Open a mono int16 output stream that pulls audio through *callback*.
+
+    *finished_callback* runs on the device thread once the stream stops,
+    whether voxd stopped it or the device went away.
+    """
 
     def __call__(
-        self, *, samplerate: int, blocksize: int, callback: OutputCallback
+        self,
+        *,
+        samplerate: int,
+        blocksize: int,
+        callback: OutputCallback,
+        finished_callback: Callable[[], None],
     ) -> OutputStream:
         """Return an unstarted stream."""
         ...
 
 
 def sounddevice_output_stream(
-    *, samplerate: int, blocksize: int, callback: OutputCallback
+    *,
+    samplerate: int,
+    blocksize: int,
+    callback: OutputCallback,
+    finished_callback: Callable[[], None],
 ) -> OutputStream:
     """Open the default PortAudio output device.
 
     Imports ``sounddevice`` here, not at module scope: it is the optional
     ``call`` extra, and every ``voxd`` start imports this module.
     """
-    from sounddevice import RawOutputStream
+    try:
+        from sounddevice import RawOutputStream
+    except (ImportError, OSError) as exc:
+        msg = (
+            "streaming playback needs the `call` extra and PortAudio: "
+            "install punt-vox[call] and libportaudio2"
+        )
+        raise RuntimeError(msg) from exc
 
     return RawOutputStream(
         samplerate=samplerate,
@@ -136,6 +170,7 @@ def sounddevice_output_stream(
         dtype="int16",
         latency="low",
         callback=callback,
+        finished_callback=finished_callback,
     )
 
 
@@ -176,10 +211,29 @@ class PcmBuffer:
             self._pending.clear()
             return dropped
 
+    def trim_partial_frame(self) -> int:
+        """Drop a trailing half sample and return how many bytes went."""
+        with self._lock:
+            extra = len(self._pending) % _BYTES_PER_FRAME
+            if extra:
+                del self._pending[-extra:]
+            return extra
+
     def __len__(self) -> int:
         """Return the number of bytes pending."""
         with self._lock:
             return len(self._pending)
+
+
+type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
+"""Where an utterance is: arriving, fully fed, flushed, or released.
+
+``streaming -> finished`` (:meth:`~PcmStreamSink.finish`),
+``streaming | finished -> interrupted`` (:meth:`~PcmStreamSink.flush`), and
+any phase ``-> closed`` (:meth:`~PcmStreamSink.close`). Only the event loop
+writes the phase; the device thread reads it. ``docs/pcm-stream.tex`` models
+the transitions and the invariants the tests name.
+"""
 
 
 @final
@@ -193,28 +247,30 @@ class PcmStreamSink:
 
     __slots__ = (
         "_buffer",
+        "_device_flags",
+        "_device_lost",
         "_done",
         "_drained",
         "_dropped",
         "_fed",
-        "_finished",
-        "_interrupted",
         "_loop",
         "_opened_at",
+        "_phase",
         "_played",
         "_stream",
         "_underflows",
     )
 
     _buffer: PcmBuffer
+    _device_flags: int
+    _device_lost: bool
     _done: asyncio.Event
     _dropped: int
     _drained: bool
     _fed: int
-    _finished: bool
-    _interrupted: bool
     _loop: asyncio.AbstractEventLoop
     _opened_at: float
+    _phase: SinkPhase
     _played: int
     _stream: OutputStream | None
     _underflows: int
@@ -223,120 +279,191 @@ class PcmStreamSink:
         """Create a sink that signals completion on *loop*."""
         self = super().__new__(cls)
         self._buffer = PcmBuffer()
+        self._device_flags = 0
+        self._device_lost = False
         self._done = asyncio.Event()
         self._dropped = 0
         self._drained = False
         self._fed = 0
-        self._finished = False
-        self._interrupted = False
         self._loop = loop
-        self._opened_at = 0.0
+        self._opened_at = time.monotonic()
+        self._phase = "streaming"
         self._played = 0
         self._stream = None
         self._underflows = 0
         return self
 
     @property
+    def phase(self) -> SinkPhase:
+        """Return where the utterance is in its lifecycle."""
+        return self._phase
+
+    @property
     def played(self) -> PcmDuration:
         """Return how much audio the device has pulled so far."""
         return PcmDuration(self._played)
 
-    def open(self, factory: OutputStreamFactory) -> None:
-        """Open and start the device stream; it plays silence until fed."""
-        started = time.monotonic()
-        stream = factory(
-            samplerate=PCM_SAMPLE_RATE_HZ,
-            blocksize=_BLOCK_FRAMES,
-            callback=self._callback,
-        )
-        try:
-            stream.start()
-        except BaseException:
-            stream.close()
-            raise
-        self._stream = stream
+    async def open(self, factory: OutputStreamFactory) -> None:
+        """Open and start the device stream off the loop; it plays silence."""
+        if self._phase != "streaming" or self._stream is not None:
+            msg = f"cannot open a PCM sink that is {self._phase}"
+            raise ValueError(msg)
         self._opened_at = time.monotonic()
-        logger.info("PCM stream open in %.1f ms", (self._opened_at - started) * 1000)
+        self._stream = await asyncio.to_thread(self._start_device, factory)
+        logger.info("PCM stream open in %.1f ms", self._since_open_ms())
 
     def feed(self, pcm: bytes) -> None:
-        """Queue one chunk of agent audio; ignored once flushed or finished."""
-        if self._interrupted or self._finished:
-            return
+        """Queue one chunk of agent audio.
+
+        After a flush, audio still in flight from the interrupted response is
+        counted as dropped and never queued. Feeding a finished or closed
+        sink is a caller bug and raises :class:`ValueError`.
+        """
+        if self._phase not in {"streaming", "interrupted"}:
+            msg = f"cannot feed a PCM sink that is {self._phase}"
+            raise ValueError(msg)
         self._fed += len(pcm)
+        if self._phase == "interrupted":
+            self._dropped += len(pcm)
+            return
         self._buffer.append(pcm)
 
     def flush(self) -> FlushReport:
         """Discard all pending audio now (an ElevenLabs ``interruption``).
 
-        Idempotent: a second flush drops nothing and reports zero. Later
-        :meth:`feed` calls are ignored, so audio still in flight from the
-        interrupted response cannot resume playback.
+        Idempotent: flushing a sink that is already interrupted, closed, or
+        played out drops nothing and reports zero, so a stop that races
+        another stop or the natural end of the turn is harmless.
         """
         started = time.monotonic()
+        if self._phase in {"interrupted", "closed"} or (
+            self._phase == "finished" and self._drained
+        ):
+            return FlushReport(PcmDuration(0), 0.0)
         dropped = PcmDuration(self._buffer.clear())
         self._dropped += dropped.nbytes
-        first = not self._interrupted
-        self._interrupted = True
+        self._phase = "interrupted"
         self._done.set()
         report = FlushReport(dropped, (time.monotonic() - started) * 1000)
-        if first:
-            logger.info(
-                "PCM flush at %.0f ms: dropped %.0f ms of queued audio in %.3f ms",
-                self._since_open_ms(),
-                report.dropped.ms,
-                report.elapsed_ms,
-            )
+        logger.info(
+            "PCM flush at %.0f ms: dropped %.0f ms of queued audio in %.3f ms",
+            self._since_open_ms(),
+            report.dropped.ms,
+            report.elapsed_ms,
+        )
         return report
 
     def finish(self) -> None:
-        """Mark the response complete: no more :meth:`feed` calls follow."""
-        self._finished = True
+        """Mark the response complete: no more :meth:`feed` calls follow.
+
+        A no-op once flushed. A trailing half sample, which a chunk boundary
+        can leave, is dropped so the stream can still play out cleanly.
+        """
+        if self._phase == "interrupted":
+            return
+        if self._phase != "streaming":
+            msg = f"cannot finish a PCM sink that is {self._phase}"
+            raise ValueError(msg)
+        self._dropped += self._buffer.trim_partial_frame()
+        self._phase = "finished"
         if not self._buffer:
             self._done.set()
 
     async def wait(self) -> None:
-        """Return once the audio has played out or the sink was flushed."""
-        await self._done.wait()
+        """Return once the audio played out, or the sink was flushed or closed.
 
-    def close(self) -> StreamReport:
-        """Release the device and report how the utterance ended.
+        Raises :class:`OutputDeviceLostError` if the device stopped first.
+        """
+        await self._done.wait()
+        if self._device_lost:
+            msg = "output device stopped before the PCM stream ended"
+            raise OutputDeviceLostError(msg)
+
+    async def close(self) -> StreamReport:
+        """Release the device off the loop and report how the utterance ended.
 
         A stream that played out is stopped, so its last block is heard;
-        anything else (flushed, or closed early) is aborted at once.
+        anything else (flushed, or closed early) is aborted at once. The
+        device is closed even when stopping it fails, and waiters are
+        released.
         """
-        stream, self._stream = self._stream, None
+        if self._phase == "closed":
+            msg = "PCM sink is already closed"
+            raise ValueError(msg)
+        ending, self._phase = self._phase, "closed"
         pending = self._buffer.clear()
         self._dropped += pending
+        self._done.set()
+        stream, self._stream = self._stream, None
         if stream is not None:
-            if self._finished and not self._interrupted and not pending:
-                stream.stop()
-            else:
-                stream.abort()
-            stream.close()
+            drain = ending == "finished" and not pending
+            await asyncio.to_thread(self._release_device, stream, drain=drain)
         report = StreamReport(
             fed=PcmDuration(self._fed),
             played=PcmDuration(self._played),
             dropped=PcmDuration(self._dropped),
-            interrupted=self._interrupted,
+            interrupted=ending == "interrupted",
             underflows=self._underflows,
+            device_flags=self._device_flags,
+            device_lost=self._device_lost,
         )
-        logger.info(
+        logger.log(
+            logging.WARNING if report.degraded else logging.INFO,
             "PCM stream closed at %.0f ms: fed %.0f ms, played %.0f ms, "
-            "dropped %.0f ms, interrupted=%s, underflows=%d",
+            "dropped %.0f ms, interrupted=%s, underflows=%d, device_flags=%d, "
+            "device_lost=%s",
             self._since_open_ms(),
             report.fed.ms,
             report.played.ms,
             report.dropped.ms,
             report.interrupted,
             report.underflows,
+            report.device_flags,
+            report.device_lost,
         )
         return report
+
+    def _start_device(self, factory: OutputStreamFactory) -> OutputStream:
+        """Worker thread: create and start the stream, closing it on failure."""
+        stream = factory(
+            samplerate=PCM_SAMPLE_RATE_HZ,
+            blocksize=_BLOCK_FRAMES,
+            callback=self._callback,
+            finished_callback=self._device_stopped,
+        )
+        try:
+            stream.start()
+        except BaseException:
+            try:
+                stream.close()
+            except Exception:
+                logger.exception("closing the PCM device after a failed start")
+            raise
+        return stream
+
+    @staticmethod
+    def _release_device(stream: OutputStream, *, drain: bool) -> None:
+        """Worker thread: stop or abort the stream, then always close it."""
+        try:
+            if drain:
+                stream.stop()
+            else:
+                stream.abort()
+        finally:
+            stream.close()
 
     def _since_open_ms(self) -> float:
         return (time.monotonic() - self._opened_at) * 1000
 
+    def _device_stopped(self) -> None:
+        """Device thread: the stream went inactive; flag it unless we closed it."""
+        if self._phase == "closed":
+            return
+        self._device_lost = True
+        self._loop.call_soon_threadsafe(self._done.set)
+
     def _callback(
-        self, outdata: Buffer, frames: int, _time: object, _status: object
+        self, outdata: Buffer, frames: int, _time: object, status: object
     ) -> None:
         """PortAudio thread: fill one block, padding with silence."""
         out = memoryview(outdata).cast("B")
@@ -344,13 +471,18 @@ class PcmStreamSink:
         block = self._buffer.pull(wanted)
         out[: len(block)] = block
         out[len(block) : wanted] = bytes(wanted - len(block))
+        if status:
+            self._device_flags += 1
+        started = self._played > 0 or bool(block)
         self._played += len(block)
-        if len(block) == wanted or self._drained or self._interrupted:
+        if len(block) == wanted or self._drained:
             return
-        if not self._finished:
+        phase = self._phase
+        if phase == "streaming":
             # Starved mid-response: the network fell behind real time.
-            if block:
+            if started:
                 self._underflows += 1
             return
-        self._drained = True
-        self._loop.call_soon_threadsafe(self._done.set)
+        if phase == "finished":
+            self._drained = True
+            self._loop.call_soon_threadsafe(self._done.set)

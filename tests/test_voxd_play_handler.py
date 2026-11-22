@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 from punt_vox.voxd.play_handler import PlayHandler
-from punt_vox.voxd.playback import PlaybackItem, PlaybackResult
+from punt_vox.voxd.playback import PlaybackItem
+from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.record_store import RecordStore
 
 if TYPE_CHECKING:

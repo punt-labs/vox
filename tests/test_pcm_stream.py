@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
+from collections.abc import Callable
 from typing import Self, final
 
 import pytest
@@ -16,6 +18,7 @@ import pytest
 from punt_vox.voxd.pcm_stream import (
     PCM_SAMPLE_RATE_HZ,
     OutputCallback,
+    OutputDeviceLostError,
     PcmBuffer,
     PcmDuration,
     PcmStreamSink,
@@ -35,36 +38,46 @@ class FakeOutputStream:
         "_callback",
         "aborted",
         "closed",
+        "finished_callback",
         "heard",
         "start_error",
         "started",
+        "stop_error",
         "stopped",
     )
 
     _callback: OutputCallback
     aborted: bool
     closed: bool
+    finished_callback: Callable[[], None]
     heard: bytearray
     start_error: Exception | None
     started: bool
+    stop_error: Exception | None
     stopped: bool
 
-    def __new__(cls, callback: OutputCallback) -> Self:
+    def __new__(
+        cls, callback: OutputCallback, finished_callback: Callable[[], None]
+    ) -> Self:
         self = super().__new__(cls)
         self._callback = callback
+        self.finished_callback = finished_callback
         self.aborted = False
         self.closed = False
         self.started = False
         self.stopped = False
         self.start_error = None
+        self.stop_error = None
         self.heard = bytearray()
         return self
 
-    def pull(self, blocks: int = 1) -> None:
+    def pull(self, blocks: int = 1, *, pace_s: float = 0.0) -> None:
         for _ in range(blocks):
             out = bytearray(BLOCK * 2)
             self._callback(out, BLOCK, None, None)
             self.heard += out
+            if pace_s:
+                time.sleep(pace_s)
 
     def start(self) -> None:
         if self.start_error is not None:
@@ -72,10 +85,14 @@ class FakeOutputStream:
         self.started = True
 
     def stop(self) -> None:
+        if self.stop_error is not None:
+            raise self.stop_error
         self.stopped = True
+        self.finished_callback()
 
     def abort(self) -> None:
         self.aborted = True
+        self.finished_callback()
 
     def close(self) -> None:
         self.closed = True
@@ -97,10 +114,15 @@ class FakeDevice:
         return self
 
     def __call__(
-        self, *, samplerate: int, blocksize: int, callback: OutputCallback
+        self,
+        *,
+        samplerate: int,
+        blocksize: int,
+        callback: OutputCallback,
+        finished_callback: Callable[[], None],
     ) -> FakeOutputStream:
         self.kwargs = {"samplerate": samplerate, "blocksize": blocksize}
-        self.stream = FakeOutputStream(callback)
+        self.stream = FakeOutputStream(callback, finished_callback)
         return self.stream
 
     @property
@@ -113,10 +135,10 @@ def ms_of(pattern: bytes, ms: int) -> bytes:
     return pattern * (PCM_SAMPLE_RATE_HZ * ms // 1000)
 
 
-def open_sink(loop: asyncio.AbstractEventLoop) -> tuple[PcmStreamSink, FakeDevice]:
+async def open_sink() -> tuple[PcmStreamSink, FakeDevice]:
     device = FakeDevice()
-    sink = PcmStreamSink(loop)
-    sink.open(device)
+    sink = PcmStreamSink(asyncio.get_running_loop())
+    await sink.open(device)
     return sink, device
 
 
@@ -141,12 +163,12 @@ class TestPcmDuration:
 
 class TestPcmStreamSink:
     async def test_open_starts_a_16k_stream_with_20ms_blocks(self) -> None:
-        _, device = open_sink(asyncio.get_running_loop())
+        _, device = await open_sink()
         assert device.kwargs == {"samplerate": 16_000, "blocksize": BLOCK}
         assert device.opened.started
 
     async def test_fed_audio_plays_in_order_then_silence(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 10))
         sink.feed(ms_of(NEW, 10))
         device.opened.pull(2)
@@ -154,7 +176,7 @@ class TestPcmStreamSink:
         assert heard == ms_of(OLD, 10) + ms_of(NEW, 10) + bytes(BLOCK * 2)
 
     async def test_flush_silences_the_next_block(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 500))
         device.opened.pull(5)
         report = sink.flush()
@@ -163,7 +185,7 @@ class TestPcmStreamSink:
         assert device.opened.heard[-BLOCK * 2 :] == bytes(BLOCK * 2)
 
     async def test_feed_after_flush_is_ignored(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 100))
         sink.flush()
         sink.feed(ms_of(OLD, 100))
@@ -171,13 +193,13 @@ class TestPcmStreamSink:
         assert not any(device.opened.heard)
 
     async def test_second_flush_drops_nothing(self) -> None:
-        sink, _ = open_sink(asyncio.get_running_loop())
+        sink, _ = await open_sink()
         sink.feed(ms_of(OLD, 100))
         sink.flush()
         assert sink.flush().dropped.nbytes == 0
 
     async def test_wait_returns_after_the_last_block_plays(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 30))
         sink.finish()
         device.opened.pull(1)
@@ -187,12 +209,12 @@ class TestPcmStreamSink:
         await asyncio.wait_for(sink.wait(), timeout=1)
 
     async def test_finish_with_nothing_pending_completes_at_once(self) -> None:
-        sink, _ = open_sink(asyncio.get_running_loop())
+        sink, _ = await open_sink()
         sink.finish()
         await asyncio.wait_for(sink.wait(), timeout=1)
 
     async def test_flush_releases_a_waiter(self) -> None:
-        sink, _ = open_sink(asyncio.get_running_loop())
+        sink, _ = await open_sink()
         sink.feed(ms_of(OLD, 1000))
         waiter = asyncio.create_task(sink.wait())
         await asyncio.sleep(0)
@@ -200,10 +222,10 @@ class TestPcmStreamSink:
         await asyncio.wait_for(waiter, timeout=1)
 
     async def test_close_aborts_and_reports(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 100))
         device.opened.pull(2)
-        report = sink.close()
+        report = await sink.close()
         assert device.opened.aborted
         assert device.opened.closed
         assert report.fed.ms == pytest.approx(100.0)
@@ -212,31 +234,31 @@ class TestPcmStreamSink:
         assert not report.interrupted
 
     async def test_close_after_play_out_drains_the_last_block(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 30))
         sink.finish()
         device.opened.pull(2)
         await asyncio.wait_for(sink.wait(), timeout=1)
-        sink.close()
+        await sink.close()
         assert device.opened.stopped
         assert not device.opened.aborted
 
     async def test_close_after_the_last_full_block_drains_it(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 20))
         device.opened.pull(1)
         sink.finish()
         await asyncio.wait_for(sink.wait(), timeout=1)
-        sink.close()
+        await sink.close()
         assert device.opened.stopped
         assert not device.opened.aborted
 
     async def test_close_report_counts_audio_the_flush_dropped(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+        sink, device = await open_sink()
         sink.feed(ms_of(OLD, 100))
         device.opened.pull(1)
         sink.flush()
-        report = sink.close()
+        report = await sink.close()
         assert device.opened.aborted
         assert report.dropped.ms == pytest.approx(80.0)
         assert report.interrupted
@@ -246,23 +268,124 @@ class TestPcmStreamSink:
         sink = PcmStreamSink(asyncio.get_running_loop())
 
         def failing(
-            *, samplerate: int, blocksize: int, callback: OutputCallback
+            *,
+            samplerate: int,
+            blocksize: int,
+            callback: OutputCallback,
+            finished_callback: Callable[[], None],
         ) -> FakeOutputStream:
             stream = device(
-                samplerate=samplerate, blocksize=blocksize, callback=callback
+                samplerate=samplerate,
+                blocksize=blocksize,
+                callback=callback,
+                finished_callback=finished_callback,
             )
             stream.start_error = RuntimeError("device busy")
             return stream
 
         with pytest.raises(RuntimeError, match="device busy"):
-            sink.open(failing)
+            await sink.open(failing)
         assert device.opened.closed
 
-    async def test_underflow_counts_a_starved_partial_block(self) -> None:
-        sink, device = open_sink(asyncio.get_running_loop())
+    async def test_underflow_counts_starved_blocks_after_audio_starts(self) -> None:
+        sink, device = await open_sink()
+        device.opened.pull(2)
         sink.feed(ms_of(OLD, 30))
         device.opened.pull(3)
-        assert sink.close().underflows == 1
+        assert (await sink.close()).underflows == 2
+
+    async def test_device_flags_are_counted_and_reported(self) -> None:
+        sink, device = await open_sink()
+        out = bytearray(BLOCK * 2)
+        device.opened._callback(out, BLOCK, None, "output underflow")  # pyright: ignore[reportPrivateUsage]
+        report = await sink.close()
+        assert report.device_flags == 1
+        assert report.degraded
+
+
+class TestSinkPhases:
+    """Transitions of docs/pcm-stream.tex, named after its properties."""
+
+    async def test_feed_after_finish_is_rejected(self) -> None:
+        sink, _ = await open_sink()
+        sink.finish()
+        with pytest.raises(ValueError, match="finished"):
+            sink.feed(ms_of(OLD, 10))
+
+    async def test_feed_after_close_is_rejected(self) -> None:
+        """Closed streams never accumulate audio."""
+        sink, _ = await open_sink()
+        await sink.close()
+        with pytest.raises(ValueError, match="closed"):
+            sink.feed(ms_of(OLD, 10))
+
+    async def test_feed_after_flush_counts_as_dropped(self) -> None:
+        """Conservation: fed = played + dropped + pending, even after a flush."""
+        sink, _ = await open_sink()
+        sink.flush()
+        sink.feed(ms_of(OLD, 100))
+        report = await sink.close()
+        assert report.fed.nbytes == report.dropped.nbytes == len(ms_of(OLD, 100))
+
+    async def test_flush_after_play_out_is_a_no_op(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 20))
+        sink.finish()
+        device.opened.pull(2)
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        assert sink.flush().dropped.nbytes == 0
+        report = await sink.close()
+        assert not report.interrupted
+        assert device.opened.stopped
+
+    async def test_flush_after_close_is_a_no_op(self) -> None:
+        """Stop during stop: a flush that loses the race to close is harmless."""
+        sink, _ = await open_sink()
+        await sink.close()
+        assert sink.flush().dropped.nbytes == 0
+
+    async def test_finish_drops_a_trailing_half_sample_and_drains(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 10) + b"\x01")
+        sink.finish()
+        device.opened.pull(1)
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        report = await sink.close()
+        assert device.opened.stopped
+        assert report.dropped.nbytes == 1
+
+    async def test_second_close_is_rejected(self) -> None:
+        sink, _ = await open_sink()
+        await sink.close()
+        with pytest.raises(ValueError, match="already closed"):
+            await sink.close()
+
+    async def test_close_releases_a_waiter(self) -> None:
+        sink, _ = await open_sink()
+        sink.feed(ms_of(OLD, 1000))
+        waiter = asyncio.create_task(sink.wait())
+        await asyncio.sleep(0)
+        await sink.close()
+        await asyncio.wait_for(waiter, timeout=1)
+
+    async def test_close_closes_the_device_when_stop_fails(self) -> None:
+        sink, device = await open_sink()
+        sink.finish()
+        device.opened.stop_error = OSError("device unplugged")
+        with pytest.raises(OSError, match="unplugged"):
+            await sink.close()
+        assert device.opened.closed
+
+    async def test_device_lost_wakes_the_waiter_with_an_error(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 1000))
+        waiter = asyncio.create_task(sink.wait())
+        await asyncio.sleep(0)
+        threading.Thread(target=device.opened.finished_callback).start()
+        with pytest.raises(OutputDeviceLostError):
+            await asyncio.wait_for(waiter, timeout=1)
+        report = await sink.close()
+        assert report.device_lost
 
 
 @final
@@ -292,14 +415,7 @@ class DeviceThread:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self._stream.pull(1)
-
-
-def flush_dropped(
-    sink: PcmStreamSink, barrier: threading.Barrier, out: list[int]
-) -> None:
-    barrier.wait()
-    out.append(sink.flush().dropped.nbytes)
+            self._stream.pull(1, pace_s=0.0002)
 
 
 class TestPcmStreamRaces:
@@ -308,51 +424,79 @@ class TestPcmStreamRaces:
     ROUNDS = 200
 
     async def test_nothing_fed_before_a_flush_plays_after_it(self) -> None:
-        """A clear racing the device's pulls is exact: old audio never resumes."""
+        """Flush is exact: old audio never resumes after the flush returns."""
+        dropped_any = played_any = False
         for _ in range(self.ROUNDS):
-            sink, device = open_sink(asyncio.get_running_loop())
-            sink.feed(ms_of(OLD, 200))
+            sink, device = await open_sink()
+            sink.feed(ms_of(OLD, 1000))
             with DeviceThread(device.opened):
                 await asyncio.sleep(0.001)
-                sink.flush()
+                report = sink.flush()
                 heard_at_flush = len(device.opened.heard)
                 await asyncio.sleep(0.001)
             # The device may be mid-pull when the flush lands: one block, no more.
             after = bytes(device.opened.heard[heard_at_flush + BLOCK * 2 :])
             assert not any(after), "pre-flush audio played after the flush"
+            dropped_any |= report.dropped.nbytes > 0
+            played_any |= sink.played.nbytes > 0
+            await sink.close()
+        assert dropped_any, "no round flushed while audio was still queued"
+        assert played_any, "no round played audio before the flush"
 
     async def test_bytes_are_conserved_across_feed_pull_flush(self) -> None:
-        """Every fed byte is either played or dropped, never both or neither."""
+        """Conservation: every fed byte is played or dropped, exactly once."""
         for _ in range(self.ROUNDS):
-            sink, device = open_sink(asyncio.get_running_loop())
+            sink, device = await open_sink()
             with DeviceThread(device.opened):
                 for _ in range(20):
                     sink.feed(ms_of(OLD, 10))
+                    await asyncio.sleep(0)
                 sink.flush()
-            report = sink.close()
+                sink.feed(ms_of(OLD, 10))
+            report = await sink.close()
             assert report.played.nbytes + report.dropped.nbytes == report.fed.nbytes
 
-    async def test_concurrent_flushes_drop_each_byte_once(self) -> None:
-        """Stop during a stop: two flushers on two threads never double-count."""
+    async def test_stops_from_two_threads_drop_each_byte_once(self) -> None:
+        """Stop during stop: two stop requests drop the queue exactly once."""
+        loop = asyncio.get_running_loop()
         for _ in range(self.ROUNDS):
-            sink, _ = open_sink(asyncio.get_running_loop())
+            sink, _ = await open_sink()
             sink.feed(ms_of(OLD, 200))
-            barrier = threading.Barrier(2)
             dropped: list[int] = []
+
+            def request_stop(
+                sink: PcmStreamSink = sink, out: list[int] = dropped
+            ) -> None:
+                out.append(sink.flush().dropped.nbytes)
+
             threads = [
-                threading.Thread(target=flush_dropped, args=(sink, barrier, dropped))
+                threading.Thread(target=loop.call_soon_threadsafe, args=(request_stop,))
                 for _ in range(2)
             ]
             for thread in threads:
                 thread.start()
             for thread in threads:
                 thread.join()
+            while len(dropped) < 2:
+                await asyncio.sleep(0)
             assert sorted(dropped) == [0, len(ms_of(OLD, 200))]
+            await sink.close()
+
+    async def test_flush_racing_close_never_raises(self) -> None:
+        """Stop vs. close: whichever runs first, the other is harmless."""
+        for _ in range(self.ROUNDS):
+            sink, _ = await open_sink()
+            sink.feed(ms_of(OLD, 200))
+            closing = asyncio.create_task(sink.close())
+            await asyncio.sleep(0)
+            sink.flush()
+            report = await closing
+            assert report.played.nbytes + report.dropped.nbytes == report.fed.nbytes
 
     async def test_flush_racing_natural_end_always_releases_wait(self) -> None:
         """Stop vs. turn end: whichever wins, the waiter returns."""
         for _ in range(self.ROUNDS):
-            sink, device = open_sink(asyncio.get_running_loop())
+            sink, device = await open_sink()
             sink.feed(ms_of(OLD, 20))
             sink.finish()
             thread = threading.Thread(target=device.opened.pull, args=(2,))
@@ -360,7 +504,8 @@ class TestPcmStreamRaces:
             sink.flush()
             thread.join()
             await asyncio.wait_for(sink.wait(), timeout=1)
-            assert sink.close().interrupted
+            report = await sink.close()
+            assert report.played.nbytes + report.dropped.nbytes == report.fed.nbytes
 
 
 class TestPlaybackQueueOwnership:

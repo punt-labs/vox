@@ -1,0 +1,203 @@
+%
+% pcm-stream.tex
+%
+% Z specification of the streaming PCM sink (src/punt_vox/voxd/pcm_stream.py,
+% PL-1298): the phases of one streamed utterance and the byte accounting the
+% tests in tests/test_pcm_stream.py assert by name.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+
+\title{The Streaming PCM Sink: A Z Specification}
+\author{Punt Labs, for PL-1298}
+\date{November 2026}
+\maketitle
+
+\section{Introduction}
+
+A \texttt{PcmStreamSink} carries one agent utterance from the network to the
+output device. The event loop feeds chunks, finishes the response, flushes on
+an ElevenLabs \texttt{interruption}, and closes the sink; the device thread
+pulls 20~ms blocks. Pending audio lives in one locked buffer, so each feed,
+pull and flush is atomic and the operations below interleave in any order.
+
+The model counts bytes. It names five properties, and the tests carry the
+same names:
+
+\begin{enumerate}
+  \item[P1] \emph{Conservation}: every byte fed is played, dropped or still
+    pending, exactly once.
+  \item[P2] \emph{Flush is exact}: once flushed, nothing is pending and the
+    device pulls no more of the utterance.
+  \item[P3] \emph{Closed streams never accumulate audio}: no operation adds to
+    a closed sink.
+  \item[P4] \emph{Stop is idempotent}: a flush after a flush, a close or a
+    play-out changes nothing.
+  \item[P5] \emph{Play-out drains}: close lets the device play its last block
+    only when the response finished and nothing is pending; otherwise it
+    aborts.
+\end{enumerate}
+
+\section{Types}
+
+\begin{zed}
+  PHASE ::= streaming | finished | interrupted | closed \\
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{State}
+
+\begin{schema}{Sink}
+  phase : PHASE \\
+  fed, played, dropped, pending : \nat \\
+  drained : ZBOOL
+\where
+  fed = played + dropped + pending \\
+  phase \in \{ interrupted, closed \} \implies pending = 0 \\
+  drained = ztrue \implies phase \in \{ finished, closed \}
+\end{schema}
+
+The first predicate is P1. The second is the state half of P2 and P3.
+
+\begin{schema}{InitSink}
+  Sink'
+\where
+  phase' = streaming \\
+  fed' = 0 \\
+  played' = 0 \\
+  dropped' = 0 \\
+  pending' = 0 \\
+  drained' = zfalse
+\end{schema}
+
+\section{Operations on the event loop}
+
+\begin{schema}{Feed}
+  \Delta Sink \\
+  n? : \nat_1
+\where
+  phase = streaming \\
+  fed' = fed + n? \\
+  pending' = pending + n? \\
+  phase' = phase \\
+  played' = played \\
+  dropped' = dropped \\
+  drained' = drained
+\end{schema}
+
+Audio still in flight after an interruption is counted and dropped (P1, P2).
+
+\begin{schema}{FeedAfterFlush}
+  \Delta Sink \\
+  n? : \nat_1
+\where
+  phase = interrupted \\
+  fed' = fed + n? \\
+  dropped' = dropped + n? \\
+  pending' = pending \\
+  phase' = phase \\
+  played' = played \\
+  drained' = drained
+\end{schema}
+
+Feeding a finished or closed sink has no operation: the implementation raises
+\texttt{ValueError} (P3).
+
+\texttt{Finish} drops a trailing half sample, which a network chunk boundary
+can leave, so the stream can still play out.
+
+\begin{schema}{Finish}
+  \Delta Sink \\
+  trim? : \nat
+\where
+  phase = streaming \\
+  trim? \leq 1 \\
+  trim? \leq pending \\
+  pending' = pending - trim? \\
+  dropped' = dropped + trim? \\
+  phase' = finished \\
+  fed' = fed \\
+  played' = played \\
+  drained' = drained
+\end{schema}
+
+\begin{schema}{Flush}
+  \Delta Sink
+\where
+  phase \in \{ streaming, finished \} \\
+  drained = zfalse \\
+  dropped' = dropped + pending \\
+  pending' = 0 \\
+  phase' = interrupted \\
+  fed' = fed \\
+  played' = played \\
+  drained' = drained
+\end{schema}
+
+\begin{schema}{FlushNoOp}
+  \Xi Sink
+\where
+  phase \in \{ interrupted, closed \} \lor drained = ztrue
+\end{schema}
+
+\texttt{Flush} and \texttt{FlushNoOp} together are total: P4.
+
+\begin{schema}{Close}
+  \Delta Sink \\
+  drain! : ZBOOL
+\where
+  phase \neq closed \\
+  (phase = finished \land pending = 0) \implies drain! = ztrue \\
+  \lnot (phase = finished \land pending = 0) \implies drain! = zfalse \\
+  dropped' = dropped + pending \\
+  pending' = 0 \\
+  phase' = closed \\
+  fed' = fed \\
+  played' = played \\
+  drained' = drained
+\end{schema}
+
+\texttt{drain!} is P5: \texttt{ztrue} stops the device after its last block,
+\texttt{zfalse} aborts it.
+
+\section{Operations on the device thread}
+
+\begin{schema}{Pull}
+  \Delta Sink \\
+  k? : \nat_1
+\where
+  phase \in \{ streaming, finished \} \\
+  k? \leq pending \\
+  played' = played + k? \\
+  pending' = pending - k? \\
+  phase' = phase \\
+  fed' = fed \\
+  dropped' = dropped \\
+  drained' = drained
+\end{schema}
+
+\texttt{Pull} needs \texttt{pending} $> 0$, which an interrupted or closed sink
+never has: the operational half of P2.
+
+\begin{schema}{Drain}
+  \Delta Sink
+\where
+  phase = finished \\
+  pending = 0 \\
+  drained = zfalse \\
+  drained' = ztrue \\
+  phase' = phase \\
+  fed' = fed \\
+  played' = played \\
+  dropped' = dropped \\
+  pending' = pending
+\end{schema}
+
+\texttt{Drain} is the callback finding the buffer empty after
+\texttt{Finish}; it releases waiters.
+
+\end{document}

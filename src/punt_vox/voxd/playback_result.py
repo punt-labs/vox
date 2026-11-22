@@ -15,7 +15,7 @@ __all__ = [
     "PlaybackResult",
 ]
 
-_logger = logging.getLogger("punt_vox.voxd.playback")
+logger = logging.getLogger(__name__)
 
 # Playback under 50ms is a "success" that almost certainly played nothing.
 SUSPICIOUS_ELAPSED_S = 0.05
@@ -98,14 +98,14 @@ class PlaybackResult:
     ) -> None:
         """Interpret this result and log at the appropriate level.
 
-        The result already bundles the
-        file, exit code, elapsed time, and stderr -- plus the spawn context
-        (``size``, ``cmd``, ``env_snapshot``) the result does not carry, so the
-        log line reproduces the exact invocation for triage.
+        The result bundles the file, exit code, elapsed time and stderr; the
+        caller adds the spawn context it does not carry (``size``, ``cmd``,
+        ``env_snapshot``), so the log line reproduces the exact invocation
+        for triage.
         """
         name = self.path.name
         if self.rc != 0:
-            _logger.error(
+            logger.error(
                 "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
                 "cmd=%s audio_env=%s stderr=%r",
                 self.rc,
@@ -119,7 +119,7 @@ class PlaybackResult:
             return
 
         if self.elapsed_s < SUSPICIOUS_ELAPSED_S:
-            _logger.warning(
+            logger.warning(
                 "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
                 "size=%d audio_env=%s stderr=%r -- probably played nothing",
                 self.elapsed_s,
@@ -131,7 +131,7 @@ class PlaybackResult:
             )
             return
 
-        _logger.debug(
+        logger.debug(
             "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
             self.elapsed_s,
             name,

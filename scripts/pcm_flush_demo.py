@@ -36,6 +36,8 @@ TEXT = (
 VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream"
 
+STALL_S = 5.0
+
 logger = logging.getLogger("punt_vox.voxd.pcm_flush_demo")
 
 
@@ -75,8 +77,15 @@ async def feed_tone(sink: PcmStreamSink) -> None:
 
 
 async def played_past(sink: PcmStreamSink, seconds: float) -> None:
+    """Return once the device has played *seconds*; raise if it stops pulling."""
+    last, stalled_since = sink.played.nbytes, time.monotonic()
     while sink.played.ms < seconds * 1000:
         await asyncio.sleep(0.005)
+        if sink.played.nbytes != last:
+            last, stalled_since = sink.played.nbytes, time.monotonic()
+        elif time.monotonic() - stalled_since > STALL_S:
+            msg = f"output device played nothing for {STALL_S:.0f} s"
+            raise TimeoutError(msg)
 
 
 async def play_out(sink: PcmStreamSink, feeding: Coroutine[None, None, None]) -> None:
@@ -94,14 +103,16 @@ async def main(interrupt_after_s: float) -> None:
         cue = asyncio.create_task(played_past(sink, interrupt_after_s))
         await asyncio.wait({speech, cue}, return_when=asyncio.FIRST_COMPLETED)
         if cue.done():
+            cue.result()
             logger.info("interruption at %.0f ms of audio played", sink.played.ms)
             sink.flush()
             speech.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await speech
         else:
             cue.cancel()
+            speech.result()
             logger.info("speech ended before the interruption point")
-        with contextlib.suppress(asyncio.CancelledError):
-            await speech
         await asyncio.sleep(0.5)
 
 

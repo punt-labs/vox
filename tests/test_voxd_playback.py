@@ -14,7 +14,8 @@ import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
 from punt_vox.voxd import _PLAYBACK_TIMEOUT_DEFAULT_S
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
+from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.playback_result import PlaybackResult
 
 
 def _make_playback_queue() -> PlaybackQueue:
