@@ -37,9 +37,11 @@ def test_real_tmux_steering_preserves_semicolons(tmp_path: Path, words: str) -> 
             str(tmp_path),
             sys.executable,
             "-c",
-            "import sys, time; from pathlib import Path; "
-            "Path('ready').write_text('ready'); "
-            "Path('received').write_text(sys.stdin.readline()); time.sleep(60)",
+            (
+                "import sys, time; from pathlib import Path; "
+                "Path('ready').write_text('ready'); "
+                "Path('received').write_text(sys.stdin.readline()); time.sleep(60)"
+            ),
         ],
         check=True,
         capture_output=True,

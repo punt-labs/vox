@@ -194,11 +194,7 @@ class WorkerRegistry:
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
         """Recognize a later matching input without inferring turn completion."""
         profile = self._profiles[self._get(worker_id).harness]
-        receipt = profile.last_input(worker_id)
-        if (
-            receipt is not None
-            and receipt.seq > baseline
-            and profile.matches_input(receipt, words)
-        ):
-            return receipt.seq
+        for receipt in profile.inputs_since(worker_id, baseline):
+            if receipt.seq > baseline and profile.matches_input(receipt, words):
+                return receipt.seq
         return None

@@ -66,6 +66,13 @@ class ClaudeProfile:
         """Match an untruncated input receipt exactly."""
         return receipt.text == words
 
+    def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
+        """Search retained submissions, not just the latest prompt at poll time."""
+        return [
+            WorkerInput(seq, text)
+            for seq, text in self._store.inputs_since(worker_id, baseline)
+        ]
+
     def cleanup(self, worktree: Path) -> None:
         """Remove the temporary trust flag, retaining work product."""
         self._trust.update(worktree, accepted=False)

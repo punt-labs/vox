@@ -12,6 +12,7 @@ from punt_vox.voxd.hook_context_projection import (
     HookToolResult,
 )
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
+from punt_vox.voxd.hook_input_history import HookInputHistory
 from punt_vox.voxd.hook_tool_history import HookToolHistory
 
 _MAX_SESSIONS = 64
@@ -72,13 +73,18 @@ class HookContextStore:
         context = self._sessions.get(session)
         return context.last_input() if context is not None else (0, "")
 
+    def inputs_since(self, session: str, baseline: int) -> list[tuple[int, str]]:
+        """Return bounded recent inputs without changing the snapshot schema."""
+        context = self._sessions.get(session)
+        return context.inputs_since(baseline) if context is not None else []
+
 
 @final
 class SessionContext:
     """Bounded per-session view, ordered by sender sequence rather than arrival."""
 
     __slots__ = ("_assistant", "_gaps", "_goal", "_input", "_started", "_tools")
-    _input: tuple[int, str]
+    _input: HookInputHistory
     _assistant: tuple[int, str]
     _gaps: HookGaps
     _goal: tuple[int, str]
@@ -91,7 +97,7 @@ class SessionContext:
         self._assistant = (0, "")
         self._gaps = HookGaps()
         self._goal = (0, "")
-        self._input = (0, "")
+        self._input = HookInputHistory()
         self._started = False
         self._tools = HookToolHistory()
         return self
@@ -104,8 +110,7 @@ class SessionContext:
             case "SessionStart":
                 self._started = True
             case "UserPromptSubmit":
-                if sequence > self._input[0]:
-                    self._input = (sequence, HookText.clip(payload.get("prompt")))
+                self._input.ingest(sequence, payload.get("prompt"))
                 self._goal = self._newest(
                     self._goal, sequence, HookText.clip(payload.get("prompt"))
                 )
@@ -123,7 +128,11 @@ class SessionContext:
 
     def last_input(self) -> tuple[int, str]:
         """Input acknowledgement is independent of Stop and turn completion."""
-        return self._input
+        return self._input.last()
+
+    def inputs_since(self, baseline: int) -> list[tuple[int, str]]:
+        """Retain intermediate receipts even when a newer input arrives."""
+        return self._input.since(baseline)
 
     def snapshot(self) -> HookContextSnapshot:
         """Project the newest goals, files, results, and still-open failure."""

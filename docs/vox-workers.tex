@@ -297,10 +297,44 @@ only the per-worker lock; waiting for the actor cannot renew deadline.
 cursor? is the latest harness input sequence sampled before sending, or zero
 when no input has been observed. ReceiptHeard uses the worker's own later
 input event. Stale or differently worded input cannot take this transition.
+The profile exposes inputs since a cursor, backed by the newest 32 input
+sequences per session. A later unrelated prompt does not erase a retained
+matching receipt. Eviction can still cause an unheard timeout; retention
+does not promise unbounded delivery history.
+
+\begin{schema}{InputHistory}
+  recent : WORKER \fun (\nat \pfun WORDS)
+\where
+  \forall w : WORKER @ \# (\dom (recent~w)) \leq 32
+\end{schema}
+
+\begin{schema}{InitInputHistory}
+  InputHistory
+\where
+  \forall w : WORKER @ recent~w = \emptyset
+\end{schema}
+
+\begin{schema}{ObserveInput}
+  \Delta InputHistory \\
+  worker? : WORKER \\
+  sequence? : \nat \\
+  text? : WORDS \\
+  entries, retained! : \nat \pfun WORDS
+\where
+  sequence? > 0 \\
+  sequence? \notin \dom (recent~worker?) \\
+  entries = (recent~worker?) \cup \{sequence? \mapsto text?\} \\
+  retained! \subseteq entries \\
+  \# (\dom entries) \leq 32 \implies retained! = entries \\
+  \# (\dom entries) > 32 \implies \# (\dom retained!) = 32 \\
+  \forall old : (\dom entries) \setminus (\dom retained!); newer : \dom retained! @ old < newer \\
+  recent' = recent \oplus \{worker? \mapsto retained!\}
+\end{schema}
 
 \begin{schema}{ReceiptHeard}
   \Delta Steering \\
   \Xi Workers \\
+  \Xi InputHistory \\
   request? : STEER \\
   worker? : WORKER \\
   sequence? : \nat \\
@@ -309,6 +343,8 @@ input event. Stale or differently worded input cannot take this transition.
   request? \in \dom steerPhase \\
   steerPhase~request? = sent \\
   worker? = target~request? \\
+  sequence? \in \dom (recent~worker?) \\
+  (recent~worker?)~sequence? = text? \\
   now < receiptDeadline~request? \\
   sequence? > baseline~request? \\
   text? = words~request? \\

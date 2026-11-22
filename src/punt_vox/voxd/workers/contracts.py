@@ -61,6 +61,10 @@ class HarnessProfile(Protocol):
         """Compare input using the harness's bounded representation."""
         ...
 
+    def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
+        """Return bounded recent inputs strictly newer than the baseline."""
+        ...
+
     def argv(self, worker_id: str, task: str) -> list[str]:
         """Build the harness launch arguments."""
         ...

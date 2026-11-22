@@ -20,7 +20,7 @@ from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
-from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -71,6 +71,9 @@ class TrivialProfile:
 
     def last_input(self, worker_id: str) -> None:
         return None
+
+    def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
+        return []
 
     def matches_input(self, receipt: object, words: str) -> bool:
         return False

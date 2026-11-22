@@ -134,6 +134,7 @@ def test_profile_receipts_latest_prompt_and_clipping(
     store = HookContextStore()
     profile = ClaudeProfile(store)
     assert profile.last_input("w") is None
+    assert profile.inputs_since("w", 0) == []
     provider = FakeWorkerProvider()
     provider.ready = True
     registry = _registry(tmp_path, provider)
@@ -145,6 +146,11 @@ def test_profile_receipts_latest_prompt_and_clipping(
 
     with (
         patch.object(TrivialProfile, "last_input", side_effect=last_input),
+        patch.object(
+            TrivialProfile,
+            "inputs_since",
+            side_effect=lambda worker, baseline: profile.inputs_since("w", baseline),
+        ),
         patch.object(
             TrivialProfile, "matches_input", side_effect=profile.matches_input
         ),
@@ -171,6 +177,37 @@ def test_profile_receipts_latest_prompt_and_clipping(
             }
         )
         assert profile.last_input("w") == WorkerInput(8, "")
+
+
+def test_intermediate_input_remains_a_receipt_after_newer_prompt(
+    tmp_path: Path,
+) -> None:
+    """Receipt freshness and exact text search retained inputs, not just the latest."""
+    store = HookContextStore()
+    profile = ClaudeProfile(store)
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    for sequence, text in [(5, "steered"), (6, "later unrelated prompt")]:
+        store.ingest(
+            {
+                "session_id": worker.id,
+                "hook_event_name": "UserPromptSubmit",
+                "relay_seq": sequence,
+                "prompt": text,
+            }
+        )
+    with (
+        patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),
+        patch.object(TrivialProfile, "inputs_since", side_effect=profile.inputs_since),
+        patch.object(
+            TrivialProfile, "matches_input", side_effect=profile.matches_input
+        ),
+    ):
+        assert registry.receipt(worker.id, "steered", 4) == 5
+        assert registry.receipt(worker.id, "steered", 5) is None
+        assert registry.receipt(worker.id, "absent", 0) is None
 
 
 def test_profile_rejects_clipped_prefix_collision() -> None:
