@@ -21,12 +21,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import threading
 import time
 from collections.abc import Buffer
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Self, final
 
+from punt_vox.voxd.pcm_audio import (
+    BYTES_PER_FRAME,
+    PCM_SAMPLE_RATE_HZ,
+    PcmBuffer,
+    PcmDuration,
+)
 from punt_vox.voxd.pcm_output import OutputDeviceLostError
 
 if TYPE_CHECKING:
@@ -35,33 +40,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "PCM_SAMPLE_RATE_HZ",
     "FlushReport",
-    "PcmBuffer",
-    "PcmDuration",
     "PcmStreamSink",
     "StreamReport",
 ]
 
-PCM_SAMPLE_RATE_HZ = 16_000
-"""ElevenLabs ``pcm_16000``: 16-bit signed little-endian mono at 16 kHz."""
-
-_BYTES_PER_FRAME = 2
 _BLOCK_FRAMES = 320
 """20 ms per callback: the most audio that can still sound after a flush."""
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class PcmDuration:
-    """A byte count of ``pcm_16000`` audio and the playing time it spans."""
-
-    nbytes: int
-
-    @property
-    def ms(self) -> float:
-        """Return how long this many bytes play for, in milliseconds."""
-        return self.nbytes / _BYTES_PER_FRAME / PCM_SAMPLE_RATE_HZ * 1000
 
 
 @final
@@ -96,57 +81,6 @@ class StreamReport:
     def degraded(self) -> bool:
         """Return whether the device starved, flagged, or stopped on its own."""
         return bool(self.underflows or self.device_flags or self.device_lost)
-
-
-@final
-class PcmBuffer:
-    """Thread-safe FIFO of PCM bytes shared by the loop and the device thread."""
-
-    __slots__ = ("_lock", "_pending")
-
-    _lock: threading.Lock
-    _pending: bytearray
-
-    def __new__(cls) -> Self:
-        """Create an empty buffer."""
-        self = super().__new__(cls)
-        self._lock = threading.Lock()
-        self._pending = bytearray()
-        return self
-
-    def append(self, pcm: bytes) -> None:
-        """Queue *pcm* behind everything already pending."""
-        with self._lock:
-            self._pending += pcm
-
-    def pull(self, nbytes: int) -> bytes:
-        """Remove and return up to *nbytes* whole frames from the front."""
-        with self._lock:
-            take = min(nbytes, len(self._pending))
-            take -= take % _BYTES_PER_FRAME
-            block = bytes(self._pending[:take])
-            del self._pending[:take]
-            return block
-
-    def clear(self) -> int:
-        """Discard everything pending and return how many bytes were dropped."""
-        with self._lock:
-            dropped = len(self._pending)
-            self._pending.clear()
-            return dropped
-
-    def trim_partial_frame(self) -> int:
-        """Drop a trailing half sample and return how many bytes went."""
-        with self._lock:
-            extra = len(self._pending) % _BYTES_PER_FRAME
-            if extra:
-                del self._pending[-extra:]
-            return extra
-
-    def __len__(self) -> int:
-        """Return the number of bytes pending."""
-        with self._lock:
-            return len(self._pending)
 
 
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
@@ -441,7 +375,7 @@ class PcmStreamSink:
     def _fill(self, outdata: Buffer, frames: int, status: object) -> None:
         """Fill one block, padding with silence, and track the utterance's end."""
         out = memoryview(outdata).cast("B")
-        wanted = frames * _BYTES_PER_FRAME
+        wanted = frames * BYTES_PER_FRAME
         block = self._buffer.pull(wanted)
         out[: len(block)] = block
         out[len(block) : wanted] = bytes(wanted - len(block))

@@ -16,13 +16,9 @@ from typing import Self, final
 
 import pytest
 
+from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
 from punt_vox.voxd.pcm_output import OutputCallback, OutputDeviceLostError
-from punt_vox.voxd.pcm_stream import (
-    PCM_SAMPLE_RATE_HZ,
-    PcmBuffer,
-    PcmDuration,
-    PcmStreamSink,
-)
+from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
 
 BLOCK = 320
@@ -147,25 +143,6 @@ async def open_sink() -> tuple[PcmStreamSink, FakeDevice]:
     sink = PcmStreamSink(asyncio.get_running_loop())
     await sink.open(device)
     return sink, device
-
-
-class TestPcmBuffer:
-    def test_pull_returns_whole_frames_in_order(self) -> None:
-        buffer = PcmBuffer()
-        buffer.append(b"\x01\x02\x03")
-        assert buffer.pull(4) == b"\x01\x02"
-        assert len(buffer) == 1
-
-    def test_clear_reports_dropped_bytes(self) -> None:
-        buffer = PcmBuffer()
-        buffer.append(b"\x00" * 10)
-        assert buffer.clear() == 10
-        assert buffer.clear() == 0
-
-
-class TestPcmDuration:
-    def test_one_second_of_pcm_16000(self) -> None:
-        assert PcmDuration(32_000).ms == pytest.approx(1000.0)
 
 
 class TestPcmStreamSink:

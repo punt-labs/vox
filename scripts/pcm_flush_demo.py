@@ -25,7 +25,8 @@ from collections.abc import Coroutine
 
 import httpx
 
-from punt_vox.voxd.pcm_stream import PCM_SAMPLE_RATE_HZ, PcmStreamSink
+from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
+from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
 
 TEXT = (
