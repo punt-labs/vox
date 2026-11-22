@@ -30,3 +30,21 @@ def test_worker_git_commands_have_a_bounded_deadline(
     timeout = run.call_args.kwargs.get("timeout")
     assert timeout is not None, "worker Git subprocess has no deadline"
     assert 0 < timeout < 30
+
+
+def test_direct_worker_rpc_requires_an_absolute_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.chdir(tmp_path)
+    config = Mock(spec=ConfigStore)
+    config.read_field.return_value = repr([str(project)])
+    with (
+        patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, str(project), ""),
+        ),
+        pytest.raises(ValueError, match="absolute"),
+    ):
+        WorkerRepoPolicy(config).resolve("repo")

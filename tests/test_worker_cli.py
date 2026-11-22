@@ -14,6 +14,22 @@ from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.desktop_install import DesktopInstaller
 
 
+def test_relative_worker_project_is_resolved_in_the_callers_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as request:
+        result = CliRunner().invoke(
+            app, ["worker", "start", "--task", "edit", "--project", "repo"]
+        )
+    assert result.exit_code == 0, result.output
+    assert request.call_args.kwargs["project"] == str(tmp_path / "repo")
+
+
 @pytest.mark.parametrize(
     ("args", "operation", "fields"),
     [

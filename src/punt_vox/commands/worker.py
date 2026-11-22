@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Annotated, final
 
 import typer
@@ -30,13 +31,17 @@ class WorkerCli:
     @staticmethod
     def start(
         task: Annotated[str, typer.Option()],
-        project: Annotated[str, typer.Option()],
+        project: Annotated[Path, typer.Option()],
         provider: str = "tmux",
         harness: str = "claude",
     ) -> None:
         """Start a worker in an allowlisted repository's new worktree."""
         WorkerCli._run(
-            "start", task=task, project=project, provider=provider, harness=harness
+            "start",
+            task=task,
+            project=str(project.expanduser().resolve()),
+            provider=provider,
+            harness=harness,
         )
 
     @staticmethod

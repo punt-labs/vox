@@ -39,7 +39,10 @@ class WorkerRepoPolicy:
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""
         allowed = self._allowed(self._config.read_field("worker_repos") or "[]")
-        path = Path(project).expanduser().resolve(strict=True)
+        path = Path(project).expanduser()
+        if not path.is_absolute():
+            raise ValueError("Worker project must be an absolute path")
+        path = path.resolve(strict=True)
         if path not in allowed:
             raise ValueError(
                 f"Worker project is not allowlisted in worker_repos: {path}"
