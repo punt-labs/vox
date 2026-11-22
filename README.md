@@ -34,7 +34,7 @@ database and creates no salt. Diagnostic logging remains available.
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b737c24/install.sh | sh
 ```
 
 Restart Claude Code, then turn vox on for the current repository:
@@ -56,13 +56,13 @@ This installs the `vox` command without the Claude Code plugin, for use with ano
 Pass the flag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh | sh -s -- --no-plugin
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b737c24/install.sh | sh -s -- --no-plugin
 ```
 
 Or set the environment variable, for places where passing arguments is awkward (CI templates, proxies):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh | VOX_NO_PLUGIN=1 sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b737c24/install.sh | VOX_NO_PLUGIN=1 sh
 ```
 
 `VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The installer also skips the plugin when `claude` or `git` is not installed.
@@ -88,7 +88,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ce8d4a5/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/b737c24/install.sh -o install.sh
 ```
 
 ```bash
