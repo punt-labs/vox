@@ -325,12 +325,13 @@ reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip and not quarantine'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip and not quarantine and not playback'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "quarantine(reason): temporarily exclude a flaky test; reason must name a Linear issue",
+    "playback: real daemon audio-device monitor capture (nightly/manual)",
     "roundtrip: real TTS to STT word-error-rate oracle (provider matrix also marked integration; Claude Code also marked agent)",
     "agent: marks tests driving the vox plugin through paid headless Claude Code (run with -m agent)",
     "integration: marks tests requiring real, credentialed provider API calls (run with -m integration)",
