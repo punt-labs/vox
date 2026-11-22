@@ -45,6 +45,19 @@ def test_counter_serializes_concurrent_independent_opens(tmp_path: Path) -> None
     assert HookSequence(tmp_path, "session/a").next() == 33
 
 
+def test_counter_fsync_failure_preserves_last_committed_sequence(
+    tmp_path: Path,
+) -> None:
+    """An interruption before replacement cannot reset the published counter."""
+    assert HookSequence(tmp_path, "a").next() == 1
+    with (
+        patch("punt_vox.atomic_file.os.fsync", side_effect=InterruptedError),
+        pytest.raises(InterruptedError),
+    ):
+        HookSequence(tmp_path, "a").next()
+    assert HookSequence(tmp_path, "a").next() == 2
+
+
 def test_relay_stages_without_waiting_for_delivery(tmp_path: Path) -> None:
     """The hook returns after allocating a sequence and starting a child."""
     staged: list[object] = []
