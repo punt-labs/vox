@@ -36,15 +36,11 @@ dependencies = [
     # Dependabot alert #69; the floor keeps a PyPI install off it.
     "dnspython>=2.9.0",
     "elevenlabs>=2.0.0",
-    # Security floor only: vox does not import fastmcp (punt-lux pulls it in
-    # with fastmcp>=3.0.0,<4). Dependabot alert #60 covers fastmcp >=3.0.0,<3.4.10
-    # and >=4.0.0,<4.1.2. The floor keeps a PyPI install off the first range; the
-    # 4.x exclusions guard that path only if lux lifts its <4 cap. The 4.1.0.* /
-    # 4.1.1.* wildcards also exclude post-releases, which sit inside <4.1.2.
-    # 4.1.2 pre-releases (4.1.2rc1) cannot be excluded in PEP 508 without listing
-    # each; the resolver never selects a pre-release unless asked.
-    # No upper cap: a patched later major stays installable.
-    "fastmcp>=3.4.10,!=4.0.*,!=4.1.0.*,!=4.1.1.*",
+    # vox does not import fastmcp (punt-lux pulls it in with fastmcp>=3.0.0,<4).
+    # The floor is a security floor: Dependabot alert #60 covers fastmcp
+    # >=3.0.0,<3.4.10. The <4 cap tracks the mcp<2 cap below: fastmcp 4.x requires
+    # mcp 2.x, which removed the mcp.server.fastmcp API the server imports.
+    "fastmcp>=3.4.10,<4",
     # Imported directly, not just through the SDKs: the providers classify
     # httpx's own transport errors (ConnectError, ProxyError, UnsupportedProtocol)
     # that the ElevenLabs SDK lets escape raw. Floors are the locked versions.
@@ -61,7 +57,10 @@ dependencies = [
     "joserfc>=1.7.6",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
-    "mcp>=1.30.0",
+    # The <2 cap is load-bearing: server.py imports mcp.server.fastmcp, which
+    # mcp 2.x removed (FastMCP became mcp.server.mcpserver.MCPServer). Without
+    # it a fresh wheel install can resolve mcp 2.x and `vox mcp` dies on import.
+    "mcp>=1.30.0,<2",
     "mutagen>=1.47.0",
     "openai>=1.0.0",
     "pydub>=0.25.0",

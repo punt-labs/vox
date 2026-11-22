@@ -699,11 +699,12 @@ async def test_on_event_drops_an_empty_play_payload_without_raising(
     service = _FakeCommands((album,))
     sub = _subscription(service=service)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         await sub.on_event("music.play", {})  # empty payload, no anchor yet
 
     assert service.played == []  # dropped, not applied
-    assert any("dropping music event" in r.getMessage() for r in caplog.records)
+    dropped = [r for r in caplog.records if "dropping music event" in r.getMessage()]
+    assert [r.levelno for r in dropped] == [logging.WARNING]  # rejection, not fault
 
 
 async def test_on_event_surfaces_a_playback_refusal_to_the_scene(

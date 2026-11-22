@@ -114,14 +114,14 @@ async def test_spawn_missing_binary_returns_none_and_logs(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # A missing/too-old mpv raises OSError from exec; spawn must fold that into a
-    # None (bring-up failure) and leave a greppable error, never propagate.
+    # None (bring-up failure) and leave DEBUG detail, never propagate.
     async def _spawn_boom(*_args: object, **_kwargs: object) -> object:
         msg = "no such binary"
         raise OSError(msg)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn_boom)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
         result = await MpvLauncher(_SOCK, FakeSleeper()).spawn()
 
     assert result is None
@@ -152,14 +152,14 @@ async def test_connect_exhaustion_returns_none_and_logs(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # A socket that never opens exhausts the retry loop; connect returns None
-    # and leaves a durable trace, symmetric with the spawn-failure error log.
+    # and leaves DEBUG detail -- the supervisor owns the outage's WARNING/outcome.
     async def _connect_fail(*_args: object, **_kwargs: object) -> object:
         msg = "no socket"
         raise OSError(msg)
 
     monkeypatch.setattr(asyncio, "open_unix_connection", _connect_fail)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
         client = await MpvLauncher(_SOCK, FakeSleeper()).connect(_noop)
 
     assert client is None

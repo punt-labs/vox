@@ -48,7 +48,7 @@ def test_empty_anchor_is_rejected_without_payload(
     MusicEventReceiver(service, presenter).receive("music.play", payload)
     service.replay_album.assert_not_called()
     presenter.present_resolve_failure.assert_not_called()
-    assert "reason=invalid_event" in caplog.text
+    _assert_rejected_at_warning(caplog)
     assert _PRIVATE not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
 
@@ -101,5 +101,26 @@ def test_unknown_topic_is_sanitized(
     service.stop.assert_not_called()
     service.replay_album.assert_not_called()
     assert "received unknown; applying" in caplog.text
-    assert "reason=invalid_event" in caplog.text
+    _assert_rejected_at_warning(caplog)
     assert _PRIVATE not in caplog.text
+
+
+def test_unexpected_decode_fault_stays_an_error(
+    service: Mock, presenter: Mock, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    service.catalog_albums.side_effect = RuntimeError(_PRIVATE)
+    MusicEventReceiver(service, presenter).receive("music.play", {"anchor": "x"})
+    service.replay_album.assert_not_called()
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == [
+        "[lux] dropping music event: reason=unexpected_error"
+    ]
+    assert _PRIVATE not in caplog.text
+
+
+def _assert_rejected_at_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Assert an expected rejection logged one WARNING and no ERROR."""
+    rejected = [r for r in caplog.records if "reason=invalid_event" in r.getMessage()]
+    assert [r.levelno for r in rejected] == [logging.WARNING]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

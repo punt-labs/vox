@@ -133,11 +133,11 @@ async def test_cold_start_that_never_connects_reaches_failed_unavailable(
     await _cancel(run)
 
 
-async def test_connect_exhaustion_logs_an_error(
+async def test_connect_exhaustion_logs_one_outage_not_an_error_stream(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # A connect that never succeeds must leave a durable trace, symmetric with the
-    # spawn-failure error log, so both bring-up failure modes are greppable.
+    # A connect that never succeeds is one outage: a WARNING onset, DEBUG detail
+    # per retry, and one ``failed`` outcome at the cap -- never an ERROR per try.
     _patch_spawn(monkeypatch, [])
 
     async def _connect_fail(*_args: object, **_kwargs: object) -> object:
@@ -147,10 +147,18 @@ async def test_connect_exhaustion_logs_an_error(
     monkeypatch.setattr(asyncio, "open_unix_connection", _connect_fail)
 
     supervisor = MpvSupervisor(_SOCK, FakeSleeper())
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
         run = asyncio.create_task(supervisor.run())
         await _wait_until(lambda: supervisor.state is MpvState.FAILED)
-    assert any("connect failed after" in r.getMessage() for r in caplog.records)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert warnings == [
+        "mpv unavailable; music playback degraded, retrying up to 3 times",
+        "mpv outcome=failed failures=4; music playback unavailable",
+    ]
+    assert debug.count("mpv connect failed after 50 attempts") == 4
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not [r for r in caplog.records if "ready" in r.getMessage()]
     await _cancel(run)
 
 
@@ -196,14 +204,17 @@ def _patch_connect_ok(
 
 
 async def test_successful_bring_up_reaches_ready(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     _patch_spawn(monkeypatch, [])
     _patch_connect_ok(monkeypatch, [], [])
 
     supervisor = MpvSupervisor(_SOCK, FakeSleeper())
-    run = asyncio.create_task(supervisor.run())
-    await _wait_until(lambda: supervisor.is_ready)
+    with caplog.at_level(logging.INFO):
+        run = asyncio.create_task(supervisor.run())
+        await _wait_until(lambda: supervisor.is_ready)
+
+    assert [r.getMessage() for r in caplog.records] == ["mpv ready"]
 
     assert supervisor.state is MpvState.READY
     assert supervisor.fault is None  # I3: ready carries no standing fault
@@ -212,7 +223,7 @@ async def test_successful_bring_up_reaches_ready(
 
 
 async def test_crash_then_reconnect_recovers(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # A crash (socket EOF) clears ready and routes through a restart; a fresh
     # connection reaches ready again (I5: one reader per connection).
@@ -224,9 +235,14 @@ async def test_crash_then_reconnect_recovers(
     run = asyncio.create_task(supervisor.run())
     await _wait_until(lambda: supervisor.is_ready)
 
-    readers[0].feed_eof()  # the process died -- the reader sees socket EOF
-    await _wait_until(lambda: len(readers) >= 2 and supervisor.is_ready)
+    with caplog.at_level(logging.INFO):
+        readers[0].feed_eof()  # the process died -- the reader sees socket EOF
+        await _wait_until(lambda: len(readers) >= 2 and supervisor.is_ready)
 
+    assert [r.getMessage() for r in caplog.records] == [
+        "mpv crashed; music playback degraded, restarting up to 3 times",
+        "mpv outcome=recovered failures=1",
+    ]
     assert supervisor.is_ready  # reconnected after the crash
     assert supervisor.fault is None  # a recovered crash clears the fault
     await _cancel(run)
