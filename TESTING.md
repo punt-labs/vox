@@ -620,9 +620,12 @@ by restricting their creation, updates, and deletion to release maintainers,
 then set `EnableReleaseTags=true` so release candidates can use the role.
 Use `ProofBranch` only as temporary exact trust for a pre-merge proof; clear
 it afterward. No AWS key secrets are passed to the suite. On any other ref
-(a PR branch dispatch, for example) the suite skips only the Polly steps and
-tests, with a "Polly skipped" notice on the run, so ElevenLabs and OpenAI still
-gate; on `main`, nightly, and `v*` tags a failed role assumption fails the run.
+(a PR branch dispatch, for example) the suite skips only the role-backed Polly
+steps and tests, with a "Polly skipped" notice on the run, so ElevenLabs and
+OpenAI still gate; the Polly credential-rejection test uses bogus keys and
+still runs. On `main`, nightly, and `v*` tags a failed role assumption fails
+the run. To prove Polly on a `ProofBranch`, dispatch with
+`gh workflow run roundtrip-live.yml --ref <branch> -f require-polly=true`.
 
 ### Coverage policy
 

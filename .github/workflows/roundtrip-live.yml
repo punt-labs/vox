@@ -2,6 +2,11 @@ name: Live speech roundtrip
 
 on:
   workflow_dispatch:
+    inputs:
+      require-polly:
+        description: Run Polly and fail if the role is denied (for a ref set as the role's ProofBranch)
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       candidate-artifact:
@@ -19,8 +24,8 @@ on:
 permissions: {}
 
 env:
-  # The vox-polly-qa role trusts only main and v* tags (never slash tags).
-  POLLY_TRUSTED: ${{ github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '/')) }}
+  # The vox-polly-qa role trusts main, v* tags (never slash tags), and an optional ProofBranch.
+  POLLY_TRUSTED: ${{ inputs.require-polly == true || github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '/')) }}
 
 jobs:
   playback-capture:
