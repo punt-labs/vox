@@ -619,7 +619,10 @@ By default only runs on `main` can assume the role. Before merging, protect
 by restricting their creation, updates, and deletion to release maintainers,
 then set `EnableReleaseTags=true` so release candidates can use the role.
 Use `ProofBranch` only as temporary exact trust for a pre-merge proof; clear
-it afterward. No AWS key secrets are passed to the suite.
+it afterward. No AWS key secrets are passed to the suite. On any other ref
+(a PR branch dispatch, for example) the suite skips only the Polly steps and
+tests, with a "Polly skipped" notice on the run, so ElevenLabs and OpenAI still
+gate; on `main`, nightly, and `v*` tags a failed role assumption fails the run.
 
 ### Coverage policy
 
