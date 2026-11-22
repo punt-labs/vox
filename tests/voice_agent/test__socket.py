@@ -31,8 +31,18 @@ async def test_signed_websocket_redirect_is_rejected() -> None:
         serve(peer, "127.0.0.1", 0, process_request=redirect) as server,
     ):
         port = server.sockets[0].getsockname()[1]
-        with pytest.raises(ConvAIError, match="WebSocket handshake failed") as error:
-            await Socket.open(f"ws://127.0.0.1:{port}/convai?signature=credential")
+        with pytest.raises(
+            ConvAIError, match=r"handshake failed \(HTTP 302\)"
+        ) as error:
+            await Socket.open(
+                f"ws://127.0.0.1:{port}/convai?signature=credential",
+                allow_loopback=True,
+            )
     assert requests == ["/convai?signature=credential"]
     assert "credential" not in str(error.value)
     assert error.value.__suppress_context__
+
+
+async def test_production_signed_socket_rejects_loopback() -> None:
+    with pytest.raises(ConvAIError, match="Untrusted ElevenLabs signed URL origin"):
+        await Socket.open("ws://127.0.0.1:1/convai")

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -15,7 +15,7 @@ from punt_vox.voxd.voice_agent.control import ConvAIControl
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from punt_vox.voxd.voice_agent.control import ClientTool
@@ -27,7 +27,7 @@ __all__ = ["VoiceAgent"]
 class _Registration:
     agent_id: str | None
     tool_ids: tuple[str, ...]
-    schema_hash: str
+    configuration_hash: str
     credential_id: str
 
 
@@ -57,29 +57,39 @@ class VoiceAgent:
     def connection(self, tools: tuple[ClientTool, ...]) -> tuple[str, tuple[str, ...]]:
         """Return a fresh signed URL and the registered IDs for the handshake."""
         ordered = tuple(sorted(tools, key=lambda tool: tool.name))
-        fingerprint = self._fingerprint(ordered)
-        PrivateState(self._file.path).ensure_private_tree()
-        with self._lock.held():
+        fingerprint = self._control.registration_fingerprint(ordered)
+        with self._locked():
             stored = self._read()
             if stored is not None and stored.agent_id is None:
                 self._delete(stored)
                 stored = None
             if stored is None:
                 stored = self._provision(ordered, fingerprint)
-            if stored.schema_hash != fingerprint:
-                msg = "Vox voice agent tool schemas changed; tear down the agent first"
+            if stored.configuration_hash != fingerprint:
+                msg = "Vox voice agent configuration changed; tear down the agent first"
                 raise ConvAIError(msg)
             agent_id = stored.agent_id
             if agent_id is None:
                 msg = "No provisioned ElevenLabs agent"
                 raise ConvAIError(msg)
-            return self._control.signed_url(agent_id), stored.tool_ids
+        return self._control.signed_url(agent_id), stored.tool_ids
 
     def teardown(self) -> None:
         """Delete managed resources; retain the config if deletion must be retried."""
-        with self._lock.held():
+        with self._locked():
             if (stored := self._read()) is not None:
                 self._delete(stored)
+
+    @contextmanager
+    def _locked(self) -> Generator[None]:
+        PrivateState(self._file.path).ensure_private_tree()
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(self._lock.held())
+            except TimeoutError:
+                msg = "ElevenLabs agent provisioning or teardown is in progress; retry"
+                raise ConvAIError(msg) from None
+            yield
 
     def _provision(
         self, tools: tuple[ClientTool, ...], fingerprint: str
@@ -143,7 +153,7 @@ class VoiceAgent:
             case {
                 "agent_id": (str() | None) as agent_id,
                 "tool_ids": ids,
-                "schema_hash": str() as fingerprint,
+                "configuration_hash": str() as fingerprint,
                 "credential_id": str() as credential_id,
             }:
                 if credential_id != self._control.credential_id:
@@ -180,14 +190,3 @@ class VoiceAgent:
             msg = "Invalid tool ID in Vox voice agent config"
             raise ConvAIError(msg)
         return ConvAIControl.resource_id(value)
-
-    @staticmethod
-    def _fingerprint(tools: tuple[ClientTool, ...]) -> str:
-        names = {tool.name for tool in tools}
-        if "" in names or len(names) != len(tools):
-            msg = "ElevenLabs client-tool names must be nonempty and unique"
-            raise ValueError(msg)
-        wire = json.dumps(
-            [asdict(tool) for tool in tools], sort_keys=True, allow_nan=False
-        )
-        return hashlib.sha256(wire.encode()).hexdigest()

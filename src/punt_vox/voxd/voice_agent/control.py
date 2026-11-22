@@ -3,31 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Self, cast, final
 
 import httpx
 
+from punt_vox.voxd.voice_agent._decode import EventDecoder
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 __all__ = ["ClientTool", "ConvAIControl"]
 
 _API = "https://api.elevenlabs.io"
 _CONVAI = "/v1/convai"
+_SIGNED_URL = "/conversation/get-signed-url"
 _OVERRIDABLE = {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}}
-_CLIENT_EVENTS = (
-    "conversation_initiation_metadata",
-    "ping",
-    "audio",
-    "interruption",
-    "user_transcript",
-    "agent_response",
-    "agent_response_correction",
-    "client_tool_call",
-    "agent_tool_response",
-    "client_error",
-)
 _RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
@@ -75,19 +66,41 @@ class ConvAIControl:
 
     def create_tool(self, tool: ClientTool) -> str:
         """Register a client tool without adding any remote execution capability."""
-        schema = {
-            "type": "client",
-            "name": tool.name,
-            "description": tool.description,
-            "expects_response": True,
-            "parameters": tool.parameters,
-        }
-        response = self._request("POST", "/tools", {"tool_config": schema})
+        response = self._request("POST", "/tools", self._tool_config(tool))
         return self.resource_id(self._string_field(response, "id"))
 
     def create_agent(self, tool_ids: tuple[str, ...]) -> str:
         """Provision an agent that requires a signed connection and PCM at 16 kHz."""
-        params: dict[str, object] = {
+        response = self._request("POST", "/agents/create", self._agent_config(tool_ids))
+        return self.resource_id(self._string_field(response, "agent_id"))
+
+    @classmethod
+    def registration_fingerprint(cls, tools: tuple[ClientTool, ...]) -> str:
+        """Identify the provisioned settings and ordered tool catalog."""
+        names = {tool.name for tool in tools}
+        if "" in names or len(names) != len(tools):
+            msg = "ElevenLabs client-tool names must be nonempty and unique"
+            raise ValueError(msg)
+        settings = (cls._agent_config(()), [cls._tool_config(tool) for tool in tools])
+        return hashlib.sha256(
+            json.dumps(settings, sort_keys=True, allow_nan=False).encode()
+        ).hexdigest()
+
+    @staticmethod
+    def _tool_config(tool: ClientTool) -> dict[str, object]:
+        return {
+            "tool_config": {
+                "type": "client",
+                "name": tool.name,
+                "description": tool.description,
+                "expects_response": True,
+                "parameters": tool.parameters,
+            }
+        }
+
+    @staticmethod
+    def _agent_config(tool_ids: tuple[str, ...]) -> dict[str, object]:
+        return {
             "name": "Vox voice agent",
             "conversation_config": {
                 "agent": {
@@ -97,7 +110,7 @@ class ConvAIControl:
                 },
                 "tts": {"agent_output_audio_format": "pcm_16000"},
                 "asr": {"user_input_audio_format": "pcm_16000"},
-                "conversation": {"client_events": list(_CLIENT_EVENTS)},
+                "conversation": {"client_events": list(EventDecoder.subscriptions())},
             },
             "platform_settings": {
                 "auth": {"enable_auth": True},
@@ -109,14 +122,12 @@ class ConvAIControl:
                 },
             },
         }
-        response = self._request("POST", "/agents/create", params)
-        return self.resource_id(self._string_field(response, "agent_id"))
 
     def signed_url(self, agent_id: str) -> str:
         """Fetch a fresh, short-lived WebSocket URL; never cache it."""
         response = self._request(
             "GET",
-            "/conversation/get-signed-url",
+            _SIGNED_URL,
             params={"agent_id": self.resource_id(agent_id)},
         )
         return self._string_field(response, "signed_url")
@@ -149,8 +160,20 @@ class ConvAIControl:
             raise ConvAIError(msg) from None
         if response.is_success or (method == "DELETE" and response.status_code == 404):
             return response
-        msg = f"ElevenLabs {method} {path} returned HTTP {response.status_code}"
+        msg = self._status_message(method, path, response.status_code)
         raise ConvAIError(msg)
+
+    @staticmethod
+    def _status_message(method: str, path: str, code: int) -> str:
+        if code == 404 and path == _SIGNED_URL:
+            return (
+                "The ElevenLabs agent no longer exists; tear down the Vox voice "
+                "agent to reprovision (HTTP 404)"
+            )
+        message = f"ElevenLabs {method} {path} returned HTTP {code}"
+        if code in (401, 403):
+            return f"{message}; check the key's ElevenLabs Agents access"
+        return message
 
     @staticmethod
     def _string_field(response: httpx.Response, field: str) -> str:

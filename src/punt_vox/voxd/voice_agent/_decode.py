@@ -99,7 +99,11 @@ class Message:
 
     def body(self, name: str) -> Self:
         """Return a nested event object."""
-        return type(self)(self._data.get(name))
+        value = self._data.get(name)
+        if not isinstance(value, dict):
+            msg = f"ElevenLabs event requires object {name}"
+            raise ConvAIError(msg)
+        return type(self)(cast("dict[str, object]", value))
 
     def fields(self) -> dict[str, object]:
         """Copy this message's top-level fields."""
@@ -109,6 +113,11 @@ class Message:
 @final
 class EventDecoder:
     """Convert known events and ignore extensions we do not consume."""
+
+    @classmethod
+    def subscriptions(cls) -> tuple[str, ...]:
+        """Return the protocol events an ElevenLabs agent should send."""
+        return (*cls._EVENTS, "client_error")
 
     @classmethod
     def decode(cls, kind: str, message: Message) -> Decoded | None:

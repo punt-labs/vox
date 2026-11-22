@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 __all__ = ["Conversation", "SessionOptions"]
 
+_METADATA_TIMEOUT_S = 15
+
 
 @dataclass(frozen=True, slots=True)
 class SessionOptions:
@@ -67,15 +69,14 @@ class Conversation:
         options: SessionOptions,
         *,
         trace: EventTrace | None = None,
+        allow_loopback: bool = False,
     ) -> AsyncGenerator[Self]:
         """Send the session override and wait for metadata before yielding."""
-        socket = await Socket.open(signed_url)
+        socket = await Socket.open(signed_url, allow_loopback=allow_loopback)
         try:
             if trace is not None:
                 trace.record("note", "ws_open", {"signed_url": signed_url})
-            await cls._start(socket, options, trace)
-            async with asyncio.timeout(15):
-                metadata = await cls._read_metadata(socket, trace)
+            metadata = await cls._initialize(socket, options, trace)
             yield cls(socket, metadata, trace)
         finally:
             await socket.close()
@@ -170,6 +171,21 @@ class Conversation:
             )
 
     @classmethod
+    async def _initialize(
+        cls, socket: ClientConnection, options: SessionOptions, trace: EventTrace | None
+    ) -> Metadata:
+        try:
+            await cls._start(socket, options, trace)
+            async with asyncio.timeout(_METADATA_TIMEOUT_S):
+                return await cls._read_metadata(socket, trace)
+        except TimeoutError:
+            msg = "Timed out waiting for ElevenLabs conversation metadata"
+            raise ConvAIError(msg) from None
+        except EOFError:
+            msg = "ElevenLabs closed the conversation before initialization"
+            raise ConvAIError(msg) from None
+
+    @classmethod
     async def _read_metadata(
         cls, socket: ClientConnection, trace: EventTrace | None
     ) -> Metadata:
@@ -188,6 +204,8 @@ class Conversation:
             kind = message.text("type")
             event = EventDecoder.decode(kind, message)
             if event is None:
+                if trace is not None:
+                    trace.record("recv", "ignored_event", {})
                 continue
             if trace is not None:
                 trace.record("recv", kind, cls._trace_fields(event))

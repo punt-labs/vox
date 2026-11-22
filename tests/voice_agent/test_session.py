@@ -121,7 +121,7 @@ async def test_localhost_session_pairs_tool_ids_and_pongs(
         port = server.sockets[0].getsockname()[1]
         url = f"ws://127.0.0.1:{port}/convai?conversation_signature=private-signature"
         async with Conversation.open(
-            url, _OPTIONS, trace=EventTrace(stream)
+            url, _OPTIONS, trace=EventTrace(stream), allow_loopback=True
         ) as session:
             assert session.metadata == Metadata("conv_test", "pcm_16000", "pcm_16000")
             await session.send_text("private question")
@@ -178,6 +178,8 @@ async def test_localhost_session_pairs_tool_ids_and_pongs(
         {"type": "pong", "event_id": 13},
     ]
     assert '"signed_url": "[redacted]"' in stream.getvalue()
+    assert '"type": "ignored_event"' in stream.getvalue()
+    assert "ignored_extension" not in stream.getvalue()
     assert "private" not in stream.getvalue()
     # The mock server is allowed to log its own wire; the client never logs it.
     assert not [
@@ -220,7 +222,7 @@ async def test_localhost_session_delivers_audio_transcript_and_interruption() ->
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         async with Conversation.open(
-            f"ws://127.0.0.1:{port}", SessionOptions("", ())
+            f"ws://127.0.0.1:{port}", SessionOptions("", ()), allow_loopback=True
         ) as session:
             await session.send_audio(pcm)
             assert await session.receive() == Audio(pcm, 7)
@@ -228,7 +230,44 @@ async def test_localhost_session_delivers_audio_transcript_and_interruption() ->
             assert await session.receive() == UserTranscript("hello", None)
             with pytest.raises(EOFError, match="ended the conversation"):
                 await session.receive()
+            with pytest.raises(EOFError, match="ended the conversation"):
+                await session.send_text("after close")
     assert observed == [{"user_audio_chunk": encoded}]
+
+
+async def test_normal_close_before_metadata_is_a_setup_failure() -> None:
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.close()
+
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        with pytest.raises(ConvAIError, match="before initialization"):
+            async with Conversation.open(
+                f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
+            ):
+                pytest.fail("closed handshake returned a conversation")
+
+
+async def test_missing_metadata_times_out_and_closes_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("punt_vox.voxd.voice_agent.session._METADATA_TIMEOUT_S", 0.05)
+    closed = asyncio.Event()
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.wait_closed()
+        closed.set()
+
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        with pytest.raises(ConvAIError, match="Timed out waiting for ElevenLabs"):
+            async with Conversation.open(
+                f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
+            ):
+                pytest.fail("uninitialized handshake returned a conversation")
+        await closed.wait()
 
 
 @pytest.mark.parametrize(
@@ -260,7 +299,9 @@ async def test_localhost_bad_handshake_closes_socket(
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         with pytest.raises(ConvAIError, match=diagnostic) as exc:
-            async with Conversation.open(f"ws://127.0.0.1:{port}", _OPTIONS):
+            async with Conversation.open(
+                f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
+            ):
                 pytest.fail("failed handshake returned a conversation")
         assert "private" not in str(exc.value)
         await closed.wait()

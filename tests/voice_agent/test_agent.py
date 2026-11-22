@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.sibling_lock import SiblingLock
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ _API_KEY = "localhost-test-key"
 class Requests:
     calls: list[tuple[str, str, object]] = field(default_factory=list)
     create_agent_status: int = 200
+    signed_url_status: int = 200
     delete_tool_status: int = 404
     delete_agent_status: int = 404
     url: str = ""
@@ -49,7 +51,7 @@ def wire() -> Iterator[Requests]:
         def do_GET(self) -> None:
             self._observe(None)
             if self.path == "/v1/convai/conversation/get-signed-url?agent_id=agent_vox":
-                self._reply(200, {"signed_url": _SIGNED_URL})
+                self._reply(requests.signed_url_status, {"signed_url": _SIGNED_URL})
             else:
                 self._reply(500, {})
 
@@ -104,7 +106,7 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         restarted = VoiceAgent(control, path=config)
         assert restarted.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
-        with pytest.raises(ConvAIError, match="schemas changed"):
+        with pytest.raises(ConvAIError, match="configuration changed"):
             restarted.connection((ClientTool("new", "Different tool"),))
         restarted.teardown()
         restarted.teardown()
@@ -145,6 +147,58 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         "agent_response_correction"
         in provision["conversation_config"]["conversation"]["client_events"]
     )
+
+
+def test_changed_agent_settings_require_teardown(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        monkeypatch.setattr(
+            "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
+            {"prompt": {"prompt": True}},
+        )
+        with pytest.raises(ConvAIError, match="configuration changed"):
+            agent.connection((_CLOCK,))
+        assert len(wire.calls) == 3
+        agent.teardown()
+
+
+def test_teardown_first_keeps_new_config_tree_private(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state" / "config"
+    with ConvAIControl(_API_KEY) as control:
+        VoiceAgent(control, path=state_dir / _COMPLETED_REGISTRATION).teardown()
+    assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(state_dir.parent.stat().st_mode) == 0o700
+
+
+def test_stale_agent_id_reports_how_to_reprovision(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        wire.signed_url_status = 404
+        with pytest.raises(ConvAIError, match="no longer exists; tear down"):
+            agent.connection((_CLOCK,))
+        assert config.exists()
+        agent.teardown()
+
+
+def test_existing_provisioning_lock_reports_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    monkeypatch.setattr(SiblingLock, "_ACQUIRE_ATTEMPTS", 1)
+    monkeypatch.setattr(SiblingLock, "_ACQUIRE_INTERVAL_S", 0)
+    with (
+        ConvAIControl(_API_KEY) as control,
+        SiblingLock(config).held(),
+        pytest.raises(ConvAIError, match="provisioning or teardown is in progress"),
+    ):
+        VoiceAgent(control, path=config).connection((_CLOCK,))
 
 
 def test_partial_provision_is_cleaned_before_retry(
