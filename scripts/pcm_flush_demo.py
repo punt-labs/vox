@@ -104,12 +104,13 @@ async def main(interrupt_after_s: float) -> None:
         cue = asyncio.create_task(played_past(sink, interrupt_after_s))
         await asyncio.wait({speech, cue}, return_when=asyncio.FIRST_COMPLETED)
         if cue.done():
-            cue.result()
-            logger.info("interruption at %.0f ms of audio played", sink.played.ms)
-            sink.flush()
+            if cue.exception() is None:
+                logger.info("interruption at %.0f ms of audio played", sink.played.ms)
+                sink.flush()
             speech.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await speech
+            cue.result()
         else:
             cue.cancel()
             speech.result()
