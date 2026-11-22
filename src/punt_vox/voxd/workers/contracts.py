@@ -47,6 +47,11 @@ class HarnessProfile(Protocol):
         """Seconds needed after interrupt and literal input before submission."""
         ...
 
+    @property
+    def input_limit(self) -> int:
+        """Return the largest input whose receipt text remains untruncated."""
+        ...
+
     def last_input(self, worker_id: str) -> WorkerInput | None:
         """Return the latest observed input, if any."""
         ...

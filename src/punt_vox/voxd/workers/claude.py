@@ -23,6 +23,7 @@ class ClaudeProfile:
     submit_key = "Enter"
     interrupt_key = "Escape"
     settle_delay = 0.5
+    input_limit = HookText.LIMIT
     ENV_NAMES = frozenset(
         {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
     )
@@ -61,8 +62,8 @@ class ClaudeProfile:
 
     @staticmethod
     def matches_input(receipt: WorkerInput, words: str) -> bool:
-        """Match the same clipping applied to the stored prompt."""
-        return receipt.text == HookText.clip(words)
+        """Match an untruncated input receipt exactly."""
+        return receipt.text == words
 
     def cleanup(self, worktree: Path) -> None:
         """Remove the temporary trust flag, retaining work product."""

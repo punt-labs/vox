@@ -26,15 +26,17 @@ if TYPE_CHECKING:
 class WorkerHandlers:
     """Serialize mutations while running blocking provider I/O off the event loop."""
 
-    __slots__ = ("_lock", "_registry")
+    __slots__ = ("_lock", "_registry", "_steering")
     _registry: WorkerRegistry
     _lock: asyncio.Lock
+    _steering: WorkerSteering
 
     def __new__(cls, registry: WorkerRegistry) -> Self:
         """Bind one registry and its serialization lock."""
         self = super().__new__(cls)
         self._registry = registry
         self._lock = asyncio.Lock()
+        self._steering = WorkerSteering(registry, self._lock)
         return self
 
     @classmethod
@@ -76,7 +78,7 @@ class WorkerHandlers:
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             if msg.get("type") == "worker_steer":
-                receipt = await WorkerSteering(self._registry, self._lock).handle(msg)
+                receipt = await self._steering.handle(msg)
                 await reply.send({"type": "worker_result", "result": receipt})
                 return
             async with self._lock:

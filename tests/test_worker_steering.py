@@ -79,7 +79,10 @@ def test_settle_order(urgent: bool) -> None:
     assert calls == expected
 
 
-def test_profile_receipts_latest_prompt_and_clipping(tmp_path: Path) -> None:
+@pytest.mark.parametrize("length", [500, 1500])
+def test_profile_receipts_latest_prompt_and_clipping(
+    tmp_path: Path, length: int
+) -> None:
     store = HookContextStore()
     profile = ClaudeProfile(store)
     assert profile.last_input("w") is None
@@ -87,7 +90,7 @@ def test_profile_receipts_latest_prompt_and_clipping(tmp_path: Path) -> None:
     provider.ready = True
     registry = _registry(tmp_path, provider)
     worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
-    words = "x" * 1500
+    words = "x" * length
 
     def last_input(worker_id: str) -> WorkerInput | None:
         return profile.last_input("w")
@@ -107,8 +110,10 @@ def test_profile_receipts_latest_prompt_and_clipping(tmp_path: Path) -> None:
                     "prompt": text,
                 }
             )
-            assert registry.receipt(worker.id, words, 5) == (7 if seq == 7 else None)
-        assert profile.last_input("w") == WorkerInput(7, "x" * 1000 + "...")
+            expected = 7 if seq == 7 and length <= 1000 else None
+            assert registry.receipt(worker.id, words, 5) == expected
+        expected_text = words if length <= 1000 else "x" * 1000 + "..."
+        assert profile.last_input("w") == WorkerInput(7, expected_text)
         store.ingest(
             {
                 "session_id": "w",
@@ -118,6 +123,93 @@ def test_profile_receipts_latest_prompt_and_clipping(tmp_path: Path) -> None:
             }
         )
         assert profile.last_input("w") == WorkerInput(8, "")
+
+
+def test_profile_rejects_clipped_prefix_collision() -> None:
+    profile = ClaudeProfile(HookContextStore())
+    prefix = "x" * 1000
+    assert not profile.matches_input(WorkerInput(5, prefix + "..."), prefix + "other")
+    assert profile.matches_input(WorkerInput(5, prefix), prefix)
+
+
+def test_profile_limit_checked_before_delivery(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    with (
+        patch.object(TrivialProfile, "input_limit", 8),
+        patch.object(FakeWorkerProvider, "steer") as send,
+    ):
+        with pytest.raises(ValueError, match=r"receipt limit.*8"):
+            registry.steer(worker.id, "123456789")
+        send.assert_not_called()
+        registry.steer(worker.id, "12345678")
+        assert send.call_args.args[1] == "12345678"
+
+
+@pytest.mark.asyncio
+async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    sequences: dict[str, int] = {}
+    release_first = False
+
+    def send(worker: str, words: str, *, urgent: bool) -> int:
+        baseline = sequences.get(worker, 0)
+        sequences[worker] = baseline + 1
+        return baseline
+
+    def receipt(worker: str, words: str, baseline: int) -> int | None:
+        if worker == "one" and sequences[worker] == 1 and not release_first:
+            return None
+        return sequences[worker]
+
+    registry.steer.side_effect = send
+    registry.receipt.side_effect = receipt
+    handlers = WorkerHandlers.build(registry)
+    first_ws, second_ws, other_ws = (AsyncMock(spec=WebSocket) for _ in range(3))
+    message: dict[str, object] = {
+        "type": "worker_steer",
+        "worker_id": "one",
+        "words": "same words",
+    }
+    first = asyncio.create_task(handlers["worker_steer"](message, first_ws))
+    async with asyncio.timeout(1):
+        while not registry.receipt.called:
+            await asyncio.sleep(0.001)
+    second = asyncio.create_task(handlers["worker_steer"](message, second_ws))
+    await asyncio.wait_for(
+        handlers["worker_steer"]({**message, "worker_id": "two"}, other_ws), 1
+    )
+    try:
+        assert sequences == {"one": 1, "two": 1}
+    finally:
+        release_first = True
+        await asyncio.wait_for(asyncio.gather(first, second), 1)
+    assert first_ws.send_json.call_args.args[0]["result"]["receipt_seq"] == 1
+    assert second_ws.send_json.call_args.args[0]["result"]["receipt_seq"] == 2
+    assert other_ws.send_json.call_args.args[0]["result"]["heard"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timeout", "error"])
+async def test_failed_steer_releases_worker_lock(failure: str) -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    registry.steer.return_value = 4
+    registry.receipt.return_value = None
+    steering = WorkerSteering(registry, asyncio.Lock())
+    message: dict[str, object] = {"worker_id": "one", "words": "words"}
+    with patch.object(WorkerSteering, "TIMEOUT", 0.01):
+        if failure == "error":
+            registry.steer.side_effect = ValueError("not ready")
+            with pytest.raises(ValueError, match="not ready"):
+                await steering.handle(message)
+            registry.steer.side_effect = None
+        else:
+            assert (await steering.handle(message))["heard"] is False
+        registry.receipt.return_value = 5
+        response = await asyncio.wait_for(steering.handle(message), 1)
+        assert response["receipt_seq"] == 5
 
 
 @pytest.mark.asyncio

@@ -177,6 +177,10 @@ class WorkerRegistry:
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
         profile = self._profiles[record.harness]
+        if len(words) > profile.input_limit:
+            raise ValueError(
+                f"Words exceed receipt limit of {profile.input_limit} characters"
+            )
         previous = profile.last_input(worker_id)
         self._providers[record.provider].steer(
             record.session,

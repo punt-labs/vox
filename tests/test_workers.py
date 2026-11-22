@@ -67,6 +67,7 @@ class TrivialProfile:
     submit_key = "Enter"
     interrupt_key = "Escape"
     settle_delay = 0.05
+    input_limit = 1000
 
     def last_input(self, worker_id: str) -> None:
         return None

@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from string import hexdigits
 from typing import TypedDict, cast
 
-_TEXT_LIMIT = 1000
 HOOK_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure"})
 
 
@@ -55,14 +54,18 @@ class HookToolSubject:
 class HookText:
     """Project bounded, UTF-8-safe text from sanitized JSON."""
 
+    LIMIT = 1000
+
     @staticmethod
     def clip(value: object, *, tail: bool = False) -> str:
         """Keep at most the useful head or tail of a text field."""
         if not isinstance(value, str):
             return ""
-        if len(value) > _TEXT_LIMIT:
+        if len(value) > HookText.LIMIT:
             value = (
-                "..." + value[-_TEXT_LIMIT:] if tail else value[:_TEXT_LIMIT] + "..."
+                "..." + value[-HookText.LIMIT :]
+                if tail
+                else value[: HookText.LIMIT] + "..."
             )
         return value.encode("utf-8", errors="replace").decode("utf-8")
 
