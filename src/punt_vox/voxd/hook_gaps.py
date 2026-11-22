@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Self
+from typing import Self, TypedDict
 
 _MAX_RANGES = 128
+
+
+class HookGapReport(TypedDict):
+    """Sequence coverage of the retained hook history."""
+
+    highest_seen: int
+    missing_ranges: list[tuple[int, int]]
+    missing_count: int
+    untracked_through: int
 
 
 class HookGaps:
@@ -50,7 +59,7 @@ class HookGaps:
                 return True
         return False
 
-    def report(self) -> dict[str, object]:
+    def report(self) -> HookGapReport:
         """Describe interior gaps only; trailing drops are not observable."""
         return {
             "highest_seen": self._high,

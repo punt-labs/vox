@@ -5,9 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import cast
+from typing import TypedDict, cast
 
 _TEXT_LIMIT = 1000
+
+
+class HookToolResult(TypedDict):
+    """Curated outcome of one hook tool event."""
+
+    relay_seq: int
+    tool: str
+    result: str
 
 
 class HookText:
@@ -80,6 +88,6 @@ class ToolUpdate:
             event != "PreToolUse",
         )
 
-    def as_result(self, sequence: int) -> dict[str, object]:
+    def as_result(self, sequence: int) -> HookToolResult:
         """Expose only curated tool details in the snapshot."""
         return {"relay_seq": sequence, "tool": self.tool, "result": self.result}

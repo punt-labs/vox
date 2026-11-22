@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Self, final
+from typing import Self, TypedDict, final
 
 from punt_vox.hook_context_event import MAX_SEQUENCE, HookIdentity, HookRedaction
-from punt_vox.voxd.hook_context_projection import HookText, ToolUpdate
+from punt_vox.voxd.hook_context_projection import HookText, HookToolResult, ToolUpdate
 from punt_vox.voxd.hook_failures import HookFailures
-from punt_vox.voxd.hook_gaps import HookGaps
+from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
 
 _MAX_SESSIONS = 64
 _MAX_TOOL_EVENTS = 48
 _MAX_FILES = 8
 _MAX_RESULTS = 5
 _TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse", "PostToolUseFailure"})
+
+
+class HookContextSnapshot(TypedDict):
+    """Bounded view of one live hook session."""
+
+    session_started: bool
+    goal: str | None
+    active_files: list[str]
+    last_results: list[HookToolResult]
+    open_failure: HookToolResult | None
+    last_assistant_message: str | None
+    gaps: HookGapReport
 
 
 @final
@@ -47,7 +59,7 @@ class HookContextStore:
         if len(self._sessions) > _MAX_SESSIONS:
             self._sessions.popitem(last=False)
 
-    def snapshot(self, session: str) -> dict[str, object]:
+    def snapshot(self, session: str) -> HookContextSnapshot:
         """Return only curated context and its gap report, never raw events."""
         context = self._sessions.get(session)
         if context is None:
@@ -106,10 +118,10 @@ class SessionContext:
     def _newest(previous: tuple[int, str], sequence: int, text: str) -> tuple[int, str]:
         return (sequence, text) if sequence > previous[0] and text else previous
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> HookContextSnapshot:
         """Project the newest goals, files, results, and still-open failure."""
         files: dict[str, None] = {}
-        results: list[dict[str, object]] = []
+        results: list[HookToolResult] = []
         for sequence, update in sorted(self._tools.items()):
             if update.file:
                 files.pop(update.file, None)

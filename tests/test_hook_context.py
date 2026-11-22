@@ -258,12 +258,7 @@ def test_bounded_advance_expires_oldest_gap_and_refuses_expired_arrival() -> Non
     for sequence in range(2, 260, 2):
         store.ingest(_event("Notification", sequence))
     before_expired = store.snapshot("session-a")
-    assert (
-        cast("dict[str, object]", store.snapshot("session-a")["gaps"])[
-            "untracked_through"
-        ]
-        == 1
-    )
+    assert before_expired["gaps"]["untracked_through"] == 1
     with pytest.raises(ValueError, match="expired gap history"):
         store.ingest(_event("SessionStart", 1))
     assert store.snapshot("session-a") == before_expired
