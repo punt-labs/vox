@@ -3,20 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Self, TypedDict, final
+from typing import TYPE_CHECKING, Self, final
 from weakref import WeakValueDictionary
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
-
-class SteerReceipt(TypedDict):
-    """Describe observed input, never a claim that a turn ended."""
-
-    worker_id: str
-    heard: bool
-    receipt_seq: int | None  # PY-TS-14: no sequence exists without a heard receipt.
-    urgent: bool
+if TYPE_CHECKING:
+    from punt_vox.voxd.workers.steering_types import SteerReceipt
 
 
 @final

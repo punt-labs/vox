@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +20,27 @@ from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.steering import WorkerSteering
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.worker_client import WorkerClient
+
+
+def test_receipt_types_import_without_worker_implementations() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from punt_vox.voxd.workers.steering_types import SteerReceipt; "
+                "import sys; "
+                "assert SteerReceipt.__required_keys__ == "
+                "{'worker_id', 'heard', 'receipt_seq', 'urgent'}; "
+                "assert 'punt_vox.voxd.workers.steering' not in sys.modules; "
+                "assert 'punt_vox.voxd.workers.registry' not in sys.modules"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
