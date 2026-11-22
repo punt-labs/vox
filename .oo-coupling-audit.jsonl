@@ -714,3 +714,4 @@
 {"ts":"2026-11-22T19:25:24Z","commit":"71bc8e3","source":null,"files_scored":483,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/voxd/workers/steering.py":{"max_lcom":[0.333,0.167],"avg_lcom":[0.333,0.167]}}}
 {"ts":"2026-11-22T19:38:49Z","commit":"88eff49","source":null,"files_scored":483,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
 {"ts":"2026-11-22T19:39:06Z","commit":"e29b661","source":null,"files_scored":483,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
+{"ts":"2026-11-22T19:40:20Z","commit":"a755f6a","source":null,"files_scored":1,"files_improved":0,"files_regressed":0,"verdict":"rebaseline-files","reason":"Expose the fixed-shape SteerReceipt TypedDict alongside its coordinator; this adds one public type without a new dependency.","deltas":{},"improved":{}}

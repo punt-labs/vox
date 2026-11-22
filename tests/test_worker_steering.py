@@ -31,6 +31,7 @@ def test_invalid_words_never_sent(tmp_path: Path, words: str) -> None:
 
 @pytest.mark.parametrize("ready", [False, True])
 def test_ready_only_and_baseline(tmp_path: Path, ready: bool) -> None:
+    """Only ready workers steered: capture baseline before provider delivery."""
     provider = FakeWorkerProvider()
     provider.ready = ready
     registry = _registry(tmp_path, provider)
@@ -83,6 +84,7 @@ def test_settle_order(urgent: bool) -> None:
 def test_profile_receipts_latest_prompt_and_clipping(
     tmp_path: Path, length: int
 ) -> None:
+    """Receipt freshness and exact text exclude stale or clipped inputs."""
     store = HookContextStore()
     profile = ClaudeProfile(store)
     assert profile.last_input("w") is None
@@ -150,6 +152,7 @@ def test_profile_limit_checked_before_delivery(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> None:
+    """At most one steer in flight per worker, without blocking other workers."""
     registry = MagicMock(spec=WorkerRegistry)
     sequences: dict[str, int] = {}
     release_first = False
@@ -237,14 +240,14 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
     actor = asyncio.Lock()
     steering = WorkerSteering(registry, actor)
     async with actor:
-        with patch.object(WorkerSteering, "TIMEOUT", 0.01):
-            with pytest.raises(ValueError, match="busy|deadline"):
-                await asyncio.wait_for(
-                    steering.handle(
-                        {"worker_id": "one", "words": "stale", "urgent": True}
-                    ),
-                    1,
-                )
+        with (
+            patch.object(WorkerSteering, "TIMEOUT", 0.01),
+            pytest.raises(ValueError, match=r"busy|deadline"),
+        ):
+            await asyncio.wait_for(
+                steering.handle({"worker_id": "one", "words": "stale", "urgent": True}),
+                1,
+            )
         registry.steer.assert_not_called()
     registry.steer.assert_not_called()
     registry.steer.return_value = 4
@@ -254,6 +257,22 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
     )
     assert response["heard"] is True
     registry.steer.assert_called_once_with("one", "fresh", urgent=False)
+
+
+@pytest.mark.asyncio
+async def test_no_delivery_after_deadline_uses_one_budget_for_both_locks() -> None:
+    """No delivery after deadline: acquiring the worker never renews the budget."""
+    registry = MagicMock(spec=WorkerRegistry)
+    registry.steer.return_value = 4
+    registry.receipt.return_value = 5
+    steering = WorkerSteering(registry, asyncio.Lock())
+    with patch.object(
+        WorkerSteering, "_acquire", wraps=WorkerSteering._acquire
+    ) as acquire:
+        result = await steering.handle({"worker_id": "one", "words": "words"})
+    assert result["heard"] is True
+    assert acquire.call_count == 2
+    assert acquire.call_args_list[0].args[1] == acquire.call_args_list[1].args[1]
 
 
 @pytest.mark.asyncio
@@ -280,6 +299,7 @@ async def test_failed_steer_releases_worker_lock(failure: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("heard", [True, False])
 async def test_receipt_wait_releases_hook_ingest_lock(heard: bool) -> None:
+    """Heard never implies turn ended; Timeout is an unheard success."""
     registry = MagicMock(spec=WorkerRegistry)
     registry.steer.return_value = 4
     registry.receipt.return_value = None
