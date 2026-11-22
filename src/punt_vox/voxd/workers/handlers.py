@@ -14,6 +14,7 @@ from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.hooks import WorkerHooks
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.steering import WorkerSteering
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -25,15 +26,17 @@ if TYPE_CHECKING:
 class WorkerHandlers:
     """Serialize mutations while running blocking provider I/O off the event loop."""
 
-    __slots__ = ("_lock", "_registry")
+    __slots__ = ("_lock", "_registry", "_steering")
     _registry: WorkerRegistry
     _lock: asyncio.Lock
+    _steering: WorkerSteering
 
     def __new__(cls, registry: WorkerRegistry) -> Self:
         """Bind one registry and its serialization lock."""
         self = super().__new__(cls)
         self._registry = registry
         self._lock = asyncio.Lock()
+        self._steering = WorkerSteering(registry, self._lock)
         return self
 
     @classmethod
@@ -45,7 +48,8 @@ class WorkerHandlers:
         """Construct one serialized actor and expose its worker control surface."""
         handler = cls(registry)
         result: dict[str, MessageHandler] = dict.fromkeys(
-            ("worker_start", "worker_list", "worker_stop"), handler.handle
+            ("worker_start", "worker_list", "worker_stop", "worker_steer"),
+            handler.handle,
         )
         if store is not None:
             hooks = WorkerHooks(store, registry, handler._lock)
@@ -73,6 +77,10 @@ class WorkerHandlers:
         """Return clear transport errors without exposing subprocess output."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
+            if msg.get("type") == "worker_steer":
+                receipt = await self._steering.handle(msg)
+                await reply.send({"type": "worker_result", "result": receipt})
+                return
             async with self._lock:
                 result = await asyncio.to_thread(self._dispatch, msg)
         except (

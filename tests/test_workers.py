@@ -20,7 +20,7 @@ from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
-from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -66,6 +66,17 @@ class TrivialProfile:
 
     submit_key = "Enter"
     interrupt_key = "Escape"
+    settle_delay = 0.05
+    input_limit = 1000
+
+    def last_input(self, worker_id: str) -> None:
+        return None
+
+    def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
+        return []
+
+    def matches_input(self, receipt: object, words: str) -> bool:
+        return False
 
     def argv(self, worker_id: str, task: str) -> list[str]:
         return [
@@ -242,13 +253,19 @@ def test_trust_exact_path_preserves_settings(
 def test_tmux_urgent_keys_and_safe_launch_error(tmp_path: Path) -> None:
     """Interrupt before literal submission, and never echo launch credentials."""
     provider = TmuxWorkerProvider()
-    with patch.object(TmuxWorkerProvider, "_run") as run:
+    with (
+        patch.object(TmuxWorkerProvider, "_run") as run,
+        patch("punt_vox.voxd.workers.tmux.uuid4", return_value="input"),
+    ):
         provider.steer("worker", "words", urgent=True, profile=TrivialProfile())
     assert [c.args for c in run.call_args_list] == [
         ("send-keys", "-t", "=worker:", "Escape"),
-        ("send-keys", "-t", "=worker:", "-l", "--", "words"),
+        ("load-buffer", "-b", "vox-steer-input", "-"),
+        ("paste-buffer", "-b", "vox-steer-input", "-t", "=worker:"),
+        ("delete-buffer", "-b", "vox-steer-input"),
         ("send-keys", "-t", "=worker:", "Enter"),
     ]
+    assert run.call_args_list[1].kwargs == {"input_text": "words"}
     with (
         patch.object(WorkerCommand, "_scoped", return_value=False),
         patch(

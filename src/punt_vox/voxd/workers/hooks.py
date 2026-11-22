@@ -51,7 +51,8 @@ class WorkerHooks:
 
     def _ingest(self, payload: dict[str, object], *, worker_only: bool) -> None:
         session, cwd = payload.get("session_id"), payload.get("cwd")
-        if worker_only and not self._registry.admits_hook(session, cwd):
+        admitted = self._registry.admits_hook(session, cwd)
+        if worker_only and not admitted:
             return
-        self._store.ingest(payload)
+        self._store.ingest(payload, worker_input=admitted)
         self._registry.checkpoint_progress(session, cwd)

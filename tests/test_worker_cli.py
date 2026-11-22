@@ -45,10 +45,20 @@ def test_relative_worker_project_is_resolved_in_the_callers_directory(
         ),
         (["worker", "list"], "list", {}),
         (["worker", "stop", "worker-id"], "stop", {"worker_id": "worker-id"}),
+        (
+            ["worker", "steer", "worker-id", " literal ", "--urgent"],
+            "steer",
+            {"worker_id": "worker-id", "words": " literal ", "urgent": True},
+        ),
+        (
+            ["worker", "steer", "worker-id", "words"],
+            "steer",
+            {"worker_id": "worker-id", "words": "words", "urgent": False},
+        ),
     ],
 )
 def test_hidden_worker_commands_delegate(
-    args: list[str], operation: str, fields: dict[str, str]
+    args: list[str], operation: str, fields: dict[str, str | bool]
 ) -> None:
     """All commands are thin RPC adapters and print the daemon's result."""
     with patch(

@@ -34,7 +34,9 @@ class WorkerCommand:
         except OSError:
             raise RuntimeError("Cannot identify the worker service cgroup") from None
 
-    def run(self, *, check: bool) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, *, check: bool, input_text: str = ""
+    ) -> subprocess.CompletedProcess[str]:
         """Run a client; service scopes require systemd 254+ and a user manager."""
         argv = ["tmux", "-L", "vox-workers", "-f", "/dev/null", *self._args]
         environment = {k: v for k, v in os.environ.items() if ProcessEnv.admits(k)}
@@ -56,6 +58,7 @@ class WorkerCommand:
                 check=check,
                 capture_output=True,
                 text=True,
+                input=input_text,
                 timeout=15,
             )
         except subprocess.SubprocessError:
