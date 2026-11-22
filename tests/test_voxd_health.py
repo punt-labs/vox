@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from punt_vox.voxd import DaemonHealth, PlaybackQueue
-from punt_vox.voxd.playback import PlaybackResult
+from punt_vox.voxd.playback_result import PlaybackResult
 
 if TYPE_CHECKING:
     import pytest

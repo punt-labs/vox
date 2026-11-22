@@ -65,7 +65,7 @@ class DirectPlayResult:
     elapsed: float
     rc: int
 
-    def publish(self, record_result: Callable[..., None]) -> None:
+    def publish(self, record_result: Callable[..., object]) -> None:
         """Record the completed playback and log its exit status."""
         record_result(
             path=Path(f"<direct:{self.provider}>"),

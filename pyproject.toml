@@ -250,6 +250,7 @@ ignore = [
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603", "S607"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
 "src/punt_vox/voxd/conversation_mode/mic_audio_source.py" = ["PLC0415"]
+"src/punt_vox/voxd/pcm_output.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
 "src/punt_vox/providers/polly.py" = ["PLC0415"]
