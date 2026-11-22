@@ -36,8 +36,14 @@ class WorkerSteering:
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a bool")
         worker_lock = self._workers.setdefault(worker_id, asyncio.Lock())
-        async with worker_lock:
+        try:
+            await asyncio.wait_for(worker_lock.acquire(), timeout=self.TIMEOUT)
+        except TimeoutError as exc:
+            raise ValueError("worker is busy with another steer") from exc
+        try:
             return await self._deliver(worker_id, words, urgent=urgent)
+        finally:
+            worker_lock.release()
 
     async def _deliver(
         self, worker_id: str, words: str, *, urgent: bool

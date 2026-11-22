@@ -192,6 +192,45 @@ async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> N
 
 
 @pytest.mark.asyncio
+async def test_queued_steer_times_out_without_delivery() -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    registry.steer.return_value = 4
+    steering = WorkerSteering(registry, asyncio.Lock())
+    waiting = asyncio.Event()
+    release = asyncio.Event()
+
+    async def receipt(worker_id: str, words: str, baseline: int) -> int:
+        waiting.set()
+        await release.wait()
+        return 5
+
+    with (
+        patch.object(WorkerSteering, "TIMEOUT", 0.01),
+        patch.object(WorkerSteering, "_receipt", side_effect=receipt),
+    ):
+        first = asyncio.create_task(
+            steering.handle({"worker_id": "one", "words": "first"})
+        )
+        await asyncio.wait_for(waiting.wait(), 1)
+        try:
+            with pytest.raises(ValueError, match="worker is busy with another steer"):
+                await asyncio.wait_for(
+                    steering.handle({"worker_id": "one", "words": "queued"}), 1
+                )
+            registry.steer.assert_called_once_with("one", "first", urgent=False)
+        finally:
+            release.set()
+            await asyncio.wait_for(first, 1)
+        registry.steer.assert_called_once_with("one", "first", urgent=False)
+        response = await steering.handle({"worker_id": "one", "words": "after"})
+        assert response["receipt_seq"] == 5
+        assert [call.args[1] for call in registry.steer.call_args_list] == [
+            "first",
+            "after",
+        ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["timeout", "error"])
 async def test_failed_steer_releases_worker_lock(failure: str) -> None:
     registry = MagicMock(spec=WorkerRegistry)
