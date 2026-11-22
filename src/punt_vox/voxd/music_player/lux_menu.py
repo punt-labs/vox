@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError, OpError
 
 from punt_vox.lux_common import HubOutageLog, MenuEntry
+from punt_vox.voxd.music_player.lux_fault_boundary import LuxFaultBoundary
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 
 if TYPE_CHECKING:
@@ -62,17 +63,13 @@ class LuxMenuRegistrar:
         a failed menu registration can never escape into the receive leg's guarded
         restart and turn a missing menu into a dropped connection.
         """
-        try:
-            result = await entry.register_on(self._connect())
-        except HubUnavailableError:
-            self._outage.note(
-                f"[lux] luxd unavailable; {entry.label!r} menu entry not registered"
-            )
-            return
-        except Exception:
-            logger.exception("[lux] %r menu registration failed", entry.label)
-            return
-        if isinstance(result, OpError):
-            _trace.error("luxd rejected the menu entry %r: %s", entry, result.reason)
-            return
-        _trace.info("registered the menu entry %r", entry)
+        with LuxFaultBoundary(logger, "menu registration failed"):
+            try:
+                result = await entry.register_on(self._connect())
+            except HubUnavailableError:
+                self._outage.note("[lux] luxd unavailable; menu entry not registered")
+                return
+            if isinstance(result, OpError):
+                _trace.error("luxd rejected the menu entry: reason=hub_refused")
+                return
+            _trace.info("registered the menu entry")

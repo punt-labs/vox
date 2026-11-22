@@ -16,9 +16,11 @@ needs no running luxd.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, final
 
+import pytest
 from punt_lux import HubUnavailableError, LuxClient
 
 from punt_vox.lux_common import HubOutageLog, MenuEntry
@@ -35,7 +37,6 @@ _ALL_TOPICS = tuple(topic.value for topic in MusicTopic)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pytest
     from punt_lux import CallbackHandler, EventHandler
     from punt_lux.hub_client import ConnectHandler
 
@@ -330,7 +331,7 @@ async def test_run_restarts_and_recovers_after_a_listen_fault(
     connect = _sequence_connect(listeners, handed)
     sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         await sub.run()
 
     assert len(handed) == 2  # the faulted connection was replaced by a fresh one
@@ -374,7 +375,7 @@ async def test_run_logs_connect_subscribe_connected_and_clean_stop(
         _FakeCommands(), _FakeOpener(), _FakeMenu(), _connect(listener, [])
     )
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         await sub.run()
 
     lux = [r.getMessage() for r in caplog.records if "[lux]" in r.getMessage()]
@@ -456,7 +457,61 @@ async def test_run_throttles_repeated_outage_ticks_to_debug(
         if r.levelno == logging.DEBUG and "music receive leg" in r.getMessage()
     ]
     assert len(warn_hits) == 1  # first tick opens the outage loudly
-    assert len(debug_hits) == 2  # later ticks throttled
+    assert len(debug_hits) >= 2  # later ticks and connection attempts are quiet
+    summaries = [r for r in caplog.records if "outcome=recovered" in r.getMessage()]
+    assert len(summaries) == 1
+    assert summaries[0].levelno == logging.INFO
+    assert "failures=3" in summaries[0].getMessage()
+    loud_attempts = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.INFO and "connecting" in r.getMessage()
+    ]
+    assert len(loud_attempts) <= 1
+
+
+async def test_event_diagnostics_never_contain_payload_values(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    album = album_of("aa11bb", name="Private Album Value")
+    service = _FakeCommands((album,))
+    sub = _subscription(service=service, opener=_FakeOpener(boom=True))
+    with caplog.at_level(logging.DEBUG):
+        await sub.on_event("music.play", {"anchor": "Private Album Value"})
+        await sub.on_event("music.play", {"anchor": "private-anchor-value"})
+        await sub.on_event("music.play", {"anchor": ["private-payload-value"]})
+        await sub.on_event("music.stop", {"extra": "private-extra-value"})
+    assert caplog.records
+    assert "private" not in caplog.text.casefold()
+    assert all(r.exc_info is None for r in caplog.records)
+    assert service.played == [AlbumId("aa11bb")]
+
+
+async def test_retry_cancellation_emits_one_terminal_summary(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def connect(
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        raise HubUnavailableError("private-error-value")
+
+    async def cancel(delay: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_receive_retry.asyncio.sleep", cancel
+    )
+    sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
+    with caplog.at_level(logging.DEBUG), pytest.raises(asyncio.CancelledError):
+        await sub.run()
+    summaries = [r for r in caplog.records if "outcome=" in r.getMessage()]
+    assert len(summaries) == 1
+    assert summaries[0].getMessage().endswith("outcome=terminated failures=1")
+    assert summaries[0].levelno == logging.INFO
+    assert "private-error-value" not in caplog.text
 
 
 async def test_shared_outage_is_used_by_both_subscription_and_menu(

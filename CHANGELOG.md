@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Daemon startup diagnostics omit the working directory. Lux music diagnostics
+  omit event payloads and rejected values, quiet repeated connection failures to
+  DEBUG, and summarize recovery or shutdown after an outage.
+
 - Logger-specific test assertions ignore unrelated captured records, preventing
   asyncio DEBUG diagnostics from breaking single-record checks.
 
