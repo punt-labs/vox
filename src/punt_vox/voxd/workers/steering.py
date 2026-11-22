@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Self, final
+from typing import Self, TypedDict, final
 from weakref import WeakValueDictionary
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.workers.registry import WorkerRegistry
+
+
+class SteerReceipt(TypedDict):
+    """Describe observed input, never a claim that a turn ended."""
+
+    worker_id: str
+    heard: bool
+    receipt_seq: int | None  # PY-TS-14: no sequence exists without a heard receipt.
+    urgent: bool
 
 
 @final
@@ -28,7 +37,7 @@ class WorkerSteering:
         self._workers = WeakValueDictionary()
         return self
 
-    async def handle(self, msg: dict[str, object]) -> dict[str, object]:
+    async def handle(self, msg: dict[str, object]) -> SteerReceipt:
         """Acknowledge heard input, never idle; interrupt need not emit Stop."""
         worker_id = parse_required_str(msg, "worker_id")
         words = parse_required_str(msg, "words")
@@ -57,7 +66,7 @@ class WorkerSteering:
 
     async def _deliver(
         self, worker_id: str, words: str, *, urgent: bool, deadline: float
-    ) -> dict[str, object]:
+    ) -> SteerReceipt:
         await self._acquire(self._lock, deadline)
         try:
             if asyncio.get_running_loop().time() >= deadline:
