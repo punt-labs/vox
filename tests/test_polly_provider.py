@@ -357,7 +357,7 @@ class TestPollyVoiceLanguageFiltering:
         self, language: str, voices: list[str]
     ) -> None:
         client = MagicMock()
-        client.describe_voices.return_value = _make_describe_voices_response(
+        client.describe_voices.side_effect = lambda **_: _make_describe_voices_response(
             [
                 _voice_entry("Joanna", "en-US", ["neural"]),
                 _voice_entry("Amy", "en-GB", ["standard"]),
