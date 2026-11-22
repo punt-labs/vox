@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from typing import final
+from uuid import uuid4
 
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
@@ -20,8 +21,10 @@ class TmuxWorkerProvider:
     __slots__ = ()
 
     @staticmethod
-    def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return WorkerCommand(*args).run(check=check)
+    def _run(
+        *args: str, check: bool = True, input_text: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+        return WorkerCommand(*args).run(check=check, input_text=input_text)
 
     def start(
         self,
@@ -60,9 +63,17 @@ class TmuxWorkerProvider:
         if urgent:
             self._run("send-keys", "-t", f"={handle}:", profile.interrupt_key)
             time.sleep(profile.settle_delay)
-        self._run("send-keys", "-t", f"={handle}:", "-l", "--", words)
+        self._paste(handle, words)
         time.sleep(profile.settle_delay)
         self._run("send-keys", "-t", f"={handle}:", profile.submit_key)
+
+    def _paste(self, handle: str, words: str) -> None:
+        buffer = f"vox-steer-{uuid4()}"
+        self._run("load-buffer", "-b", buffer, "-", input_text=words)
+        try:
+            self._run("paste-buffer", "-b", buffer, "-t", f"={handle}:")
+        finally:
+            self._run("delete-buffer", "-b", buffer, check=False)
 
     def status(self, handle: str) -> bool:
         """Report whether the session is still alive."""

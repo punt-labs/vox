@@ -250,13 +250,19 @@ def test_trust_exact_path_preserves_settings(
 def test_tmux_urgent_keys_and_safe_launch_error(tmp_path: Path) -> None:
     """Interrupt before literal submission, and never echo launch credentials."""
     provider = TmuxWorkerProvider()
-    with patch.object(TmuxWorkerProvider, "_run") as run:
+    with (
+        patch.object(TmuxWorkerProvider, "_run") as run,
+        patch("punt_vox.voxd.workers.tmux.uuid4", return_value="input"),
+    ):
         provider.steer("worker", "words", urgent=True, profile=TrivialProfile())
     assert [c.args for c in run.call_args_list] == [
         ("send-keys", "-t", "=worker:", "Escape"),
-        ("send-keys", "-t", "=worker:", "-l", "--", "words"),
+        ("load-buffer", "-b", "vox-steer-input", "-"),
+        ("paste-buffer", "-b", "vox-steer-input", "-t", "=worker:"),
+        ("delete-buffer", "-b", "vox-steer-input"),
         ("send-keys", "-t", "=worker:", "Enter"),
     ]
+    assert run.call_args_list[1].kwargs == {"input_text": "words"}
     with (
         patch.object(WorkerCommand, "_scoped", return_value=False),
         patch(

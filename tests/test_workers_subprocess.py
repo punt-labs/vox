@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +19,39 @@ from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 pytestmark = pytest.mark.subprocess
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is required")
+@pytest.mark.parametrize("words", ["x;", "x\\;", ";", "a ; b"])
+def test_real_tmux_steering_preserves_semicolons(tmp_path: Path, words: str) -> None:
+    handle = f"vox-verbatim-{uuid4()}"
+    command = ["tmux", "-L", "vox-workers", "-f", "/dev/null"]
+    subprocess.run(
+        [
+            *command,
+            "new-session",
+            "-d",
+            "-s",
+            handle,
+            "-c",
+            str(tmp_path),
+            sys.executable,
+            "-c",
+            "import sys, time; from pathlib import Path; "
+            "Path('ready').write_text('ready'); "
+            "Path('received').write_text(sys.stdin.readline()); time.sleep(60)",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    try:
+        _until_file(tmp_path / "ready", "ready")
+        TmuxWorkerProvider().steer(
+            handle, words, urgent=False, profile=TrivialProfile()
+        )
+        assert _until_file(tmp_path / "received", "\n") == words + "\n"
+    finally:
+        subprocess.run([*command, "kill-session", "-t", f"={handle}"], check=True)
 
 
 def test_policy_requires_allowlisted_top_level_and_creates_worktree(

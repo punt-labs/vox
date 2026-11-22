@@ -44,6 +44,25 @@ def test_receipt_types_import_without_worker_implementations() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("failure", ["load-buffer", "paste-buffer"])
+def test_paste_failure_never_submits_and_cleans_loaded_buffer(failure: str) -> None:
+    def run(*args: str, **kwargs: object) -> None:
+        if args[0] == failure:
+            raise RuntimeError("transport failed")
+
+    with (
+        patch.object(TmuxWorkerProvider, "_run", side_effect=run) as command,
+        pytest.raises(RuntimeError, match="transport failed"),
+    ):
+        TmuxWorkerProvider().steer("w", "words", urgent=False, profile=TrivialProfile())
+    commands = [call.args[0] for call in command.call_args_list]
+    assert commands == (
+        ["load-buffer"]
+        if failure == "load-buffer"
+        else ["load-buffer", "paste-buffer", "delete-buffer"]
+    )
+
+
 @pytest.mark.parametrize(
     "words", ["", "  ", "a\nb", "a\rb", "a\tb", "a\x00b", "a\x7fb", "a\u2028b"]
 )
@@ -75,13 +94,14 @@ def test_ready_only_and_baseline(tmp_path: Path, ready: bool) -> None:
 def test_settle_order(urgent: bool) -> None:
     calls: list[object] = []
 
-    def run(*args: str) -> None:
-        calls.append(args)
+    def run(*args: str, **kwargs: object) -> None:
+        calls.append((args, kwargs))
 
     def settle(delay: float) -> None:
         calls.append(delay)
 
     with (
+        patch("punt_vox.voxd.workers.tmux.uuid4", return_value="input"),
         patch.object(TmuxWorkerProvider, "_run", side_effect=run),
         patch(
             "punt_vox.voxd.workers.tmux.time.sleep",
@@ -92,13 +112,15 @@ def test_settle_order(urgent: bool) -> None:
             "w", "literal", urgent=urgent, profile=TrivialProfile()
         )
     expected: list[object] = [
-        ("send-keys", "-t", "=w:", "-l", "--", "literal"),
+        (("load-buffer", "-b", "vox-steer-input", "-"), {"input_text": "literal"}),
+        (("paste-buffer", "-b", "vox-steer-input", "-t", "=w:"), {}),
+        (("delete-buffer", "-b", "vox-steer-input"), {"check": False}),
         TrivialProfile.settle_delay,
-        ("send-keys", "-t", "=w:", "Enter"),
+        (("send-keys", "-t", "=w:", "Enter"), {}),
     ]
     if urgent:
         expected[:0] = [
-            ("send-keys", "-t", "=w:", "Escape"),
+            (("send-keys", "-t", "=w:", "Escape"), {}),
             TrivialProfile.settle_delay,
         ]
     assert calls == expected
