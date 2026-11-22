@@ -18,3 +18,7 @@ if ! git diff --cached --quiet -- '*.py'; then
   fi
   make test-changed
 fi
+ethos_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit"
+if [[ -x "$ethos_hook" && ! "$ethos_hook" -ef "${BASH_SOURCE[0]}" ]]; then
+  "$ethos_hook"
+fi

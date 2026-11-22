@@ -17,7 +17,7 @@ checks:
     timeout: 10s
   - name: shellcheck-edit
     stage: edit
-    files: ["**/*.sh"]
+    files: ["**/*.sh", .githooks/pre-commit, .githooks/pre-push]
     adapter: exec
     run: [shellcheck, "{file}"]
     on_fail: advisory
@@ -38,7 +38,7 @@ checks:
     timeout: 120s
   - name: shellcheck-commit
     stage: commit
-    files: ["**/*.sh"]
+    files: ["**/*.sh", .githooks/pre-commit, .githooks/pre-push]
     adapter: exec
     run: [shellcheck, "{files}"]
     on_fail: block
