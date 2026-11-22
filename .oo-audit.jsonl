@@ -2297,3 +2297,4 @@
 {"ts":"2026-11-22T14:07:10Z","commit":"79c578b","source":null,"files_scored":441,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-22T14:09:22Z","commit":"79c578b","source":null,"files_scored":1,"files_improved":0,"files_regressed":1,"verdict":"rebaseline-files","reason":"Use a neutral working directory for the isolated detached relay.","deltas":{"src/punt_vox/hook_context_relay.py":{"module_size":[94.0,96.0]}},"removed":[],"improved":{}}
 {"ts":"2026-11-22T14:09:24Z","commit":"79c578b","source":null,"files_scored":441,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
+{"ts":"2026-11-22T14:14:23Z","commit":"9580d9d","source":null,"files_scored":441,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/hook_context_event.py":{"module_size":[54.0,52.0]}},"removed":[]}

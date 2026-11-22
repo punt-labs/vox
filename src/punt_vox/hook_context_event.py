@@ -8,13 +8,11 @@ from typing import cast
 _CREDENTIAL_KEYS = (
     "token",
     "secret",
-    "signed_url",
-    "api_key",
+    "signedurl",
     "apikey",
-    "access_key",
+    "accesskey",
     "authorization",
     "password",
-    "private_key",
     "privatekey",
     "credential",
 )
@@ -35,7 +33,7 @@ class HookRedaction:
 
     @staticmethod
     def _credential_key(key: str) -> bool:
-        normalized = key.lower().replace("-", "_")
+        normalized = key.lower().replace("-", "").replace("_", "")
         return any(marker in normalized for marker in _CREDENTIAL_KEYS)
 
     @classmethod

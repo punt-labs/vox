@@ -204,7 +204,13 @@ def test_projection_is_bounded_redacted_and_session_local() -> None:
                 tool_name="Read",
                 tool_input={"file_path": f"{sequence}.py"},
                 tool_response={
-                    "content": [{"authorization": "not-for-the-snapshot"}],
+                    "content": [
+                        {
+                            "authorization": "not-for-the-snapshot",
+                            "accessKey": "placeholder",
+                            "signedUrl": "placeholder",
+                        }
+                    ],
                     "private_key": "placeholder",
                     "privateKey": "placeholder",
                 },
@@ -221,7 +227,8 @@ def test_projection_is_bounded_redacted_and_session_local() -> None:
             "relay_seq": n,
             "tool": "Read",
             "result": (
-                '{"content": [{"authorization": "[redacted]"}], '
+                '{"content": [{"authorization": "[redacted]", '
+                '"accessKey": "[redacted]", "signedUrl": "[redacted]"}], '
                 '"private_key": "[redacted]", "privateKey": "[redacted]"}'
             ),
         }
