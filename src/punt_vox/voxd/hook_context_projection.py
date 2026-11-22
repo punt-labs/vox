@@ -25,7 +25,11 @@ class HookToolSubject:
     """Match retries without exposing redacted input values."""
 
     @staticmethod
-    def fingerprint(payload: dict[str, object], *, key: bytes | None = None) -> str:
+    def fingerprint(
+        payload: dict[str, object],
+        *,
+        key: bytes | None = None,  # None for unkeyed hashes of sanitized inputs.
+    ) -> str:
         """Hash canonical tool input, keying the hash if it contains secrets."""
         raw = payload.get("tool_input")
         canonical = json.dumps(

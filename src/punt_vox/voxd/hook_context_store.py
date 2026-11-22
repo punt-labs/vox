@@ -25,11 +25,11 @@ class HookContextSnapshot(TypedDict):
     """Bounded view of one live hook session."""
 
     session_started: bool
-    goal: str | None
+    goal: str | None  # None until a nonempty prompt arrives.
     active_files: list[str]
     last_results: list[HookToolResult]
-    open_failure: HookToolResult | None
-    last_assistant_message: str | None
+    open_failure: HookToolResult | None  # None when no failure is unresolved.
+    last_assistant_message: str | None  # None until a nonempty Stop message arrives.
     gaps: HookGapReport
 
 
