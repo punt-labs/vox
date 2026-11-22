@@ -329,7 +329,7 @@ class PlaybackQueue:
             return
 
         rc, elapsed, stderr_text = result
-        recorded = self._record_result(
+        recorded = self.record_result(
             path=path, rc=rc, elapsed=elapsed, stderr=stderr_text
         )
         recorded.log_outcome(size=size, cmd=cmd, env_snapshot=env_snapshot)
@@ -340,7 +340,7 @@ class PlaybackQueue:
             size = path.stat().st_size
         except OSError as exc:
             logger.error("Playback aborted: cannot stat %s: %s", path, exc)
-            self._record_result(
+            self.record_result(
                 path=path, rc=-1, elapsed=0.0, stderr=f"stat failed: {exc}"
             )
             return None
@@ -350,7 +350,7 @@ class PlaybackQueue:
                 "Playback aborted: 0-byte audio file %s -- synthesis bug upstream",
                 path,
             )
-            self._record_result(path=path, rc=-1, elapsed=0.0, stderr="0-byte file")
+            self.record_result(path=path, rc=-1, elapsed=0.0, stderr="0-byte file")
             return None
 
         return size
@@ -395,7 +395,7 @@ class PlaybackQueue:
                 cmd,
                 env_snapshot,
             )
-            self._record_result(
+            self.record_result(
                 path=path,
                 rc=-1,
                 elapsed=elapsed,
@@ -410,7 +410,7 @@ class PlaybackQueue:
                 exc,
                 env_snapshot,
             )
-            self._record_result(
+            self.record_result(
                 path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
             )
             return None
@@ -434,7 +434,7 @@ class PlaybackQueue:
                 proc.kill()
             with contextlib.suppress(Exception):
                 await proc.wait()
-            self._record_result(
+            self.record_result(
                 path=path,
                 rc=-1,
                 elapsed=elapsed,
@@ -515,9 +515,7 @@ class PlaybackQueue:
             path=path, rc=-1, elapsed_s=0.0, stderr=reason, ts=time.time()
         )
 
-    # -- Private helpers -----------------------------------------------------
-
-    def _record_result(
+    def record_result(
         self,
         *,
         path: Path,
@@ -534,3 +532,5 @@ class PlaybackQueue:
             ts=time.time(),
         )
         return self._last_result
+
+    # -- Private helpers -----------------------------------------------------

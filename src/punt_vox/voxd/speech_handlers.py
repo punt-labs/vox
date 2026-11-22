@@ -7,9 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -25,7 +23,6 @@ from punt_vox.voxd._parse import (
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
-from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,
@@ -256,7 +253,7 @@ class SynthesizeHandler(MessageHandler):
         through to file synthesis.
         """
         result = await self._synthesis.try_direct_play(
-            req.text, req.spec, record_result=self._record_playback_result
+            req.text, req.spec, record_result=self._playback.record_result
         )
         if result is None:
             return False
@@ -302,17 +299,3 @@ class SynthesizeHandler(MessageHandler):
         """Undo a recorded dedup entry when synthesis fails after recording it."""
         if dedup_recorded:
             self._once_dedup.rollback(req.text)
-
-    def _record_playback_result(
-        self, *, path: Path, rc: int, elapsed: float, stderr: str
-    ) -> None:
-        """Update the playback queue's last_result with a freshly-observed result."""
-        self._playback.set_last_result(
-            PlaybackResult(
-                path=path,
-                rc=rc,
-                elapsed_s=round(elapsed, 4),
-                stderr=stderr,
-                ts=time.time(),
-            )
-        )

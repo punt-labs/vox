@@ -36,7 +36,7 @@ class TestConsumerResilience:
             if path.name == "bad.mp3":
                 raise RuntimeError("boom")
             # A clean, real-duration success for the following item.
-            self._record_result(path=path, rc=0, elapsed=1.0, stderr="")
+            self.record_result(path=path, rc=0, elapsed=1.0, stderr="")
 
         monkeypatch.setattr(PlaybackQueue, "play_audio", fake_play)
 

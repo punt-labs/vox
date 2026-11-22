@@ -225,7 +225,7 @@ class SynthesisPipeline:
         text: str,
         spec: SynthesisSpec,
         *,
-        record_result: Callable[..., None],
+        record_result: Callable[..., object],
     ) -> int | Exception | None:
         """Attempt direct-to-device playback via the provider.
 
