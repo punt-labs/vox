@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol, Self, TextIO, final
@@ -115,14 +116,14 @@ class CallHandlers:
         """Answer one lifecycle RPC with the call's status."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            async with self._lock:
-                match msg.get("type"):
-                    case "call_start":
-                        status = await self._start(msg)
-                    case "call_stop":
+            match msg.get("type"):
+                case "call_start":
+                    status = await self._start(msg)
+                case "call_stop":
+                    async with self._lock:
                         status = await self._stop()
-                    case _:
-                        status = self._status()
+                case _:
+                    status = self._status()
         except (ValueError, OSError, ConvAIError) as exc:
             await reply.error(str(exc))
             return
@@ -132,17 +133,31 @@ class CallHandlers:
         return self._active.status() if self._active is not None else {"state": "idle"}
 
     async def _start(self, msg: dict[str, object]) -> dict[str, object]:
+        """Launch under the lock, then wait unlocked so call_stop can cancel."""
+        async with self._lock:
+            active = await self._launch(msg)
+        try:
+            await asyncio.wait_for(active.call.connected(), _CONNECT_TIMEOUT_S)
+        except TimeoutError:
+            await self._cancel(active)
+            raise ConvAIError("the ElevenLabs conversation did not connect") from None
+        return active.status()
+
+    async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
         if self._active is not None and not self._active.task.done():
             raise ValueError("a call is already running; stop it first")
         audio: CallInput = (
-            ScriptInput.from_wire(msg["script"]) if "script" in msg else MicInput()
+            await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
+            if "script" in msg
+            else MicInput()
         )
         prompt = CallSeed(self._projects.repos(), await self._workers.workers())
         url, tool_ids = await asyncio.to_thread(
             self._agent().connection, BossTools.CATALOG
         )
         self._trace_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = self._trace_dir / f"call-{time.strftime('%Y%m%dT%H%M%S')}.jsonl"
+        stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        path = self._trace_dir / f"call-{stamp}.jsonl"
         stream = os.fdopen(
             os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
         )
@@ -156,12 +171,7 @@ class CallHandlers:
         options = SessionOptions(prompt.prompt(), tool_ids)
         task = asyncio.create_task(self._run(call, url, options, stream))
         self._active = _ActiveCall(call, task, path)
-        try:
-            await asyncio.wait_for(call.connected(), _CONNECT_TIMEOUT_S)
-        except TimeoutError:
-            await self._stop()
-            raise ConvAIError("the ElevenLabs conversation did not connect") from None
-        return self._status()
+        return self._active
 
     @staticmethod
     async def _run(
@@ -174,9 +184,13 @@ class CallHandlers:
 
     async def _stop(self) -> dict[str, object]:
         if self._active is not None:
-            self._active.task.cancel()
-            await asyncio.gather(self._active.task, return_exceptions=True)
+            await self._cancel(self._active)
         return self._status()
+
+    @staticmethod
+    async def _cancel(active: _ActiveCall) -> None:
+        active.task.cancel()
+        await asyncio.gather(active.task, return_exceptions=True)
 
     def _agent(self) -> AgentConnector:
         if self._connector is None:

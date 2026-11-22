@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
 
 if TYPE_CHECKING:
     from punt_vox.voxd.pcm_stream import PcmStreamSink
@@ -15,11 +17,13 @@ __all__ = ["AgentSpeaker"]
 
 @final
 class AgentSpeaker:
-    """Hold one PCM stream per stretch of agent speech.
+    """Own the daemon's audio output from the agent's first word to hang-up.
 
-    The stream holds the playback mutex, so chimes and music wait while the
-    agent talks. An interruption flushes queued audio at once and drops any
-    late audio from the response it cut; the next response opens a new stream.
+    The stream holds the playback mutex for the whole call, not per reply:
+    hook speech, chimes or music played between replies would talk over the
+    agent and leak into the open microphone as a false barge-in. An
+    interruption flushes queued audio at once and drops any late audio from
+    the response it cut; the next response opens a new stream.
     """
 
     __slots__ = ("_cut", "_playback", "_sink", "_stack")
@@ -53,6 +57,16 @@ class AgentSpeaker:
         if self._sink is not None:
             self._sink.flush()
         await self.close()
+
+    async def finish(self) -> None:
+        """Let audio already received play out, then release the output."""
+        try:
+            if self._sink is not None:
+                self._sink.finish()
+                with suppress(OutputDeviceLostError):
+                    await self._sink.wait()
+        finally:
+            await self.close()
 
     async def close(self) -> None:
         """Release the stream and the playback mutex."""

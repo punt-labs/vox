@@ -73,12 +73,19 @@ class FakeSink:
     def __init__(self) -> None:
         self.fed: list[bytes] = []
         self.flushed = 0
+        self.finished = False
 
     def feed(self, pcm: bytes) -> None:
         self.fed.append(pcm)
 
     def flush(self) -> None:
         self.flushed += 1
+
+    def finish(self) -> None:
+        self.finished = True
+
+    async def wait(self) -> None:
+        assert self.finished
 
 
 class FakePlayback:

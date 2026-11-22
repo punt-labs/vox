@@ -14,6 +14,8 @@ __all__ = ["ToolResultCache"]
 
 
 _WORDS: Final = re.compile(r"\w+")
+# Free text the agent transcribes afresh on each ask; IDs and paths stay exact.
+_SPOKEN: Final = frozenset({"task", "words"})
 
 
 @final
@@ -47,14 +49,14 @@ class ToolResultCache:
 
     @staticmethod
     def key(name: str, arguments: dict[str, object]) -> str:
-        """Return a canonical key that argument order, case and punctuation share.
+        """Return a canonical key that argument order and spoken punctuation share.
 
-        A re-ask after barge-in is transcribed afresh, so "Hello, world!" and
-        "hello world." must name the same request.
+        A re-ask after barge-in is transcribed afresh, so a task of "Hello,
+        world!" and one of "hello world." must name the same request.
         """
         canonical = {
             field: " ".join(_WORDS.findall(value.casefold()))
-            if isinstance(value, str)
+            if field in _SPOKEN and isinstance(value, str)
             else value
             for field, value in arguments.items()
         }

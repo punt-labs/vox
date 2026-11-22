@@ -79,3 +79,9 @@ def test_key_ignores_case_and_punctuation_of_a_reask() -> None:
     again = ToolResultCache.key("start_worker", {"task": "print hello world."})
     other = ToolResultCache.key("start_worker", {"task": "print goodbye world"})
     assert first == again != other
+
+
+def test_key_keeps_paths_and_ids_exact() -> None:
+    dashed = ToolResultCache.key("start_worker", {"task": "t", "project": "/a/b-c"})
+    nested = ToolResultCache.key("start_worker", {"task": "t", "project": "/a/b/c"})
+    assert dashed != nested

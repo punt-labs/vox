@@ -182,3 +182,87 @@ async def test_start_without_a_key_is_refused(
     assert (await _rpc(handlers, {"type": "call_status"}))["result"] == {
         "state": "idle"
     }
+
+
+async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None:
+    said = {"agent_response": "Starting the worker now", "event_id": 4}
+    fixed = {
+        "original_agent_response": "Starting the worker now",
+        "corrected_agent_response": "Starting the",
+        "event_id": 4,
+        "response_id": "r4",
+    }
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(
+            json.dumps({"type": "agent_response", "agent_response_event": said})
+        )
+        await socket.send(
+            json.dumps(
+                {
+                    "type": "agent_response_correction",
+                    "agent_response_correction_event": fixed,
+                }
+            )
+        )
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        workers = FakeWorkers()
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while True:
+            status = cast(
+                "dict[str, object]",
+                (await _rpc(handlers, {"type": "call_status"}))["result"],
+            )
+            if status["state"] != "live":
+                break
+            await asyncio.sleep(0.01)
+    assert status["transcript"] == [{"role": "agent", "text": "Starting the"}]
+
+
+async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
+    hold = asyncio.Event()
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await hold.wait()  # never answers the handshake
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        workers = FakeWorkers()
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        script = [{"pcm_path": str(pcm)}]
+        start = asyncio.create_task(
+            _rpc(handlers, {"type": "call_start", "script": script})
+        )
+        while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
+            "state": "idle"
+        }:
+            await asyncio.sleep(0.01)
+        stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
+        started = (await start)["result"]
+        hold.set()
+    assert cast("dict[str, object]", stopped)["state"] == "ended"
+    assert cast("dict[str, object]", started)["state"] == "ended"

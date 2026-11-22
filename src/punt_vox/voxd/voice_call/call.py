@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final, Literal, Self, final
 
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
+    AgentResponseCorrection,
     Audio,
     ClientToolCall,
     Interruption,
@@ -90,6 +91,7 @@ class VoiceAgentCall:
 
     async def run(self, signed_url: str, options: SessionOptions) -> None:
         """Hold the call until ElevenLabs ends it, it fails, or it is cancelled."""
+        hung_up = False  # Only a remote hang-up lets the last reply play out.
         try:
             async with self._opener(signed_url, options, trace=self._trace) as conv:
                 self._conversation_id = conv.metadata.conversation_id
@@ -100,6 +102,7 @@ class VoiceAgentCall:
                     group.create_task(self._listen(conv, group))
         except* EOFError:
             self._state = "ended"
+            hung_up = True
         except* Exception as failures:
             # The call is a background task: its failure is reported, not raised.
             failure = failures.exceptions[0]
@@ -111,7 +114,10 @@ class VoiceAgentCall:
             if self._state in {"connecting", "live"}:
                 self._state = "ended"
             self._connected.set()
-            await self._speaker.close()
+            if hung_up:
+                await self._speaker.finish()
+            else:
+                await self._speaker.close()
 
     async def connected(self) -> None:
         """Return once the conversation is live or has already ended."""
@@ -145,8 +151,17 @@ class VoiceAgentCall:
                     self._transcript.append({"role": "user", "text": text})
                 case AgentResponse(text=text):
                     self._transcript.append({"role": "agent", "text": text})
+                case AgentResponseCorrection() as correction:
+                    self._correct(correction)
                 case _:
                     pass
+
+    def _correct(self, correction: AgentResponseCorrection) -> None:
+        """Replace interrupted agent text with what the person actually heard."""
+        for turn in reversed(self._transcript):
+            if turn == {"role": "agent", "text": correction.original_text}:
+                turn["text"] = correction.corrected_text
+                return
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)

@@ -54,6 +54,20 @@ async def test_reask_during_a_slow_start_starts_one_worker() -> None:
     assert tools.replayed == 2
 
 
+async def test_reask_spelling_out_defaults_replays_the_first_answer() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    tools = _tools(workers)
+    first = await tools.answer("start_worker", {"task": "fix x"})
+    spelled: dict[str, object] = {"task": "fix x", "project": "/repo"}
+    assert await tools.answer("start_worker", spelled) == first
+    steer: dict[str, object] = {"worker_id": "abcd", "words": "go"}
+    await tools.answer("steer_worker", steer)
+    await tools.answer("steer_worker", {**steer, "urgent": False})
+    assert workers.started == [("fix x", "/repo")]
+    assert workers.steered == [("abcd1234", "go", False)]
+
+
 async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234"), payload("ef567890")]

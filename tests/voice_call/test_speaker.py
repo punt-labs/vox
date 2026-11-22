@@ -30,3 +30,13 @@ async def test_close_without_audio_is_a_no_op() -> None:
     playback = FakePlayback()
     await AgentSpeaker(cast("PlaybackQueue", playback)).close()
     assert playback.sinks == []
+
+
+async def test_finish_plays_out_the_last_reply_before_release() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"bye", 3))
+    await speaker.finish()
+    (sink,) = playback.sinks
+    assert (sink.fed, sink.finished, sink.flushed) == ([b"bye"], True, 0)
+    assert playback.released == 1

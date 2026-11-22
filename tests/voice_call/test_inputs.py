@@ -39,8 +39,23 @@ def test_from_wire_reads_turn_files(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    [[], "x", [1], [{"pcm_path": "rel.pcm"}], [{"pcm_path": "/x", "pause_s": -1}]],
+    [
+        [],
+        "x",
+        [1],
+        [{"pcm_path": "rel.pcm"}],
+        [{"pcm_path": "/x", "pause_s": -1}],
+        [{"pcm_path": "/dev/zero"}],
+        [{"pcm_path": "/tmp"}],
+    ],
 )
 def test_from_wire_refuses_malformed_scripts(raw: object) -> None:
     with pytest.raises(ValueError):
         ScriptInput.from_wire(raw)
+
+
+def test_from_wire_caps_the_number_of_turns(tmp_path: Path) -> None:
+    pcm = tmp_path / "hi.pcm"
+    pcm.write_bytes(b"\x02" * 64)
+    with pytest.raises(ValueError, match="1 to 20 turns"):
+        ScriptInput.from_wire([{"pcm_path": str(pcm)}] * 21)

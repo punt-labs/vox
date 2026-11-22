@@ -113,6 +113,8 @@ class BossTools:
         if operation is None:
             return json.dumps({"error": f"unknown tool {name}"}), True
 
+        arguments = self._with_defaults(name, arguments)
+
         async def execute() -> str:
             return json.dumps(await operation(arguments), ensure_ascii=False)
 
@@ -131,6 +133,17 @@ class BossTools:
         ) as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
         return result, False
+
+    def _with_defaults(
+        self, name: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
+        """Fill omitted defaults, so a re-ask that spells one out is the same ask."""
+        defaults: dict[str, object] = {}
+        if name == "steer_worker":
+            defaults["urgent"] = False
+        elif name == "start_worker" and len(repos := self._projects.repos()) == 1:
+            defaults["project"] = repos[0]
+        return {**defaults, **arguments}
 
     async def _start(self, arguments: dict[str, object]) -> object:
         task = self._text(arguments, "task")
