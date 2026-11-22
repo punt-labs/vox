@@ -165,9 +165,7 @@ class TestVibeTraceLog:
         trace.record("style=a\u2028forged\u2029b\u0085c")
 
         text = trace.path.read_text(encoding="utf-8")
-        assert text.splitlines() == [
-            "[vibe-trace] style=a\\u2028forged\\u2029b\\u0085c"
-        ]
+        assert text.splitlines() == ["[vibe-trace] style=a\\u2028forged\\u2029b\\x85c"]
         raw = trace.path.read_bytes()
         assert "\u2028".encode() not in raw
         assert "\u2029".encode() not in raw
