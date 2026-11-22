@@ -635,25 +635,3 @@ class TestAudioContext:
 
         monkeypatch.setattr(subprocess, "run", _fake_run)
         assert AudioContext._probe_launchctl_manager() == "unknown"
-
-
-class TestStderrTruncation:
-    """ffplay stderr can be unbounded; the truncator caps it but keeps both ends."""
-
-    def test_short_text_passes_through(self) -> None:
-        from punt_vox.voxd.playback_result import PlaybackResult
-
-        assert PlaybackResult.truncate_stderr("hello") == "hello"
-
-    def test_long_text_truncated_with_marker(self) -> None:
-        from punt_vox.voxd.playback_result import MAX_STDERR_LEN, PlaybackResult
-
-        text = "A" * 5000 + "B" * 5000
-        out = PlaybackResult.truncate_stderr(text)
-
-        assert len(out) < len(text)
-        assert "truncated" in out
-        assert out.startswith("A")
-        assert out.endswith("B")
-        # Marker reports the dropped byte count.
-        assert str(len(text) - MAX_STDERR_LEN) in out

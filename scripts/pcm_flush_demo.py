@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import math
 import os
@@ -95,10 +96,12 @@ async def main(interrupt_after_s: float) -> None:
         if cue.done():
             logger.info("interruption at %.0f ms of audio played", sink.played.ms)
             sink.flush()
+            speech.cancel()
         else:
             cue.cancel()
             logger.info("speech ended before the interruption point")
-        await speech
+        with contextlib.suppress(asyncio.CancelledError):
+            await speech
         await asyncio.sleep(0.5)
 
 
