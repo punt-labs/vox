@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Daemon-side ElevenLabs Conversational AI transport and lazy agent provisioning.
 - Parallel local and coverage test loops, changed-module pre-commit selection,
   opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
   time-bounded flaky-test quarantine policy.
