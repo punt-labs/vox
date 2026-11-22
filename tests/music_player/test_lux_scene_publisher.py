@@ -223,20 +223,32 @@ class TestRefreshDoesNotReinstall:
             [{"id": "music.status", "set": {"content": "2 of 12"}}]
         ]
 
-    async def test_an_identical_render_puts_nothing_on_the_wire(self) -> None:
+    async def test_an_identical_render_puts_nothing_on_the_wire(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         client = _FakeClient()
         publisher = LuxScenePublisher(lambda: _as_client(client))
         task = asyncio.create_task(publisher.run())
 
-        publisher.submit(_scene("vox.music", "same"))
-        await asyncio.sleep(0.05)
-        publisher.submit(_scene("vox.music", "same"))
-        await asyncio.sleep(0.05)
+        with caplog.at_level(logging.DEBUG):
+            for _ in range(6):
+                publisher.submit(_scene("vox.music", "same"))
+                await asyncio.sleep(0.05)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
         assert len(client.scene.rendered) == 1
         assert client.scene.patched == []
+        records = [
+            r
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.music_player.lux_scene_publisher"
+        ]
+        assert [r.levelno for r in records] == [logging.INFO, *[logging.DEBUG] * 5]
+        assert records[0].getMessage() == "[lux] installed vox.music scene (1 elements)"
+        assert all(
+            "scene unchanged; nothing pushed" in r.getMessage() for r in records[1:]
+        )
 
     async def test_reinstall_shows_even_when_nothing_changed(self) -> None:
         # The Music menu click's answer is the whole scene -- the display reopens
