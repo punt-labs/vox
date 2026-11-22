@@ -144,9 +144,9 @@ class DeviceCall[T]:
         return self._cancelled
 
     def error(self) -> BaseException | None:
-        """The exception the call raised, if any."""
+        """Return the exception the call raised, if any."""
         return self._task.exception()
 
     def result(self) -> T:
-        """The call's return value; re-raises its exception."""
+        """Return the call's value, re-raising its exception."""
         return self._task.result()
