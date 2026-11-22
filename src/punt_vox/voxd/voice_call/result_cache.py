@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Self, final
+import re
+from typing import TYPE_CHECKING, Final, Self, final
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 __all__ = ["ToolResultCache"]
+
+
+_WORDS: Final = re.compile(r"\w+")
 
 
 @final
@@ -43,8 +47,18 @@ class ToolResultCache:
 
     @staticmethod
     def key(name: str, arguments: dict[str, object]) -> str:
-        """Return a canonical key, so argument order cannot defeat the cache."""
-        return json.dumps([name, arguments], sort_keys=True, separators=(",", ":"))
+        """Return a canonical key that argument order, case and punctuation share.
+
+        A re-ask after barge-in is transcribed afresh, so "Hello, world!" and
+        "hello world." must name the same request.
+        """
+        canonical = {
+            field: " ".join(_WORDS.findall(value.casefold()))
+            if isinstance(value, str)
+            else value
+            for field, value in arguments.items()
+        }
+        return json.dumps([name, canonical], sort_keys=True, separators=(",", ":"))
 
     async def run(
         self, key: str, execute: Callable[[], Awaitable[str]], *, durable: bool

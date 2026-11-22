@@ -72,3 +72,10 @@ async def test_failure_is_not_cached() -> None:
     with pytest.raises(ValueError, match="busy"):
         await cache.run("k", execute, durable=True)
     assert await cache.run("k", execute, durable=True) == "ok"
+
+
+def test_key_ignores_case_and_punctuation_of_a_reask() -> None:
+    first = ToolResultCache.key("start_worker", {"task": "Print 'Hello, world!'"})
+    again = ToolResultCache.key("start_worker", {"task": "print hello world."})
+    other = ToolResultCache.key("start_worker", {"task": "print goodbye world"})
+    assert first == again != other
