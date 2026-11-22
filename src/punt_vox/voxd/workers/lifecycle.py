@@ -46,9 +46,10 @@ class WorkerLifecycle:
         if not alive:
             provider.stop(record.session)
             return self._cleanup(replace(record, state="exited"))
-        return self._report(record)
+        return self.report(record)
 
-    def _report(self, record: WorkerRecord) -> WorkerRecord:
+    def report(self, record: WorkerRecord) -> WorkerRecord:
+        """Replace a fresh snapshot without regressing a previously ready phase."""
         report = self._providers[record.provider].progress(
             record.id, self._profiles[record.harness]
         )

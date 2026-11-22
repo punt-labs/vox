@@ -33,5 +33,6 @@ class WorkerSubsystem:
                 WorkerRecords(user_state_dir() / "workers"),
                 {"tmux": TmuxWorkerProvider()},
                 {"claude": ClaudeProfile(store)},
-            )
+            ),
+            store,
         )

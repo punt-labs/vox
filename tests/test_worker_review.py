@@ -101,17 +101,17 @@ def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
     worktree.mkdir(parents=True)
     payload: dict[str, object] = {"session_id": record.id, "cwd": str(worktree)}
     with (
-        patch("punt_vox.hook_context_admission.user_state_dir", return_value=tmp_path),
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=worktree),
         patch(
             "punt_vox.hook_context_admission.VoxMarker.is_present", return_value=False
         ),
     ):
-        assert HookContextRelay(payload).enabled()
-        assert not HookContextRelay({**payload, "session_id": "unknown"}).enabled()
-        assert not HookContextRelay({**payload, "cwd": str(tmp_path)}).enabled()
-        registry.stop(record.id)
         assert not HookContextRelay(payload).enabled()
+        assert registry.admits_hook(record.id, str(worktree))
+        assert not registry.admits_hook("unknown", str(worktree))
+        assert not registry.admits_hook(record.id, str(tmp_path))
+        registry.stop(record.id)
+        assert not registry.admits_hook(record.id, str(worktree))
     assert not (worktree / ".punt-labs").exists()
 
 
@@ -120,12 +120,13 @@ def test_invalid_managed_record_cannot_admit_hooks(tmp_path: Path, data: str) ->
     registry = _registry(tmp_path, FakeWorkerProvider())
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
     (tmp_path / "workers" / f"{record.id}.json").write_text(data)
+    rebuilt = _registry(tmp_path, FakeWorkerProvider())
     payload: dict[str, object] = {"session_id": record.id, "cwd": record.worktree}
     with (
-        patch("punt_vox.hook_context_admission.user_state_dir", return_value=tmp_path),
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=None),
         patch(
             "punt_vox.hook_context_admission.VoxMarker.is_present", return_value=False
         ),
     ):
         assert not HookContextRelay(payload).enabled()
+        assert not rebuilt.admits_hook(record.id, record.worktree)

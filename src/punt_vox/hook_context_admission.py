@@ -1,4 +1,4 @@
-"""Admit opt-in repository hooks and exact registered worker sessions."""
+"""Classify repository opt-in without consulting daemon worker state."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from typing import Self, final
 from punt_vox.deposited_files import VoxMarker
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.hook_envelope import HookEnvelope
-from punt_vox.paths import user_state_dir
-from punt_vox.voxd.workers.records import WorkerRecords
 
 
 @final
@@ -25,14 +23,10 @@ class HookContextAdmission:
         return self
 
     def enabled(self) -> bool:
-        """Require repository enablement or an exact live worker identity."""
+        """Classify repository opt-in without reading daemon lifecycle state."""
         cwd = HookEnvelope.cwd_of(self._payload)
         if cwd is None:
             return False
-        if WorkerRecords(user_state_dir() / "workers").owns_session(
-            self._payload.get("session_id"), cwd
-        ):
-            return True
         root = find_repo_root(cwd)
         roots = (root,) if root is not None else (cwd, *cwd.parents)
         return any(

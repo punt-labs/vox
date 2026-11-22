@@ -41,23 +41,6 @@ class WorkerRecords:
             json.dumps(WorkerRecordCodec.encode(record), indent=2) + "\n", mode=0o600
         )
 
-    def owns_session(self, session_id: object, cwd: Path) -> bool:
-        """Admit hooks only for a live registered session in its exact worktree."""
-        if not isinstance(session_id, str):
-            return False
-        try:
-            worker_id = str(UUID(session_id))
-            record = WorkerRecordCodec.decode(
-                json.loads((self._root / f"{worker_id}.json").read_text())
-            )
-            return (
-                record.id == worker_id
-                and record.state in ("starting", "ready")
-                and record.worktree == str(cwd.resolve())
-            )
-        except (OSError, ValueError):
-            return False
-
     @staticmethod
     def _read(path: Path) -> WorkerRecord:
         record = WorkerRecordCodec.decode(json.loads(path.read_text()))

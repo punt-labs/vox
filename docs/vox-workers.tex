@@ -40,6 +40,8 @@ Named invariants checked by implementation tests are:
 Unavailability is not evidence of death. Every omitted state component is framed
 explicitly below. Provider termination and harness cleanup are attempted before
 the termination result is checkpointed; failure is represented by pending.
+Hook delivery receipts follow the curated report checkpoint; receipt is never
+issued for an uncommitted readiness transition.
 
 \begin{schema}{InitWorkers}
   Workers

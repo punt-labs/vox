@@ -7,8 +7,11 @@ import subprocess
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd.hook_context_handlers import HookContextHandlers
+from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.wire_reply import WireReply
 from punt_vox.voxd.workers.codec import WorkerRecordCodec
+from punt_vox.voxd.workers.hooks import WorkerHooks
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
@@ -34,12 +37,19 @@ class WorkerHandlers:
         return self
 
     @classmethod
-    def build(cls, registry: WorkerRegistry) -> dict[str, MessageHandler]:
+    def build(
+        cls, registry: WorkerRegistry, store: HookContextStore | None = None
+    ) -> dict[str, MessageHandler]:
         """Construct one serialized actor and expose its worker control surface."""
         handler = cls(registry)
-        return dict.fromkeys(
+        result: dict[str, MessageHandler] = dict.fromkeys(
             ("worker_start", "worker_list", "worker_stop"), handler.handle
         )
+        if store is not None:
+            hooks = WorkerHooks(store, registry, handler._lock)
+            result.update(HookContextHandlers(store, hooks.ingest).handlers())
+            result["worker_hook_admission"] = hooks.admit
+        return result
 
     def _dispatch(self, msg: dict[str, object]) -> WorkerRecord | list[WorkerRecord]:
         match msg["type"]:

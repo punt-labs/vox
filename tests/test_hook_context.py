@@ -256,12 +256,14 @@ def test_detached_relay_logs_nesting_failure_without_input(
 
 
 def test_enabled_boundary(tmp_path: Path) -> None:
-    """Global plugin registration cannot relay an event from an unenabled repo."""
+    """An unenabled repository requires daemon admission before sending an event."""
     (tmp_path / ".git").mkdir()
-    command = HookContextCommand(lambda: {"cwd": str(tmp_path)})
+    command = HookContextCommand(
+        lambda: {"cwd": str(tmp_path), "session_id": "a", "hook_event_name": "Stop"}
+    )
     with patch.object(HookContextRelay, "submit") as submit:
         command.run(enabled_only=True)
-    submit.assert_not_called()
+    submit.assert_called_once_with(worker_only=True)
 
 
 def test_enabled_boundary_rejects_symlink(tmp_path: Path) -> None:

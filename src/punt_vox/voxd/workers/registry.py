@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import subprocess
 from datetime import UTC, datetime
-from typing import Self, final
+from pathlib import Path
+from typing import Self, cast, final
 from uuid import uuid4
 
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
@@ -138,6 +139,26 @@ class WorkerRegistry:
             return self._workers[worker_id]
         except KeyError:
             raise ValueError(f"no worker {worker_id}") from None
+
+    def admits_hook(self, worker_id: object, cwd: object) -> bool:
+        """Accept only an active worker's exact session and canonical worktree."""
+        if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
+            return False
+        record = self._workers.get(worker_id)
+        return (
+            record is not None
+            and record.state in ("starting", "ready")
+            and "launch_error" not in record.last_report
+            and Path(cwd).is_absolute()
+            and record.worktree == str(Path(cwd).resolve())
+        )
+
+    def checkpoint_progress(self, worker_id: object, cwd: object) -> None:
+        """Persist curated progress before a managed hook delivery is acknowledged."""
+        if self.admits_hook(worker_id, cwd):
+            self._checkpoint(
+                self._lifecycle.report(self._workers[cast("str", worker_id)])
+            )
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""

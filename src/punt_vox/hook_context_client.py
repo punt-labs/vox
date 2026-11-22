@@ -2,21 +2,38 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import cast, final
 from uuid import uuid4
 
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
 
 
+@final
 class HookContextClient:
     """Short-lived RPCs shared by the relay and `vox call context`."""
 
+    __slots__ = ()
+
     @classmethod
-    async def send_event(cls, payload: dict[str, object]) -> None:
+    async def send_event(
+        cls, payload: dict[str, object], *, worker_only: bool = False
+    ) -> None:
         """Deliver one stamped hook payload and check the daemon's receipt."""
+        if worker_only:
+            admission = await cls._request(
+                {
+                    "type": "worker_hook_admission",
+                    "session_id": payload.get("session_id"),
+                    "cwd": payload.get("cwd"),
+                },
+                expected="worker_hook_admission",
+            )
+            if admission.get("admitted") is not True:
+                return
         await cls._request(
-            {"type": "hook_event", "payload": payload}, expected="hook_event_accepted"
+            {"type": "hook_event", "payload": payload, "worker_only": worker_only},
+            expected="hook_event_accepted",
         )
 
     @classmethod
