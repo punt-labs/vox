@@ -476,6 +476,71 @@ class TestDeviceFailures:
             await closing
         assert device.opened.closed
 
+    async def test_repeatedly_cancelled_close_waits_for_the_device_release(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
+        release = threading.Event()
+        device.opened.release_gate = release
+        closing = asyncio.create_task(sink.close())
+        for _ in range(3):
+            await asyncio.sleep(0.01)
+            closing.cancel()
+        await asyncio.sleep(0.01)
+        assert not closing.done(), "a second cancel abandoned the device release"
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert device.opened.closed
+
+    async def test_repeatedly_cancelled_open_closes_the_device(self) -> None:
+        device = FakeDevice()
+        sink = PcmStreamSink(asyncio.get_running_loop())
+        release = threading.Event()
+
+        def slow(
+            *,
+            samplerate: int,
+            blocksize: int,
+            callback: OutputCallback,
+            finished_callback: Callable[[], None],
+        ) -> FakeOutputStream:
+            release.wait(timeout=5)
+            stream = device(
+                samplerate=samplerate,
+                blocksize=blocksize,
+                callback=callback,
+                finished_callback=finished_callback,
+            )
+            stream.release_gate = release
+            return stream
+
+        opening = asyncio.create_task(sink.open(slow))
+        for _ in range(3):
+            await asyncio.sleep(0.01)
+            opening.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opening
+        assert device.opened.closed
+
+    async def test_cancelled_close_logs_a_failing_release(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sink, device = await open_sink()
+        release = threading.Event()
+        device.opened.release_gate = release
+        device.opened.stop_error = OSError("device unplugged")
+        sink.finish()
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.01)
+        closing.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert "during a cancelled close" in caplog.text
+        assert "device unplugged" in caplog.text
+
     async def test_cancelled_open_whose_start_fails_is_logged(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

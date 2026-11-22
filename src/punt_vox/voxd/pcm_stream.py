@@ -35,6 +35,8 @@ from punt_vox.voxd.pcm_audio import (
 from punt_vox.voxd.pcm_output import OutputDeviceLostError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.pcm_output import OutputStream, OutputStreamFactory
 
 logger = logging.getLogger(__name__)
@@ -167,12 +169,11 @@ class PcmStreamSink:
             msg = f"cannot open a PCM sink that is {self._phase}"
             raise ValueError(msg)
         self._opened_at = time.monotonic()
-        starting = asyncio.ensure_future(asyncio.to_thread(self._start_device, factory))
-        try:
-            self._stream = await asyncio.shield(starting)
-        except asyncio.CancelledError:
+        starting, cancelled = await _run_to_completion(self._start_device, factory)
+        if cancelled:
             await self._release_cancelled_open(starting)
-            raise
+            raise asyncio.CancelledError
+        self._stream = starting.result()
         logger.info("PCM stream open in %.1f ms", self._since_open_ms())
 
     def feed(self, pcm: bytes) -> None:
@@ -266,16 +267,19 @@ class PcmStreamSink:
         try:
             if stream is not None:
                 drain = ending == "finished" and not pending
-                releasing = asyncio.ensure_future(
-                    asyncio.to_thread(self._release_device, stream, drain=drain)
+                releasing, cancelled = await _run_to_completion(
+                    self._release_device, stream, drain=drain
                 )
-                try:
-                    await asyncio.shield(releasing)
-                except asyncio.CancelledError:
-                    # Hold the caller (and the playback mutex) until the device is free.
-                    with contextlib.suppress(Exception):
-                        await releasing
-                    raise
+                error = releasing.exception()
+                if cancelled:
+                    if error is not None:
+                        logger.error(
+                            "releasing the PCM device during a cancelled close",
+                            exc_info=error,
+                        )
+                    raise asyncio.CancelledError
+                if error is not None:
+                    raise error
         finally:
             report = self._report(interrupted=ending == "interrupted")
         return report
@@ -312,11 +316,16 @@ class PcmStreamSink:
         cls, starting: asyncio.Future[OutputStream]
     ) -> None:
         """Close the device a cancelled :meth:`open` was still starting."""
-        try:
-            stream = await starting
-            await asyncio.to_thread(cls._release_device, stream, drain=False)
-        except Exception:
-            logger.exception("releasing the PCM device after a cancelled open")
+        error = starting.exception()
+        if error is None:
+            releasing, _ = await _run_to_completion(
+                cls._release_device, starting.result(), drain=False
+            )
+            error = releasing.exception()
+        if error is not None:
+            logger.error(
+                "releasing the PCM device after a cancelled open", exc_info=error
+            )
 
     def _start_device(self, factory: OutputStreamFactory) -> OutputStream:
         """Worker thread: create and start the stream, closing it on failure."""
@@ -394,3 +403,25 @@ class PcmStreamSink:
         if phase == "finished":
             self._drained = True
             self._loop.call_soon_threadsafe(self._done.set)
+
+
+async def _run_to_completion[**P, T](
+    func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
+) -> tuple[asyncio.Future[T], bool]:
+    """Run *func* in a worker thread and wait for it even through cancellation.
+
+    A device call cannot be abandoned half-way: the caller holds the playback
+    mutex, and freeing it early would let other audio open the device too.
+    Every cancellation is deferred until the thread returns. Returns the
+    finished future and whether the caller was cancelled meanwhile.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait((task,))
+        except asyncio.CancelledError:
+            cancelled = True
+    if task.cancelled():
+        raise asyncio.CancelledError
+    return task, cancelled
