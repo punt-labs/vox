@@ -36,7 +36,10 @@ def test_full_report_includes_non_gating_design_scan() -> None:
         ("punt_vox.undeclared", None),
     ],
 )
-def test_design_layer_boundaries(module: str, expected: str | None) -> None:
+def test_design_layer_boundaries(
+    module: str,
+    expected: str | None,  # None means the module matches no layer.
+) -> None:
     layers = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["oo-ratchet"][
         "layers"
     ]
