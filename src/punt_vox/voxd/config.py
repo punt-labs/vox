@@ -11,10 +11,8 @@ import logging
 import os
 import re
 import secrets
-import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import Self, cast
+from typing import Self
 
 from punt_vox.keys import PROVIDER_KEY_NAMES, parse_keys_env
 from punt_vox.paths import (
@@ -248,22 +246,12 @@ class DaemonConfig:
         return token
 
     def log_environment(self) -> None:
-        """Log a short startup INFO; the full process/env dump goes to DEBUG."""
+        """Log startup metadata and environment presence without identity values."""
         logger.info("voxd starting (pid %d, v%s)", os.getpid(), installed_version())
-        env = {k: os.environ.get(k, "<unset>") for k in _STARTUP_ENV_KEYS}
-        getuid = cast("Callable[[], int] | None", getattr(os, "getuid", None))
-        getgid = cast("Callable[[], int] | None", getattr(os, "getgid", None))
-        uid: int | str = getuid() if getuid is not None else "<n/a>"
-        gid: int | str = getgid() if getgid is not None else "<n/a>"
+        env = {k: k in os.environ for k in _STARTUP_ENV_KEYS}
         logger.debug(
-            "voxd environment: pid=%d uid=%s gid=%s cwd=%s "
-            "voxd_binary=%s voxd_module=%s env=%s",
+            "voxd environment: pid=%d env_present=%s",
             os.getpid(),
-            uid,
-            gid,
-            Path.cwd(),
-            sys.executable,
-            __file__,
             env,
         )
 

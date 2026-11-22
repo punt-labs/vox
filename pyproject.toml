@@ -120,6 +120,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.8.0",
     # Builds the throwaway certificates the TLS-verification tests handshake with.
     "cryptography>=46.0.0",
 ]
@@ -324,16 +325,20 @@ reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip and not quarantine and not playback and not levels'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
-    "roundtrip: real TTS to STT word-error-rate oracle (offline by default; live also marked integration)",
+    "quarantine(reason): temporarily exclude a flaky test; reason must name a Linear issue",
+    "playback: real daemon audio-device monitor capture (nightly/manual)",
+    "roundtrip: real TTS to STT word-error-rate oracle (provider matrix also marked integration; Claude Code also marked agent)",
+    "agent: marks tests driving the vox plugin through paid headless Claude Code (run with -m agent)",
     "integration: marks tests requiring real, credentialed provider API calls (run with -m integration)",
     "slow: marks tests with heavy real-subprocess or real-filesystem overhead (run with -m slow)",
     "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",
     "sdk: marks tests that drive a real Claude Agent SDK session and cost real money (run with -m sdk)",
+    "levels: signal-level loudness, silence, and track-change checks for chimes and music via ffmpeg ebur128/silencedetect and an mpv render (offline by default; live music also marked integration)",
     "e2e: marks packaging-e2e tests that drive the INSTALLED wheel -- `vox` binary as a subprocess and `vox mcp` over stdio; catches entry-point resolution / missing-wheel-data / stdio-startup faults no in-process test can see (run with -m e2e; requires `make install` first; distinct from the live-audio tier in tests/conversation_mode/coverage-matrix.md)",
 ]
 filterwarnings = [

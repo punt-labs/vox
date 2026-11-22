@@ -13,10 +13,66 @@ on:
         required: false
       OPENAI_API_KEY:
         required: false
+      ANTHROPIC_API_KEY:
+        required: false
 
 permissions: {}
 
 jobs:
+  playback-capture:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
+      VOX_PLAYBACK_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.candidate-artifact != ''
+        with:
+          name: ${{ inputs.candidate-artifact }}
+          path: candidate/
+      - run: sudo apt-get update && sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.HF_HUB_CACHE }}
+          key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
+      - name: Install playback dependencies and subject
+        env:
+          CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
+        run: |
+          if [[ -z "$CANDIDATE_ARTIFACT" ]]; then
+            export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
+            uv sync --frozen --all-extras --group roundtrip
+          else
+            export UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/vox-playback-venv"
+            uv sync --frozen --all-extras --group roundtrip --no-install-project
+            uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps candidate/*.whl
+          fi
+          printf 'UV_PROJECT_ENVIRONMENT=%s\n' "$UV_PROJECT_ENVIRONMENT" >> "$GITHUB_ENV"
+      - name: Assume the Polly QA role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with: &polly-role
+          role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
+          allowed-account-ids: "579096219769"
+          aws-region: us-east-1
+          role-session-name: vox-qa-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 900
+          retry-max-attempts: 3
+      - name: Capture real daemon playback
+        # Keep the installed candidate wheel instead of syncing the checkout.
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -s
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+
   roundtrip-live:
     name: Live speech (${{ matrix.os }})
     permissions:
@@ -37,12 +93,13 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - &download-candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: inputs.candidate-artifact != ''
         with:
           name: ${{ inputs.candidate-artifact }}
           path: candidate/
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng ripgrep mpv
         if: runner.os == 'Linux'
       - run: command -v ffmpeg || brew install ffmpeg
         if: runner.os == 'macOS'
@@ -50,7 +107,8 @@ jobs:
         with:
           path: ${{ env.HF_HUB_CACHE }}
           key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
-      - name: Install test dependencies and subject
+      - &install-subject
+        name: Install test dependencies and subject
         id: dependencies
         env:
           CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
@@ -82,13 +140,7 @@ jobs:
       - name: Assume the Polly QA role
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
-          allowed-account-ids: "579096219769"
-          aws-region: us-east-1
-          role-session-name: vox-qa-${{ github.run_id }}-${{ github.run_attempt }}
-          role-duration-seconds: 900
-          retry-max-attempts: 3
+        with: *polly-role
       - name: ElevenLabs, OpenAI, and Polly to Whisper and Scribe
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
@@ -100,3 +152,51 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_say_roundtrip.py -m 'roundtrip and integration' -s
+      - name: Chime and music signal levels
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/levels -m levels -s --basetemp="$RUNNER_TEMP/levels"
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          VOX_LEVELS_REQUIRE_LIVE: "1"
+      - name: Upload measured audio
+        if: ${{ failure() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: levels-audio
+          path: ${{ runner.temp }}/levels/**/*.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  agent:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_HUB_CACHE: ${{ github.workspace }}/.hf-cache
+      VOX_AGENT_REQUIRE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - *download-candidate
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng mpv
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.HF_HUB_CACHE }}
+          key: whisper-small-en-${{ runner.os }}-d1d751a5-v1
+      - name: Install Claude Code
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/claude-code" @anthropic-ai/claude-code@2.1.330
+          printf '%s\n' "$RUNNER_TEMP/claude-code/bin" >> "$GITHUB_PATH"
+      - *install-subject
+      - name: Agent speech roundtrip
+        # Keep vox and voxd from the selected test subject, including an installed RC wheel.
+        run: |
+          export PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip -m agent -s
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

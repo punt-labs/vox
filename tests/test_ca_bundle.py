@@ -375,7 +375,11 @@ def test_a_path_cannot_forge_a_log_line(
     with caplog.at_level(logging.ERROR, logger="punt_vox.providers.ca_bundle"):
         translate(CaBundle("/etc/ca.pem\nERROR forged record\r"))
 
-    [message] = [r.getMessage() for r in caplog.records]
+    [message] = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "punt_vox.providers.ca_bundle"
+    ]
     assert "\n" not in message
     assert "\r" not in message
     assert "/etc/ca.pem\\nERROR forged record\\r" in message

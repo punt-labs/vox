@@ -78,6 +78,7 @@ jobs:
     secrets:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   candidate-signoff:
     name: Jim’s installed-candidate QA sign-off (voice and music)

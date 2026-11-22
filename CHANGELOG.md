@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Parallel local and coverage test loops, changed-module pre-commit selection,
+  opt-in Git hooks, exact-commit cached CI coverage baselines, and a tracked,
+  time-bounded flaky-test quarantine policy.
+
 - Release candidates run the nightly suite on the exact wheel to be published.
   `make qa` records installed-candidate voice and music checks before release
   approval, and a PyPI smoke test round-trips one line after publishing.
@@ -17,8 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tight 0.02 offline word error rate limit, synthesized dropped/swapped-word
   and normalization fault checks, non-silence gates, offline PR checks, and a
   strict nightly credentialed provider matrix.
-- Nightly speech checks now include espeak-ng and native macOS Say, cloud
-  credential rejection, and Linear issue filing on scheduled failures.
 
 - Combined line and branch coverage for all credential-free test tiers,
   including installed-wheel subprocesses, with published reports and a PR
@@ -41,6 +43,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Report AWS credential rejection during Polly voice discovery the same way
   as rejection during synthesis, including on a cold voice cache.
+
+- Daemon startup diagnostics omit the working directory. Lux music diagnostics
+  omit event payloads and rejected values, quiet repeated connection failures to
+  DEBUG, and summarize recovery or shutdown after an outage.
+
+- Logger-specific test assertions ignore unrelated captured records, preventing
+  asyncio DEBUG diagnostics from breaking single-record checks.
+
+- Daemon DEBUG startup diagnostics report environment-variable presence rather
+  than values and omit numeric user/group IDs, preventing account identity leaks.
+
+- Local-provider caller rejections emit only the request-ID-stamped warning,
+  with a fixed reason code instead of private voice or rejection details and
+  without an additional direct-play error traceback. Synthesis and record start
+  logs omit caller-supplied voice, provider and recording names; all wire
+  rejections (including chimes) omit rejection details from logs. Unexpected
+  direct-play failures retain their error tracebacks.
+
+- Daemon synthesis rejections emit one sanitized, request-ID-stamped warning
+  instead of duplicate warning records.
+
 - Tightened the live speech roundtrip WER limit from 0.25 to 0.05 after all
   24 provider/backend/passage cases measured zero WER, so one wrong word in
   the shortest passage fails the gate.

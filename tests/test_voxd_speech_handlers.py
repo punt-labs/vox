@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from punt_vox.providers.ca_bundle import CaBundleError
+from punt_vox.providers.provider_faults import (
+    ProviderConfigError,
+    UnsendableHeaderError,
+)
 from punt_vox.types_errors import VoiceNotFoundError
 from punt_vox.types_provider_errors import (
     ProviderAuthError,
@@ -40,6 +45,44 @@ def _make_synthesize_handler(
 class TestHandleSynthesizeShortCircuit:
     """SynthesizeHandler skips try_direct_play for cloud providers."""
 
+    @pytest.mark.skipif(
+        shutil.which("espeak-ng") is None and shutil.which("espeak") is None,
+        reason="requires a real espeak voice registry",
+    )
+    def test_real_local_rejection_logs_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler = _make_synthesize_handler()
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "real-local-rejection",
+            "provider": "espeak",
+            "voice": "smoke-voice-marker-xyz",
+            "text": "Private speech must not reach the log.",
+        }
+
+        with caplog.at_level(logging.DEBUG, logger="punt_vox"):
+            asyncio.run(handler(msg, websocket))
+
+        failures = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(failures) == 1
+        record = failures[0]
+        assert record.name == "punt_vox.voxd.wire_reply"
+        assert record.levelno == logging.WARNING
+        assert record.exc_info is None
+        assert "real-local-rejection" in record.getMessage()
+        assert "smoke-voice-marker-xyz" not in caplog.text
+        assert "available:" not in caplog.text
+        assert all(r.exc_info is None and not r.exc_text for r in caplog.records)
+        assert "voice_not_found" in record.getMessage()
+        assert "Private speech must not reach the log." not in caplog.text
+        websocket.send_json.assert_awaited_once()
+        reply = websocket.send_json.await_args.args[0]
+        assert reply["id"] == "real-local-rejection"
+        assert reply["type"] == "error"
+        assert "smoke-voice-marker-xyz" in reply["message"]
+
     def test_cloud_provider_skips_direct_play(self) -> None:
         mock_synth = MagicMock(spec=SynthesisPipeline)
         mock_synth.try_direct_play = AsyncMock(return_value=None)
@@ -56,6 +99,63 @@ class TestHandleSynthesizeShortCircuit:
         asyncio.run(handler(msg, websocket))
 
         mock_synth.try_direct_play.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("rejection", "reason"),
+        [
+            (
+                ProviderUnavailableError("espeak", "provider unavailable"),
+                "provider_unavailable",
+            ),
+            (ProviderAuthError("espeak", 401), "provider_auth"),
+            (UnknownProviderError("espeak", ["say"]), "unknown_provider"),
+            (VoiceNotFoundError("missing", ["en"]), "voice_not_found"),
+            (CaBundleError("unusable CA bundle"), "ca_bundle"),
+            (ProviderConfigError("invalid provider configuration"), "provider_config"),
+            (UnsendableHeaderError("header cannot be sent"), "provider_config"),
+        ],
+    )
+    def test_direct_play_caller_errors_log_once(
+        self,
+        rejection: ValueError,
+        reason: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(
+            "punt_vox.voxd.synthesis.get_provider", MagicMock(side_effect=rejection)
+        )
+        handler = _make_synthesize_handler()
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+
+        with caplog.at_level(logging.DEBUG, logger="punt_vox"):
+            asyncio.run(
+                handler(
+                    {
+                        "id": "typed-local",
+                        "provider": "espeak",
+                        "text": "Private speech",
+                    },
+                    websocket,
+                )
+            )
+
+        [record] = [
+            r
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.wire_reply" and r.levelno >= logging.WARNING
+        ]
+        assert record.name == "punt_vox.voxd.wire_reply"
+        assert record.levelno == logging.WARNING
+        assert record.exc_info is None
+        assert "typed-local" in record.getMessage()
+        assert reason in record.getMessage()
+        assert str(rejection) not in caplog.text
+        assert "Private speech" not in caplog.text
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "typed-local", "message": str(rejection)}
+        )
 
     def test_local_provider_calls_direct_play(self) -> None:
         mock_synth = MagicMock(spec=SynthesisPipeline)
@@ -629,21 +729,69 @@ class TestSynthesizeHandlerTypedErrorRouting:
         ), "a CA bundle failure must never route through fault()"
 
     @pytest.mark.asyncio
-    async def test_reject_log_escapes_newlines_in_caller_supplied_strings(
+    @pytest.mark.parametrize(
+        "rejection",
+        [
+            ProviderAuthError("elevenlabs", 401),
+            VoiceNotFoundError("bella", ["alloy"]),
+        ],
+    )
+    async def test_synthesis_rejection_logs_once(
+        self, rejection: ValueError, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler, _ = self._handler_that_raises(rejection)
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            sent = await self._drive(handler)
+
+        records = [r for r in caplog.records if "req-1" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert records[0].name == "punt_vox.voxd.wire_reply"
+        assert str(rejection) not in records[0].getMessage()
+        assert "hi" not in records[0].getMessage()
+        assert sent[-1] == {"type": "error", "id": "req-1", "message": str(rejection)}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direct_play", [True, False])
+    async def test_local_rejection_logs_once_and_allows_retry(
+        self, direct_play: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        rejection = ProviderAuthError("espeak", 401)
+        synthesis = MagicMock(spec=SynthesisPipeline)
+        synthesis.try_direct_play = AsyncMock(
+            return_value=rejection if direct_play else None
+        )
+        synthesis.synthesize_to_file = AsyncMock(side_effect=rejection)
+        dedup = OnceDedup()
+        handler = _make_synthesize_handler(synthesis=synthesis, once_dedup=dedup)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock()
+        msg: dict[str, object] = {
+            "id": "local-rejection",
+            "text": "private speech content",
+            "provider": "espeak",
+            "once": 30,
+        }
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await handler(msg, websocket)
+
+        records = [r for r in caplog.records if "local-rejection" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert "provider_auth" in records[0].getMessage()
+        assert str(rejection) not in caplog.text
+        assert "private speech content" not in caplog.text
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "local-rejection", "message": str(rejection)}
+        )
+        assert dedup.check_and_record("private speech content", 30) is None
+
+    @pytest.mark.asyncio
+    async def test_reject_log_omits_caller_supplied_strings(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # The reject-path WARNING interpolates the exception message
-        # through ``%r`` on ``str(exc)`` so a caller-supplied string
-        # in the message (a voice name that carries a newline, a
-        # hostile provider name in a hand-edited vox.md) cannot forge
-        # a second audit line. Same discipline
-        # AwsRequirement.satisfied uses on the boto3 exception it
-        # swallows, and the shape this test pins so a future change
-        # cannot regress it back to ``%s``.
-        #
-        # VoiceNotFoundError renders the voice name verbatim into
-        # str(exc), so a forged newline in the voice name would land
-        # directly at the log sink without the ``%r`` escape.
         handler, _ = self._handler_that_raises(
             VoiceNotFoundError("b\nFATAL forged audit line", ["alloy"])
         )
@@ -651,13 +799,13 @@ class TestSynthesizeHandlerTypedErrorRouting:
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
             await self._drive(handler)
 
-        rejected = [r for r in caplog.records if "Rejected synthesis" in r.getMessage()]
+        rejected = [r for r in caplog.records if "req-1" in r.getMessage()]
         assert len(rejected) == 1
         message = rejected[0].getMessage()
-        # The raw newline is escaped as ``\n`` inside the quoted repr;
-        # never a literal newline character at the log sink.
         assert "\n" not in message
-        assert "\\n" in message
+        assert "forged audit line" not in caplog.text
+        assert "alloy" not in caplog.text
+        assert "voice_not_found" in message
         assert message.splitlines() == [message]
 
     @pytest.mark.asyncio

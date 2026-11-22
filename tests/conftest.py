@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -21,6 +22,19 @@ from punt_vox.providers.espeak import EspeakProvider, EspeakVoiceConfig
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.polly import PollyProvider, VoiceConfig
 from punt_vox.providers.say import SayProvider, SayVoiceConfig
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Reject untracked quarantines before marker-based deselection."""
+    for item in items:
+        for mark in item.iter_markers("quarantine"):
+            reason = mark.kwargs.get("reason")
+            if not isinstance(reason, str) or not re.search(r"\bPL-\d+\b", reason):
+                raise pytest.UsageError(
+                    f"{item.nodeid}: quarantine requires reason= naming a Linear issue"
+                )
+
 
 # Test voice configs — constructed directly, no API call needed.
 JOANNA = VoiceConfig(voice_id="Joanna", language_code="en-US", engine="neural")

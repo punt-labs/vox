@@ -2,6 +2,68 @@
 
 The default suite needs no API keys, network, or audio hardware, but relies on local system binaries (ffmpeg for MP3 encoding, optionally espeak-ng). Opt-in roundtrip checks use a downloaded Whisper model; live integration checks call credentialed APIs.
 
+## Local and CI feedback stages
+
+Run `make hooks` once after cloning. Hooks print their elapsed time, stop on the
+first failure, and use the working tree for checks; stage the intended changes
+before committing. `--no-verify` is for emergencies only, never a way to land
+failing checks.
+
+| Stage | Trigger | Commands | Budget |
+| --- | --- | --- | --- |
+| Pre-commit | Staged Python changes | Ruff format/check on staged files, `uv run mypy src/ tests/`, Pyright on staged files, `make test-changed` | <30s for a typical one-file change with warm type caches |
+| Pre-push | Every local push | `make lint type test-push` | <3 min |
+| Required PR checks | Pull request | Parallel `make coverage` (includes default, slow, subprocess and installed-wheel e2e), offline `make test-roundtrip`, packaging `make test-e2e`, no-drop coverage comparison | <10 min normally |
+| Main verification | Push to main | Same CI suite; save successful coverage as `coverage-baseline-<sha>` | <10 min normally |
+
+`make test` runs the default tier with `-n auto`. `make test-push` includes slow
+and subprocess tests but excludes integration, SDK, e2e, roundtrip, and quarantine.
+`make test-changed` selects changed test files and tests directly importing staged
+`src/punt_vox` modules. Use `make test-changed REF=origin/main` to compare HEAD
+against a merge base. Package `__init__.py` or `conftest.py` changes require the
+whole default tier, which can exceed the pre-commit budget. Selection is a fast
+direct-import heuristic, not a substitute for the full pre-push suite.
+
+PR coverage compares against the exact merge-base SHA's cached report, never a
+nearby commit. A cache miss reruns that base serially with the current coverage harness;
+missing or invalid reports fail closed. Main publishes the baseline only after
+successful coverage. Cold apt setup or a baseline cache miss can exceed the
+normal CI budget; the test job has a 40-minute safety timeout to accommodate
+both apt's 17-minute ceiling and the measured 14-minute serial fallback.
+
+Initial measurements on an 8-vCPU Linux VM: default tier 587.38s serial versus
+34.51s with auto workers (64.78s with four); slow/subprocess 31.77s serial versus
+21.61s auto (18.97s with four). The parallel default runs exposed three
+ambient-key-dependent tests, now given explicit fake keys. Warm mypy took 1.08s,
+Pyright 20.54s, and Ruff check plus format check 0.20s. These are local timings,
+not guarantees about GitHub runner capacity.
+
+After implementation, the actual pre-commit hook on the single changed
+`tests/test_elevenlabs_client.py` took **9.59s** (68 selected tests); the full
+pre-push hook took **61.00s** (9,455 passed, four platform/tool skips). Both
+measurements include their lint and type gates and use warm type caches.
+
+Coverage of the same source tree was identical with serial and auto workers:
+**97.00% lines**, **92.66% branches** (96.49% combined). The serial harness
+(`uv run python tools/run_coverage.py --workers 0`) took **823.84s**; parallel
+`make coverage`, including build/install, took **68.21s**. Both ran 9,461 tests
+with four skips and retained installed-wheel subprocess coverage.
+
+## Flake policy
+
+A flaky test discovered on main or a PR must be fixed or quarantined **the same
+day**. Quarantine requires a Linear issue and a named owner, with a deadline no
+more than **14 days** away; record the owner and deadline in the issue and name
+the owner in the mark's reason. Fix or delete the quarantined test by that
+deadline. Review the quarantine list daily with
+`uv run pytest --collect-only -m quarantine`.
+
+Use `@pytest.mark.quarantine(reason="PL-1234: owner Jim")` (or the corresponding
+Linear issue URL containing its `PL-` identifier). Collection rejects missing or untracked reasons, including inherited
+marks. Default, pre-push, and coverage runs deselect quarantine; explicitly run
+`uv run pytest -m quarantine` when investigating. Quarantine does not silently
+retry a failure: never retry-until-green, and do not add rerun plugins.
+
 ## Philosophy
 
 Vox has five TTS providers (ElevenLabs, OpenAI, Polly, macOS Say, espeak-ng), a plugin hook system, an MCP server, and a CLI. All of these talk to external services. The test suite proves correctness without ever calling them.
@@ -197,23 +259,26 @@ reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,213 |
-| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 208 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,305 |
+| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
-| `roundtrip` | Real speech WER and cloud credential rejection; live cases also `integration` | See [Integration Tests](#integration-tests) | Offline PR/push; all providers nightly/manual | 39 |
-| `integration` | Cloud TTS × STT matrix, cloud credential rejection, and macOS Say | See [Integration Tests](#integration-tests) | Nightly/manual | 31 |
+| `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/RC/manual | 40 |
+| `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/RC/manual | 3 |
+| `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/RC/manual | 20 |
+| `integration` | Live provider speech and credential rejection, music levels, and playback capture | See [Integration Tests](#integration-tests) | Nightly/RC/manual | 37 |
+| `agent` | Paid headless Claude Code → vox plugin → recorded speech → Whisper (also `roundtrip`) | `make test-agent` | Nightly/RC/manual | 1 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
 | Live audio (no marker) | Human-judged voice and music quality; not `e2e` | [`make qa` on the installed candidate](docs/testing/manual-tests.md) | Before release approval | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,213 default / 9,471 collected across all markers. `slow` is cross-cutting,
-so marker counts need not be disjoint in future revisions.
+9,305 default / 9,593 collected across all markers. Cross-cutting markers
+overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
 
 No marker, no external service dependency. This is the vast majority of the
-suite (9,213 of 9,471 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
+suite (9,305 of 9,593 collected tests as of this revision) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
@@ -272,11 +337,15 @@ default tier. The pi-side secret guard extension runs under real `node` in
 `test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
 problem repeated in a different domain, not a new marker.
 
-### `integration` and `sdk`
+### `integration`, `agent`, and `sdk`
 
 `integration` marks live provider checks, not mocked cross-component wiring.
-The shared nightly/manual/RC suite supplies cloud provider secrets and fails when
-prerequisites are missing; local cloud roundtrips name and skip missing keys.
+The shared nightly/manual/RC suite fails when prerequisites are missing;
+local runs report and skip missing credentials.
+
+`agent` exercises the real Claude Code CLI and the plugin's MCP server, not
+the Claude Agent SDK. It is excluded from default, PR, and offline roundtrip
+runs. It does not replace playback capture or manual listening.
 
 `sdk` is reserved for a real paid Claude Agent SDK session and is not run in
 CI. Conversation mode already has default and subprocess coverage; that does
@@ -395,9 +464,9 @@ verify:
 
 ## Markers
 
-The [named-tier table](#testing-pyramid) lists every marker, its command,
+The [named-tier table](#testing-pyramid) lists the core markers, their commands,
 CI coverage, and collected count. The default selection excludes `slow`,
-`subprocess`, `e2e`, `integration`, `sdk`, and `roundtrip`. An explicit `-m`
+`subprocess`, `e2e`, `integration`, `sdk`, `roundtrip`, and `playback`. An explicit `-m`
 expression overrides that selection. Live audio has no pytest marker.
 
 ## Running Tests
@@ -418,8 +487,8 @@ uv run pytest -m slow
 # subprocess -- real shell-script/install.sh subprocess tests
 uv run pytest -m subprocess
 
-# All local tiers except the separately run speech oracle
-uv run pytest -m "not integration and not sdk and not roundtrip"
+# All local tiers except the separately run speech oracle and signal levels
+uv run pytest -m "not integration and not sdk and not roundtrip and not levels"
 
 # Packaging e2e separately, against the installed wheel
 make install
@@ -430,6 +499,32 @@ make coverage
 ```
 
 ## Integration Tests
+
+### Stage five: playback capture
+
+`make test-playback-capture` selects `playback and not integration`, so it never
+spends provider quota even when credentials are present. Run
+`make test-playback-capture-live` for `playback and integration`; the live Polly
+and ElevenLabs cases carry both markers. CI explicitly selects `-m playback`
+to run both offline and live cases. Playback is excluded from default tests
+and combined coverage. A private headless PulseAudio null sink records
+its monitor while a real isolated `voxd` subprocess speaks. Pinned CPU/int8
+Whisper small.en transcribes that capture; WER must be at most 0.05 and unique
+marker words must occur exactly once in order. Install `pulseaudio`,
+`pulseaudio-utils`, `ffmpeg`, and `espeak-ng`, then sync the `roundtrip` group.
+
+The offline case covers sequential espeak direct-device requests. Neither
+espeak record nor Polly synthesis chunks text, so no offline chunking claim is
+made. Live Polly covers file synthesis and ffplay queue playback. Live
+ElevenLabs uses just over 5,000 characters with `eleven_v3`, forcing two real
+provider chunks with markers on opposite sides of the seam. Missing provider
+credentials or audio prerequisites skip locally; `VOX_PLAYBACK_REQUIRE=1`
+makes them failures in the nightly/manual `roundtrip-live.yml` playback job.
+The reusable workflow also runs this job against the installed candidate wheel
+when called by the release gate.
+Live cases need `ELEVENLABS_API_KEY` and the same `AWS_*` variables as roundtrip.
+Concurrent submission order is not asserted: FIFO applies to enqueued files,
+not to synthesis completion across independent client connections.
 
 Speech intelligibility checks live in `tests/roundtrip/`. Run
 `make test-roundtrip` for real espeak-ng en-us synthesis at 131 WPM and
@@ -448,15 +543,40 @@ Run `make test-roundtrip-live` for ElevenLabs/OpenAI/Polly TTS crossed with
 Whisper/Scribe (also marked `integration`). Missing credentials produce named
 skips unless `VOX_ROUNDTRIP_REQUIRE_LIVE=1`, as in nightly CI. ElevenLabs and
 Scribe use `ELEVENLABS_API_KEY`; OpenAI uses `OPENAI_API_KEY`. For Polly on a
-dev box, export temporary AWS SSO credentials as environment variables and
-set `AWS_DEFAULT_REGION`. Neither tier runs by default.
+dev box, export temporary AWS SSO credentials and set `AWS_DEFAULT_REGION`.
 
-Run `make test-roundtrip-auth` to verify that the three cloud providers
-reject deliberately invalid credentials and do not write audio. This test
-contacts the real endpoints but does not need any valid keys.
-Run `make test-roundtrip-say` on macOS for native Say → Whisper using the same
-speech corpus. It needs `say` and `ffmpeg`, not cloud credentials. Say and
-espeak-ng do not have an authentication path.
+Run `make test-roundtrip-auth` to verify that the three cloud providers reject
+deliberately invalid credentials without writing audio. The test contacts the
+real endpoints without valid keys. Run `make test-roundtrip-say` on macOS for
+native Say → Whisper. It needs `say` and `ffmpeg`, not cloud credentials. Say
+and espeak-ng have no authentication path. These commands do not run by default.
+
+Signal-level checks live in `tests/levels/` and judge what speech-to-text
+cannot: loudness, silence, and the change between music tracks. ffmpeg's
+`ebur128` (BS.1770 integrated loudness, true peak) and `silencedetect`
+(-50 dBFS) are the oracle. `make test-levels` needs ffmpeg and mpv, no keys:
+every bundled chime sounds within 20 ms, lasts 0.2-1.5 s, sits at -21 to
+-13 LUFS with true peak at or below -1 dBTP, and chimes differ by at most
+3 LU (measured: done -16.3 LUFS / -10.4 dBTP, prompt -18.5 / -12.4). Late,
+quiet, clipped, and truncated chimes must be rejected. Track change is
+rendered through mpv with voxd's player settings (`--gapless-audio=yes`,
+`--volume=60`, no crossfade) and passes with at most 1.0 s of silence at the
+boundary and at most 6 LU between the two tracks' integrated loudness;
+synthetic tones prove gaps and jumps fail. `make test-levels-live` generates two 20 s ElevenLabs tracks, edge-trimmed as voxd
+stores them (`EdgeTrimmedMusic`), and checks
+each at -30 to -8 LUFS, true peak at or below 0 dBTP, at most 1 s of leading
+and 2 s of internal silence, then the change between them, and that chimes at
+playback gain (80%, linear) stay at least 3 LU above music at mpv volume 60
+(cubic, about -13.3 dB). Missing `ELEVENLABS_API_KEY` skips unless
+`VOX_LEVELS_REQUIRE_LIVE=1`, as in nightly CI.
+
+Run `make test-agent` with Claude Code on `PATH` and `ANTHROPIC_API_KEY` set.
+The test launches a private `voxd` on a fresh loopback port. Headless Haiku
+calls the plugin's `mic:rec` tool, which writes real eSpeak speech to the
+daemon's recordings store without playing it. The same CPU Whisper oracle
+requires WER ≤ **0.02** and rejects a reference with one word changed. The
+session is limited to two turns, 90 seconds, and a $0.05 API budget. Missing
+CLI or key skips locally; `VOX_AGENT_REQUIRE=1` makes it fail in CI.
 
 ## Dev box vs CI
 
@@ -470,7 +590,8 @@ default tier during development, `subprocess` when changing scripts or their
 process boundaries, and `slow` when changing concurrent logging or other
 heavy local operations. Run `make install` then `make test-e2e` to verify
 the installed wheel. Run `make test-roundtrip` for the offline speech oracle and
-`make test-roundtrip-live` for the credentialed matrix. The reserved `sdk`
+`make test-roundtrip-live` for the credentialed matrix. Run `make test-agent`
+to test the Claude Code plugin. The reserved `sdk`
 command currently selects no tests. Live audio requires manual listening, not packaging smoke.
 
 ### In CI
@@ -480,31 +601,30 @@ tier, `slow`, `subprocess`, and installed-wheel `e2e`, in one pytest-cov
 invocation.** `make coverage` builds and installs the wheel first, so packaging
 tests do not silently skip for lack of an installed binary. The separate
 packaging-e2e job remains as a fast packaging diagnostic.
-The separate `roundtrip` job enforces offline speech WER. The shared
-`.github/workflows/roundtrip-live.yml` suite runs espeak-ng and cloud checks
-on Linux and Say on macOS. On release-candidate runs, both runners import
-the installed wheel for speech tests; Linux also exercises the installed CLI
-and MCP entry points. The scheduled caller (`.github/workflows/nightly.yml`) files
-a Linear Bug tagged `repo:vox` on failure, linking the exact run attempt.
-Set the `LINEAR_API_KEY` Actions secret to a Linear personal API key with
-issue-create permission for the Punt Labs team. Manual and RC runs do not file issues.
+The separate `roundtrip` job enforces offline speech WER on PRs. The shared
+`roundtrip-live.yml` suite runs espeak-ng, cloud providers, playback capture,
+signal levels, and the Claude agent on Linux, and Say on macOS. The release
+gate runs the same suite with the installed candidate wheel; Linux also
+exercises the wheel's CLI and MCP entry points. The scheduled caller
+(`.github/workflows/nightly.yml`) uses the `LINEAR_API_KEY` Actions secret
+to file a `repo:vox` Bug linking the failed run attempt. Manual dispatch and
+release-candidate runs do not file issues.
 
-The Linux live job assumes the Non-Production `vox-polly-qa` IAM role via
-GitHub OIDC and uses Polly in `us-east-1`. Provision the role using
+The Linux provider and playback jobs assume the Non-Production `vox-polly-qa`
+IAM role via GitHub OIDC to use Polly in `us-east-1`. Provision the role using
 [the CloudFormation template](.github/vox-polly-oidc.yml) in account
 `579096219769`, with the GitHub OIDC provider and audience `sts.amazonaws.com`.
 By default only runs on `main` can assume the role. Before merging, protect
 `v*` tags in the [Vox rulesets](https://github.com/punt-labs/vox/settings/rules)
 by restricting their creation, updates, and deletion to release maintainers,
 then set `EnableReleaseTags=true` so release candidates can use the role.
-Use `ProofBranch` only for a temporary, exact branch to verify a change
-before merge; clear it after the proof run. No AWS key secrets are passed
-to the suite.
+Use `ProofBranch` only as temporary exact trust for a pre-merge proof; clear
+it afterward. No AWS key secrets are passed to the suite.
 
 ### Coverage policy
 
-Combined coverage excludes `roundtrip` explicitly, so its selection does not
-depend on whether Whisper is installed. The dedicated speech job enforces WER;
+Combined coverage excludes `roundtrip` and `levels` explicitly, so its selection
+does not depend on whether Whisper or mpv is installed. The dedicated speech job enforces WER;
 the coverage ratchet covers default, slow, subprocess, and packaging tiers.
 
 Coverage is measured, not subject to an absolute percentage floor (punt-kit
@@ -535,8 +655,8 @@ both the test venv and the installed wheel's tool environment, and exports
 mapped back to source. Hooks are removed on exit. Processes that deliberately
 strip the environment or are killed before coverage can flush cannot contribute
 data; shell scripts themselves are not Python coverage. Live audio/hardware and
-human-judged tests remain outside automated CI. `sdk` remains empty; live
-`integration and roundtrip` checks run in the shared nightly/manual/RC suite.
+human-judged tests remain outside automated CI. `sdk` remains empty; the
+live provider and agent checks run in the shared nightly/RC workflow.
 
 ## Follow-ups
 

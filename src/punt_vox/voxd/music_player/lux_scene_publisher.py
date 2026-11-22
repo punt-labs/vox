@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.lux_common import LiveScene
+from punt_vox.voxd.music_player.lux_fault_boundary import LuxFaultBoundary
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
 
@@ -83,18 +84,17 @@ class LuxScenePublisher:
         """
         while True:
             delivery = await self._mailbox.get()
-            try:
+            with LuxFaultBoundary(
+                logger, "scene publisher: unexpected rendering error"
+            ) as fault:
                 await self._publish(delivery)
-            except Exception:
+            if fault.failed():
                 # Disarm like the outage and refusal paths inside _publish do:
                 # an unexpected fault here leaves no guarantee about what
                 # actually landed on luxd, so the next push must install
                 # afresh rather than patch against a tree that may never have
                 # been accepted.
                 self._live.disarm()
-                logger.exception(
-                    "[lux] scene publisher: unexpected error rendering a scene"
-                )
 
     async def _publish(self, delivery: SceneDelivery) -> None:
         """Connect if needed and complete the planned push, dropping any lux failure."""
@@ -115,7 +115,7 @@ class LuxScenePublisher:
             # installed is now a guess, and the next push must install afresh
             # rather than patch against a tree that was never accepted.
             self._live.disarm()
-            _trace.error("rejected %s scene: %s", request.scene_id, refusal.reason)
+            _trace.error("rejected scene: reason=hub_refused")
             return
         _trace.info("%s", push.summary)
 

@@ -41,8 +41,10 @@ def test_runner_reports_and_preserves_exit(
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "pytest" in args:
             assert args[args.index("-m", args.index("pytest")) + 1] == (
-                "not integration and not sdk and not roundtrip"
+                "not integration and not sdk and not roundtrip and not quarantine "
+                "and not playback and not levels"
             )
+            assert args[args.index("-n") + 1] == "auto"
             assert (
                 (root / "vox_coverage.pth").read_text().startswith("import coverage;")
             )
@@ -131,7 +133,7 @@ def test_cli_configuration(monkeypatch: pytest.MonkeyPatch, rcfile: str | None) 
     run = MagicMock(return_value=1)
     monkeypatch.setattr("tools.run_coverage.run_coverage", run)
     assert main() == 1
-    run.assert_called_once_with(None if rcfile is None else Path(rcfile))
+    run.assert_called_once_with(None if rcfile is None else Path(rcfile), "auto")
 
 
 def test_cli_requires_configuration_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,6 +144,14 @@ def test_cli_requires_configuration_value(monkeypatch: pytest.MonkeyPatch) -> No
         main()
     assert error.value.code == 2
     run.assert_not_called()
+
+
+def test_cli_serial_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.argv", ["run_coverage", "--workers", "0"])
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("tools.run_coverage.run_coverage", run)
+    assert main() == 0
+    run.assert_called_once_with(None, "0")
 
 
 def test_runner_removes_hook_after_spawn_error(

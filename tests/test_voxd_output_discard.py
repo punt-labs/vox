@@ -91,10 +91,13 @@ def test_failure_message_is_escaped_onto_one_line(
     output: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     error = ValueError("voice 'x\nERROR forged record\r' not found")
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+    with (
+        caplog.at_level(logging.DEBUG, logger=_LOGGER),
+        caplog.at_level(logging.DEBUG, logger="asyncio"),
+    ):
         _discard_settled(output, lambda done: done.set_exception(error))
 
-    [message] = [r.getMessage() for r in caplog.records]
+    [message] = [r.getMessage() for r in caplog.records if r.name == _LOGGER]
     assert message == (
         "cancelled synthesis then failed: ValueError: "
         "voice 'x\\nERROR forged record\\r' not found"

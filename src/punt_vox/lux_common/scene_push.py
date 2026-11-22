@@ -111,9 +111,8 @@ class PatchScene:
         if not isinstance(result, OpError):
             return None
         logger.warning(
-            "luxd refused the %s scene patch (%s); re-installing the whole scene",
+            "luxd refused the %s scene patch; re-installing the whole scene",
             self.request.scene_id,
-            result.reason,
         )
         return await InstallScene(self.request).apply(client)
 
