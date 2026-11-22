@@ -94,9 +94,12 @@ class FakePlayback:
     def __init__(self) -> None:
         self.sinks: list[FakeSink] = []
         self.released = 0
+        self.mutex = asyncio.Lock()
 
     @asynccontextmanager
-    async def stream_pcm(self) -> AsyncGenerator[FakeSink]:
+    async def stream_pcm(self, *, locked: bool = False) -> AsyncGenerator[FakeSink]:
+        assert locked
+        assert self.mutex.locked()
         sink = FakeSink()
         self.sinks.append(sink)
         try:

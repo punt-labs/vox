@@ -19,35 +19,40 @@ __all__ = ["AgentSpeaker"]
 class AgentSpeaker:
     """Own the daemon's audio output from the agent's first word to hang-up.
 
-    The stream holds the playback mutex for the whole call, not per reply:
+    The speaker holds the playback mutex for the whole call, not per reply:
     hook speech, chimes or music played between replies would talk over the
-    agent and leak into the open microphone as a false barge-in. An
-    interruption flushes queued audio at once and drops any late audio from
-    the response it cut; the next response opens a new stream.
+    agent and leak into the open microphone as a false barge-in. Each reply
+    gets its own sink; an interruption flushes it at once and drops any late
+    audio from the response it cut, and the next response opens a new sink.
     """
 
-    __slots__ = ("_cut", "_playback", "_sink", "_stack")
+    __slots__ = ("_cut", "_held", "_owns", "_playback", "_reply", "_sink")
     _playback: PlaybackQueue
-    _stack: AsyncExitStack
-    _sink: PcmStreamSink | None
+    _held: AsyncExitStack  # The playback mutex, from the first reply to hang-up.
+    _owns: bool  # Whether ``_held`` holds the mutex now.
+    _reply: AsyncExitStack  # The current reply's sink.
+    _sink: PcmStreamSink | None  # None between replies and after a cut.
     _cut: int  # The newest interrupted response; its audio is never played.
 
     def __new__(cls, playback: PlaybackQueue) -> Self:
         """Bind the daemon's playback queue."""
         self = super().__new__(cls)
         self._playback = playback
-        self._stack = AsyncExitStack()
-        self._sink = None
+        self._held, self._reply = AsyncExitStack(), AsyncExitStack()
+        self._sink, self._owns = None, False
         self._cut = -1
         return self
 
     async def play(self, audio: Audio) -> None:
-        """Queue one chunk, opening the stream for a new response."""
+        """Queue one chunk, opening a sink for a new response."""
         if audio.event_id <= self._cut:
             return
         if self._sink is None:
-            self._sink = await self._stack.enter_async_context(
-                self._playback.stream_pcm()
+            if not self._owns:
+                await self._held.enter_async_context(self._playback.mutex)
+                self._owns = True
+            self._sink = await self._reply.enter_async_context(
+                self._playback.stream_pcm(locked=True)
             )
         self._sink.feed(audio.pcm)
 
@@ -56,7 +61,7 @@ class AgentSpeaker:
         self._cut = max(self._cut, event_id)
         if self._sink is not None:
             self._sink.flush()
-        await self.close()
+        await self._end_reply()
 
     async def finish(self) -> None:
         """Let audio already received play out, then release the output."""
@@ -69,7 +74,15 @@ class AgentSpeaker:
             await self.close()
 
     async def close(self) -> None:
-        """Release the stream and the playback mutex."""
+        """Release the reply's sink and the playback mutex."""
+        try:
+            await self._end_reply()
+        finally:
+            held, self._held = self._held, AsyncExitStack()
+            self._owns = False
+            await held.aclose()
+
+    async def _end_reply(self) -> None:
         self._sink = None
-        stack, self._stack = self._stack, AsyncExitStack()
-        await stack.aclose()
+        reply, self._reply = self._reply, AsyncExitStack()
+        await reply.aclose()

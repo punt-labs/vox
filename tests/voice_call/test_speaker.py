@@ -40,3 +40,15 @@ async def test_finish_plays_out_the_last_reply_before_release() -> None:
     (sink,) = playback.sinks
     assert (sink.fed, sink.finished, sink.flushed) == ([b"bye"], True, 0)
     assert playback.released == 1
+
+
+async def test_the_call_keeps_the_output_across_a_cut() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"a", 1))
+    await speaker.interrupt(1)
+    assert playback.mutex.locked()  # queued hook speech cannot slip in here
+    await speaker.play(Audio(b"b", 2))
+    await speaker.close()
+    assert not playback.mutex.locked()
+    assert [sink.fed for sink in playback.sinks] == [[b"a"], [b"b"]]
