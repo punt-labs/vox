@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.wire_reply import WireReply
+from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ class WorkerHandlers:
             ("worker_start", "worker_list", "worker_stop"), self.handle
         )
 
-    def _dispatch(self, msg: dict[str, object]) -> object:
+    def _dispatch(self, msg: dict[str, object]) -> WorkerRecord | list[WorkerRecord]:
         match msg["type"]:
             case "worker_start":
                 return self._registry.start(

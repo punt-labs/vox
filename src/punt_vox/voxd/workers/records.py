@@ -8,6 +8,7 @@ from typing import Self, cast, final
 from uuid import UUID
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.voxd.workers.model import WorkerRecord
 
 
 @final
@@ -29,22 +30,31 @@ class WorkerRecords:
         """Return a worker's dedicated work product directory."""
         return self._root / str(UUID(worker_id)) / "worktree"
 
-    def save(self, record: dict[str, object]) -> None:
+    def save(self, record: WorkerRecord) -> None:
         """Commit a full record with owner-only permissions."""
-        worker_id = str(UUID(str(record["id"])))
+        worker_id = str(UUID(record["id"]))
         AtomicFile(self._root / f"{worker_id}.json").replace(
             json.dumps(record, indent=2) + "\n", mode=0o600
         )
 
-    def load(self) -> list[dict[str, object]]:
+    def load(self) -> list[WorkerRecord]:
         """Read durable records; malformed records fail loudly, never vanish."""
-        records: list[dict[str, object]] = []
+        records: list[WorkerRecord] = []
         for path in sorted(self._root.glob("*.json")):
             record = json.loads(path.read_text())
             if not isinstance(record, dict):
                 raise ValueError(f"Invalid worker record: {path}")
             fields = cast("dict[str, object]", record)
+            if (
+                not all(
+                    isinstance(fields.get(k), str)
+                    for k in WorkerRecord.__required_keys__ - {"last_report"}
+                )
+                or fields.get("state") not in ("starting", "ready", "exited", "stopped")
+                or not isinstance(fields.get("last_report"), dict)
+            ):
+                raise ValueError(f"Invalid worker record: {path}")
             if str(UUID(str(fields.get("id")))) != path.stem:
                 raise ValueError(f"Invalid worker record: {path}")
-            records.append(fields)
+            records.append(cast("WorkerRecord", fields))
         return records

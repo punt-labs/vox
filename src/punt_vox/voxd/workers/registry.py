@@ -9,6 +9,7 @@ from typing import Self, final
 from uuid import uuid4
 
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
+from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 
@@ -22,7 +23,7 @@ class WorkerRegistry:
     _profiles: dict[str, HarnessProfile]
     _providers: dict[str, WorkerProvider]
     _records: WorkerRecords
-    _workers: dict[str, dict[str, object]]
+    _workers: dict[str, WorkerRecord]
 
     def __new__(
         cls,
@@ -35,7 +36,7 @@ class WorkerRegistry:
         self = super().__new__(cls)
         self._policy, self._records = policy, records
         self._providers, self._profiles = providers, profiles
-        self._workers = {str(r["id"]): r for r in records.load()}
+        self._workers = {r["id"]: r for r in records.load()}
         self.list()
         return self
 
@@ -46,7 +47,7 @@ class WorkerRegistry:
         *,
         provider: str = "tmux",
         harness: str = "claude",
-    ) -> dict[str, object]:
+    ) -> WorkerRecord:
         """Validate all inputs before making any worktree or launching a process."""
         if not task.strip():
             raise ValueError("Worker task must not be empty")
@@ -58,7 +59,7 @@ class WorkerRegistry:
         branch = f"vox-worker/{worker_id}"
         handle = f"vox-worker-{worker_id}"
         self._policy.create(repo, worktree, branch)
-        record: dict[str, object] = {
+        record: WorkerRecord = {
             "id": worker_id,
             "provider": provider,
             "harness": harness,
@@ -82,41 +83,49 @@ class WorkerRegistry:
             raise
         return self._refresh(record)
 
-    def _refresh(self, record: dict[str, object]) -> dict[str, object]:
+    def _refresh(self, record: WorkerRecord) -> WorkerRecord:
         if record["state"] not in ("stopped", "exited"):
-            provider = self._providers[str(record["provider"])]
-            profile = self._profiles[str(record["harness"])]
-            if not provider.status(str(record["session"])):
+            provider = self._providers[record["provider"]]
+            profile = self._profiles[record["harness"]]
+            if not provider.status(record["session"]):
                 record["state"] = "exited"
-                profile.cleanup(Path(str(record["worktree"])))
+                profile.cleanup(Path(record["worktree"]))
             else:
-                report = provider.progress(str(record["id"]), profile)
+                report = provider.progress(record["id"], profile)
                 record["last_report"] = report
                 record["state"] = (
                     "ready" if report.get("session_started") else "starting"
                 )
             self._records.save(record)
-        return dict(record)
+        return record.copy()
 
-    def list(self) -> list[dict[str, object]]:
+    def list(self) -> list[WorkerRecord]:
         """Reconcile live state, including after a daemon restart."""
         return [self._refresh(r) for r in self._workers.values()]
 
-    def stop(self, worker_id: str) -> dict[str, object]:
+    def _get(self, worker_id: str) -> WorkerRecord:
+        try:
+            return self._workers[worker_id]
+        except KeyError:
+            raise ValueError(f"no worker {worker_id}") from None
+
+    def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        record = self._workers[worker_id]
-        self._providers[str(record["provider"])].stop(str(record["session"]))
-        self._profiles[str(record["harness"])].cleanup(Path(str(record["worktree"])))
+        record = self._get(worker_id)
+        if record["state"] in ("stopped", "exited"):
+            return record.copy()
+        self._providers[record["provider"]].stop(record["session"])
+        self._profiles[record["harness"]].cleanup(Path(record["worktree"]))
         record["state"] = "stopped"
         self._records.save(record)
-        return dict(record)
+        return record.copy()
 
     def steer(self, worker_id: str, words: str, *, urgent: bool = False) -> None:
         """Delegate steering without knowing the harness's keys or transport."""
-        record = self._workers[worker_id]
-        self._providers[str(record["provider"])].steer(
-            str(record["session"]),
+        record = self._get(worker_id)
+        self._providers[record["provider"]].steer(
+            record["session"],
             words,
             urgent=urgent,
-            profile=self._profiles[str(record["harness"])],
+            profile=self._profiles[record["harness"]],
         )
