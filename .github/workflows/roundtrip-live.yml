@@ -2,6 +2,11 @@ name: Live speech roundtrip
 
 on:
   workflow_dispatch:
+    inputs:
+      require-polly:
+        description: Run Polly and fail if the role is denied (for a ref set as the role's ProofBranch)
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       candidate-artifact:
@@ -17,6 +22,10 @@ on:
         required: false
 
 permissions: {}
+
+env:
+  # The vox-polly-qa role trusts main, v* tags (never slash tags), and an optional ProofBranch.
+  POLLY_TRUSTED: ${{ inputs.require-polly == true || github.ref == 'refs/heads/main' || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '/')) }}
 
 jobs:
   playback-capture:
@@ -63,9 +72,12 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_playback_capture.py -m playback -k 'not polly' -s
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      - name: Skip Polly on an untrusted ref
+        if: env.POLLY_TRUSTED != 'true'
+        run: echo "::notice title=Polly skipped::The vox-polly-qa role does not trust $GITHUB_REF; Polly playback did not run."
       - name: Assume the Polly QA role
         id: playback-role
-        if: ${{ !cancelled() && steps.playback-dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.playback-dependencies.outcome == 'success' && env.POLLY_TRUSTED == 'true' }}
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with: &polly-role
           role-to-assume: arn:aws:iam::579096219769:role/vox-polly-qa
@@ -144,13 +156,18 @@ jobs:
         run: |
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live_auth.py -m integration
       - name: Assume the Polly QA role
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' && env.POLLY_TRUSTED == 'true' }}
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with: *polly-role
       - name: ElevenLabs, OpenAI, and Polly to Whisper and Scribe
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && runner.os == 'Linux' }}
         run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live.py -m 'roundtrip and integration' -s
+          deselect=()
+          if [[ "$POLLY_TRUSTED" != true ]]; then
+            echo "::notice title=Polly skipped::The vox-polly-qa role does not trust $GITHUB_REF; Polly roundtrips did not run."
+            deselect=(-k 'not polly')
+          fi
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest tests/roundtrip/test_live.py -m 'roundtrip and integration' -s "${deselect[@]}"
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
