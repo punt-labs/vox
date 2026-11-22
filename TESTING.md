@@ -302,7 +302,13 @@ in-process code stay here.
 
 ### OO, coupling, and suppression ratchets
 
-The dev dependency `punt-oo-ratchet==0.3.1` supplies all three gates through
+`make design-shadow` reports advisory design changes against `origin/main`
+(`DESIGN_BASE` overrides it). It is not part of `make check`. PR CI publishes
+the verdict to its job summary, even after another gate fails, without gating.
+The layer map in `pyproject.toml` separates entry wiring, concrete adapters,
+application orchestration and domain models; findings remain advisory.
+
+The dev dependency `punt-oo-ratchet==0.4.0` supplies all three gates through
 `oo-ratchet {oo,coupling,suppressions}`. Their implementation tests live in
 [`python-oo-ratchet`](https://github.com/punt-labs/python-oo-ratchet), not in
 this repository. Run `make check-oo check-coupling check-suppressions` to

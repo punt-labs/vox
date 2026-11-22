@@ -22,6 +22,8 @@ and the progress source. Registry and handlers contain no tmux or Claude cases.
 The first provider uses the dedicated `tmux -L vox-workers` server, surviving
 voxd restarts. The first profile runs interactive Claude Code with the worker
 UUID as `--session-id`; readiness requires SessionStart in the shared hook store.
+Once ready, a live worker keeps its persisted readiness and last report across
+daemon restarts, even though the in-memory hook store starts empty.
 
 The global durable config accepts `worker_repos: "['/absolute/repo']"`, a list
 of repository paths using the config's existing scalar storage convention.

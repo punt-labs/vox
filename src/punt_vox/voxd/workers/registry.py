@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -58,7 +61,6 @@ class WorkerRegistry:
         worktree = self._records.worktree(worker_id)
         branch = f"vox-worker/{worker_id}"
         handle = f"vox-worker-{worker_id}"
-        self._policy.create(repo, worktree, branch)
         record: WorkerRecord = {
             "id": worker_id,
             "provider": provider,
@@ -72,10 +74,11 @@ class WorkerRegistry:
             "created_at": datetime.now(UTC).isoformat(),
             "last_report": {},
         }
-        self._workers[worker_id] = record
         self._records.save(record)
+        self._workers[worker_id] = record
         profile = self._profiles[harness]
         try:
+            self._policy.create(repo, worktree, branch)
             profile.prepare(worktree)
             self._providers[provider].start(handle, worker_id, worktree, task, profile)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -87,17 +90,33 @@ class WorkerRegistry:
         if record["state"] not in ("stopped", "exited"):
             provider = self._providers[record["provider"]]
             profile = self._profiles[record["harness"]]
-            if not provider.status(record["session"]):
+            try:
+                alive = provider.status(record["session"])
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                logger.warning("Worker provider unavailable (%s)", type(exc).__name__)
+                return record.copy()
+            if not alive:
                 record["state"] = "exited"
-                profile.cleanup(Path(record["worktree"]))
+                self._cleanup(record)
             else:
                 report = provider.progress(record["id"], profile)
-                record["last_report"] = report
-                record["state"] = (
-                    "ready" if report.get("session_started") else "starting"
-                )
+                if report.get("session_started") or record["state"] != "ready":
+                    record["last_report"] = report
+                    record["state"] = (
+                        "ready" if report.get("session_started") else "starting"
+                    )
             self._records.save(record)
         return record.copy()
+
+    def _cleanup(self, record: WorkerRecord) -> None:
+        try:
+            self._profiles[record["harness"]].cleanup(Path(record["worktree"]))
+        except (OSError, ValueError, RuntimeError) as exc:
+            record["last_report"] = {
+                **record["last_report"],
+                "cleanup_error": type(exc).__name__,
+            }
+            logger.warning("Worker cleanup failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
         """Reconcile live state, including after a daemon restart."""
@@ -115,8 +134,8 @@ class WorkerRegistry:
         if record["state"] in ("stopped", "exited"):
             return record.copy()
         self._providers[record["provider"]].stop(record["session"])
-        self._profiles[record["harness"]].cleanup(Path(record["worktree"]))
         record["state"] = "stopped"
+        self._cleanup(record)
         self._records.save(record)
         return record.copy()
 

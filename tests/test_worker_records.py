@@ -18,6 +18,19 @@ def test_unknown_worker_controls_are_clear(tmp_path: Path) -> None:
         registry.steer("missing", "hello")
 
 
+def test_ready_survives_restart_until_provider_exits(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    ready = registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    assert ready["state"] == "ready"
+    provider.ready = False
+    restored = _registry(tmp_path, provider)
+    assert restored.list()[0] == ready
+    provider.alive = False
+    assert restored.list()[0]["state"] == "exited"
+
+
 @pytest.mark.parametrize("exited", [False, True])
 def test_terminal_stop_is_a_noop(tmp_path: Path, exited: bool) -> None:
     provider = FakeWorkerProvider()

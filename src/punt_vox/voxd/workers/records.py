@@ -37,6 +37,24 @@ class WorkerRecords:
             json.dumps(record, indent=2) + "\n", mode=0o600
         )
 
+    def owns_session(self, session_id: object, cwd: Path) -> bool:
+        """Admit hooks only for a live registered session in its exact worktree."""
+        if not isinstance(session_id, str):
+            return False
+        try:
+            worker_id = str(UUID(session_id))
+            record = json.loads((self._root / f"{worker_id}.json").read_text())
+            if not isinstance(record, dict):
+                return False
+            fields = cast("dict[str, object]", record)
+            return (
+                fields.get("id") == worker_id
+                and fields.get("state") in ("starting", "ready")
+                and fields.get("worktree") == str(cwd.resolve())
+            )
+        except (OSError, ValueError):
+            return False
+
     def load(self) -> list[WorkerRecord]:
         """Read durable records; malformed records fail loudly, never vanish."""
         records: list[WorkerRecord] = []

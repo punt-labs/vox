@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Workers use new git worktrees of repositories explicitly listed in the global
   durable `worker_repos` setting and inherit the harness's own permissions.
 
+- Report-only design ratchet: `make design-shadow` compares against
+  `origin/main` (override `DESIGN_BASE`), and PR CI appends its advisory
+  verdict to the job summary even after a gate fails. Explicit architecture
+  layers cover every current module; the report never gates `make check` or CI.
+  Upgrade the quality-gate dev dependency to `punt-oo-ratchet==0.4.0` without
+  changing existing gate policies or baselines.
+
 - `vox call context --session <id>` displays a session's in-memory hook
   snapshot and sender sequence gaps. The Vox plugin feeds it live Claude Code
   hooks from enabled projects.

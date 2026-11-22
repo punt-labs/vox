@@ -69,21 +69,25 @@ class TmuxWorkerProvider:
         """Report whether the session is still alive."""
         if self._run("has-session", "-t", f"={handle}", check=False).returncode != 0:
             return False
-        pane = self._run("display-message", "-p", "-t", f"={handle}:", "#{pane_dead}")
-        return pane.stdout.strip() == "0"
+        pane = self._run(
+            "display-message", "-p", "-t", f"={handle}:", "#{pane_dead}", check=False
+        )
+        return pane.returncode == 0 and pane.stdout.strip() == "0"
 
     def stop(self, handle: str) -> None:
         """Kill the session and its pane process group."""
         if self._run("has-session", "-t", f"={handle}", check=False).returncode == 0:
             pane = self._run(
-                "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}"
+                "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
             )
+            if pane.returncode != 0:
+                return
             pid = int(pane.stdout.strip())
             try:
                 group = os.getpgid(pid)
             except ProcessLookupError:
                 group = None
-            self._run("kill-session", "-t", f"={handle}")
+            self._run("kill-session", "-t", f"={handle}", check=False)
             if group is not None:
                 self._finish(pid, group)
 

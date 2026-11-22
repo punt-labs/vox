@@ -87,6 +87,12 @@ docs: ## Lint markdown files (matches CI docs job)
 OO_BASE ?=
 COUPLING_BASE ?=
 SUPPRESSION_BASE ?=
+DESIGN_BASE ?= origin/main
+
+.PHONY: design-shadow
+
+design-shadow: ## Report advisory design changes; never part of check
+	uv run oo-ratchet design src/punt_vox --shadow-check "$(DESIGN_BASE)"
 
 check: lint type docs build-api-docs test check-oo check-coupling check-suppressions ## Run all quality gates
 
@@ -110,6 +116,7 @@ update-suppressions: ## Update suppression baseline
 
 report: ## Full diagnostics (OO score + all checks, no fail-fast)
 	-uv run oo-ratchet oo src/punt_vox/ --threshold
+	-uv run oo-ratchet design src/punt_vox/
 	-uv run mypy src/ tests/
 	-uv run ruff format --check src/ tests/
 	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,PLC1901,S101 src/ tests/

@@ -14,12 +14,10 @@ from typing import Self, cast
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.deposited_files import VoxMarker
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.hook_context_admission import HookContextAdmission
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_event import HookIdentity
 from punt_vox.hook_context_stage import HookContextStage
-from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_sequence import HookSequence
 from punt_vox.logging_config import configure_client_logging
 from punt_vox.paths import user_state_dir
@@ -68,15 +66,7 @@ class HookContextRelay:
 
     def enabled(self) -> bool:
         """Honor the plugin's existing per-repo enable boundary."""
-        cwd = HookEnvelope.cwd_of(self._payload)
-        if cwd is None:
-            return False
-        root = find_repo_root(cwd)
-        roots = (root,) if root is not None else (cwd, *cwd.parents)
-        return any(
-            VoxMarker(path / DEFAULT_CONFIG_DIR / "enabled", path).is_present()
-            for path in roots
-        )
+        return HookContextAdmission(self._payload).enabled()
 
     def submit(self) -> None:
         """Validate and stamp synchronously; never wait for network delivery."""
