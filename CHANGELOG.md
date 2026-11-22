@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gate TestPyPI publication on the nightly suite against the exact release
+  wheel, including Polly via OIDC, and smoke-test speech from published PyPI.
+  PyPI publication retains plain `release` environment approval.
+
 ## [5.1.0] - 2026-11-22
 
 ### Added
