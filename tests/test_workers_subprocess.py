@@ -13,6 +13,7 @@ import pytest
 from test_workers import TrivialProfile
 
 from punt_vox.config import ConfigStore
+from punt_vox.voxd.workers.contracts import WorkerLaunch
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
@@ -87,7 +88,7 @@ def test_real_tmux_literal_steering_clean_env_and_stop(
     worker_id = str(uuid4())
     handle = f"vox-test-{worker_id}"
     monkeypatch.setenv("VOX_WORKER_SECRET_TEST", "must-not-leak")
-    provider.start(handle, worker_id, tmp_path, "task", profile)
+    provider.start(WorkerLaunch(handle, worker_id, tmp_path, "task"), profile)
     try:
         assert provider.status(handle)
         environment = _until_file(tmp_path / "environment", "HOME=")

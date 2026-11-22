@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.wire_reply import WireReply
+from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
@@ -32,10 +33,12 @@ class WorkerHandlers:
         self._lock = asyncio.Lock()
         return self
 
-    def handlers(self) -> dict[str, MessageHandler]:
-        """Expose the worker control surface."""
+    @classmethod
+    def build(cls, registry: WorkerRegistry) -> dict[str, MessageHandler]:
+        """Construct one serialized actor and expose its worker control surface."""
+        handler = cls(registry)
         return dict.fromkeys(
-            ("worker_start", "worker_list", "worker_stop"), self.handle
+            ("worker_start", "worker_list", "worker_stop"), handler.handle
         )
 
     def _dispatch(self, msg: dict[str, object]) -> WorkerRecord | list[WorkerRecord]:
@@ -69,4 +72,9 @@ class WorkerHandlers:
         ) as exc:
             await reply.error(str(exc))
             return
-        await reply.send({"type": "worker_result", "result": result})
+        wire = (
+            [WorkerRecordCodec.encode(record) for record in result]
+            if isinstance(result, list)
+            else WorkerRecordCodec.encode(result)
+        )
+        await reply.send({"type": "worker_result", "result": wire})

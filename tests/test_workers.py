@@ -19,7 +19,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
-from punt_vox.voxd.workers.contracts import HarnessProfile
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -38,10 +38,7 @@ class FakeWorkerProvider:
 
     def start(
         self,
-        handle: str,
-        worker_id: str,
-        worktree: Path,
-        task: str,
+        launch: WorkerLaunch,
         profile: HarnessProfile,
     ) -> None:
         if self.fail:
@@ -108,7 +105,7 @@ async def test_call_side_start_ready_list_stop(tmp_path: Path) -> None:
     """Boss-facing handlers own the full lifecycle, including empty listing."""
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
-    handlers = WorkerHandlers(registry).handlers()
+    handlers = WorkerHandlers.build(registry)
     ws = AsyncMock(spec=WebSocket)
 
     async def rpc(operation: str, **fields: object) -> object:
@@ -140,10 +137,10 @@ def test_restart_reconciles_dead_and_preserves_private_records(tmp_path: Path) -
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
     provider.alive = False
     restored = _registry(tmp_path, provider)
-    assert restored.list()[0]["state"] == "exited"
+    assert restored.list()[0].state == "exited"
     root = tmp_path / "workers"
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    path = root / f"{record['id']}.json"
+    path = root / f"{record.id}.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert json.loads(path.read_text())["task"] == "edit"
 
@@ -158,7 +155,7 @@ def test_empty_task_unknown_provider_and_failed_start(tmp_path: Path) -> None:
     provider.fail = True
     with pytest.raises(OSError, match="launch failed"):
         registry.start("task", str(tmp_path), provider="fake", harness="test")
-    assert registry.list()[0]["state"] == "stopped"
+    assert registry.list()[0].state == "stopped"
 
 
 @pytest.mark.asyncio
@@ -258,7 +255,9 @@ def test_tmux_urgent_keys_and_safe_launch_error(tmp_path: Path) -> None:
         ),
         pytest.raises(RuntimeError, match=r"^Worker tmux operation failed$"),
     ):
-        provider.start("worker", str(uuid4()), tmp_path, "task", TrivialProfile())
+        provider.start(
+            WorkerLaunch("worker", str(uuid4()), tmp_path, "task"), TrivialProfile()
+        )
 
 
 @pytest.mark.asyncio

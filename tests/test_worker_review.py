@@ -1,5 +1,7 @@
 """Regression proofs for worker failure isolation and managed hook admission."""
 
+from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -34,8 +36,8 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
     with patch.object(TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")):
         restored = _registry(tmp_path, provider)
     record = restored.list()[0]
-    assert record["state"] == "exited"
-    assert record["last_report"]["cleanup_error"] == "ValueError"
+    assert record.state == "exited"
+    assert record.last_report["cleanup_error"] == "ValueError"
     assert WorkerRecords(tmp_path / "workers").load()[0] == record
 
 
@@ -47,7 +49,7 @@ def test_provider_unavailable_cannot_block_registry_rebuild(tmp_path: Path) -> N
         restored = _registry(tmp_path, provider)
         assert restored.list()[0] == record
     provider.alive = False
-    assert restored.list()[0]["state"] == "exited"
+    assert restored.list()[0].state == "exited"
 
 
 def test_failed_first_save_creates_no_worktree(tmp_path: Path) -> None:
@@ -93,9 +95,9 @@ def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
-    worktree = Path(record["worktree"])
+    worktree = Path(record.worktree)
     worktree.mkdir(parents=True)
-    payload: dict[str, object] = {"session_id": record["id"], "cwd": str(worktree)}
+    payload: dict[str, object] = {"session_id": record.id, "cwd": str(worktree)}
     with (
         patch("punt_vox.hook_context_admission.user_state_dir", return_value=tmp_path),
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=worktree),
@@ -106,7 +108,7 @@ def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
         assert HookContextRelay(payload).enabled()
         assert not HookContextRelay({**payload, "session_id": "unknown"}).enabled()
         assert not HookContextRelay({**payload, "cwd": str(tmp_path)}).enabled()
-        registry.stop(record["id"])
+        registry.stop(record.id)
         assert not HookContextRelay(payload).enabled()
     assert not (worktree / ".punt-labs").exists()
 
@@ -115,8 +117,8 @@ def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
 def test_invalid_managed_record_cannot_admit_hooks(tmp_path: Path, data: str) -> None:
     registry = _registry(tmp_path, FakeWorkerProvider())
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
-    (tmp_path / "workers" / f"{record['id']}.json").write_text(data)
-    payload: dict[str, object] = {"session_id": record["id"], "cwd": record["worktree"]}
+    (tmp_path / "workers" / f"{record.id}.json").write_text(data)
+    payload: dict[str, object] = {"session_id": record.id, "cwd": record.worktree}
     with (
         patch("punt_vox.hook_context_admission.user_state_dir", return_value=tmp_path),
         patch("punt_vox.hook_context_admission.find_repo_root", return_value=None),

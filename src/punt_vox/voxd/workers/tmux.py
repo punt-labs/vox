@@ -8,11 +8,10 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
-from pathlib import Path
 from typing import final
 
 from punt_vox.voxd.workers.command import WorkerCommand
-from punt_vox.voxd.workers.contracts import HarnessProfile
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.environment import WorkerEnvironment
 
 
@@ -28,10 +27,7 @@ class TmuxWorkerProvider:
 
     def start(
         self,
-        handle: str,
-        worker_id: str,
-        worktree: Path,
-        task: str,
+        launch: WorkerLaunch,
         profile: HarnessProfile,
     ) -> None:
         """Start with an explicitly empty environment, not tmux's server env."""
@@ -41,9 +37,9 @@ class TmuxWorkerProvider:
                 "new-session",
                 "-d",
                 "-s",
-                handle,
+                launch.handle,
                 "-c",
-                str(worktree),
+                str(launch.worktree),
                 "--",
                 "env",
                 "-i",
@@ -53,7 +49,7 @@ class TmuxWorkerProvider:
                 "-m",
                 "punt_vox.voxd.workers.bootstrap",
                 str(environment.address),
-                *profile.argv(worker_id, task),
+                *profile.argv(launch.worker_id, launch.task),
             )
             environment.send(profile.environment(os.environ))
         finally:
@@ -110,6 +106,7 @@ class TmuxWorkerProvider:
                 raise RuntimeError("Worker pane did not exit after stop")
             time.sleep(0.01)
 
+    # PY-TS-14: transport relays the profile's open JSON snapshot schema unchanged.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:
         """Read the profile's progress source."""
         return profile.progress(worker_id)

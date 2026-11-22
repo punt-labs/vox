@@ -51,6 +51,7 @@ class ClaudeProfile:
         """Remove the temporary trust flag, retaining work product."""
         self._trust.update(worktree, accepted=False)
 
+    # PY-TS-14: curated hook JSON is a snapshot; fields evolve with the hook source.
     def progress(self, worker_id: str) -> dict[str, object]:
         """SessionStart, not pane existence, establishes readiness."""
         try:

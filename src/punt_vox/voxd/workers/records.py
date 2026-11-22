@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Self, cast, final
+from typing import Self, final
 from uuid import UUID
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.model import WorkerRecord
 
 
@@ -32,9 +33,9 @@ class WorkerRecords:
 
     def save(self, record: WorkerRecord) -> None:
         """Commit a full record with owner-only permissions."""
-        worker_id = str(UUID(record["id"]))
+        worker_id = str(UUID(record.id))
         AtomicFile(self._root / f"{worker_id}.json").replace(
-            json.dumps(record, indent=2) + "\n", mode=0o600
+            json.dumps(WorkerRecordCodec.encode(record), indent=2) + "\n", mode=0o600
         )
 
     def owns_session(self, session_id: object, cwd: Path) -> bool:
@@ -43,14 +44,13 @@ class WorkerRecords:
             return False
         try:
             worker_id = str(UUID(session_id))
-            record = json.loads((self._root / f"{worker_id}.json").read_text())
-            if not isinstance(record, dict):
-                return False
-            fields = cast("dict[str, object]", record)
+            record = WorkerRecordCodec.decode(
+                json.loads((self._root / f"{worker_id}.json").read_text())
+            )
             return (
-                fields.get("id") == worker_id
-                and fields.get("state") in ("starting", "ready")
-                and fields.get("worktree") == str(cwd.resolve())
+                record.id == worker_id
+                and record.state in ("starting", "ready")
+                and record.worktree == str(cwd.resolve())
             )
         except (OSError, ValueError):
             return False
@@ -59,20 +59,8 @@ class WorkerRecords:
         """Read durable records; malformed records fail loudly, never vanish."""
         records: list[WorkerRecord] = []
         for path in sorted(self._root.glob("*.json")):
-            record = json.loads(path.read_text())
-            if not isinstance(record, dict):
+            record = WorkerRecordCodec.decode(json.loads(path.read_text()))
+            if str(UUID(record.id)) != path.stem:
                 raise ValueError(f"Invalid worker record: {path}")
-            fields = cast("dict[str, object]", record)
-            if (
-                not all(
-                    isinstance(fields.get(k), str)
-                    for k in WorkerRecord.__required_keys__ - {"last_report"}
-                )
-                or fields.get("state") not in ("starting", "ready", "exited", "stopped")
-                or not isinstance(fields.get("last_report"), dict)
-            ):
-                raise ValueError(f"Invalid worker record: {path}")
-            if str(UUID(str(fields.get("id")))) != path.stem:
-                raise ValueError(f"Invalid worker record: {path}")
-            records.append(cast("WorkerRecord", fields))
+            records.append(record)
         return records

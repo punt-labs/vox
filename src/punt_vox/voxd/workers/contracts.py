@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, final
+
+__all__ = ["HarnessProfile", "WorkerLaunch", "WorkerProvider"]
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class WorkerLaunch:
+    """Provider-neutral launch identity and work product location."""
+
+    handle: str
+    worker_id: str
+    worktree: Path
+    task: str
 
 
 class HarnessProfile(Protocol):
@@ -36,6 +50,7 @@ class HarnessProfile(Protocol):
         """Undo preparation without deleting work product."""
         ...
 
+    # PY-TS-14: profiles supply extensible JSON snapshots, not shared domain state.
     def progress(self, worker_id: str) -> dict[str, object]:
         """Read the harness progress source."""
         ...
@@ -46,10 +61,7 @@ class WorkerProvider(Protocol):
 
     def start(
         self,
-        handle: str,
-        worker_id: str,
-        worktree: Path,
-        task: str,
+        launch: WorkerLaunch,
         profile: HarnessProfile,
     ) -> None:
         """Launch a persistent worker."""
@@ -69,6 +81,7 @@ class WorkerProvider(Protocol):
         """Terminate the worker and its process group."""
         ...
 
+    # PY-TS-14: provider-specific JSON snapshots share only session_started.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:
         """Read current progress independently of process liveness."""
         ...

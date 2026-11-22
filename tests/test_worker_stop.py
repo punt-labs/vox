@@ -1,5 +1,7 @@
 """A successful stop must leave no live pane, including HUP-resistant harnesses."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import signal
@@ -12,6 +14,7 @@ import pytest
 from test_workers import TrivialProfile
 from test_workers_subprocess import _until_file
 
+from punt_vox.voxd.workers.contracts import WorkerLaunch
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 pytestmark = pytest.mark.subprocess
@@ -24,7 +27,9 @@ def test_stop_waits_for_hup_resistant_pane(tmp_path: Path) -> None:
     handle = f"vox-test-{worker_id}"
     argv = ["/bin/sh", "-c", "trap '' HUP; echo $$ > leader; exec sleep 120"]
     with patch.object(TrivialProfile, "argv", return_value=argv):
-        provider.start(handle, worker_id, tmp_path, "task", TrivialProfile())
+        provider.start(
+            WorkerLaunch(handle, worker_id, tmp_path, "task"), TrivialProfile()
+        )
     pid = int(_until_file(tmp_path / "leader", "\n"))
     try:
         provider.stop(handle)

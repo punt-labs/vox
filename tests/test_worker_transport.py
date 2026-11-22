@@ -11,6 +11,7 @@ import pytest
 from test_workers import TrivialProfile
 from test_workers_subprocess import _until_file
 
+from punt_vox.voxd.workers.contracts import WorkerLaunch
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 
@@ -31,7 +32,9 @@ def test_worker_environment_values_never_enter_tmux_argv(tmp_path: Path) -> None
             patch.object(TrivialProfile, "environment", return_value=environment),
             patch.object(TmuxWorkerProvider, "_run", side_effect=run),
         ):
-            provider.start(handle, worker_id, tmp_path, "task", TrivialProfile())
+            provider.start(
+                WorkerLaunch(handle, worker_id, tmp_path, "task"), TrivialProfile()
+            )
         contents = _until_file(tmp_path / "environment", "fake-private-token")
         assert "CLAUDE_CODE_OAUTH_TOKEN=fake-private-token" in contents
         assert "PATH=" in contents

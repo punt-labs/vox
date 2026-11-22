@@ -22,5 +22,5 @@ class WorkerContext:
         store = HookContextStore()
         return {
             **HookContextHandlers(store).handlers(),
-            **WorkerSubsystem.build(store).handlers(),
+            **WorkerSubsystem.build(store),
         }
