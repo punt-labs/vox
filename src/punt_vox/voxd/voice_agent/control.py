@@ -41,14 +41,18 @@ class ConvAIControl:
     _http: httpx.Client
 
     def __new__(cls, api_key: str, *, base_url: str = _API) -> Self:
-        """Create a control client without making any requests."""
+        """Construct off the event loop because key derivation is synchronous."""
         if not api_key.strip():
             msg = "ElevenLabs Conversational AI requires an API key"
             raise ValueError(msg)
         self = super().__new__(cls)
-        self._credential_id = hashlib.sha256(
-            f"{base_url}\0{api_key}".encode()
-        ).hexdigest()
+        self._credential_id = hashlib.scrypt(
+            api_key.encode(),
+            salt=f"vox:elevenlabs:convai:{base_url}".encode(),
+            n=2**14,
+            r=8,
+            p=5,
+        ).hex()
         self._http = httpx.Client(
             base_url=base_url, headers={"xi-api-key": api_key}, timeout=10.0
         )
