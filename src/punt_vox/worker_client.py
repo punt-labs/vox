@@ -23,7 +23,8 @@ class WorkerClient:
         await transport.connect()
         try:
             reply = await transport.send_and_recv(
-                {"type": f"worker_{operation}", "id": request_id, **fields}, timeout=30
+                {"type": f"worker_{operation}", "id": request_id, **fields},
+                timeout=90 if operation == "start" else 30,
             )
         finally:
             await transport.close()
