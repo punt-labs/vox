@@ -221,6 +221,16 @@ class TestPcmStreamSink:
         assert device.opened.stopped
         assert not device.opened.aborted
 
+    async def test_close_after_the_last_full_block_drains_it(self) -> None:
+        sink, device = open_sink(asyncio.get_running_loop())
+        sink.feed(ms_of(OLD, 20))
+        device.opened.pull(1)
+        sink.finish()
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        sink.close()
+        assert device.opened.stopped
+        assert not device.opened.aborted
+
     async def test_close_report_counts_audio_the_flush_dropped(self) -> None:
         sink, device = open_sink(asyncio.get_running_loop())
         sink.feed(ms_of(OLD, 100))

@@ -305,9 +305,10 @@ class PcmStreamSink:
         anything else (flushed, or closed early) is aborted at once.
         """
         stream, self._stream = self._stream, None
-        self._dropped += self._buffer.clear()
+        pending = self._buffer.clear()
+        self._dropped += pending
         if stream is not None:
-            if self._drained and not self._interrupted:
+            if self._finished and not self._interrupted and not pending:
                 stream.stop()
             else:
                 stream.abort()
