@@ -858,9 +858,9 @@ def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 @app.command()
 def mcp() -> None:
     """Run the MCP server with stdio transport."""
-    from punt_vox.server import run_server
+    from punt_vox.mcp_lifecycle import McpLifecycle
 
-    run_server()
+    McpLifecycle().run()
 
 
 # ---------------------------------------------------------------------------

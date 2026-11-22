@@ -1065,6 +1065,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/mcp_lifecycle.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 5.0,
+    "module_size": 36.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/models.py": {
     "method_ratio": 0.875,
     "encapsulation_ratio": 1.0,
@@ -4163,9 +4176,9 @@
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
     "avg_params": 1.4,
-    "max_complexity": 3.0,
-    "avg_complexity": 1.6,
-    "module_size": 55.0,
+    "max_complexity": 4.0,
+    "avg_complexity": 1.8,
+    "module_size": 57.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -4887,6 +4900,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/programs/mpv/mpv_outage.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.17,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.5,
+    "module_size": 53.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/programs/mpv/mpv_program_player.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -4905,8 +4931,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 0.23,
     "max_complexity": 5.0,
-    "avg_complexity": 1.86,
-    "module_size": 211.0,
+    "avg_complexity": 1.82,
+    "module_size": 204.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

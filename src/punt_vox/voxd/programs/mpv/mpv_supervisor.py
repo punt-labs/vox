@@ -9,7 +9,7 @@ The lifecycle is the six-mode machine of ``docs/mpv-program-player.tex``:
 ``down -> starting -> ready``; a crash or a failed bring-up routes through
 ``crashed -> restarting`` and, at the cap, terminates in ``failed`` (the standing
 ``PLAYER_UNAVAILABLE``/``PLAYER_FAILED`` fault the client sees). A successful
-``Connect`` clears the restart counter, so the cap counts only *consecutive*
+``Connect`` ends the outage (:class:`MpvOutage`), so the cap counts only *consecutive*
 attempts that never reached ``ready`` -- a cold start that never connects and a
 crash loop that never reconnects both terminate, while a crash that recovers does
 not accumulate toward the cap (I4).
@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.types_programs.mpv_event import MpvCommand
 from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
 from punt_vox.voxd.programs.mpv.mpv_launcher import MpvLauncher
+from punt_vox.voxd.programs.mpv.mpv_outage import MpvOutage
 from punt_vox.voxd.programs.mpv.orphan_reaper import (
     OrphanReaper,
     OrphanUnreachableError,
@@ -73,27 +74,25 @@ class MpvSupervisor:
     __slots__ = (
         "_client",
         "_crashed",
-        "_ever_ready",
         "_fault",
         "_launcher",
+        "_outage",
         "_proc",
         "_ready",
         "_reaped",
         "_reaper",
-        "_restarts",
         "_sleeper",
         "_state",
     )
     _sleeper: Sleeper
     _launcher: MpvLauncher
+    _outage: MpvOutage
     _ready: asyncio.Event
     _crashed: asyncio.Event
     _client: MpvClient | None
     _proc: asyncio.subprocess.Process | None
     _fault: PlaybackFault | None
     _state: MpvState
-    _restarts: int
-    _ever_ready: bool
     _reaper: OrphanReaper
     _reaped: bool
 
@@ -102,14 +101,13 @@ class MpvSupervisor:
         self = super().__new__(cls)
         self._sleeper = sleeper
         self._launcher = MpvLauncher(socket, sleeper)
+        self._outage = MpvOutage(_MAX_RESTARTS)
         self._ready = asyncio.Event()
         self._crashed = asyncio.Event()
         self._client = None
         self._proc = None
         self._fault = None
         self._state = MpvState.DOWN
-        self._restarts = 0
-        self._ever_ready = False
         self._reaper = OrphanReaper(socket)
         self._reaped = False
         return self
@@ -226,9 +224,8 @@ class MpvSupervisor:
         """Enter ``ready``: healthy, counter cleared, the loop's gate opened."""
         self._client = client
         self._state = MpvState.READY
-        self._ever_ready = True
-        self._restarts = 0
         self._fault = None
+        self._outage.ready()
         self._ready.set()
 
     def _record_bring_up_failure(self) -> None:
@@ -239,6 +236,7 @@ class MpvSupervisor:
             "mpv could not be started or connected",
             PlaybackFaultKind.PLAYER_UNAVAILABLE,
         )
+        self._outage.bring_up_failed()
 
     async def _note_crash(self) -> None:
         """Handle a detected crash: close the dead client, discard the process, fault.
@@ -255,6 +253,7 @@ class MpvSupervisor:
         self._fault = PlaybackFault.process_level(
             "mpv crashed; restarting", PlaybackFaultKind.PLAYER_CRASH
         )
+        self._outage.crashed()
 
     async def _close_dead_client(self) -> None:
         """Close the crashed connection, ignoring errors from its broken transport."""
@@ -267,21 +266,15 @@ class MpvSupervisor:
 
     async def _restart_or_fail(self) -> bool:
         """Restart within the cap (return ``True``), else give up (``False``, I4)."""
-        if self._restarts >= _MAX_RESTARTS:
+        if not self._outage.may_restart():
             self._enter_failed()
             return False
-        self._restarts += 1
         await self._sleeper.sleep(_SPAWN_BACKOFF_SECONDS)
         return True
 
     def _enter_failed(self) -> None:
         """Terminate at ``failed`` -- the cap is exceeded; the program tier is dead."""
-        kind = (
-            PlaybackFaultKind.PLAYER_FAILED
-            if self._ever_ready
-            else PlaybackFaultKind.PLAYER_UNAVAILABLE
-        )
-        self._stand_failed("mpv could not be kept running", kind)
+        self._stand_failed("mpv could not be kept running", self._outage.gave_up())
 
     def _stand_failed(self, reason: str, kind: PlaybackFaultKind) -> None:
         """Clear readiness and stand a hard process-level fault at ``failed``."""

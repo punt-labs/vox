@@ -43,16 +43,18 @@ class MusicEventReceiver:
         """Decode and apply once, surfacing unresolved anchors without logging them."""
         operation = topic if topic in MusicTopic else "unknown"
         logger.info("[lux] received %s; applying", operation)
-        with LuxFaultBoundary(logger, "dropping music event: reason=invalid_event"):
+        with LuxFaultBoundary(logger, "dropping music event: reason=unexpected_error"):
+            albums = self._service.catalog_albums()
             try:
-                event = self._codec.decode(
-                    topic, payload, self._service.catalog_albums()
-                )
+                event = self._codec.decode(topic, payload, albums)
             except AnchorUnresolvedError as exc:
                 logger.warning(
                     "[lux] anchor on %s names no catalogued album; surfacing", operation
                 )
                 self._surface_resolve_failure(exc.anchor)
+                return
+            except ValueError:  # malformed frame or unknown topic: a rejection
+                logger.warning("[lux] dropping music event: reason=invalid_event")
                 return
             self._apply(event)
 

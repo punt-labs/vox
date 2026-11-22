@@ -12,7 +12,7 @@ import pytest
 import typer
 from punt_observe import logging as shared_logging
 
-from punt_vox import hooks, logging_config, server
+from punt_vox import hooks, logging_config, mcp_lifecycle, server
 from punt_vox.cli_io import OutputFlags
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.panel import applet
@@ -82,3 +82,86 @@ def test_boot_daemon_role(configured: MagicMock) -> None:
     ):
         boot.DaemonBoot._prepare_logging_and_config()
     assert configured.call_args.args == ("vox", "daemon")
+
+
+@pytest.fixture
+def lifecycle_logging() -> Iterator[MagicMock]:
+    """Keep caplog's root handler: the real setup would replace it."""
+    with patch.object(mcp_lifecycle, "configure_client_logging") as configure:
+        yield configure
+
+
+def _lifecycle_records(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
+    return [
+        (r.levelno, r.getMessage())
+        for r in caplog.records
+        if r.name == "punt_vox.mcp_lifecycle"
+    ]
+
+
+def test_mcp_lifecycle_records_a_clean_stop(
+    lifecycle_logging: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    with (
+        patch.object(server, "run_server") as run_server,
+        caplog.at_level(logging.INFO),
+    ):
+        mcp_lifecycle.McpLifecycle().run()
+    run_server.assert_called_once_with()
+    lifecycle_logging.assert_called_once_with(role="mcp")
+    assert _lifecycle_records(caplog) == [
+        (logging.INFO, "vox MCP server stopped: outcome=completed")
+    ]
+
+
+@pytest.mark.usefixtures("lifecycle_logging")
+def test_mcp_lifecycle_records_a_server_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    boom = RuntimeError("SYNTHETIC-PRIVATE-DETAIL")
+    with (
+        patch.object(server, "run_server", side_effect=boom),
+        caplog.at_level(logging.INFO),
+        pytest.raises(RuntimeError),
+    ):
+        mcp_lifecycle.McpLifecycle().run()
+    assert _lifecycle_records(caplog) == [
+        (logging.ERROR, "vox MCP server stopped: outcome=failed reason=RuntimeError")
+    ]
+    assert "SYNTHETIC-PRIVATE-DETAIL" not in caplog.text
+
+
+@pytest.mark.usefixtures("lifecycle_logging")
+def test_mcp_lifecycle_records_an_interrupt(caplog: pytest.LogCaptureFixture) -> None:
+    with (
+        patch.object(server, "run_server", side_effect=KeyboardInterrupt),
+        caplog.at_level(logging.INFO),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        mcp_lifecycle.McpLifecycle().run()
+    assert _lifecycle_records(caplog) == [
+        (logging.INFO, "vox MCP server stopped: outcome=interrupted")
+    ]
+
+
+@pytest.mark.usefixtures("lifecycle_logging")
+def test_mcp_lifecycle_records_an_incompatible_sdk(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``None`` in sys.modules makes the import raise, as mcp 2.x's removed
+    # ``mcp.server.fastmcp`` does on a mis-resolved install.
+    with (
+        patch.dict(sys.modules, {"punt_vox.server": None}),
+        caplog.at_level(logging.INFO),
+        pytest.raises(ImportError),
+    ):
+        mcp_lifecycle.McpLifecycle().run()
+    assert _lifecycle_records(caplog) == [
+        (
+            logging.ERROR,
+            (
+                "vox MCP server failed to start: outcome=failed "
+                "reason=import_error module=punt_vox.server"
+            ),
+        )
+    ]

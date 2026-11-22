@@ -195,7 +195,7 @@ class VoxDaemon:
         producers.start(service.run_player_supervisor)
         producers.start(service.run_playback)
         producers.start(music.run)
-        logger.info("Playback consumer, control writer, loop, mpv, and scene up")
+        logger.info("Playback, control, loop, mpv supervisor, scene tasks started")
         try:
             yield
         finally:
