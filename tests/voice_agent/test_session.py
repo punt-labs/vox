@@ -341,3 +341,22 @@ async def test_localhost_bad_handshake_closes_socket(
                 pytest.fail("failed handshake returned a conversation")
         assert "private" not in str(exc.value)
         await closed.wait()
+
+
+async def test_duplicate_metadata_does_not_resurface_setup() -> None:
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send('{"type":"ignored_extension"}')
+        await socket.send('{"type":"ping","ping_event":{"event_id":12}}')
+        assert json.loads(await socket.recv()) == {"type": "pong", "event_id": 12}
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(json.dumps(_METADATA))
+        await socket.wait_closed()
+
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        async with Conversation.open(
+            f"ws://127.0.0.1:{port}", _OPTIONS, allow_loopback=True
+        ) as session:
+            with pytest.raises(ConvAIError, match="duplicate conversation metadata"):
+                await session.receive()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Self, cast, final
 
 from punt_vox.voxd.voice_agent.events import (
@@ -16,6 +15,7 @@ from punt_vox.voxd.voice_agent.events import (
     ClientToolCall,
     Interruption,
     Metadata,
+    Ping,
     UserTranscript,
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
@@ -23,17 +23,7 @@ from punt_vox.voxd.voice_agent.fault import ConvAIError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.voxd.voice_agent.events import Event
-
-
-@dataclass(frozen=True, slots=True)
-class Ping:
-    """Hold the event ID that the client must echo in a pong."""
-
-    event_id: int
-
-
-type Decoded = Event | Metadata | Ping
+    from punt_vox.voxd.voice_agent.events import Decoded
 
 
 @final
@@ -41,7 +31,7 @@ class Message:
     """Read fields from a valid JSON object with checked value types."""
 
     __slots__ = ("_data",)
-    _data: dict[str, object]
+    _data: dict[str, object]  # Untrusted JSON; each event validates its own fields.
 
     def __new__(cls, data: object) -> Self:
         """Bind a JSON object for checked field access."""
@@ -81,7 +71,12 @@ class Message:
             raise ConvAIError(msg)
         return value
 
-    def flag(self, name: str, *, default: bool | None = None) -> bool:
+    def flag(
+        self,
+        name: str,
+        *,
+        default: bool | None = None,  # None makes the field required.
+    ) -> bool:
         """Return a boolean field with an optional backwards-compatible default."""
         value = self._data.get(name, default)
         if not isinstance(value, bool):
@@ -89,11 +84,11 @@ class Message:
             raise ConvAIError(msg)
         return value
 
-    def optional_number(self, name: str) -> int | None:
+    def optional_number(self, name: str) -> int | None:  # Wire field can be absent.
         """Allow older transcript and response events to omit their event ID."""
         return self.number(name) if name in self._data else None
 
-    def optional_text(self, name: str) -> str | None:
+    def optional_text(self, name: str) -> str | None:  # Wire field can be absent.
         """Return a string field when the event supplies it."""
         return self.text(name) if name in self._data else None
 
@@ -105,7 +100,7 @@ class Message:
             raise ConvAIError(msg)
         return type(self)(cast("dict[str, object]", value))
 
-    def fields(self) -> dict[str, object]:
+    def fields(self) -> dict[str, object]:  # Client tools each define their own schema.
         """Copy this message's top-level fields."""
         return self._data.copy()
 
@@ -120,7 +115,9 @@ class EventDecoder:
         return (*cls._EVENTS, "client_error")
 
     @classmethod
-    def decode(cls, kind: str, message: Message) -> Decoded | None:
+    def decode(
+        cls, kind: str, message: Message
+    ) -> Decoded | None:  # None skips extensions.
         """Decode one event without letting remote error text reach logs."""
         if kind == "client_error":
             msg = "ElevenLabs sent a client_error event"

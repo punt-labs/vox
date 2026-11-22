@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from contextlib import ExitStack, contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.paths import config_dir
 from punt_vox.private_state import PrivateState
 from punt_vox.sibling_lock import SiblingLock
+from punt_vox.voxd.voice_agent.contracts import Registration
 from punt_vox.voxd.voice_agent.control import ConvAIControl
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
@@ -18,17 +19,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
-    from punt_vox.voxd.voice_agent.control import ClientTool
+    from punt_vox.voxd.voice_agent.contracts import ClientTool
 
 __all__ = ["VoiceAgent"]
-
-
-@dataclass(frozen=True, slots=True)
-class _Registration:
-    agent_id: str | None
-    tool_ids: tuple[str, ...]
-    configuration_hash: str
-    credential_id: str
 
 
 @final
@@ -44,7 +37,12 @@ class VoiceAgent:
     _file: AtomicFile
     _lock: SiblingLock
 
-    def __new__(cls, control: ConvAIControl, *, path: Path | None = None) -> Self:
+    def __new__(
+        cls,
+        control: ConvAIControl,
+        *,
+        path: Path | None = None,  # None selects the daemon's default config path.
+    ) -> Self:
         """Bind the agent to the per-user daemon config or a separate test path."""
         self = super().__new__(cls)
         self._control = control
@@ -93,8 +91,8 @@ class VoiceAgent:
 
     def _provision(
         self, tools: tuple[ClientTool, ...], fingerprint: str
-    ) -> _Registration:
-        record = _Registration(None, (), fingerprint, self._control.credential_id)
+    ) -> Registration:
+        record = Registration(None, (), fingerprint, self._control.credential_id)
         self._write(record)
         for tool in tools:
             tool_id = self._control.create_tool(tool)
@@ -107,7 +105,7 @@ class VoiceAgent:
 
     def _checkpoint(
         self,
-        record: _Registration,
+        record: Registration,
         resource_id: str,
         kind: str,
         delete: Callable[[str], None],
@@ -127,7 +125,7 @@ class VoiceAgent:
                 )
             raise
 
-    def _delete(self, stored: _Registration) -> None:
+    def _delete(self, stored: Registration) -> None:
         if stored.agent_id is not None:
             self._control.delete_agent(stored.agent_id)
             self._write(replace(stored, agent_id=None))
@@ -135,7 +133,7 @@ class VoiceAgent:
             self._control.delete_tool(tool_id)
         self._file.path.unlink()
 
-    def _read(self) -> _Registration | None:
+    def _read(self) -> Registration | None:  # No file is valid before provisioning.
         if self._file.path.is_symlink():
             msg = "Vox voice agent config must not be a symbolic link"
             raise ConvAIError(msg)
@@ -148,7 +146,7 @@ class VoiceAgent:
             raise ConvAIError(msg) from None
         return self._parse_registration(raw)
 
-    def _parse_registration(self, raw: str) -> _Registration:
+    def _parse_registration(self, raw: str) -> Registration:
         try:
             data: object = json.loads(raw)
         except (ValueError, RecursionError):
@@ -168,7 +166,7 @@ class VoiceAgent:
                         "restore it and tear down the agent before switching"
                     )
                     raise ConvAIError(msg)
-                return _Registration(
+                return Registration(
                     None if agent_id is None else ConvAIControl.resource_id(agent_id),
                     self._tool_ids(ids),
                     fingerprint,
@@ -178,7 +176,7 @@ class VoiceAgent:
                 msg = "Invalid Vox voice agent config"
                 raise ConvAIError(msg)
 
-    def _write(self, record: _Registration) -> None:
+    def _write(self, record: Registration) -> None:
         self._file.replace(json.dumps(asdict(record)) + "\n", mode=0o600)
 
     @staticmethod

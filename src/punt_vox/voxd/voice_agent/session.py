@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.voice_agent._decode import EventDecoder, Message, Ping
+from punt_vox.voxd.voice_agent._decode import EventDecoder, Message
 from punt_vox.voxd.voice_agent._socket import Socket
-from punt_vox.voxd.voice_agent.events import AgentToolResponse, ClientToolCall, Metadata
+from punt_vox.voxd.voice_agent.events import (
+    AgentToolResponse,
+    ClientToolCall,
+    Metadata,
+    Ping,
+)
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
@@ -18,22 +22,17 @@ if TYPE_CHECKING:
 
     from websockets.asyncio.client import ClientConnection
 
-    from punt_vox.voxd.voice_agent._decode import Decoded
-    from punt_vox.voxd.voice_agent.events import Event
-    from punt_vox.voxd.voice_agent.trace import EventTrace
+    from punt_vox.voxd.voice_agent.contracts import (
+        ClientMessage,
+        OptionalTrace,
+        SessionOptions,
+        SessionStart,
+    )
+    from punt_vox.voxd.voice_agent.events import Decoded, Event
 
-__all__ = ["Conversation", "SessionOptions"]
+__all__ = ["Conversation"]
 
 _METADATA_TIMEOUT_S = 15
-
-
-@dataclass(frozen=True, slots=True)
-class SessionOptions:
-    """Select the prompt and the registered client-tool schemas for a call."""
-
-    prompt: str
-    tool_ids: tuple[str, ...]
-    text_only: bool = False
 
 
 @final
@@ -47,11 +46,11 @@ class Conversation:
     __slots__ = ("_metadata", "_socket", "_tool_calls", "_trace")
     _socket: ClientConnection
     _metadata: Metadata
-    _trace: EventTrace | None
+    _trace: OptionalTrace
     _tool_calls: dict[str, bool]
 
     def __new__(
-        cls, socket: ClientConnection, metadata: Metadata, trace: EventTrace | None
+        cls, socket: ClientConnection, metadata: Metadata, trace: OptionalTrace
     ) -> Self:
         """Wrap an initialized WebSocket connection."""
         self = super().__new__(cls)
@@ -68,7 +67,7 @@ class Conversation:
         signed_url: str,
         options: SessionOptions,
         *,
-        trace: EventTrace | None = None,
+        trace: OptionalTrace = None,
         allow_loopback: bool = False,
     ) -> AsyncGenerator[Self]:
         """Send the session override and wait for metadata before yielding."""
@@ -134,9 +133,9 @@ class Conversation:
 
     async def _send(
         self,
-        payload: dict[str, object],
+        payload: ClientMessage,
         kind: str,
-        detail: dict[str, object] | None = None,
+        detail: dict[str, object] | None = None,  # Trace fields vary by event.
     ) -> None:
         await Socket.send(self._socket, payload)
         if self._trace is not None:
@@ -144,35 +143,32 @@ class Conversation:
 
     @staticmethod
     async def _start(
-        socket: ClientConnection, options: SessionOptions, trace: EventTrace | None
+        socket: ClientConnection, options: SessionOptions, trace: OptionalTrace
     ) -> None:
-        kind = "conversation_initiation_client_data"
-        await Socket.send(
-            socket,
-            {
-                "type": kind,
-                "conversation_config_override": {
-                    "agent": {
-                        "prompt": {
-                            "prompt": options.prompt,
-                            "tool_ids": list(options.tool_ids),
-                            "tool_ids_strict": True,
-                        },
+        payload: SessionStart = {
+            "type": "conversation_initiation_client_data",
+            "conversation_config_override": {
+                "agent": {
+                    "prompt": {
+                        "prompt": options.prompt,
+                        "tool_ids": list(options.tool_ids),
+                        "tool_ids_strict": True,
                     },
-                    "conversation": {"text_only": options.text_only},
                 },
+                "conversation": {"text_only": options.text_only},
             },
-        )
+        }
+        await Socket.send(socket, payload)
         if trace is not None:
             trace.record(
                 "send",
-                kind,
+                payload["type"],
                 {"text_only": options.text_only, "tools": len(options.tool_ids)},
             )
 
     @classmethod
     async def _initialize(
-        cls, socket: ClientConnection, options: SessionOptions, trace: EventTrace | None
+        cls, socket: ClientConnection, options: SessionOptions, trace: OptionalTrace
     ) -> Metadata:
         try:
             await cls._start(socket, options, trace)
@@ -187,7 +183,7 @@ class Conversation:
 
     @classmethod
     async def _read_metadata(
-        cls, socket: ClientConnection, trace: EventTrace | None
+        cls, socket: ClientConnection, trace: OptionalTrace
     ) -> Metadata:
         event = await cls._read(socket, trace)
         if not isinstance(event, Metadata):
@@ -197,7 +193,7 @@ class Conversation:
 
     @classmethod
     async def _read(
-        cls, socket: ClientConnection, trace: EventTrace | None
+        cls, socket: ClientConnection, trace: OptionalTrace
     ) -> Event | Metadata:
         while True:
             message = Message.from_frame(await Socket.receive(socket))
@@ -211,13 +207,14 @@ class Conversation:
                 trace.record("recv", kind, cls._trace_fields(event))
             if not isinstance(event, Ping):
                 return event
-            pong: dict[str, object] = {"type": "pong", "event_id": event.event_id}
-            await Socket.send(socket, pong)
+            await Socket.send(socket, {"type": "pong", "event_id": event.event_id})
             if trace is not None:
                 trace.record("send", "pong", {"event_id": event.event_id})
 
     @staticmethod
-    def _trace_fields(event: Decoded) -> dict[str, object]:
+    def _trace_fields(
+        event: Decoded,
+    ) -> dict[str, object]:  # Each event has different fields.
         match event:
             case ClientToolCall():
                 return {

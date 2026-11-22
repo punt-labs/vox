@@ -5,31 +5,32 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import httpx
 
 from punt_vox.voxd.voice_agent._decode import EventDecoder
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
-__all__ = ["ClientTool", "ConvAIControl"]
+if TYPE_CHECKING:
+    from punt_vox.voxd.voice_agent.contracts import (
+        AgentPermissions,
+        ClientTool,
+        CreateAgentConfig,
+        CreateConfig,
+        CreateToolConfig,
+    )
+
+__all__ = ["ConvAIControl"]
 
 _API = "https://api.elevenlabs.io"
 _CONVAI = "/v1/convai"
 _SIGNED_URL = "/conversation/get-signed-url"
-_OVERRIDABLE = {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}}
 _RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
-
-
-@dataclass(frozen=True, slots=True)
-class ClientTool:
-    """Describe a local client tool whose result the conversation waits for."""
-
-    name: str
-    description: str
-    parameters: dict[str, object] | None = None
+_OVERRIDABLE: AgentPermissions = {
+    "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
+}
 
 
 @final
@@ -99,7 +100,7 @@ class ConvAIControl:
         ).hexdigest()
 
     @staticmethod
-    def _tool_config(tool: ClientTool) -> dict[str, object]:
+    def _tool_config(tool: ClientTool) -> CreateToolConfig:
         return {
             "tool_config": {
                 "type": "client",
@@ -111,7 +112,7 @@ class ConvAIControl:
         }
 
     @staticmethod
-    def _agent_config(tool_ids: tuple[str, ...]) -> dict[str, object]:
+    def _agent_config(tool_ids: tuple[str, ...]) -> CreateAgentConfig:
         return {
             "name": "Vox voice agent",
             "conversation_config": {
@@ -159,9 +160,9 @@ class ConvAIControl:
         self,
         method: str,
         path: str,
-        body: dict[str, object] | None = None,
+        body: CreateConfig | None = None,  # Only create requests have a JSON body.
         *,
-        params: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,  # Only GET and DELETE take query params.
     ) -> httpx.Response:
         try:
             response = self._http.request(

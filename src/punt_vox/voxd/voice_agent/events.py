@@ -32,7 +32,7 @@ class ClientToolCall:
 
     tool_call_id: str
     tool_name: str
-    parameters: dict[str, object]
+    parameters: dict[str, object]  # The registered tool defines its own schema.
     expects_response: bool
 
 
@@ -49,8 +49,8 @@ class AgentResponse:
     """Deliver a completed agent text response."""
 
     text: str
-    event_id: int | None
-    response_id: str | None = None
+    event_id: int | None  # Some ElevenLabs response frames omit this ID.
+    response_id: str | None = None  # Older responses do not identify corrections.
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +68,7 @@ class UserTranscript:
     """Deliver a final transcription of one user utterance."""
 
     text: str
-    event_id: int | None
+    event_id: int | None  # Some ElevenLabs transcript frames omit this ID.
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +86,13 @@ class Interruption:
     event_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class Ping:
+    """Hold the event ID that the client must echo in a pong."""
+
+    event_id: int
+
+
 type Event = (
     AgentResponse
     | AgentResponseCorrection
@@ -95,3 +102,4 @@ type Event = (
     | Interruption
     | UserTranscript
 )
+type Decoded = Event | Metadata | Ping

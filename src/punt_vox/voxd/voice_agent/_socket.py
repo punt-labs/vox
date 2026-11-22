@@ -21,6 +21,8 @@ from punt_vox.voxd.voice_agent.fault import ConvAIError
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
+    from punt_vox.voxd.voice_agent.contracts import ClientMessage
+
 MAX_MESSAGE_BYTES = 1024 * 1024
 
 _PRIVATE_WIRE_LOG = logging.getLogger(f"{__name__}.wire")
@@ -78,7 +80,7 @@ class Socket:
             raise Socket._transfer_error("receive", exc) from None
 
     @staticmethod
-    async def send(socket: ClientConnection, payload: dict[str, object]) -> None:
+    async def send(socket: ClientConnection, payload: ClientMessage) -> None:
         """Write a text frame; close on cancellation since delivery is uncertain."""
         try:
             await socket.send(json.dumps(payload))
