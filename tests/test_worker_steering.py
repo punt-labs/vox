@@ -22,6 +22,7 @@ from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.worker_client import WorkerClient
 
 
+@pytest.mark.subprocess
 def test_receipt_types_import_without_worker_implementations() -> None:
     result = subprocess.run(
         [
