@@ -181,7 +181,7 @@ def test_changed_agent_settings_require_teardown(
         agent.teardown()
 
 
-def test_registration_without_first_message_permission_is_reprovisioned(
+def test_registration_without_first_message_permission_requires_explicit_teardown(
     tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / _COMPLETED_REGISTRATION
@@ -194,6 +194,11 @@ def test_registration_without_first_message_permission_is_reprovisioned(
             )
             agent.connection((_CLOCK,))
         wire.calls.clear()
+
+        with pytest.raises(ConvAIError, match="tear down the agent first"):
+            agent.connection((_CLOCK,))
+        assert wire.calls == []
+        agent.teardown()
 
         assert VoiceAgent(control, path=config).connection((_CLOCK,)) == (
             _SIGNED_URL,

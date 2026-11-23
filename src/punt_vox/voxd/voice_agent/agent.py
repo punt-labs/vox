@@ -58,7 +58,7 @@ class VoiceAgent:
         fingerprint = self._control.registration_fingerprint(ordered)
         with self._locked():
             stored = self._read()
-            if stored is not None and self._replaceable(stored, ordered, fingerprint):
+            if stored is not None and stored.agent_id is None:
                 self._delete(stored)
                 stored = None
             if stored is None:
@@ -71,15 +71,6 @@ class VoiceAgent:
                 msg = "No provisioned ElevenLabs agent"
                 raise ConvAIError(msg)
         return self._control.signed_url(agent_id), stored.tool_ids
-
-    def _replaceable(
-        self, stored: Registration, tools: tuple[ClientTool, ...], fingerprint: str
-    ) -> bool:
-        return stored.agent_id is None or (
-            stored.configuration_hash != fingerprint
-            and stored.configuration_hash
-            == self._control.registration_fingerprint(tools, legacy=True)
-        )
 
     def teardown(self) -> None:
         """Delete managed resources; retain the config if deletion must be retried."""
