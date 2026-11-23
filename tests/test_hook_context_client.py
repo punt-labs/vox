@@ -34,7 +34,11 @@ async def test_worker_session_identity_requires_server_admission(
 
 
 async def test_pending_admission_exhausts_retry_budget_as_timeout() -> None:
-    payload: dict[str, object] = {"session_id": "worker", "hook_event_name": "Stop"}
+    payload: dict[str, object] = {
+        "session_id": "worker",
+        "cwd": "/repo",
+        "hook_event_name": "UserPromptSubmit",
+    }
     request = AsyncMock(return_value={"admitted": False, "retryable": True})
 
     with (
