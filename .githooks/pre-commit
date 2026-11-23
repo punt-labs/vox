@@ -21,7 +21,8 @@ fi
 ethos_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit"
 if grep -q '^# --- BEGIN ETHOS DES-058 SEAL ---$' "${BASH_SOURCE[0]}"; then
   :
-elif [[ -x "$ethos_hook" && ! "$ethos_hook" -ef "${BASH_SOURCE[0]}" ]]; then
+elif [[ -x "$ethos_hook" && ! "$ethos_hook" -ef "${BASH_SOURCE[0]}" ]] &&
+  grep -q '^# --- BEGIN ETHOS DES-058 SEAL ---$' "$ethos_hook"; then
   "$ethos_hook"
 elif [[ -e "$(git rev-parse --show-toplevel)/.punt-labs/ethos/enabled" ]]; then
   if command -v ethos >/dev/null 2>&1; then
