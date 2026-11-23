@@ -40,16 +40,45 @@ async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> Non
     assert workers.choices == ["approve", "approve"]
 
 
-async def test_ordinary_steer_reask_with_a_new_tool_id_replays_the_receipt() -> None:
+async def test_ordinary_steer_retry_with_the_same_tool_id_replays_the_receipt() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234")]
     tools = _tools(workers)
     arguments: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
-    first = await tools.answer("steer_worker", arguments, tool_call_id="interrupted")
+    first = await tools.answer("steer_worker", arguments, tool_call_id="retry")
     assert not first[1]
-    assert await tools.answer("steer_worker", arguments, tool_call_id="reask") == first
+    assert await tools.answer("steer_worker", arguments, tool_call_id="retry") == first
     assert workers.steered == [("abcd1234", "Continue.", False)]
     assert tools.replayed == 1
+
+
+async def test_identical_answers_to_two_idle_prompts_both_reach_the_worker() -> None:
+    workers = FakeWorkers()
+    workers.known = [
+        payload(
+            "abcd1234", pending_decision={"seq": 4, "notification_type": "idle_prompt"}
+        )
+    ]
+    tools = _tools(workers)
+    answer: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
+    first = await tools.answer("steer_worker", answer, tool_call_id="first-idle")
+    assert not first[1]
+    assert (
+        await tools.answer("steer_worker", answer, tool_call_id="first-idle") == first
+    )
+    workers.known = [
+        payload(
+            "abcd1234", pending_decision={"seq": 9, "notification_type": "idle_prompt"}
+        )
+    ]
+    assert not (await tools.answer("steer_worker", answer, tool_call_id="second-idle"))[
+        1
+    ]
+    assert workers.steered == [
+        ("abcd1234", "Continue.", False),
+        ("abcd1234", "Continue.", False),
+    ]
+    assert workers.choices == [None, None]
 
 
 async def test_explicit_denial_and_receipt_reach_the_worker_boundary() -> None:

@@ -129,7 +129,7 @@ class BossTools:
             resolved = self._with_defaults(name, arguments)
             cache_arguments = (
                 {**resolved, "tool_call_id": tool_call_id}
-                if name == "steer_worker" and resolved.get("choice") is not None
+                if name == "steer_worker"
                 else resolved
             )
 
