@@ -119,8 +119,7 @@ class SessionContext:
         )
         self._goal = (checkpoint["goal_seq"], checkpoint["goal"] or "")
         self._gaps.restore(checkpoint["gaps"])
-        if "tool_history_checkpoint" in checkpoint:
-            self._tools.restore(checkpoint["tool_history_checkpoint"])
+        self._tools.restore(checkpoint["tool_history_checkpoint"])
         self._decisions.restore(
             checkpoint["worker_seq"],
             checkpoint["prompt_epoch"],

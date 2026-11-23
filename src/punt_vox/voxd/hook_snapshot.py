@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
 from punt_vox.voxd.hook_context_projection import HookToolResult
 from punt_vox.voxd.hook_decision_types import PendingDecision
@@ -30,4 +30,4 @@ class WorkerHookCheckpoint(HookContextSnapshot):
     result_seq: int
     worker_seq: int
     goal_seq: int
-    tool_history_checkpoint: NotRequired[ToolHistoryCheckpoint]
+    tool_history_checkpoint: ToolHistoryCheckpoint

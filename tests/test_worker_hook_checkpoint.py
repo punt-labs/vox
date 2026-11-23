@@ -108,6 +108,28 @@ def test_startup_skips_incomplete_hook_checkpoint(
         restarted.snapshot(worker.id)
 
 
+def test_checkpoint_missing_tool_history_is_not_restored(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    incomplete = dict(checkpoint)
+    incomplete.pop("tool_history_checkpoint")
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, last_report=incomplete))
+
+    restarted = HookContextStore()
+    WorkerRecovery.restore(records, restarted)
+
+    with pytest.raises(ValueError, match="no hook context"):
+        restarted.snapshot(worker.id)
+
+
 def test_invalid_gap_ranges_cannot_be_restored_or_acknowledged() -> None:
     invalid: HookGapReport = {
         "highest_seen": 4,
