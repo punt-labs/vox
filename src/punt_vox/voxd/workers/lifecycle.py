@@ -6,9 +6,9 @@ import logging
 import subprocess
 from dataclasses import replace
 from enum import Enum, auto
-from pathlib import Path
 from typing import Self, final
 
+from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
 from punt_vox.voxd.workers.model import WorkerRecord
 
@@ -87,38 +87,14 @@ class WorkerLifecycle:
             )
         else:
             record = replace(record, state="stopped")
-        return self._cleanup(replace(record, last_report=report))
-
-    def _cleanup(self, record: WorkerRecord) -> WorkerRecord:
-        try:
-            self._profiles[record.harness].cleanup(Path(record.worktree))
-        except (
-            KeyError,
-            OSError,
-            ValueError,
-            RuntimeError,
-            subprocess.SubprocessError,
-        ) as exc:
-            logger.warning("Worker cleanup failed (%s)", type(exc).__name__)
-            return replace(
-                record,
-                last_report={**record.last_report, "cleanup_error": type(exc).__name__},
-            )
-        return replace(
-            record,
-            last_report={
-                k: v
-                for k, v in record.last_report.items()
-                if k not in ("cleanup_error", "cleanup_pending")
-            },
-        )
+        return WorkerCleanup.run(replace(record, last_report=report), self._profiles)
 
     def stop(self, record: WorkerRecord) -> WorkerRecord:
         """Terminal phase is stable, but failed cleanup remains retryable."""
         if record.state in ("stopped", "exited"):
             return (
-                self._cleanup(record)
-                if {"cleanup_error", "cleanup_pending"} & record.last_report.keys()
+                WorkerCleanup.run(record, self._profiles)
+                if WorkerCleanup.pending(record)
                 else record
             )
         dead = (
@@ -126,12 +102,13 @@ class WorkerLifecycle:
             and self._liveness(record) is _Liveness.EXITED
         )
         self._providers[record.provider].stop(record.session)
-        return self._cleanup(
+        return WorkerCleanup.run(
             replace(
                 record,
                 state="exited" if dead else "stopped",
                 last_report={
                     k: v for k, v in record.last_report.items() if k != "stop_error"
                 },
-            )
+            ),
+            self._profiles,
         )
