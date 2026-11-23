@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import stat
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -22,6 +24,21 @@ def test_cursor_file_creates_and_replaces_private_utf8_file(tmp_path: Path) -> N
 
     assert file.read() == '{"séance": 2}\n'
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_cursor_syncs_directory_after_renaming(tmp_path: Path) -> None:
+    path = tmp_path / "departure.json"
+    syncs: list[tuple[bool, bool]] = []
+    fsync = os.fsync
+
+    def observe(fd: int) -> None:
+        syncs.append((stat.S_ISDIR(os.fstat(fd).st_mode), path.exists()))
+        fsync(fd)
+
+    with patch("punt_vox.voxd.voice_call.cursor_file.os.fsync", side_effect=observe):
+        CursorFile(path).replace("{}")
+
+    assert syncs == [(False, False), (True, True)]
 
 
 def test_cursor_file_does_not_read_symlink_target(tmp_path: Path) -> None:

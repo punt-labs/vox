@@ -50,6 +50,11 @@ class CursorFile:
             os.fsync(tmp.fileno())
             tmp.close()
             Path(tmp.name).replace(self._path)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _require_regular(mode: int) -> None:
