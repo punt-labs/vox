@@ -406,7 +406,9 @@ UserPromptSubmit or Stop is introduced for dialog answers.
 \end{schema}
 
 After checkpointing, admitted Stop and decision notifications publish one
-provider-neutral live report per sender sequence. A separate bounded sequence
+provider-neutral live report per sender sequence. Decision notifications publish
+only when the store's current pending question has that notification's sequence;
+delayed notifications cannot ask an obsolete question. A separate bounded sequence
 window records successful checkpoints, so a failed checkpoint can be retried
 and a delayed event filling a tracked gap still publishes once. Each subscriber retains at
 most 32 reports, dropping the oldest on overflow; absent subscribers lose

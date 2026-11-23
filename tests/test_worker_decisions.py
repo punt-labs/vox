@@ -168,3 +168,35 @@ def test_registry_hears_pending_dialog_without_user_prompt(tmp_path: Path) -> No
         )
         assert registry.receipt(worker.id, "Yes, allow it.", baseline) == 5
         assert store.last_input(worker.id) == (0, "")
+
+
+async def test_delayed_decision_does_not_publish_an_obsolete_question(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    events = ProgressEvents()
+    store = HookContextStore()
+    hooks = WorkerHooks(store, registry, asyncio.Lock(), events)
+    notification: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt",
+        "message": "Allow?",
+        "relay_seq": 2,
+    }
+    async with events.subscribe() as queue:
+        await hooks.ingest(
+            {**notification, "relay_seq": 3, "hook_event_name": "PostToolUse"},
+            worker_only=True,
+        )
+        await hooks.ingest(notification, worker_only=True)
+        assert queue.empty()
+        assert store.snapshot(worker.id)["pending_decision"] is None
+        await hooks.ingest({**notification, "relay_seq": 4}, worker_only=True)
+        assert queue.get_nowait().kind == "needs_decision"
+        await hooks.ingest(notification, worker_only=True)
+        assert queue.empty()

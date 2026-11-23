@@ -8,7 +8,7 @@ from punt_vox.voxd.voice_agent.tool_calls import ToolCalls
 
 def test_tool_calls_admit_once_and_claim_one_response() -> None:
     calls = ToolCalls()
-    event = ClientToolCall("id", "tool", {})
+    event = ClientToolCall("id", "tool", {}, expects_response=True)
     assert calls.admit(event)
     assert not calls.admit(event)
     calls.claim("id")

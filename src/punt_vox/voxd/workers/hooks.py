@@ -73,4 +73,7 @@ class WorkerHooks:
             return None
         self._store.ingest(payload, worker_input=admitted)
         self._registry.checkpoint_progress(session, cwd)
-        return self._reports.observe(str(session), payload) if admitted else None
+        if not admitted:
+            return None
+        pending = self._store.snapshot(str(session))["pending_decision"]
+        return self._reports.observe(str(session), payload, pending)

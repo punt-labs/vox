@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.hook_context_projection import HookText
 from punt_vox.voxd.hook_gaps import HookGaps
 from punt_vox.voxd.voice_call.progress_types import WorkerProgress
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.hook_decision_types import PendingDecision
 
 
 @final
@@ -24,7 +27,7 @@ class HookReports:
         return self
 
     def observe(
-        self, session: str, payload: dict[str, object]
+        self, session: str, payload: dict[str, object], pending: PendingDecision | None
     ) -> WorkerProgress | None:
         """Project a validated event only after its checkpoint succeeded."""
         history = self._sessions.setdefault(session, HookGaps())
@@ -34,11 +37,14 @@ class HookReports:
         seq = cast("int", payload["relay_seq"])
         if not history.observe(seq):
             return None
-        return self._event(session, seq, payload)
+        return self._event(session, seq, payload, pending)
 
     @staticmethod
     def _event(
-        session: str, seq: int, payload: dict[str, object]
+        session: str,
+        seq: int,
+        payload: dict[str, object],
+        pending: PendingDecision | None,
     ) -> WorkerProgress | None:
         if payload.get("hook_event_name") == "Stop":
             return WorkerProgress(
@@ -47,16 +53,16 @@ class HookReports:
                 "finished",
                 HookText.clip(payload.get("last_assistant_message")),
             )
-        notification = payload.get("notification_type")
-        if payload.get("hook_event_name") == "Notification" and notification in {
-            "permission_prompt",
-            "idle_prompt",
-        }:
+        if (
+            payload.get("hook_event_name") == "Notification"
+            and pending is not None
+            and pending["seq"] == seq
+        ):
             return WorkerProgress(
                 session,
                 seq,
                 "needs_decision",
-                HookText.clip(payload.get("message")),
-                str(notification),
+                pending["message"],
+                pending["notification_type"],
             )
         return None
