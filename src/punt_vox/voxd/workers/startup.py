@@ -11,6 +11,7 @@ from punt_vox.voxd.workers.recovery import WorkerRecovery
 
 if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
+    from punt_vox.voxd.workers.model import WorkerRecord
     from punt_vox.voxd.workers.records import WorkerRecords
     from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
@@ -29,28 +30,31 @@ class WorkerStartup:
         records: WorkerRecords,
         store: HookContextStore,
         provider: TmuxWorkerProvider,
-    ) -> None:
+    ) -> list[WorkerRecord]:
         """Restore active workers and reap orphans without harness cleanup."""
-        cls._reconcile(records, provider)
-        WorkerRecovery.restore(records, store)
+        reconciled = [
+            cls._reconcile(record, records, provider)
+            for record in records.load(strict=False)
+        ]
+        WorkerRecovery.restore(reconciled, store)
         WorkerReaper.run(records, provider)
+        return reconciled
 
     @staticmethod
-    def _reconcile(records: WorkerRecords, provider: TmuxWorkerProvider) -> None:
-        for record in records.load(strict=False):
-            if record.provider != "tmux" or record.state not in ("starting", "ready"):
-                continue
-            try:
-                if not provider.status(record.session):
-                    records.save(record.retire())
-            except (
-                OSError,
-                ValueError,
-                RuntimeError,
-                subprocess.SubprocessError,
-            ) as exc:
-                logger.warning(
-                    "Worker %s startup reconciliation unavailable (%s)",
-                    record.id,
-                    type(exc).__name__,
-                )
+    def _reconcile(
+        record: WorkerRecord, records: WorkerRecords, provider: TmuxWorkerProvider
+    ) -> WorkerRecord:
+        if record.provider != "tmux" or record.state not in ("starting", "ready"):
+            return record
+        try:
+            if not provider.status(record.session):
+                retired = record.retire()
+                records.save(retired)
+                return retired
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            logger.warning(
+                "Worker %s startup reconciliation unavailable (%s)",
+                record.id,
+                type(exc).__name__,
+            )
+        return record

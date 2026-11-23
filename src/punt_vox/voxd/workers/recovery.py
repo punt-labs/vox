@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast, final
 if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
     from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
-    from punt_vox.voxd.workers.records import WorkerRecords
+    from punt_vox.voxd.workers.model import WorkerRecord
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ class WorkerRecovery:
     __slots__ = ()
 
     @staticmethod
-    def restore(records: WorkerRecords, store: HookContextStore) -> None:
+    def restore(records: list[WorkerRecord], store: HookContextStore) -> None:
         """Restore each supported active checkpoint in isolation."""
-        for record in records.load(strict=False):
+        for record in records:
             if (
                 record.state not in ("starting", "ready")
                 or "worker_seq" not in record.last_report

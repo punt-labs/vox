@@ -10,9 +10,11 @@ from starlette.testclient import TestClient
 from test_workers import FakeWorkerProvider, _registry
 
 from punt_vox.voxd.daemon import build_app
+from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.reaper import WorkerReaper
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
+from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,6 +27,19 @@ def _rpc_health(app: Starlette) -> None:
         websocket.send_json({"type": "health", "id": "health"})
         response = websocket.receive_json()
     assert response["type"] == response["id"] == "health"
+
+
+def test_worker_records_load_once_during_recovery() -> None:
+    with (
+        patch.object(WorkerRecords, "load", return_value=[]) as load,
+        patch.object(WorkerReaper, "run"),
+    ):
+        _, recover = WorkerSubsystem.prepare(
+            HookContextStore(), WorkerSubsystem.policy()
+        )
+        load.assert_not_called()
+        recover()
+        load.assert_called_once_with(strict=False)
 
 
 async def test_daemon_serves_health_rpc_during_stalled_worker_probe(

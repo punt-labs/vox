@@ -46,7 +46,6 @@ class WorkerSubsystem:
         )
 
         def recover() -> None:
-            WorkerStartup.run(records, store, provider)
-            registry.reload()
+            registry.restore(WorkerStartup.run(records, store, provider))
 
         return WorkerActor(registry), recover

@@ -139,7 +139,7 @@ def test_startup_skips_incomplete_hook_checkpoint(
     records.save(replace(worker, last_report={"worker_seq": 1}))
     restarted = HookContextStore()
 
-    WorkerRecovery.restore(records, restarted)
+    WorkerRecovery.restore(records.load(), restarted)
 
     assert f"Worker {worker.id} hook checkpoint unavailable (KeyError)" in caplog.text
     with pytest.raises(ValueError, match="no hook context"):
@@ -162,7 +162,7 @@ def test_checkpoint_missing_tool_history_is_not_restored(tmp_path: Path) -> None
     records.save(replace(worker, last_report=incomplete))
 
     restarted = HookContextStore()
-    WorkerRecovery.restore(records, restarted)
+    WorkerRecovery.restore(records.load(), restarted)
 
     with pytest.raises(ValueError, match="no hook context"):
         restarted.snapshot(worker.id)

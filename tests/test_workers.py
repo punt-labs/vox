@@ -114,12 +114,15 @@ class TrivialProfile:
 def _registry(tmp_path: Path, provider: FakeWorkerProvider) -> WorkerRegistry:
     policy = MagicMock(spec=WorkerRepoPolicy)
     policy.resolve.return_value = tmp_path
-    return WorkerRegistry(
+    records = WorkerRecords(tmp_path / "workers")
+    registry = WorkerRegistry(
         policy,
-        WorkerRecords(tmp_path / "workers"),
+        records,
         {"fake": provider},
         {"test": TrivialProfile()},
     )
+    registry.restore(records.load(strict=False))
+    return registry
 
 
 @pytest.mark.asyncio

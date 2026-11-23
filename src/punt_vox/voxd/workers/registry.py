@@ -48,19 +48,17 @@ class WorkerRegistry:
         providers: dict[str, WorkerProvider],
         profiles: dict[str, HarnessProfile],
     ) -> Self:
-        """Rebuild persistent workers without invoking harness cleanup at boot."""
+        """Wire an empty registry for startup recovery."""
         self = super().__new__(cls)
         self._policy, self._records = policy, records
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
-        self._workers = {r.id: r for r in records.load(strict=False)}
+        self._workers = {}
         return self
 
-    def reload(self) -> None:
-        """Refresh records before admitting callers after startup reconciliation."""
-        records = self._records.load(strict=False)
-        self._workers.clear()
-        self._workers.update((record.id, record) for record in records)
+    def restore(self, records: list[WorkerRecord]) -> None:
+        """Install reconciled checkpoints before admitting callers."""
+        self._workers = {record.id: record for record in records}
 
     def start(
         self,
