@@ -94,10 +94,10 @@ def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
-def test_the_verbs_are_start_stop_status_and_context() -> None:
+def test_the_call_group_registers_its_explicit_verbs() -> None:
     """Context is inspectable without starting or transferring a call."""
     group = cast("typer.core.TyperGroup", typer.main.get_command(CallCli.build_app()))
-    assert set(group.commands) == {"start", "stop", "status", "context"}
+    assert set(group.commands) == {"start", "stop", "status", "context", "teardown"}
 
 
 def _start_command() -> typer.core.TyperCommand:
