@@ -97,8 +97,17 @@ operation has run or is in flight; \texttt{ran} those that finished.
 
 \section{Lifecycle}
 
+\begin{schema}{ManagedAgent}
+  registered, provisioning : ZBOOL
+\where
+  registered = ztrue \implies provisioning = zfalse
+\end{schema}
+
+Registration can predate \texttt{InitCall}; a new daemon does not discard it.
+
 \begin{schema}{Start}
-  \Delta Call
+  \Delta Call \\
+  \Xi ManagedAgent
 \where
   call \in \{ idle, ended, failed \} \\
   call' = connecting \\
@@ -111,20 +120,31 @@ operation has run or is in flight; \texttt{ran} those that finished.
 \texttt{Start} is refused from \emph{connecting} or \emph{live} (C1), and a
 new call gets a fresh cache.
 
-\begin{schema}{ManagedAgent}
-  registered : ZBOOL
-\end{schema}
-
-Registration can predate \texttt{InitCall}; a new daemon does not discard it.
-
-\begin{schema}{ProvisionAgent}
+\begin{schema}{BeginProvisionAgent}
   \Xi Call \\
   \Delta ManagedAgent
 \where
   call = connecting \\
   registered = zfalse \\
-  registered' = ztrue
+  provisioning = zfalse \\
+  registered' = registered \\
+  provisioning' = ztrue
 \end{schema}
+
+\begin{schema}{ProvisionAgent}
+  \Xi Call \\
+  \Delta ManagedAgent \\
+  success? : ZBOOL
+\where
+  provisioning = ztrue \\
+  registered' = success? \\
+  provisioning' = zfalse
+\end{schema}
+
+Cancellation stops the call's wait for the provisioning thread, not the
+thread itself. \texttt{ProvisionAgent} records whether registration succeeded,
+not whether the call connected, and may finish after hang-up without
+changing the call state.
 
 \begin{schema}{Connect}
   \Delta Call \\
@@ -141,6 +161,7 @@ Registration can predate \texttt{InitCall}; a new daemon does not discard it.
 
 \begin{schema}{End}
   \Delta Call \\
+  \Xi ManagedAgent \\
   failure? : ZBOOL
 \where
   call \in \{ connecting, live \} \\
@@ -161,7 +182,8 @@ admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
   \Delta ManagedAgent
 \where
   call \in \{ idle, ended, failed \} \\
-  registered' = zfalse
+  registered' = zfalse \\
+  provisioning' = provisioning
 \end{schema}
 
 \texttt{TeardownAgent} models success, including when nothing is registered.
