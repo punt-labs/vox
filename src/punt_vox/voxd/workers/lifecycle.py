@@ -48,11 +48,20 @@ class WorkerLifecycle:
             return record, False
         match self.probe(record, self._providers[record.provider]):
             case WorkerLiveness.ALIVE:
-                return self.report(record), True
+                return self._snapshot(record), True
             case WorkerLiveness.EXITED:
                 return record.retire(), False
             case WorkerLiveness.UNKNOWN:
                 return record, False
+
+    def _snapshot(self, record: WorkerRecord) -> WorkerRecord:
+        try:
+            return self.report(record)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            logger.warning(
+                "Worker %s progress unavailable (%s)", record.id, type(exc).__name__
+            )
+            return record
 
     @staticmethod
     def probe(record: WorkerRecord, provider: WorkerProvider) -> WorkerLiveness:

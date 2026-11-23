@@ -401,6 +401,41 @@ async def test_inconclusive_restart_does_not_reopen_active_hook_admission(
             assert socket.send_json.call_args.args[0]["admitted"] is True
 
 
+async def test_positive_liveness_restores_hooks_despite_progress_error(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    WorkerRecords(tmp_path / "workers").save(
+        replace(worker, provider="tmux", harness="claude")
+    )
+    request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "SessionStart",
+    }
+    store = HookContextStore()
+    socket = AsyncMock()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        await hooks.admit(request, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+        with patch.object(
+            FakeWorkerProvider, "progress", side_effect=OSError("unreadable progress")
+        ) as progress:
+            assert (await actor.workers())[0]["state"] == worker.state
+        progress.assert_called_once()
+        await hooks.admit(request, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is True
+
+
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     tmp_path: Path,
 ) -> None:
