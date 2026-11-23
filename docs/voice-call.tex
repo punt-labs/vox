@@ -500,4 +500,18 @@ failing, or cancelling the task releases only its own hold. A transport reset
   callHeld' = callHeld
 \end{schema}
 
+The pause-state effects of stopping and switching source are the same.
+
+\begin{schema}{ResetMusicTransport}
+  \Delta MusicPause
+\where
+  userPaused' = zfalse \\
+  callHeld' = callHeld
+\end{schema}
+
+\begin{zed}
+  MusicStop \defs ResetMusicTransport \\
+  MusicSwitchSource \defs ResetMusicTransport
+\end{zed}
+
 \end{document}
