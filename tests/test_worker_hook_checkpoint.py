@@ -360,8 +360,12 @@ async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
 @pytest.mark.parametrize(
     "sequence_field", ["worker_seq", "prompt_epoch", "result_seq", "goal_seq"]
 )
+@pytest.mark.parametrize("invalid", ["invalid", 999])
 async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
-    tmp_path: Path, sequence_field: str, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    sequence_field: str,
+    invalid: str | int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
@@ -380,7 +384,7 @@ async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
             provider="tmux",
             harness="claude",
             state="ready",
-            last_report={**checkpoint, sequence_field: "invalid"},
+            last_report={**checkpoint, sequence_field: invalid},
         )
     )
     after = HookContextStore()

@@ -48,5 +48,8 @@ class CheckpointOrdering:
             checkpoint["result_seq"],
             checkpoint["goal_seq"],
         )
-        if not all(type(seq) is int and seq >= 0 for seq in sequences):
+        if not all(
+            type(seq) is int and 0 <= seq <= checkpoint["gaps"]["highest_seen"]
+            for seq in sequences
+        ):
             raise ValueError("Invalid worker hook checkpoint ordering")
