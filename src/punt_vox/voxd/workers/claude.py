@@ -86,7 +86,6 @@ class ClaudeProfile:
 
     def cleanup(self, worktree: Path) -> None:
         """Remove the temporary trust flag, retaining work product."""
-        self._store.release_worker(worktree.parent.name)
         self._trust.update(worktree, accepted=False)
 
     # PY-TS-14: curated hook JSON is a snapshot; fields evolve with the hook source.

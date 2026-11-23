@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from threading import Lock
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
@@ -13,7 +14,8 @@ if TYPE_CHECKING:
 class HookSessions:
     """Pin managed contexts until their workers exit; bound all other contexts."""
 
-    __slots__ = ("_ordinary", "_workers")
+    __slots__ = ("_lock", "_ordinary", "_workers")
+    _lock: Lock
     _ordinary: OrderedDict[str, SessionContext]
     _workers: dict[str, SessionContext]
     LIMIT = 64
@@ -21,26 +23,33 @@ class HookSessions:
     def __new__(cls) -> Self:
         """Start with no live sessions in either retention group."""
         self = super().__new__(cls)
+        self._lock = Lock()
         self._ordinary = OrderedDict()
         self._workers = {}
         return self
 
     def get(self, session: str) -> SessionContext | None:
         """Look up a managed or ordinary session without refreshing its age."""
-        return self._workers.get(session) or self._ordinary.get(session)
+        with self._lock:
+            return self._workers.get(session) or self._ordinary.get(session)
 
     def remember(self, session: str, context: SessionContext, *, managed: bool) -> None:
         """Retain a context according to its lifetime."""
-        if managed:
-            self._ordinary.pop(session, None)
-            self._workers[session] = context
-        elif session not in self._workers:
-            self._ordinary[session] = context
-            self._ordinary.move_to_end(session)
-            if len(self._ordinary) > self.LIMIT:
-                self._ordinary.popitem(last=False)
+        with self._lock:
+            if managed:
+                self._ordinary.pop(session, None)
+                self._workers[session] = context
+            elif session not in self._workers:
+                self._remember_ordinary(session, context)
 
     def release(self, session: str) -> None:
         """Allow the context of a terminated worker to age out."""
-        if context := self._workers.pop(session, None):
-            self.remember(session, context, managed=False)
+        with self._lock:
+            if context := self._workers.pop(session, None):
+                self._remember_ordinary(session, context)
+
+    def _remember_ordinary(self, session: str, context: SessionContext) -> None:
+        self._ordinary[session] = context
+        self._ordinary.move_to_end(session)
+        if len(self._ordinary) > self.LIMIT:
+            self._ordinary.popitem(last=False)

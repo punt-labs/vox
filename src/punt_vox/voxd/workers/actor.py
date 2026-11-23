@@ -59,6 +59,8 @@ class WorkerActor:
         """Stop one worker; its worktree and branch are retained."""
         async with self._lock:
             record = await asyncio.to_thread(self._registry.stop, worker_id)
+            if self._store is not None:
+                self._store.release_worker(worker_id)
         return WorkerRecordCodec.public(record)
 
     def shutdown(self) -> None:

@@ -7,6 +7,7 @@ import io
 import json
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -579,6 +580,83 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         store.snapshot(worker.id)
 
 
+async def test_retirement_does_not_evict_context_during_late_session_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    store = HookContextStore()
+    base = {"session_id": worker.id, "cwd": worker.worktree}
+    store.ingest(
+        {
+            **base,
+            "hook_event_name": "Stop",
+            "relay_seq": 1,
+            "last_assistant_message": "Saved result.",
+        },
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
+    )
+    release, cleaned = Event(), Event()
+    restore, cleanup = HookContextStore.restore, ClaudeProfile.cleanup
+
+    def finish_cleanup(profile: ClaudeProfile, path: Path) -> None:
+        assert release.wait(3)
+        try:
+            cleanup(profile, path)
+        finally:
+            cleaned.set()
+
+    def restore_and_churn(
+        context: HookContextStore, session: str, saved: WorkerHookCheckpoint | None
+    ) -> None:
+        restore(context, session, saved)
+        release.set()
+        assert cleaned.wait(1)
+        for index in range(65):
+            context.ingest(
+                {
+                    "session_id": f"ordinary-{index}",
+                    "hook_event_name": "SessionStart",
+                    "relay_seq": 1,
+                }
+            )
+
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(
+            ClaudeProfile, "cleanup", autospec=True, side_effect=finish_cleanup
+        ),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        try:
+            provider.alive = False
+            assert (await actor.workers())[0]["state"] == "exited"
+            with patch.object(
+                HookContextStore,
+                "restore",
+                autospec=True,
+                side_effect=restore_and_churn,
+            ):
+                await actor.hooks(store).ingest(
+                    {**base, "hook_event_name": "SessionEnd", "relay_seq": 2},
+                    worker_only=True,
+                )
+        finally:
+            release.set()
+            actor.shutdown()
+    assert records.load()[0].last_report["last_assistant_message"] == "Saved result."
+
+
 async def test_first_worker_completion_after_exit_ignores_ordinary_context(
     tmp_path: Path,
 ) -> None:
@@ -730,18 +808,25 @@ def test_restore_keeps_managed_sessions_outside_ordinary_cache() -> None:
     assert restarted.snapshot("original")["session_started"]
 
 
-def test_failed_trust_cleanup_still_releases_terminal_context(
+async def test_failed_trust_cleanup_still_releases_terminal_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     (tmp_path / ".claude.json").write_text("not valid JSON")
     store = HookContextStore()
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
     store.ingest(
-        {"session_id": "original", "hook_event_name": "SessionStart", "relay_seq": 1},
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
         worker_input=True,
     )
-    with pytest.raises(ValueError):
-        ClaudeProfile(store).cleanup(tmp_path / "original" / "worktree")
+    with patch.object(
+        TrivialProfile, "cleanup", side_effect=ClaudeProfile(store).cleanup
+    ):
+        assert (await WorkerActor(registry, store).stop(worker.id))[
+            "state"
+        ] == "stopped"
+    assert registry.list()[0].last_report["cleanup_error"] == "JSONDecodeError"
     for index in range(65):
         store.ingest(
             {
@@ -751,7 +836,7 @@ def test_failed_trust_cleanup_still_releases_terminal_context(
             }
         )
     with pytest.raises(ValueError, match="no hook context"):
-        store.snapshot("original")
+        store.snapshot(worker.id)
 
 
 def test_hook_sender_does_not_open_the_worker_registry(tmp_path: Path) -> None:
