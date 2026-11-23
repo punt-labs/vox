@@ -14,7 +14,7 @@ snapshot, not a hook history. Pending cleanup is orthogonal to process lifecycle
 a failed cleanup is durable and retried even when the lifecycle is terminal.
 
 \begin{zed}
-  [WORKER, REPORT] \\
+  [WORKER, REPORT, RESULT] \\
   Phase ::= starting | ready | exited | stopped \\
   Event ::= sessionStart | update | stopHook | sessionEndHook
 \end{zed}
@@ -90,20 +90,29 @@ SessionStart. Missing hook-store state and provider unavailability are no-ops;
 neither supplies a fresh report nor a new liveness fact.
 
 \begin{axdef}
-  mergeTerminal : REPORT \cross Event \cross REPORT \fun REPORT
+  mergeTerminal : REPORT \cross Event \cross \nat \cross REPORT \fun REPORT \\
+  result : REPORT \fun RESULT \\
+  resultSequence : RESULT \fun \nat
+\where
+  \forall saved, delivered : REPORT; seq : \nat @
+    result~(mergeTerminal(saved, sessionEndHook, seq, delivered)) = result~saved \\
+  \forall saved, delivered : REPORT; seq : \nat |
+    seq < resultSequence~(result~saved) @
+    result~(mergeTerminal(saved, stopHook, seq, delivered)) = result~saved
 \end{axdef}
 
 \begin{schema}{ObserveExitedReport}
   \Delta Workers \\
   worker? : WORKER \\
   event? : Event \\
+  sequence? : \nat \\
   delivered? : REPORT
 \where
   worker? \in \dom phase \\
   phase~worker? = exited \\
   event? \in \{stopHook, sessionEndHook\} \\
   report' = report \oplus
-    \{worker? \mapsto mergeTerminal(report~worker?, event?, delivered?)\} \\
+    \{worker? \mapsto mergeTerminal(report~worker?, event?, sequence?, delivered?)\} \\
   phase' = phase \\
   readySeen' = readySeen \\
   pending' = pending
