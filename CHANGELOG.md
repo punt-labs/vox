@@ -24,9 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `vox daemon status` reports `unknown` with "invalid UTF-8" when
-  `serve.port` holds bytes that are not UTF-8, instead of a traceback;
-  install and uninstall fail with the same message. (PL-1189)
+- A `serve.port` holding bytes that are not UTF-8 no longer crashes vox
+  with a traceback where it reads the file: `vox daemon status` (with no
+  voxd on the service port) reports `unknown` with "invalid UTF-8", and
+  `vox daemon install`, or `uninstall` when it stopped no voxd, fails with
+  that message. (PL-1189)
 
 ### Added
 
