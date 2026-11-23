@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import replace
+from enum import Enum, auto
 from pathlib import Path
 from typing import Self, final
 
@@ -12,6 +13,12 @@ from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
 from punt_vox.voxd.workers.model import WorkerRecord
 
 logger = logging.getLogger(__name__)
+
+
+class _Liveness(Enum):
+    ALIVE = auto()
+    EXITED = auto()
+    UNKNOWN = auto()
 
 
 @final
@@ -37,17 +44,21 @@ class WorkerLifecycle:
             or "launch_error" in record.last_report
         ):
             return record
-        alive = self._alive(record)
-        if alive is None:
-            return record
-        return self.report(record) if alive else record.retire()
+        match self._liveness(record):
+            case _Liveness.ALIVE:
+                return self.report(record)
+            case _Liveness.EXITED:
+                return record.retire()
+            case _Liveness.UNKNOWN:
+                return record
 
-    def _alive(self, record: WorkerRecord) -> bool | None:
+    def _liveness(self, record: WorkerRecord) -> _Liveness:
         try:
-            return self._providers[record.provider].status(record.session)
+            alive = self._providers[record.provider].status(record.session)
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             logger.warning("Worker provider unavailable (%s)", type(exc).__name__)
-            return None
+            return _Liveness.UNKNOWN
+        return _Liveness.ALIVE if alive else _Liveness.EXITED
 
     def report(self, record: WorkerRecord) -> WorkerRecord:
         """Replace a fresh snapshot without regressing a previously ready phase."""
@@ -110,7 +121,10 @@ class WorkerLifecycle:
                 if {"cleanup_error", "cleanup_pending"} & record.last_report.keys()
                 else record
             )
-        dead = "launch_error" not in record.last_report and self._alive(record) is False
+        dead = (
+            "launch_error" not in record.last_report
+            and self._liveness(record) is _Liveness.EXITED
+        )
         self._providers[record.provider].stop(record.session)
         return self._cleanup(
             replace(
