@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
@@ -14,7 +15,8 @@ from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
-    from contextlib import ExitStack
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager, ExitStack
 
     from starlette.websockets import WebSocket
 
@@ -35,6 +37,8 @@ class WorkerContext:
         playback: PlaybackQueue,
         lifetime: ExitStack
         | None = None,  # PY-TS-14: standalone handlers lack a lifespan.
+        *,
+        hold_music: Callable[[], AbstractContextManager[None]] = nullcontext,
     ) -> dict[str, MessageHandler]:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
@@ -49,7 +53,9 @@ class WorkerContext:
         events = ProgressEvents()
         return {
             **WorkerHandlers(actor).handlers(store, events),
-            **CallHandlers(actor, policy, playback, progress=events).handlers(),
+            **CallHandlers(
+                actor, policy, playback, progress=events, hold_music=hold_music
+            ).handlers(),
         }
 
     @staticmethod

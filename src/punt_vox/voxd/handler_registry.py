@@ -86,6 +86,10 @@ class HandlerRegistry:
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
             "provider_status": ProviderStatusHandler(),
-            **WorkerContext.handlers(self._playback, lifetime),
+            **WorkerContext.handlers(
+                self._playback,
+                lifetime,
+                hold_music=self._programs.service.hold_music_for_call,
+            ),
             **self._programs.handlers(),
         }

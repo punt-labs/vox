@@ -466,4 +466,52 @@ its bounded queue; the cut filters duplicates among events that remain queued.
   established? = zfalse \implies departed' = departed \land cursor' = cursor
 \end{schema}
 
+\section{Music suspension}
+
+The call task holds music from before dialing through audio cleanup. Finishing,
+failing, or cancelling the task releases only its own hold. A transport reset
+(stop or source switch) clears the user's pause, not the call's hold.
+
+\begin{schema}{MusicPause}
+  userPaused, callHeld, paused : ZBOOL
+\where
+  paused = ztrue \iff (userPaused = ztrue \lor callHeld = ztrue)
+\end{schema}
+
+\begin{schema}{HoldMusic}
+  \Delta MusicPause
+\where
+  callHeld = zfalse \land callHeld' = ztrue \\
+  userPaused' = userPaused
+\end{schema}
+
+\begin{schema}{ReleaseMusic}
+  \Delta MusicPause
+\where
+  callHeld = ztrue \land callHeld' = zfalse \\
+  userPaused' = userPaused
+\end{schema}
+
+\begin{schema}{SetUserPause}
+  \Delta MusicPause \\
+  userPause? : ZBOOL
+\where
+  userPaused' = userPause? \\
+  callHeld' = callHeld
+\end{schema}
+
+The pause-state effects of stopping and switching source are the same.
+
+\begin{schema}{ResetMusicTransport}
+  \Delta MusicPause
+\where
+  userPaused' = zfalse \\
+  callHeld' = callHeld
+\end{schema}
+
+\begin{zed}
+  MusicStop \defs ResetMusicTransport \\
+  MusicSwitchSource \defs ResetMusicTransport
+\end{zed}
+
 \end{document}

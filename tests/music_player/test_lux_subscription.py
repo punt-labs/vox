@@ -72,7 +72,7 @@ class _FakeCommands:
     def catalog_albums(self) -> tuple[Album, ...]:
         return self._catalog
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
         return ProgramStatus.idle()
 
     def replay_album(self, album_id: AlbumId) -> None:
@@ -720,7 +720,7 @@ async def test_on_event_surfaces_a_playback_refusal_to_the_scene(
         def catalog_albums(self) -> tuple[Album, ...]:
             return (album,)
 
-        def status(self) -> ProgramStatus:
+        def status(self, *, user_pause_only: bool) -> ProgramStatus:
             return ProgramStatus.idle()
 
         def replay_album(self, album_id: AlbumId) -> None:
@@ -758,7 +758,7 @@ async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
         def catalog_albums(self) -> tuple[Album, ...]:
             return ()
 
-        def status(self) -> ProgramStatus:
+        def status(self, *, user_pause_only: bool) -> ProgramStatus:
             return ProgramStatus.idle()
 
         def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover
@@ -803,7 +803,7 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
         def catalog_albums(self) -> tuple[Album, ...]:
             return (album,)
 
-        def status(self) -> ProgramStatus:
+        def status(self, *, user_pause_only: bool) -> ProgramStatus:
             return ProgramStatus.idle()
 
         def replay_album(self, album_id: AlbumId) -> None:
