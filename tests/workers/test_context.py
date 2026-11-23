@@ -19,6 +19,7 @@ from punt_vox.voxd.workers.wiring import WorkerSubsystem
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
     from starlette.applications import Starlette
 
 
@@ -36,6 +37,37 @@ def _rpc_health(app: Starlette) -> None:
         websocket.send_json({"type": "health", "id": "health"})
         response = websocket.receive_json()
     assert response["type"] == response["id"] == "health"
+
+
+def test_worker_recovery_failure_keeps_health_playback_and_ordinary_hooks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with patch.object(WorkerRecords, "load", side_effect=OSError("disk unavailable")):
+        app = build_app()
+    _rpc_health(app)
+    with TestClient(app).websocket_connect("/ws") as websocket:
+        for request, expected in (
+            ({"type": "program_status"}, "program_status"),
+            (
+                {
+                    "type": "hook_event",
+                    "payload": {
+                        "session_id": "ordinary",
+                        "hook_event_name": "SessionStart",
+                        "relay_seq": 1,
+                    },
+                },
+                "hook_event_accepted",
+            ),
+            ({"type": "worker_list"}, "error"),
+            ({"type": "worker_hook_admission"}, "error"),
+        ):
+            websocket.send_json({"id": "test", **request})
+            response = websocket.receive_json()
+            assert response["type"] == expected
+            if expected == "error":
+                assert "Worker startup recovery failed" in response["message"]
+    assert "Worker startup recovery failed" in caplog.text
 
 
 async def test_daemon_starts_within_budget_despite_multiple_stalled_probes(

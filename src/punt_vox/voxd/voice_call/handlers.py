@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import user_state_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
@@ -81,6 +81,12 @@ class CallHandlers:
     _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
     _opener: Opener
+    ROUTES: ClassVar[tuple[str, ...]] = (
+        "call_start",
+        "call_stop",
+        "call_status",
+        "call_teardown",
+    )
 
     def __new__(
         cls,
@@ -108,9 +114,7 @@ class CallHandlers:
 
     def handlers(self) -> dict[str, MessageHandler]:
         """Expose the call lifecycle RPCs."""
-        return dict.fromkeys(
-            ("call_start", "call_stop", "call_status", "call_teardown"), self.handle
-        )
+        return dict.fromkeys(self.ROUTES, self.handle)
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Answer one lifecycle RPC with the call's status."""
