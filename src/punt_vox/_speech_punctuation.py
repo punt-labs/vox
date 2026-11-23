@@ -25,12 +25,6 @@ _LEADING_NON_SPEECH_RE = re.compile(
     rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
     r"[^\w~/.])+"
 )
-_WRAPPED_CURRENCY_RE = re.compile(
-    rf"[^\w~/.`\\]*(?P<ticks>`+){_CURRENCY_AMOUNT.pattern}(?P=ticks)(?!`)(?P<suffix>[\W_]*)"
-)
-_NUMERIC_CODE_PREFIX_RE = re.compile(
-    rf"^(?P<ticks>`+)(?P<label>\d+)(?P=ticks)(?={_CURRENCY_AMOUNT.pattern}[\W_]*$)"
-)
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 
@@ -46,21 +40,9 @@ class SpeechPunctuation:
         (``~/._``), a numeric minus, and signed or unsigned currency amounts.
         Trailing non-prosody symbols are discarded to avoid synthesis artifacts.
         """
-        label = _NUMERIC_CODE_PREFIX_RE.match(token)
-        prefix = ""
-        if label:
-            prefix, token = f"{label['label']} ", token[label.end() :]
-        core, raw_suffix = cls._split_trailing(cls._strip_leading(token))
+        core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
         suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-        return prefix + cls._spell_currency(core), suffix
-
-    @staticmethod
-    def _strip_leading(token: str) -> str:
-        wrapped = _WRAPPED_CURRENCY_RE.fullmatch(token)
-        if wrapped:
-            sign = (wrapped["sign_after"] or "").lstrip("+")
-            return f"{sign}{wrapped['amount']}{wrapped['suffix']}"
-        return _LEADING_NON_SPEECH_RE.sub("", token)
+        return cls._spell_currency(core), suffix
 
     @staticmethod
     def _spell_currency(core: str) -> str:
