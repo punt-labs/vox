@@ -343,6 +343,29 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
+            (
+                "Use ``printf ` $1 $2`` then pay -$5",
+                "Use printf dollar sign 1 dollar sign 2 then pay minus 5 dollars",
+            ),
+            ("Use (`$1`), not $1", "Use dollar sign 1, not 1 dollar"),
+            ("Use `_-$5._`, not -$5", "Use minus dollar sign 5., not minus 5 dollars"),
+            ("Use `arg\n$1` then pay $5", "Use arg dollar sign 1 then pay 5 dollars"),
+            (r"Use \ `$1\` then pay -$5", "Use dollar sign 1 then pay minus 5 dollars"),
+            (r"Use \`$1\` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ``$1` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ` here\n\nPay -$5 there `", "Use here Pay minus 5 dollars there"),
+        ],
+    )
+    def test_currency_bypassed_only_inside_code_spans(
+        self, text: str, expected: str
+    ) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             ("-5", "-5"),
             ("temperature (-2.5 C)", "temperature -2.5 C"),
             ("delta [\u22123.5],", "delta \u22123.5,"),

@@ -21,6 +21,9 @@ _CURRENCY_AMOUNT = re.compile(
     r"(?(sign_before)|(?P<sign_after>[-+\u2212])?)"
     r"(?P<amount>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
 )
+_CODE_CURRENCY_AMOUNT = re.compile(
+    rf"(?<![^\W_]){_CURRENCY_AMOUNT.pattern}(?=_*(?!\w|[.,]\d))"
+)
 _LEADING_NON_SPEECH_RE = re.compile(
     rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
     r"[^\w~/.])+"
@@ -43,6 +46,20 @@ class SpeechPunctuation:
         core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
         suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
         return cls._spell_currency(core), suffix
+
+    @classmethod
+    def spell_code_currency(cls, text: str) -> str:
+        """Say a code currency symbol literally rather than as a monetary unit."""
+        return _CODE_CURRENCY_AMOUNT.sub(cls._spell_code_symbol, text)
+
+    @staticmethod
+    def _spell_code_symbol(match: re.Match[str]) -> str:
+        symbol, amount = match.group("symbol", "amount")
+        before, after = match.group("sign_before", "sign_after")
+        unit, _ = _CURRENCY_UNITS[symbol]
+        return (
+            f"{_SIGN_WORDS[before or '']}{unit} sign {_SIGN_WORDS[after or '']}{amount}"
+        )
 
     @staticmethod
     def _spell_currency(core: str) -> str:

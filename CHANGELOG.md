@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak inline-code amounts such as `$1` literally without changing prose
+  prices. (PL-1413)
+
 - `vox call stop` and foreground hangup no longer stop a replacement call
   that started after the original call ended. (PL-1380)
 

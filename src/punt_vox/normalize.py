@@ -9,49 +9,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import final
 
+from punt_vox._inline_code import InlineCode
+from punt_vox._speech_abbreviations import SpeechAbbreviations
 from punt_vox._speech_punctuation import SpeechPunctuation
-
-# ---------------------------------------------------------------------------
-# Abbreviation dictionary — whole-word expansions
-# ---------------------------------------------------------------------------
-
-_ABBREVIATIONS: dict[str, str] = {
-    # Programmer terms
-    "stderr": "standard error",
-    "stdout": "standard output",
-    "stdin": "standard input",
-    "eof": "E O F",
-    "env": "environment",
-    "dir": "directory",
-    "config": "configuration",
-    "args": "arguments",
-    "params": "parameters",
-    "auth": "authentication",
-    "repo": "repository",
-    "src": "source",
-    "tmp": "temporary",
-    "deps": "dependencies",
-    "impl": "implementation",
-    "init": "initialize",
-    "ctx": "context",
-    # Internet slang
-    "lol": "laughing out loud",
-    "rofl": "rolling on the floor laughing",
-    "lmao": "laughing my ass off",
-    "lmfao": "laughing my head off",
-    "smh": "shaking my head",
-    "tbh": "to be honest",
-    "imo": "in my opinion",
-    "imho": "in my humble opinion",
-    "fwiw": "for what it's worth",
-    "afaik": "as far as I know",
-    "brb": "be right back",
-    "ttyl": "talk to you later",
-    "ftw": "for the win",
-    "omg": "oh my god",
-    "wtf": "what the heck",
-}
 
 # ---------------------------------------------------------------------------
 # Pronounceable acronyms — TTS engines handle these as words
@@ -561,7 +523,7 @@ def normalize_for_speech(text: str) -> str:
 
     Transforms applied per token (whitespace-delimited):
 
-    1. **Currency amounts** — spoken with their sign and currency unit.
+    1. **Currency amounts** — spoken as money in prose and literally in code.
     2. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
     3. **snake_case** — underscores replaced with spaces, parts processed
        individually for abbreviation expansion.
@@ -570,7 +532,41 @@ def normalize_for_speech(text: str) -> str:
 
     Idempotent: running twice produces the same result.
     """
-    return " ".join(filter(None, map(_normalize_token, text.split())))
+    return SpeechText.normalize(text)
+
+
+@final
+class SpeechText:
+    """Normalize raw speech text without losing inline code context."""
+
+    @classmethod
+    def normalize(cls, text: str) -> str:
+        """Normalize text without interpreting expressive tags."""
+        return cls._words(
+            InlineCode.rewrite(text, SpeechPunctuation.spell_code_currency)
+        )
+
+    @classmethod
+    def for_synthesis(cls, text: str, *, expressive: bool) -> str:
+        """Normalize text, retaining expressive tags only for supported models."""
+        prepared = InlineCode.rewrite(text, SpeechPunctuation.spell_code_currency)
+        if not expressive:
+            return cls._words(VIBE_TAG_RE.sub("", prepared))
+        return " ".join(filter(None, cls._expressive_parts(prepared)))
+
+    @classmethod
+    def _expressive_parts(cls, text: str) -> list[str]:
+        parts: list[str] = []
+        cursor = 0
+        for tag in VIBE_TAG_RE.finditer(text):
+            parts.extend((cls._words(text[cursor : tag.start()]), tag[0]))
+            cursor = tag.end()
+        parts.append(cls._words(text[cursor:]))
+        return parts
+
+    @staticmethod
+    def _words(text: str) -> str:
+        return " ".join(filter(None, map(_normalize_token, text.split())))
 
 
 def _normalize_token(token: str) -> str:
@@ -587,12 +583,12 @@ def _normalize_token(token: str) -> str:
     parts = _CAMEL_BOUNDARY.split(core)
     if len(parts) > 1:
         return _expand_parts(parts) + suffix
-    return _ABBREVIATIONS.get(core.lower(), _space_acronym(core)) + suffix
+    return (SpeechAbbreviations.expand(core) or _space_acronym(core)) + suffix
 
 
 def _expand_snake_part(part: str) -> str:
     """Look up the whole snake_case part before splitting it further."""
-    return _ABBREVIATIONS.get(part.lower()) or _expand_parts(
+    return SpeechAbbreviations.expand(part) or _expand_parts(
         _CAMEL_BOUNDARY.split(part)
     )
 
@@ -604,7 +600,7 @@ def _expand_parts(parts: list[str]) -> str:
 
 def _expand_part(part: str) -> str:
     """Expand a single sub-token after identifier splitting."""
-    expanded = _ABBREVIATIONS.get(part.lower())
+    expanded = SpeechAbbreviations.expand(part)
     if expanded:
         return expanded
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
