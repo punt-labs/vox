@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -41,20 +42,42 @@ def test_corrupt_cursor_is_rewritten_on_save(
     assert json.loads(path.read_text()) == {"worker": 3}
 
 
-def test_non_regular_cursor_is_not_opened_or_replaced(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_fifo_cursor_is_not_read_or_replaced(tmp_path: Path) -> None:
     path = tmp_path / "departure.json"
     os.mkfifo(path)
-    cursor = DepartureCursor(path)
+    data = b'{"worker": 99}'
+    reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_NONBLOCK), "wb") as writer:
+            writer.write(data)
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+from pathlib import Path
+import sys
+from punt_vox.voxd.voice_call.departure_cursor import DepartureCursor
 
-    with patch.object(Path, "read_text", side_effect=AssertionError("opened FIFO")):
-        assert not cursor.load([("worker", 3)])
+cursor = DepartureCursor(Path(sys.argv[1]))
+assert not cursor.load([("worker", 3)])
+assert cursor.sequence("worker") == 3
+""",
+                str(path),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+        assert probe.returncode == 0, probe.stderr
+        assert "Ignoring invalid call departure cursor" in probe.stderr
+        assert os.read(reader, len(data)) == data
+    finally:
+        os.close(reader)
 
-    assert cursor.sequence("worker") == 3
-    assert "Ignoring invalid call departure cursor" in caplog.text
     with pytest.raises(ValueError, match="not a regular file"):
-        cursor.save({})
+        DepartureCursor(path).save({})
     assert stat.S_ISFIFO(path.stat().st_mode)
 
 

@@ -61,17 +61,12 @@ class DepartureCursor:
         if not stat.S_ISREG(mode):
             raise ValueError("Call departure cursor is not a regular file")
 
-    def _read_text(self) -> str:
-        path = self._file.path
-        self._require_regular(path.stat().st_mode)
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-        with os.fdopen(fd, encoding="utf-8") as stream:
-            self._require_regular(os.fstat(stream.fileno()).st_mode)
-            return stream.read()
-
     def _read(self) -> dict[str, int] | None:
         try:
-            cursor: object = json.loads(self._read_text())
+            fd = os.open(self._file.path, os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, encoding="utf-8") as stream:
+                self._require_regular(os.fstat(stream.fileno()).st_mode)
+                cursor: object = json.load(stream)
             if isinstance(cursor, dict) and all(
                 type(seq) is int and seq >= 0
                 for seq in cast("dict[str, object]", cursor).values()
