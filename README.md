@@ -671,8 +671,6 @@ memory. Sequence gaps report what this snapshot has not seen, not
 necessarily a lost hook. Credential-shaped keys are redacted, but
 free-form text is not scrubbed.
 
-**Limits on the agent.** It runs with only the `read`, `grep`, `find`, and `ls` tools; no extensions, skills, MCP servers, or repository context files; and an environment reduced to `PATH`, `HOME`, and locale and terminal variables, with no API keys or tokens from your shell. vox checks every tool call before it runs and refuses any path outside the repository, inside `.git/`, matching a secret pattern (`.env*`, keys, credential files, `.git-credentials`), or ignored by git (every `.gitignore`, `.git/info/exclude`, and your global excludes, as reported by git). A directory search is refused if it would read any refused file. Text that looks like a secret is removed from the spoken reply and the saved summary.
-
 ## Architecture
 
 ```text
