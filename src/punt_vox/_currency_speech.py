@@ -44,7 +44,7 @@ class CurrencySpeech:
     @staticmethod
     def prose_pattern(text: str) -> re.Pattern[str]:
         """Build the prose grammar with any combining marks present in *text*."""
-        marks = (
+        marks: set[str] = (
             {char for char in text if unicodedata.category(char).startswith("M")}
             if not text.isascii()
             else set()
