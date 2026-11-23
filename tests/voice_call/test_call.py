@@ -782,7 +782,10 @@ async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None
     ]
 
 
-async def test_stale_stop_does_not_hang_up_the_replacement_call(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_route", ["call_stop", "call_stop_scoped"])
+async def test_stale_stop_does_not_hang_up_the_replacement_call(
+    tmp_path: Path, stop_route: str
+) -> None:
     async def peer(socket: ServerConnection) -> None:
         await socket.recv()
         await socket.send(json.dumps(_METADATA))
@@ -810,14 +813,17 @@ async def test_stale_stop_does_not_hang_up_the_replacement_call(tmp_path: Path) 
         await _rpc(handlers, {"type": "call_stop"})
         second = await _rpc(handlers, start)
         try:
-            stale = await _rpc(handlers, {"type": "call_stop", "call_id": first_id})
+            stale = await _rpc(handlers, {"type": stop_route, "call_id": first_id})
             current = await _rpc(handlers, {"type": "call_status"})
             assert cast("dict[str, object]", current["result"])["state"] == "live"
             assert stale["message"] == "the requested call is no longer current"
             assert current == second
             assert cast("dict[str, object]", first["result"])["call_id"] == first_id
-            malformed = await _rpc(handlers, {"type": "call_stop", "call_id": None})
-            assert malformed["type"] == "error"
+            for invalid_id in (None, "not-a-uuid"):
+                malformed = await _rpc(
+                    handlers, {"type": stop_route, "call_id": invalid_id}
+                )
+                assert malformed["message"] == "call_id must be a UUID string"
             missing = await _rpc(handlers, {"type": "call_stop_scoped"})
             assert missing["message"] == "call_id is required for a scoped request"
             assert await _rpc(handlers, {"type": "call_status"}) == second
