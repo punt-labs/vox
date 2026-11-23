@@ -29,7 +29,7 @@ While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names ten properties:
+The model names eleven properties:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -62,12 +62,15 @@ The model names ten properties:
     calls without a headset or external AEC declaration are refused before
     provisioning; scripted calls do not open the microphone
     (\texttt{test\_mic\_call\_without\_echo\_protection\_does\_not\_dial}).
+  \item[C11] \emph{A named stop affects only that call}: a stop naming a
+    previous call leaves its replacement unchanged
+    (\texttt{test\_stale\_stop\_does\_not\_hang\_up\_the\_replacement\_call}).
 \end{enumerate}
 
 \section{Types}
 
 \begin{zed}
-  [KEY] \\
+  [KEY, CALLID] \\
   CALL ::= idle | connecting | live | ended | failed \\
   INPUT ::= scripted | headset | externalAEC | openSpeakers \\
   ZBOOL ::= ztrue | zfalse
@@ -80,27 +83,37 @@ The model names ten properties:
 \begin{schema}{Call}
   call : CALL \\
   holding, replying, settled : ZBOOL \\
-  durable, ran : \power KEY
+  durable, ran : \power KEY \\
+  current, issued : \power CALLID
 \where
   (call \in \{ idle, connecting \} \lor settled = ztrue) \implies holding = zfalse \\
   call = idle \implies settled = ztrue \\
   call \in \{ connecting, live \} \implies settled = zfalse \\
   replying = ztrue \implies holding = ztrue \\
-  ran \subseteq durable
+  ran \subseteq durable \\
+  current \subseteq issued \\
+  call = idle \implies current = \emptyset \\
+  call \neq idle \implies \# current = 1
 \end{schema}
+
+Here \texttt{current} retains the last call's ID even after it ends, and
+\texttt{issued} models the IDs reserved by the call trace store.
 
 The first predicate is C5. \texttt{durable} is the set of durable keys whose
 operation has run or is in flight; \texttt{ran} those that finished.
 
 \begin{schema}{InitCall}
-  Call'
+  Call' \\
+  savedIds? : \power CALLID
 \where
   call' = idle \\
   holding' = zfalse \\
   replying' = zfalse \\
   settled' = ztrue \\
   durable' = \emptyset \\
-  ran' = \emptyset
+  ran' = \emptyset \\
+  current' = \emptyset \\
+  issued' = savedIds?
 \end{schema}
 
 \section{Lifecycle}
@@ -129,17 +142,21 @@ cleans the partial record first, under the same registration lock.
 \begin{schema}{Start}
   \Delta Call \\
   \Xi ManagedAgent \\
-  input? : INPUT
+  input? : INPUT \\
+  id? : CALLID
 \where
   call \in \{ idle, ended, failed \} \\
   settled = ztrue \\
   input? \neq openSpeakers \\
+  id? \notin issued \\
   call' = connecting \\
   settled' = zfalse \\
   holding' = zfalse \\
   replying' = zfalse \\
   durable' = \emptyset \\
-  ran' = \emptyset
+  ran' = \emptyset \\
+  current' = \{ id? \} \\
+  issued' = issued \cup current'
 \end{schema}
 
 \texttt{Start} is refused until the prior call task has finished (C1).
@@ -174,7 +191,9 @@ task leaves the previous call unchanged.
   holding' = holding \\
   replying' = replying \\
   durable' = durable \\
-  ran' = ran
+  ran' = ran \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 Cancellation stops the call's wait for the provisioning thread, not the
@@ -196,7 +215,9 @@ without changing any call state, including that of a later call.
   holding' = holding \\
   replying' = replying \\
   durable' = durable \\
-  ran' = ran
+  ran' = ran \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 Acceptance here includes validating or provisioning the registration,
@@ -223,6 +244,8 @@ status replies.
   replying' = zfalse \\
   durable' = durable \\
   ran' = ran \\
+  current' = current \\
+  issued' = issued \\
   registered' = registered \\
   provisioning' = provisioning \\
   awaitingProvision' = zfalse
@@ -233,6 +256,29 @@ admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
 \emph{failed} except a new \texttt{Start}, which is C3. Terminal status
 can be visible before the call task has finished its cleanup, including
 draining the final reply after a remote hang-up.
+
+\begin{schema}{StopNamed}
+  End \\
+  id? : CALLID
+\where
+  id? \in current \\
+  failure? = zfalse \\
+  draining? = zfalse
+\end{schema}
+
+\begin{schema}{RejectStaleStop}
+  \Xi Call \\
+  \Xi ManagedAgent \\
+  id? : CALLID
+\where
+  current \neq \emptyset \\
+  id? \notin current
+\end{schema}
+
+A named stop checks identity before cancellation, under the same lock as
+\texttt{Start}. A mismatch leaves the call unchanged (C11); with no call,
+there is nothing to cancel. A stop without an ID explicitly targets the
+current call.
 
 \begin{schema}{SettleCall}
   \Delta Call \\
@@ -245,7 +291,9 @@ draining the final reply after a remote hang-up.
   holding' = zfalse \\
   replying' = zfalse \\
   durable' = durable \\
-  ran' = ran
+  ran' = ran \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 \begin{schema}{TeardownAgent}
@@ -301,7 +349,9 @@ touches workers or the departure cursor.
   call' = call \\
   settled' = settled \\
   durable' = durable \\
-  ran' = ran
+  ran' = ran \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 \begin{schema}{Interrupt}
@@ -313,7 +363,9 @@ touches workers or the departure cursor.
   call' = call \\
   settled' = settled \\
   durable' = durable \\
-  ran' = ran
+  ran' = ran \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 \texttt{Interrupt} leaves \texttt{holding} as it was: C4.
@@ -331,7 +383,9 @@ touches workers or the departure cursor.
   call' = call \\
   settled' = settled \\
   holding' = holding \\
-  replying' = replying
+  replying' = replying \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 \begin{schema}{Replay}
@@ -352,7 +406,9 @@ touches workers or the departure cursor.
   call' = call \\
   settled' = settled \\
   holding' = holding \\
-  replying' = replying
+  replying' = replying \\
+  current' = current \\
+  issued' = issued
 \end{schema}
 
 A key enters \texttt{durable} only through \texttt{RunDurable}, whose
