@@ -106,7 +106,7 @@ class Frontmatter:
             logger.warning("Malformed config (no closing ---): %s", self._path)
             written = FrontmatterBlock.rendered(updates)
 
-        self._path.write_text(written.text, encoding="utf-8")
+        self._path.write_text(written.text, encoding="utf-8", newline="")
         self._log_write(updates)
 
     def _log_write(self, updates: dict[str, str]) -> None:
@@ -123,7 +123,7 @@ class Frontmatter:
 
     def _read_block(self) -> FrontmatterBlock:
         """Parse the file as UTF-8, propagating I/O and decode errors."""
-        return FrontmatterBlock(self._path.read_text(encoding="utf-8"))
+        return FrontmatterBlock(self._path.read_text(encoding="utf-8", newline=""))
 
     def _readable_block(self) -> FrontmatterBlock | None:
         """Return the file's frontmatter, or ``None`` if absent or unreadable.
