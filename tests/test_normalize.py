@@ -385,6 +385,9 @@ class TestSymbolStripping:
                 "Use here Pay minus 5 dollars there",
             ),
             ("Use `/tmp/$1`", "Use /tmp/$1"),
+            ("Use `../prices/$5`", "Use ../prices/$5"),
+            ("Use `./price reports/$5`", "Use ./price reports/$5"),
+            ("Use `./price $5`", "Use ./price dollar sign 5"),
             (
                 "Use ` here\nTitle\n=====\nPay -$5 there `",
                 "Use here Title Pay minus 5 dollars there",
