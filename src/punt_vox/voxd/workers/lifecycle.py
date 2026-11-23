@@ -36,17 +36,18 @@ class WorkerLifecycle:
             record.state in ("stopped", "exited")
             or "launch_error" in record.last_report
         ):
-            return self.stop(record)
-        provider = self._providers[record.provider]
+            return record
+        alive = self._alive(record)
+        if alive is None:
+            return record
+        return self.report(record) if alive else record.retire()
+
+    def _alive(self, record: WorkerRecord) -> bool | None:
         try:
-            alive = provider.status(record.session)
+            return self._providers[record.provider].status(record.session)
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             logger.warning("Worker provider unavailable (%s)", type(exc).__name__)
-            return record
-        if not alive:
-            provider.stop(record.session)
-            return self._cleanup(replace(record, state="exited"))
-        return self.report(record)
+            return None
 
     def report(self, record: WorkerRecord) -> WorkerRecord:
         """Replace a fresh snapshot without regressing a previously ready phase."""
@@ -109,11 +110,12 @@ class WorkerLifecycle:
                 if {"cleanup_error", "cleanup_pending"} & record.last_report.keys()
                 else record
             )
+        dead = "launch_error" not in record.last_report and self._alive(record) is False
         self._providers[record.provider].stop(record.session)
         return self._cleanup(
             replace(
                 record,
-                state="stopped",
+                state="exited" if dead else "stopped",
                 last_report={
                     k: v for k, v in record.last_report.items() if k != "stop_error"
                 },

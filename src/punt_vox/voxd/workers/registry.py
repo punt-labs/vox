@@ -126,11 +126,11 @@ class WorkerRegistry:
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
-        """Reconcile live state, including after a daemon restart."""
+        """Report current state without changing records or worker resources."""
         result: list[WorkerRecord] = []
         for record in self._workers.values():
             try:
-                result.append(self._checkpoint(self._lifecycle.observe(record)))
+                result.append(self._lifecycle.observe(record))
             except (
                 KeyError,
                 OSError,
@@ -205,9 +205,10 @@ class WorkerRegistry:
             raise ValueError(
                 "Worker words must not contain control characters or newlines"
             )
-        record = self._checkpoint(self._lifecycle.observe(self._get(worker_id)))
+        record = self._lifecycle.observe(self._get(worker_id))
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
+        self._checkpoint(record)
         if choice is not None:
             self._question(record, prompt_seq)
         if prompt_epoch is not None and prompt_epoch != record.last_report.get(

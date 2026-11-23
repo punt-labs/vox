@@ -146,7 +146,8 @@ def test_terminal_stop_is_a_noop(tmp_path: Path, exited: bool) -> None:
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
     if exited:
         provider.alive = False
-        record = registry.list()[0]
+        record = registry.stop(record.id)
+        assert record.state == "exited"
     else:
         record = registry.stop(str(record.id))
     with patch.object(FakeWorkerProvider, "stop") as stop:

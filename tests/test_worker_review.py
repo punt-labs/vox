@@ -40,9 +40,13 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
         cleanup.assert_not_called()
         record = restored.list()[0]
         assert record.state == "exited"
-        assert record.last_report["cleanup_error"] == "ValueError"
-    cleaned = restored.list()[0]
+        assert record.last_report["cleanup_pending"] is True
+        cleanup.assert_not_called()
+        assert restored.stop(record.id).last_report["cleanup_error"] == "ValueError"
+        cleanup.assert_called_once()
+    cleaned = restored.stop(record.id)
     assert "cleanup_error" not in cleaned.last_report
+    assert "cleanup_pending" not in cleaned.last_report
     assert WorkerRecords(tmp_path / "workers").load()[0] == cleaned
 
 

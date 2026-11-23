@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import replace
 from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.workers.reaper import WorkerReaper
@@ -43,13 +42,7 @@ class WorkerStartup:
                 continue
             try:
                 if not provider.status(record.session):
-                    records.save(
-                        replace(
-                            record,
-                            state="exited",
-                            last_report={**record.last_report, "cleanup_pending": True},
-                        )
-                    )
+                    records.save(record.retire())
             except (
                 OSError,
                 ValueError,

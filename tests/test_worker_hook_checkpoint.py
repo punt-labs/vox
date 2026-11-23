@@ -334,6 +334,7 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         assert ws.send_json.call_args.args[0]["admitted"] is False
         assert records.load()[0].state == "exited"
         assert after.checkpoint(worker.id) is None
+        assert (await actor.workers())[0]["state"] == "exited"
         cleanup.assert_not_called()
         await actor.stop(worker.id)
         cleanup.assert_called_once_with(Path(worker.worktree))
