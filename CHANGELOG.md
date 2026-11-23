@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox call stop` and foreground hangup no longer stop a replacement call
   that started after the original call ended. (PL-1380)
 
+- Hooks no longer hang when given a relative working directory outside a Git
+  worktree. (PL-820)
+
 - A `serve.port` holding bytes that are not UTF-8 no longer crashes vox
   with a traceback where it reads the file: `vox daemon status` (with no
   voxd on the service port) reports `unknown` with "invalid UTF-8", and
