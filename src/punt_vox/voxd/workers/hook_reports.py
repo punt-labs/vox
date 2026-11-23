@@ -7,7 +7,7 @@ from typing import Self, cast, final
 
 from punt_vox.voxd.hook_context_projection import HookText
 from punt_vox.voxd.hook_gaps import HookGaps
-from punt_vox.voxd.voice_call.progress import WorkerProgress
+from punt_vox.voxd.voice_call.progress_types import WorkerProgress
 
 
 @final

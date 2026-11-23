@@ -9,7 +9,8 @@ from punt_vox.voxd.hook_context_projection import (
     HookText,
     HookToolResult,
 )
-from punt_vox.voxd.hook_decisions import HookDecisions, PendingDecision
+from punt_vox.voxd.hook_decision_types import PendingDecision
+from punt_vox.voxd.hook_decisions import HookDecisions
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
 from punt_vox.voxd.hook_input_history import HookInputHistory
 from punt_vox.voxd.hook_tool_history import HookToolHistory

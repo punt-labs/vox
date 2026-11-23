@@ -10,8 +10,8 @@ from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.progress import (
     CallProgress,
     ProgressEvents,
-    WorkerProgress,
 )
+from punt_vox.voxd.voice_call.progress_types import WorkerProgress
 
 
 async def test_fanout_bounded_and_unsubscribed() -> None:

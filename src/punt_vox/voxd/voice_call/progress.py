@@ -5,24 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self, final
+from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.voxd.voice_call.progress_types import WorkerProgress
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from punt_vox.voxd.voice_agent.session import Conversation
-
-
-@dataclass(frozen=True, slots=True)
-class WorkerProgress:
-    """One already-admitted, deduplicated worker milestone."""
-
-    worker_id: str
-    seq: int
-    kind: Literal["finished", "needs_decision"]
-    text: str
-    notification_type: str = ""
 
 
 @final

@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Self, TypedDict, final
+from typing import Self, final
 
 from punt_vox.voxd.hook_context_projection import HookText
-
-
-class PendingDecision(TypedDict):
-    """A harness question still awaiting input."""
-
-    notification_type: str
-    message: str
-    seq: int
+from punt_vox.voxd.hook_decision_types import PendingDecision
 
 
 @final

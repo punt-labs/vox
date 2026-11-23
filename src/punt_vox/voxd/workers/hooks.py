@@ -6,7 +6,8 @@ import asyncio
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.hook_context_store import HookContextStore
-from punt_vox.voxd.voice_call.progress import ProgressEvents, WorkerProgress
+from punt_vox.voxd.voice_call.progress import ProgressEvents
+from punt_vox.voxd.voice_call.progress_types import WorkerProgress
 from punt_vox.voxd.wire_reply import WireReply
 from punt_vox.voxd.workers.hook_reports import HookReports
 from punt_vox.voxd.workers.registry import WorkerRegistry
