@@ -281,6 +281,22 @@ def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
     )
 
 
+def test_return_opener_distinguishes_two_workers_in_the_same_repository(
+    tmp_path: Path,
+) -> None:
+    brief = ReturnBrief(tmp_path / "departure.json")
+    brief.depart([payload("first"), payload("second")])
+    finished = payload("second", last_assistant_message="Wrote hello.py.", result_seq=1)
+    blocked = payload("first", pending_decision={"message": "Which suite?"})
+
+    options = brief.options([blocked, finished], ("/repo",), ())
+
+    assert options.first_message == (
+        "While you were away, worker 1 in repo finished: Wrote hello.py. "
+        "Worker 2 in repo needs your input: Which suite?"
+    )
+
+
 async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None:
     workers = FakeWorkers()
     workers.known = [payload("working")]

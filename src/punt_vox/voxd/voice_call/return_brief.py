@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -53,17 +54,33 @@ class ReturnBrief:
         if not saved:
             return None
         cursor = cast("dict[str, int]", json.loads(saved))
-        updates: list[str] = []
+        updates: list[tuple[str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
             if update := self._update(worker, cursor.get(worker["id"], 0)):
-                updates.append(update)
+                project = Path(worker["project"]).name or "the project"
+                updates.append((project, update))
             self._covered[worker["id"]] = self._sequence(worker, "worker_seq")
-        opening = " ".join(updates)
+        opening = self._labelled_updates(updates)
         return (
             f"While you were away, {opening[:1].lower()}{opening[1:]}"
             if opening
             else None
         )
+
+    @staticmethod
+    def _labelled_updates(updates: list[tuple[str, str]]) -> str:
+        counts = Counter(project for project, _ in updates)
+        ordinals: Counter[str] = Counter()
+        spoken: list[str] = []
+        for project, update in updates:
+            ordinals[project] += 1
+            label = (
+                f"The worker in {project}"
+                if counts[project] == 1
+                else f"Worker {ordinals[project]} in {project}"
+            )
+            spoken.append(f"{label} {update}")
+        return " ".join(spoken)
 
     def depart(self, workers: list[WorkerPayload]) -> None:
         """Save the report boundary without writing tasks or results again."""
@@ -72,14 +89,13 @@ class ReturnBrief:
 
     @classmethod
     def _update(cls, worker: WorkerPayload, prior: int) -> str:
-        project = Path(worker["project"]).name or "the project"
-        label = f"The worker in {project}"
         snippets: list[str] = []
         result = worker["last_report"].get("last_assistant_message")
         if cls._sequence(worker, "result_seq") > prior and isinstance(result, str):
-            snippets.append(f"{label} finished: {cls._speech(result)}")
+            snippets.append(f"finished: {cls._speech(result)}")
         if question := cls._pending_question(worker):
-            snippets.append(f"{label} needs your input: {cls._speech(question)}")
+            subject = "It " if snippets else ""
+            snippets.append(f"{subject}needs your input: {cls._speech(question)}")
         return " ".join(snippets)
 
     @staticmethod
