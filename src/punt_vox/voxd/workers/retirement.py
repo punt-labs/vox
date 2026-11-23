@@ -30,8 +30,8 @@ class WorkerRetirement:
     __slots__ = (
         "_executor",
         "_inventory",
-        "_jobs",
         "_job_lock",
+        "_jobs",
         "_profiles",
         "_release",
     )
