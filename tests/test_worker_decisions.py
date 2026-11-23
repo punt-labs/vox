@@ -272,13 +272,13 @@ def test_choice_keys_never_paste_words_or_confirm_highlighted_yes(
 
 
 @pytest.mark.parametrize(
-    "pending,choice,urgent",
+    "pending,choice,urgent,error",
     [
-        (True, None, False),
-        (False, "approve", False),
-        (False, "deny", False),
-        (True, "approve", True),
-        (True, "deny", True),
+        (True, None, False, "Pending decision: ask yes/no and pass choice=approve"),
+        (False, "approve", False, "worker has a different prompt now"),
+        (False, "deny", False, "worker has a different prompt now"),
+        (True, "approve", True, "must not interrupt the permission dialog"),
+        (True, "deny", True, "must not interrupt the permission dialog"),
     ],
 )
 def test_mismatched_decision_requests_never_touch_the_transport(
@@ -286,12 +286,20 @@ def test_mismatched_decision_requests_never_touch_the_transport(
     pending: bool,
     choice: DecisionChoice | None,  # None tests refusal of free text while blocked.
     urgent: bool,
+    error: str,
 ) -> None:
     provider = FakeWorkerProvider()
     provider.ready = True
     registry = _registry(tmp_path, provider)
     worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    report: dict[str, object] = {"session_started": True}
+    if pending:
+        report["pending_decision"] = {
+            "seq": 3,
+            "notification_type": "permission_prompt",
+        }
     with (
+        patch.object(FakeWorkerProvider, "progress", return_value=report),
         patch.object(
             TrivialProfile,
             "last_input",
@@ -299,9 +307,28 @@ def test_mismatched_decision_requests_never_touch_the_transport(
         ),
         patch.object(FakeWorkerProvider, "steer") as text,
         patch.object(FakeWorkerProvider, "decide") as decision,
-        pytest.raises(ValueError, match=r"decision|choice"),
+        pytest.raises(ValueError, match=error),
     ):
-        registry.steer(worker.id, "No, don't run that", choice=choice, urgent=urgent)
+        registry.steer(
+            worker.id, "No, don't run that", choice=choice, urgent=urgent, prompt_seq=3
+        )
+    text.assert_not_called()
+    decision.assert_not_called()
+
+
+def test_missing_permission_sequence_never_touches_the_transport(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    with (
+        patch.object(FakeWorkerProvider, "steer") as text,
+        patch.object(FakeWorkerProvider, "decide") as decision,
+        pytest.raises(ValueError, match="choice requires prompt_seq"),
+    ):
+        registry.steer(worker.id, "Yes", choice="approve")
     text.assert_not_called()
     decision.assert_not_called()
 
