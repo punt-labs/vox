@@ -51,12 +51,7 @@ class ConvAIKeyCheck:
         detail = cls._error_detail(response)
         status = detail.get("status")
         message = detail.get("message")
-        if (
-            response.status_code == 404
-            and status == "document_not_found"
-            and isinstance(message, str)
-            and _PROBE_AGENT in message
-        ):
+        if response.status_code == 404 and cls._missing_agent(detail):
             return CheckResult.of(OK, f"{_LABEL}: granted", required=False)
         if response.status_code in (401, 403):
             if (
@@ -70,6 +65,17 @@ class ConvAIKeyCheck:
             if status == "invalid_api_key":
                 return cls._warning("invalid key")
         return cls._warning(f"could not verify scope (HTTP {response.status_code})")
+
+    @staticmethod
+    def _missing_agent(detail: dict[str, object]) -> bool:
+        if detail.get("code") == "agent_not_found":
+            return True
+        message = detail.get("message")
+        return (
+            detail.get("status") == "document_not_found"
+            and isinstance(message, str)
+            and _PROBE_AGENT in message
+        )
 
     @staticmethod
     def _warning(message: str) -> CheckResult:

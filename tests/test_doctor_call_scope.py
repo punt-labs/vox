@@ -23,6 +23,7 @@ _SCOPE_CHECK = "punt_vox.doctor_call_scope"
             },
             "granted",
         ),
+        (404, {"code": "agent_not_found"}, "granted"),
         (
             401,
             {
