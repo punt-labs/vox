@@ -24,7 +24,7 @@ from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
     from pathlib import Path
 
     from websockets.asyncio.server import ServerConnection
@@ -481,7 +481,7 @@ async def test_result_after_live_progress_stops_is_away(
     @asynccontextmanager
     async def opener(
         url: str, options: SessionOptions, *, trace: EventTrace
-    ) -> AsyncIterator[Conversation]:
+    ) -> AsyncGenerator[Conversation]:
         async with _LOOPBACK(url, options, trace=trace) as conv:
             try:
                 yield conv
