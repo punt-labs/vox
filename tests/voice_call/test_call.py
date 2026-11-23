@@ -570,8 +570,11 @@ async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None
     ]
 
 
+@pytest.mark.parametrize("save_fails", [False, True])
 async def test_local_hangup_releases_playback_before_saving_departure(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    save_fails: bool,
 ) -> None:
     workers, playback = FakeWorkers(), FakePlayback()
     released_at_departure: list[int] = []
@@ -587,6 +590,9 @@ async def test_local_hangup_releases_playback_before_saving_departure(
     def depart(_brief: ReturnBrief, _reported: dict[str, int]) -> None:
         released_at_departure.append(playback.released)
         steps.append("departure")
+        if save_fails:
+            msg = "read-only trace directory"
+            raise OSError(msg)
 
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
@@ -621,11 +627,13 @@ async def test_local_hangup_releases_playback_before_saving_departure(
             )
             while not playback.sinks or not playback.sinks[0].fed:
                 await asyncio.sleep(0.01)
-            await _rpc(handlers, {"type": "call_stop"})
+            stopped = await _rpc(handlers, {"type": "call_stop"})
 
+    assert cast("dict[str, object]", stopped["result"])["state"] == "ended"
     assert released_at_departure == [1]
     assert steps == ["terminal", "released", "departure"]
     assert not playback.sinks[0].finished
+    assert ("Call departure not saved (OSError)" in caplog.text) is save_fails
 
 
 @pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])

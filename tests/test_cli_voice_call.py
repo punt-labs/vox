@@ -211,6 +211,16 @@ def test_stop_hangs_up_the_running_call() -> None:
     assert "Stopping the call." in result.output
 
 
+def test_stop_does_not_send_hangup_when_no_call_is_active() -> None:
+    voxd = _Voxd({"state": "idle"})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), ["stop"])
+
+    assert result.exit_code == 2, result.output
+    assert "no call is active" in result.output
+    assert voxd.sent == [("status", {})]
+
+
 def test_status_prints_the_line_and_transcript() -> None:
     with _voxd(_Voxd(_ENDED)):
         result = runner.invoke(CallCli.build_app(), ["status"])
@@ -404,8 +414,10 @@ async def test_daemon_control_checks_the_reply_family() -> None:
     transport.close.assert_awaited_once()
 
 
-def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
+@pytest.mark.parametrize("text", ["short call status", "word " * 20])
+def test_a_terminal_status_line_fits_the_terminal_width(
     capsys: pytest.CaptureFixture[str],
+    text: str,
 ) -> None:
     """A wrapped line would strand rows the next in-place rewrite cannot reach."""
     with (
@@ -417,9 +429,18 @@ def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
             return_value=os.terminal_size((40, 24)),
         ),
     ):
-        CallFollower._show("call live | 1 tool calls | agent: " + "word " * 20)
+        CallFollower._show(text)
 
     written = capsys.readouterr().out
     assert written.startswith("\r\x1b[K")
-    assert len(written.removeprefix("\r\x1b[K")) == 39
-    assert written.endswith("...")
+    expected = text if len(text) <= 39 else text[:36] + "..."
+    assert written.removeprefix("\r\x1b[K") == expected
+
+
+def test_terminal_call_report_starts_on_a_new_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(f"{_FOLLOW}.sys.stdout.isatty", return_value=True):
+        CallFollower.finish(CallStatusView(_ENDED))
+
+    assert capsys.readouterr().out.startswith("\n")

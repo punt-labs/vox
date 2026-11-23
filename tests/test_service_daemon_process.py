@@ -14,7 +14,6 @@ import pytest
 from _lifecycle_fakes import FakeClock
 
 from punt_vox.service.backend import PortProbeError
-from punt_vox.service.clock import SystemClock
 from punt_vox.service.daemon_process import (
     DaemonProcess,
     PidfdProcess,
@@ -129,6 +128,23 @@ def test_pidfd_permission_denied_reports_not_exited(
     assert handle.terminate(7.0) is Termination.REFUSED
 
 
+def test_pidfd_reports_exit_when_the_process_disappears_during_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
+    mark_exited = signal.pidfd_send_signal
+
+    def gone(fd: int, sig: signal.Signals) -> None:
+        mark_exited(fd, sig)
+        raise ProcessLookupError
+
+    monkeypatch.setattr(signal, "pidfd_send_signal", gone, raising=False)
+    handle = PidfdProcess.open(4242, _Identities(_VOXD))
+    assert handle is not None
+    assert handle.pid == 4242
+    assert handle.terminate(7.0) is Termination.EXITED
+
+
 @pytest.mark.parametrize("columns", ["80", "200"])
 def test_handle_terminates_a_real_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, columns: str
@@ -145,7 +161,7 @@ def test_handle_terminates_a_real_process(
         ["./voxd", "-c", "import time; time.sleep(30)"], cwd=tmp_path
     )
     try:
-        handle = DaemonProcess(SystemClock(), ProcessManager().identity).open(proc.pid)
+        handle = DaemonProcess.on_this_host(ProcessManager().identity).open(proc.pid)
         assert handle is not None
         assert handle.terminate(7.0) is Termination.EXITED
         assert handle.exited() is True
@@ -192,6 +208,16 @@ def test_start_time_handle_exited_true_when_gone() -> None:
     handle = StartTimeProcess.open(4242, _Identities(_VOXD, None), FakeClock())
     assert handle is not None
     assert handle.exited() is True
+
+
+def test_start_time_handle_does_not_signal_a_process_that_exited(
+    kills: list[tuple[int, int]],
+) -> None:
+    handle = StartTimeProcess.open(4242, _Identities(_VOXD, None), FakeClock())
+    assert handle is not None
+    assert handle.pid == 4242
+    assert handle.terminate(7.0) is Termination.EXITED
+    assert not kills
 
 
 def test_start_time_handle_escalates_when_same_process_survives(

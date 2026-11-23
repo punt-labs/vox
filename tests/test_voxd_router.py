@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, cast, final
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
@@ -311,6 +312,28 @@ class TestWsRouteOrigin:
 
         assert closed == [1008]
         assert router.client_count == 0
+
+
+async def test_bad_frames_receive_errors_without_losing_the_connection() -> None:
+    router = _make_router()
+    socket = AsyncMock(spec=WebSocket)
+    socket.headers = {}
+    socket.application_state = WebSocketState.CONNECTED
+    socket.receive_text.side_effect = [
+        "{",
+        "[]",
+        '{"type":"call_unknown","id":"req"}',
+        WebSocketDisconnect(),
+    ]
+
+    await router.handle_connection(socket)
+
+    assert [call.args[0] for call in socket.send_json.await_args_list] == [
+        {"type": "error", "id": "", "message": "invalid JSON"},
+        {"type": "error", "id": "", "message": "expected JSON object"},
+        {"type": "error", "id": "req", "message": "unknown message type: call_unknown"},
+    ]
+    assert router.client_count == 0
 
 
 class TestHandlerRegistration:
