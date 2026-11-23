@@ -2,32 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Self, TypedDict, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.hook_context_projection import (
-    HOOK_TOOL_EVENTS,
-    HookText,
-    HookToolResult,
-)
-from punt_vox.voxd.hook_decision_types import PendingDecision
+from punt_vox.voxd.hook_context_projection import HOOK_TOOL_EVENTS, HookText
 from punt_vox.voxd.hook_decisions import HookDecisions
-from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
+from punt_vox.voxd.hook_gaps import HookGaps
 from punt_vox.voxd.hook_input_history import HookInputHistory
 from punt_vox.voxd.hook_tool_history import HookToolHistory
 
-
-class HookContextSnapshot(TypedDict):
-    """Bounded view of one live hook session."""
-
-    session_started: bool
-    goal: str | None  # None until a nonempty prompt arrives.
-    active_files: list[str]
-    last_results: list[HookToolResult]
-    open_failure: HookToolResult | None  # None when no failure is unresolved.
-    last_assistant_message: str | None  # None until a nonempty Stop message arrives.
-    gaps: HookGapReport
-    pending_decision: PendingDecision | None  # None when no question is outstanding.
-    prompt_epoch: int
+if TYPE_CHECKING:
+    from punt_vox.voxd.hook_snapshot import HookContextSnapshot, WorkerHookCheckpoint
 
 
 @final
@@ -110,6 +94,38 @@ class SessionContext:
     def last_input(self) -> tuple[int, str]:
         """Input acknowledgement is independent of Stop and turn completion."""
         return self._input.last()
+
+    @property
+    def result_sequence(self) -> int:
+        """Identify the last nonempty completed turn."""
+        return self._assistant[0]
+
+    def checkpoint(self) -> WorkerHookCheckpoint:
+        """Retain the sequence identities needed when the live store restarts."""
+        return {
+            **self.snapshot(),
+            "result_seq": self.result_sequence,
+            "worker_seq": self._decisions.latest,
+            "goal_seq": self._goal[0],
+            "tool_history_checkpoint": self._tools.checkpoint(),
+        }
+
+    def restore(self, checkpoint: WorkerHookCheckpoint) -> None:
+        """Restore the most recent report and decision before admitting new hooks."""
+        self._started = checkpoint["session_started"]
+        self._assistant = (
+            checkpoint["result_seq"],
+            checkpoint["last_assistant_message"] or "",
+        )
+        self._goal = (checkpoint["goal_seq"], checkpoint["goal"] or "")
+        self._gaps.restore(checkpoint["gaps"])
+        if "tool_history_checkpoint" in checkpoint:
+            self._tools.restore(checkpoint["tool_history_checkpoint"])
+        self._decisions.restore(
+            checkpoint["worker_seq"],
+            checkpoint["prompt_epoch"],
+            checkpoint["pending_decision"],
+        )
 
     def inputs_since(self, baseline: int) -> list[tuple[int, str]]:
         """Retain intermediate receipts even when a newer input arrives."""

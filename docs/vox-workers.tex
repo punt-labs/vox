@@ -638,4 +638,49 @@ queued request must not release another request's per-worker lock.
     (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
 \end{schema}
 
+\section{Daemon restart}
+
+\emph{Restart preserves result and current decision}: the boot projection
+is seeded with the checkpointed result, pending question and relay order
+before the next hook can be admitted. A lower sequence cannot replace the
+latest result or clear the latest decision. The retained tool projection
+also survives boot. The hook client retries the same stamped event for up
+to five seconds; delivery across longer outages is not guaranteed.
+
+\begin{zed}
+  [CHECKPOINT, PANE]
+\end{zed}
+
+\begin{schema}{WorkerRecovery}
+  saved, restored : WORKER \pfun CHECKPOINT \\
+  active : \power WORKER \\
+  panes : PANE \pfun WORKER \\
+  owned, live : \power PANE
+\where
+  active \subseteq \dom saved \\
+  restored \subseteq saved \\
+  owned \subseteq \dom panes \\
+  live \subseteq \dom panes
+\end{schema}
+
+\begin{schema}{StartupAdoptsAndReaps}
+  \Delta WorkerRecovery \\
+  protected? : \power WORKER
+\where
+  active \subseteq protected? \\
+  saved' = saved \\
+  active' = active \\
+  restored' = active \dres saved \\
+  panes' = panes \\
+  owned' = owned \\
+  live' = live \setminus \{ p : owned | panes~p \notin protected? \}
+\end{schema}
+
+\emph{Startup only reaps marked orphans}: the reaper removes only a pane
+marked as owned by this registry and not protected by a live or unreadable
+registry record. The reaper never modifies an inherited harness config.
+Credentials are transferred by a private Unix socket and not written to
+a dedicated credential file; private brokers are removed separately when
+their recorded owner process no longer exists.
+
 \end{document}

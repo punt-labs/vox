@@ -138,6 +138,10 @@ class Conversation:
                 "conversation": {"text_only": options.text_only},
             },
         }
+        if options.first_message is not None:
+            payload["conversation_config_override"]["agent"]["first_message"] = (
+                options.first_message
+            )
         await Socket.send(socket, payload)
         if trace is not None:
             trace.record(

@@ -20,6 +20,17 @@ class HookToolResult(TypedDict):
     result: str
 
 
+class HookToolUpdate(TypedDict):
+    """Durable, ordered fields of a redacted tool event."""
+
+    tool: str
+    subject: str
+    file: str
+    result: str
+    failed: bool
+    completed: bool
+
+
 class HookToolSubject:
     """Match retries without exposing redacted input values."""
 
@@ -102,6 +113,17 @@ class ToolUpdate:
     result: str
     failed: bool
     completed: bool
+
+    def checkpoint(self) -> HookToolUpdate:
+        """Retain identity so a successful retry can clear a restored failure."""
+        return {
+            "tool": self.tool,
+            "subject": self.subject,
+            "file": self.file,
+            "result": self.result,
+            "failed": self.failed,
+            "completed": self.completed,
+        }
 
     @classmethod
     def from_payload(cls, payload: dict[str, object], event: str) -> ToolUpdate:

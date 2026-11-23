@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Self, cast, final
 from uuid import uuid4
 
+from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
 from punt_vox.voxd.workers.model import WorkerRecord
@@ -47,13 +48,12 @@ class WorkerRegistry:
         providers: dict[str, WorkerProvider],
         profiles: dict[str, HarnessProfile],
     ) -> Self:
-        """Rebuild persistent workers using the supplied provider catalogs."""
+        """Rebuild persistent workers without invoking harness cleanup at boot."""
         self = super().__new__(cls)
         self._policy, self._records = policy, records
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
         self._workers = {r.id: r for r in records.load(strict=False)}
-        self.list()
         return self
 
     def start(
@@ -94,7 +94,10 @@ class WorkerRegistry:
             self._policy.create(repo, worktree, branch)
             profile.prepare(worktree)
             self._providers[provider].start(
-                WorkerLaunch(handle, worker_id, worktree, task), profile
+                WorkerLaunch(
+                    handle, worker_id, worktree, task, self._records.namespace
+                ),
+                profile,
             )
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._rollback(record, exc)
@@ -162,6 +165,16 @@ class WorkerRegistry:
             self._checkpoint(
                 self._lifecycle.report(self._workers[cast("str", worker_id)])
             )
+
+    def has_hook_receipt(self, worker_id: str, sequence: int) -> bool:
+        """Detect a retry of a hook already saved by this or a previous daemon."""
+        report = self._get(worker_id).last_report
+        gaps = report.get("gaps")
+        return (
+            "worker_seq" in report
+            and isinstance(gaps, dict)
+            and HookGaps.received(cast("HookGapReport", gaps), sequence)
+        )
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""

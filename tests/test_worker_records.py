@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from test_workers import FakeWorkerProvider, _registry
 
+from punt_vox.voxd.workers.reaper import WorkerReaper
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 
 def test_unknown_worker_controls_are_clear(tmp_path: Path) -> None:
@@ -31,6 +35,32 @@ def test_ready_survives_restart_until_provider_exits(tmp_path: Path) -> None:
     assert restored.list()[0] == ready
     provider.alive = False
     assert restored.list()[0].state == "exited"
+
+
+def test_startup_only_reaps_marked_orphans(tmp_path: Path) -> None:
+    registered = _registry(tmp_path, FakeWorkerProvider()).start(
+        "edit", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    orphan_id = str(uuid4())
+    orphan = f"vox-worker-{orphan_id}"
+    foreign_id = str(uuid4())
+    foreign = f"vox-worker-{foreign_id}"
+
+    listed = CompletedProcess([], 0, f"{registered.session}\n{foreign}\n{orphan}\n")
+    other = CompletedProcess([], 0, f"VOX_WORKER_OWNER=other:{foreign_id}\n")
+    owned = CompletedProcess(
+        [], 0, f"VOX_WORKER_OWNER={records.namespace}:{orphan_id}\n"
+    )
+    with (
+        patch(
+            "punt_vox.voxd.workers.reaper.WorkerCommand.run",
+            side_effect=[listed, other, owned],
+        ),
+        patch.object(TmuxWorkerProvider, "stop") as stop,
+    ):
+        WorkerReaper.run(records, TmuxWorkerProvider())
+    stop.assert_called_once_with(orphan)
 
 
 def test_ready_worker_accepts_fresh_post_restart_report(tmp_path: Path) -> None:

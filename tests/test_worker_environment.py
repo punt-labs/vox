@@ -8,11 +8,13 @@ import signal
 import socket
 import stat
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
 from punt_vox.voxd.workers.bootstrap import WorkerBootstrap
 from punt_vox.voxd.workers.environment import WorkerEnvironment
+from punt_vox.voxd.workers.reaper import WorkerReaper
 
 
 def test_environment_socket_is_private_single_use_and_removed() -> None:
@@ -27,6 +29,30 @@ def test_environment_socket_is_private_single_use_and_removed() -> None:
     finally:
         broker.close()
     assert not address.parent.exists()
+
+
+def test_startup_reaps_only_its_private_broker() -> None:
+    namespace = uuid4().hex[:16]
+    with patch("os.getpid", return_value=894321):
+        abandoned = WorkerEnvironment(namespace)
+    live = WorkerEnvironment(namespace)
+    other = WorkerEnvironment()
+    try:
+
+        def signal_owner(pid: int, signal_number: int) -> None:
+            assert signal_number == 0
+            if pid == 894321:
+                raise ProcessLookupError
+
+        with patch("os.kill", side_effect=signal_owner):
+            WorkerReaper.reap_brokers(namespace)
+        assert not abandoned.address.parent.exists()
+        assert live.address.is_socket()
+        assert other.address.is_socket()
+    finally:
+        abandoned.close()
+        live.close()
+        other.close()
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"KEY": 1}'])

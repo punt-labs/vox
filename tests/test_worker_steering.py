@@ -555,6 +555,7 @@ async def test_failed_steer_releases_worker_lock(failure: str) -> None:
 async def test_receipt_wait_releases_hook_ingest_lock(heard: bool) -> None:
     """Heard never implies turn ended; Timeout is an unheard success."""
     registry = MagicMock(spec=WorkerRegistry)
+    registry.has_hook_receipt.return_value = False
     registry.steer.return_value = 4
     registry.receipt.return_value = None
     store = HookContextStore()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.trace import EventTrace
@@ -28,6 +28,7 @@ class SessionOptions:
     prompt: str
     tool_ids: tuple[str, ...]
     text_only: bool = False
+    first_message: str | None = None  # None leaves the agent default in effect.
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,7 @@ class _PromptPermissions(TypedDict):
 
 class AgentPermissions(TypedDict):
     prompt: _PromptPermissions
+    first_message: bool
 
 
 class _TextOnly(TypedDict):
@@ -128,6 +130,7 @@ class _PromptOverride(TypedDict):
 
 class _AgentOverride(TypedDict):
     prompt: _PromptOverride
+    first_message: NotRequired[str]
 
 
 class _SessionOverride(TypedDict):

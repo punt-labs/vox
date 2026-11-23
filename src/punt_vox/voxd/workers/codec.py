@@ -17,6 +17,13 @@ class WorkerRecordCodec:
 
     __slots__ = ()
 
+    @classmethod
+    def public(cls, record: WorkerRecord) -> WorkerPayload:
+        """Expose report excerpts without the internal tool history checkpoint."""
+        payload = cls.encode(record)
+        payload["last_report"].pop("tool_history_checkpoint", None)
+        return payload
+
     @staticmethod
     def encode(record: WorkerRecord) -> WorkerPayload:
         """Expose JSON-compatible data only when crossing a serialization edge."""

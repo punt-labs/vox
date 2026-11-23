@@ -151,7 +151,8 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         "conversation_config_override"
     ] == {
         "agent": {
-            "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}
+            "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
+            "first_message": True,
         },
         "conversation": {"text_only": True},
     }

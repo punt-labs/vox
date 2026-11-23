@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import Self, TypedDict, final
 
-from punt_vox.voxd.hook_context_projection import HookToolResult, ToolUpdate
+from punt_vox.voxd.hook_context_projection import (
+    HookToolResult,
+    HookToolUpdate,
+    ToolUpdate,
+)
 from punt_vox.voxd.hook_failures import HookFailures
+
+
+class ToolHistoryCheckpoint(TypedDict):
+    """Ordered tool and failure windows internal to the worker checkpoint."""
+
+    tools: list[tuple[int, HookToolUpdate]]
+    outcomes: list[tuple[int, HookToolUpdate]]
 
 
 @final
@@ -46,3 +57,19 @@ class HookToolHistory:
     def open_failure(self) -> HookToolResult | None:  # None when no failure remains.
         """Return the newest unresolved failure."""
         return self._failures.latest()
+
+    def checkpoint(self) -> ToolHistoryCheckpoint:
+        """Preserve ordered tool history rather than reconstructing it from excerpts."""
+        return {
+            "tools": [
+                (seq, update.checkpoint())
+                for seq, update in sorted(self._tools.items())
+            ],
+            "outcomes": self._failures.checkpoint(),
+        }
+
+    def restore(self, checkpoint: ToolHistoryCheckpoint) -> None:
+        """Recover both bounded histories before projecting new hooks."""
+        self._tools = {seq: ToolUpdate(**fields) for seq, fields in checkpoint["tools"]}
+        for seq, fields in checkpoint["outcomes"]:
+            self._failures.observe(seq, ToolUpdate(**fields))

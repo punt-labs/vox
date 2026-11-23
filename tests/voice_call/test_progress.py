@@ -27,6 +27,34 @@ async def test_fanout_bounded_and_unsubscribed() -> None:
     events.publish(event)
 
 
+async def test_return_snapshot_covers_pre_cut_events_without_losing_later_ones() -> (
+    None
+):
+    events = ProgressEvents()
+    progress = CallProgress(events)
+    conv = AsyncMock(spec=Conversation)
+    delivered = asyncio.Event()
+
+    def after_delivery(_context: str) -> None:
+        delivered.set()
+
+    conv.send_context.side_effect = after_delivery
+    async with progress.subscribe() as queue:
+        events.publish(WorkerProgress("w", 3, "finished", "covered"))
+        events.publish(WorkerProgress("w", 4, "finished", "after cut"))
+        task = asyncio.create_task(
+            progress.run(cast("Conversation", conv), queue, {"w": 3})
+        )
+        try:
+            await asyncio.wait_for(delivered.wait(), 1)
+            conv.send_context.assert_awaited_once()
+            assert "after cut" in conv.send_context.call_args.args[0]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+
 async def test_context_immediate_results_wait_decisions_bypass_lull() -> None:
     events = ProgressEvents()
     progress = CallProgress(events)

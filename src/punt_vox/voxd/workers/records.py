@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from hashlib import sha256
 from pathlib import Path
 from typing import Self, final
 from uuid import UUID
@@ -33,6 +34,22 @@ class WorkerRecords:
     def worktree(self, worker_id: str) -> Path:
         """Return a worker's dedicated work product directory."""
         return self._root / str(UUID(worker_id)) / "worktree"
+
+    @property
+    def namespace(self) -> str:
+        """Identify resources belonging to this registry, not another daemon."""
+        return sha256(str(self._root.resolve()).encode()).hexdigest()[:16]
+
+    def protects_session(self, worker_id: str) -> bool:
+        """Keep active or unreadable checkpoints; terminal workers own no pane."""
+        path = self._root / f"{UUID(worker_id)}.json"
+        try:
+            record = self._read(path)
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            return True
+        return record.state in ("starting", "ready")
 
     def save(self, record: WorkerRecord) -> None:
         """Commit a full record with owner-only permissions."""

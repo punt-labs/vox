@@ -47,19 +47,19 @@ class WorkerActor:
             record = await asyncio.to_thread(
                 self._registry.start, task, project, provider=provider, harness=harness
             )
-        return WorkerRecordCodec.encode(record)
+        return WorkerRecordCodec.public(record)
 
     async def stop(self, worker_id: str) -> WorkerPayload:
         """Stop one worker; its worktree and branch are retained."""
         async with self._lock:
             record = await asyncio.to_thread(self._registry.stop, worker_id)
-        return WorkerRecordCodec.encode(record)
+        return WorkerRecordCodec.public(record)
 
     async def workers(self) -> list[WorkerPayload]:
         """Reconcile and return every known worker."""
         async with self._lock:
             records = await asyncio.to_thread(self._registry.list)
-        return [WorkerRecordCodec.encode(record) for record in records]
+        return [WorkerRecordCodec.public(record) for record in records]
 
     async def steer(
         self,

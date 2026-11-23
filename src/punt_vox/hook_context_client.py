@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
-from typing import cast, final
+import asyncio
+import os
+from typing import ClassVar, cast, final
 from uuid import uuid4
 
-from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdHandshakeRejectedError,
+    VoxdProtocolError,
+)
 from punt_vox.client_transport import VoxdTransport
 
 
@@ -14,12 +20,36 @@ class HookContextClient:
     """Short-lived RPCs shared by the relay and `vox call context`."""
 
     __slots__ = ()
+    _RETRY_DELAYS: ClassVar[tuple[float, ...]] = (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0)
 
     @classmethod
     async def send_event(
         cls, payload: dict[str, object], *, worker_only: bool = False
     ) -> None:
         """Deliver one stamped hook payload and check the daemon's receipt."""
+        managed_id = os.environ.get("VOX_WORKER_SESSION_ID")
+        managed = worker_only or (
+            managed_id is not None and managed_id == payload.get("session_id")
+        )
+        if not managed:
+            await cls._deliver(payload, worker_only=False)
+            return
+        async with asyncio.timeout(5):
+            for delay in (*cls._RETRY_DELAYS, None):
+                try:
+                    await cls._deliver(payload, worker_only=worker_only)
+                except VoxdHandshakeRejectedError:
+                    raise
+                except VoxdConnectionError:
+                    if delay is None:
+                        raise
+                    await asyncio.sleep(delay)
+                else:
+                    return
+
+    @classmethod
+    async def _deliver(cls, payload: dict[str, object], *, worker_only: bool) -> None:
+        """Start each attempt at admission, preserving the stamped event."""
         if worker_only:
             admission = await cls._request(
                 {

@@ -29,7 +29,7 @@ While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names six properties, and the tests carry the same names:
+The model names eight properties, and the tests carry the same names:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -49,6 +49,12 @@ The model names six properties, and the tests carry the same names:
   \item[C6] \emph{Durable once}: a re-asked durable tool call replays and
     never runs its operation a second time
     (\texttt{test\_reask\_during\_a\_slow\_start\_starts\_one\_worker}).
+  \item[C7] \emph{Return opens with only away results and open decisions}:
+    compare the registry snapshot with the previous live call's durable departure
+    cursor; a failed dial does not advance it.
+  \item[C8] \emph{Return snapshot covers pre-cut events without losing later ones}:
+    subscribe before taking the snapshot and suppress live reports already
+    covered by it.
 \end{enumerate}
 
 \section{Types}
@@ -194,5 +200,77 @@ admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
 A key enters \texttt{durable} only through \texttt{RunDurable}, whose
 precondition is $k? \notin durable$; a re-ask finds it there and replays,
 whether the first run finished or is still in flight under the shield: C6.
+
+\section{Return and live updates}
+
+The durable departure cursor contains only result identities. Questions
+come from the current projection, never from that cursor. The snapshot
+and cut come from the same worker view, after subscription and before
+the provider can speak. The provider gets one first-message override
+only when the selected reports are nonempty.
+The cursor is the worker state at departure, not a receipt that the
+caller heard a result. The live stream retains its existing bounded queue;
+the cut filters duplicates among events that remain queued.
+
+\begin{zed}
+  [CALLWORKER]
+\end{zed}
+
+\begin{schema}{ReturnBoundary}
+  departed : ZBOOL \\
+  cursor, cut : CALLWORKER \pfun \nat \\
+  subscribed : ZBOOL
+\where
+  departed = zfalse \implies cursor = \emptyset \\
+  subscribed = zfalse \implies cut = \emptyset
+\end{schema}
+
+\begin{schema}{SubscribeForReturn}
+  \Delta ReturnBoundary
+\where
+  subscribed = zfalse \\
+  subscribed' = ztrue \\
+  cut' = \emptyset \\
+  departed' = departed \\
+  cursor' = cursor
+\end{schema}
+
+\begin{schema}{ReturnSnapshot}
+  \Delta ReturnBoundary \\
+  newest?, result? : CALLWORKER \pfun \nat \\
+  questions? : \power CALLWORKER \\
+  newResults!, openQuestions! : \power CALLWORKER
+\where
+  subscribed = ztrue \\
+  subscribed' = subscribed \\
+  departed' = departed \\
+  cursor' = cursor \\
+  departed = zfalse \implies
+    cut' = \emptyset \land newResults! = \emptyset \land openQuestions! = \emptyset \\
+  departed = ztrue \implies
+    cut' = newest? \land openQuestions! = questions? \\
+  departed = ztrue \implies newResults! =
+    \{ w : \dom result? | w \notin \dom cursor \lor result?~w > cursor~w \}
+\end{schema}
+
+\begin{schema}{LiveUpdateAfterCut}
+  \Xi ReturnBoundary \\
+  worker? : CALLWORKER \\
+  sequence? : \nat
+\where
+  subscribed = ztrue \\
+  worker? \notin \dom cut \lor sequence? > cut~worker?
+\end{schema}
+
+\begin{schema}{DepartCall}
+  \Delta ReturnBoundary \\
+  established? : ZBOOL \\
+  result? : CALLWORKER \pfun \nat
+\where
+  subscribed' = zfalse \\
+  cut' = \emptyset \\
+  established? = ztrue \implies departed' = ztrue \land cursor' = result? \\
+  established? = zfalse \implies departed' = departed \land cursor' = cursor
+\end{schema}
 
 \end{document}

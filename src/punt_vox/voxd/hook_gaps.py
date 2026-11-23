@@ -67,3 +67,18 @@ class HookGaps:
             "missing_count": sum(end - start + 1 for start, end in self._missing),
             "untracked_through": self._untracked_through,
         }
+
+    def restore(self, report: HookGapReport) -> None:
+        """Continue deduplication and retain known gaps after a process restart."""
+        self._high = report["highest_seen"]
+        self._missing = [(low, high) for low, high in report["missing_ranges"]]
+        self._untracked_through = report["untracked_through"]
+
+    @staticmethod
+    def received(report: HookGapReport, sequence: int) -> bool:
+        """Recognize a durable receipt, not a reported sequence gap."""
+        return report["untracked_through"] < sequence <= report[
+            "highest_seen"
+        ] and not any(
+            start <= sequence <= end for start, end in report["missing_ranges"]
+        )

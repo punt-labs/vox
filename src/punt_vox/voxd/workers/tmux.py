@@ -33,7 +33,7 @@ class TmuxWorkerProvider:
         profile: HarnessProfile,
     ) -> None:
         """Start with an explicitly empty environment, not tmux's server env."""
-        environment = WorkerEnvironment()
+        environment = WorkerEnvironment(launch.namespace)
         try:
             self._run(
                 "new-session",
@@ -42,6 +42,8 @@ class TmuxWorkerProvider:
                 launch.handle,
                 "-c",
                 str(launch.worktree),
+                "-e",
+                f"VOX_WORKER_OWNER={launch.namespace}:{launch.worker_id}",
                 "--",
                 "env",
                 "-i",
@@ -53,7 +55,12 @@ class TmuxWorkerProvider:
                 str(environment.address),
                 *profile.argv(launch.worker_id, launch.task),
             )
-            environment.send(profile.environment(os.environ))
+            environment.send(
+                {
+                    **profile.environment(os.environ),
+                    "VOX_WORKER_SESSION_ID": launch.worker_id,
+                }
+            )
         finally:
             environment.close()
 

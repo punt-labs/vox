@@ -72,6 +72,13 @@ class WorkerHooks:
         admitted = self._registry.admits_hook(session, cwd)
         if worker_only and not admitted:
             return None
+        sequence = payload.get("relay_seq")
+        if (
+            admitted
+            and type(sequence) is int
+            and self._registry.has_hook_receipt(str(session), sequence)
+        ):
+            return None
         self._store.ingest(payload, worker_input=admitted)
         self._registry.checkpoint_progress(session, cwd)
         if not admitted:

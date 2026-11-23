@@ -15,7 +15,7 @@ from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 
-from .fakes import FakePlayback, FakeWorkers
+from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -165,6 +165,90 @@ async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
                 break
             await asyncio.sleep(0.01)
     assert cast("dict[str, object]", status)["state"] == "ended"
+
+
+async def test_return_opens_with_only_away_results_and_open_decisions(
+    tmp_path: Path,
+) -> None:
+    workers, playback = FakeWorkers(), FakePlayback()
+    workers.known = [
+        payload("old", last_assistant_message="Already reviewed.", result_seq=1),
+        payload("running", "Write the greeting"),
+    ]
+    opening: list[str | None] = []
+
+    async def peer(socket: ServerConnection) -> None:
+        init = json.loads(await socket.recv())
+        opening.append(
+            init["conversation_config_override"]["agent"].get("first_message")
+        )
+        await socket.send(json.dumps(_METADATA))
+        await socket.wait_closed()
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    start: dict[str, object] = {
+        "type": "call_start",
+        "script": [{"pcm_path": str(pcm)}],
+    }
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+
+        def handlers() -> CallHandlers:
+            return CallHandlers(
+                workers,
+                workers,
+                cast("PlaybackQueue", playback),
+                connector=_Connector(
+                    f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+                ),
+                trace_dir=tmp_path,
+                opener=_LOOPBACK,
+            )
+
+        first = handlers()
+        assert "result" in await _rpc(first, start)
+        assert "result" in await _rpc(first, {"type": "call_stop"})
+        workers.known[1] = payload(
+            "running",
+            "Write the greeting",
+            last_assistant_message="Wrote hello.py.",
+            result_seq=3,
+        )
+        workers.known.append(
+            payload(
+                "blocked",
+                "Run tests",
+                pending_decision={
+                    "notification_type": "idle_prompt",
+                    "message": "Which suite?",
+                    "seq": 2,
+                },
+            )
+        )
+        for index in range(4, 7):
+            workers.known.append(
+                payload(
+                    f"new-{index}",
+                    f"Task {index}",
+                    last_assistant_message=f"Result {index}.",
+                    result_seq=index,
+                )
+            )
+        second = handlers()
+        assert "result" in await _rpc(second, start)
+        assert "result" in await _rpc(second, {"type": "call_stop"})
+        workers.known = [row for row in workers.known if row["id"] != "blocked"]
+        third = handlers()
+        assert "result" in await _rpc(third, start)
+        assert "result" in await _rpc(third, {"type": "call_stop"})
+
+    assert opening[0] is None
+    assert opening[1] is not None
+    assert "Wrote hello.py." in opening[1]
+    assert "Which suite?" in opening[1]
+    assert "Already reviewed." not in opening[1]
+    assert all(f"Result {index}." in opening[1] for index in range(4, 7))
+    assert opening[2] is None
 
 
 async def test_start_without_a_key_is_refused(

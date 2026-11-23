@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Self, TextIO, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.paths import user_state_dir
-from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_agent.trace import EventTrace
@@ -20,7 +20,7 @@ from punt_vox.voxd.voice_call.call import VoiceAgentCall
 from punt_vox.voxd.voice_call.connector import CallConnector
 from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
-from punt_vox.voxd.voice_call.seed import CallSeed
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.types import MessageHandler
-    from punt_vox.voxd.voice_call.call import Dial, Opener
+    from punt_vox.voxd.voice_agent.contracts import SessionOptions
+    from punt_vox.voxd.voice_call.call import Opener
     from punt_vox.voxd.voice_call.connector import AgentConnector
     from punt_vox.voxd.voice_call.contracts import (
         CallInput,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 __all__ = ["CallHandlers"]
 
 _CONNECT_TIMEOUT_S: Final = 30.0  # Provisioning the agent and the handshake.
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,22 +167,36 @@ class CallHandlers:
             opener=self._opener,
             progress=self._progress,
         )
+        returning = ReturnBrief(self._trace_dir / "departure.json")
 
         async def dial() -> tuple[str, SessionOptions]:
-            prompt = CallSeed(self._projects.repos(), await self._workers.workers())
             url, tool_ids = await asyncio.to_thread(agent.connection, BossTools.CATALOG)
-            return url, SessionOptions(prompt.prompt(), tool_ids)
+            workers = await self._workers.workers()
+            options = await asyncio.to_thread(
+                returning.options,
+                workers,
+                self._projects.repos(),
+                tool_ids,
+            )
+            return url, options
 
-        task = asyncio.create_task(self._run(call, dial, stream))
+        async def run() -> None:
+            try:
+                await call.run(dial, returning.covered)
+            finally:
+                stream.close()
+                if call.was_connected:
+                    try:
+                        workers = await self._workers.workers()
+                        await asyncio.to_thread(returning.depart, workers)
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        logger.warning(
+                            "Call departure not saved (%s)", type(exc).__name__
+                        )
+
+        task = asyncio.create_task(run())
         self._active = _ActiveCall(call, task, path)
         return self._active
-
-    @staticmethod
-    async def _run(call: VoiceAgentCall, dial: Dial, stream: TextIO) -> None:
-        try:
-            await call.run(dial)
-        finally:
-            stream.close()
 
     async def _stop(self) -> dict[str, object]:
         if self._active is not None:

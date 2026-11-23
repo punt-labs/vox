@@ -21,6 +21,7 @@ class WorkerLaunch:
     worker_id: str
     worktree: Path
     task: str
+    namespace: str = ""
 
 
 @dataclass(frozen=True, slots=True)

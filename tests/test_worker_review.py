@@ -33,8 +33,11 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
     registry = _registry(tmp_path, provider)
     registry.start("edit", str(tmp_path), provider="fake", harness="test")
     provider.alive = False
-    with patch.object(TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")):
+    with patch.object(
+        TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")
+    ) as cleanup:
         restored = _registry(tmp_path, provider)
+        cleanup.assert_not_called()
         record = restored.list()[0]
         assert record.state == "exited"
         assert record.last_report["cleanup_error"] == "ValueError"
