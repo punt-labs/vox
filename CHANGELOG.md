@@ -24,10 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `vox say`, `vox voice`, and `vox rec new` use the repo's configured provider
-  unless given an explicit `--provider` flag. `TTS_PROVIDER` only guides
-  provider selection during setup. To override the model for one request,
-  use `--model` instead of `TTS_MODEL`. (PL-1151, PL-1150)
+- `vox say`, `vox rec new`, and voice listings from `vox voice` use the
+  repo's configured provider unless given an explicit `--provider` flag.
+  `TTS_PROVIDER` only guides provider selection during setup. To override
+  the model for one request, use `--model` instead of `TTS_MODEL`.
+  (PL-1151, PL-1150)
 
 - Updating settings preserves existing CRLF line endings and the Markdown
   body. (PL-1142)
