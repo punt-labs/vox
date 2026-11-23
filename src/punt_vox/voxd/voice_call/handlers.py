@@ -18,6 +18,7 @@ from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
+from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
 from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
@@ -170,7 +171,7 @@ class CallHandlers:
             if "script" in msg
             else MicInput()
         )
-        self._trace_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
         stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
         path = self._trace_dir / f"call-{stamp}.jsonl"
         stream = os.fdopen(

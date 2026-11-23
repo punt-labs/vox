@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import stat
-import tempfile
 from contextlib import suppress
-from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @final
@@ -34,27 +37,7 @@ class CursorFile:
         """Write the cursor atomically without replacing a known special file."""
         with suppress(FileNotFoundError):
             self._require_regular(self._path.lstat().st_mode)
-        directory = self._path.parent
-        directory.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=directory,
-            prefix=f".{self._path.name}.",
-            suffix=".tmp",
-            delete_on_close=False,
-        ) as tmp:
-            tmp.write(text)
-            tmp.flush()
-            os.fchmod(tmp.fileno(), 0o600)
-            os.fsync(tmp.fileno())
-            tmp.close()
-            Path(tmp.name).replace(self._path)
-        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        CursorCommit.write(self._path, text)
 
     @staticmethod
     def _require_regular(mode: int) -> None:

@@ -41,6 +41,32 @@ def test_cursor_syncs_directory_after_renaming(tmp_path: Path) -> None:
     assert syncs == [(False, False), (True, True)]
 
 
+def test_first_cursor_syncs_each_new_directories_parent(tmp_path: Path) -> None:
+    parent = tmp_path / "vox"
+    directory = parent / "calls"
+    path = directory / "departure.json"
+    syncs: list[int] = []
+    fsync = os.fsync
+
+    def observe(fd: int) -> None:
+        assert parent.exists()
+        inode = os.fstat(fd).st_ino
+        if inode == parent.stat().st_ino:
+            assert directory.exists()
+        syncs.append(inode)
+        fsync(fd)
+
+    with patch("punt_vox.voxd.voice_call.cursor_file.os.fsync", side_effect=observe):
+        CursorFile(path).replace("{}")
+
+    assert syncs == [
+        tmp_path.stat().st_ino,
+        parent.stat().st_ino,
+        path.stat().st_ino,
+        directory.stat().st_ino,
+    ]
+
+
 def test_cursor_file_does_not_read_symlink_target(tmp_path: Path) -> None:
     target = tmp_path / "other.json"
     target.write_text('{"worker": 99}')
