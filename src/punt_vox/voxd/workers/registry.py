@@ -56,6 +56,12 @@ class WorkerRegistry:
         self._workers = {r.id: r for r in records.load(strict=False)}
         return self
 
+    def reload(self) -> None:
+        """Refresh records before admitting callers after startup reconciliation."""
+        records = self._records.load(strict=False)
+        self._workers.clear()
+        self._workers.update((record.id, record) for record in records)
+
     def start(
         self,
         task: str,

@@ -227,7 +227,8 @@ async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> 
                 "punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider
             ),
         ):
-            adopted = WorkerSubsystem.actor(after, policy)
+            adopted, recover = WorkerSubsystem.prepare(after, policy)
+            recover()
         events = ProgressEvents()
         resumed = adopted.hooks(after, events)
         async with events.subscribe() as subscription:
@@ -309,7 +310,8 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(ClaudeProfile, "cleanup") as cleanup,
     ):
-        actor = WorkerSubsystem.actor(after, WorkerSubsystem.policy())
+        actor, recover = WorkerSubsystem.prepare(after, WorkerSubsystem.policy())
+        recover()
         ws = AsyncMock()
         await actor.hooks(after).admit(
             {"session_id": worker.id, "cwd": worker.worktree}, ws
@@ -398,7 +400,8 @@ async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
     ):
-        actor = WorkerSubsystem.actor(after, WorkerSubsystem.policy())
+        actor, recover = WorkerSubsystem.prepare(after, WorkerSubsystem.policy())
+        recover()
         await actor.hooks(after).ingest(
             {
                 "session_id": worker.id,

@@ -15,6 +15,8 @@ from punt_vox.voxd.workers.startup import WorkerStartup
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.hook_context_store import HookContextStore
 
 
@@ -30,16 +32,21 @@ class WorkerSubsystem:
         return WorkerRepoPolicy(ConfigStore(ConfigStore.global_dir()))
 
     @staticmethod
-    def actor(store: HookContextStore, policy: WorkerRepoPolicy) -> WorkerActor:
-        """Rehydrate the registry at daemon startup behind one serialized actor."""
+    def prepare(
+        store: HookContextStore, policy: WorkerRepoPolicy
+    ) -> tuple[WorkerActor, Callable[[], None]]:
+        """Wire the actor and return the recovery it must await before serving."""
         records = WorkerRecords(user_state_dir() / "workers")
         provider = TmuxWorkerProvider()
-        WorkerStartup.run(records, store, provider)
-        return WorkerActor(
-            WorkerRegistry(
-                policy,
-                records,
-                {"tmux": provider},
-                {"claude": ClaudeProfile(store)},
-            )
+        registry = WorkerRegistry(
+            policy,
+            records,
+            {"tmux": provider},
+            {"claude": ClaudeProfile(store)},
         )
+
+        def recover() -> None:
+            WorkerStartup.run(records, store, provider)
+            registry.reload()
+
+        return WorkerActor(registry), recover
