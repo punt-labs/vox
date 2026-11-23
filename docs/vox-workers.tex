@@ -112,7 +112,7 @@ neither supplies a fresh report nor a new liveness fact.
 
 Confirmed provider death selects exited; explicit stop and successful launch
 rollback select stopped. If rollback cannot confirm termination, starting is
-retained with a durable launch error and reconciliation retries termination.
+retained with a durable launch error and explicit stop can retry termination.
 Cleanup success removes the pending marker. On failure it remains, and an error
 may be attached to the opaque report without changing process phase.
 
@@ -665,14 +665,20 @@ to five seconds; delivery across longer outages is not guaranteed.
 
 \begin{schema}{StartupAdoptsAndReaps}
   \Delta WorkerRecovery \\
+  \Delta Workers \\
   protected?, retired? : \power WORKER
 \where
+  active = \dom (phase \rres \{starting, ready\}) \\
   retired? \subseteq active \\
   retired? \cap \ran (live \dres panes) = \emptyset \\
   active \setminus retired? \subseteq protected? \\
   retired? \cap protected? = \emptyset \\
   saved' = saved \\
   active' = active \setminus retired? \\
+  phase' = phase \oplus \{ w : retired? @ w \mapsto exited \} \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending \cup retired? \\
   restored' = active' \dres saved \\
   panes' = panes \\
   owned' = owned \\
@@ -682,8 +688,8 @@ to five seconds; delivery across longer outages is not guaranteed.
 \emph{Startup retires dead workers before hook admission}:
 \textit{retired?} names the workers confirmed dead and checkpointed as
 \textit{exited}, not a new worker state. Their work products are retained.
-Startup records cleanup as pending; the ordinary stop operation can then
-remove the worktree's temporary trust entry.
+Startup adds them to \textit{pending}, enabling \textit{RetryCleanup} through
+explicit stop. Worker listing and call snapshots do not run trust cleanup.
 
 \emph{Startup only reaps marked orphans}: the reaper removes only a pane
 marked as owned by this registry and not protected by a live or unreadable
