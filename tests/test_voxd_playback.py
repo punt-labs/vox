@@ -165,6 +165,31 @@ def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
 class TestPlayAudioObservability:
     """``PlaybackQueue.play_audio`` must never silently discard playback failures."""
 
+    async def test_timeout_reaps_player_and_records_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        audio = tmp_path / "timed-out.mp3"
+        audio.write_bytes(b"audio")
+        playback = _make_playback_queue()
+        proc = _fake_proc(rc=0, stderr=b"")
+        proc.communicate = AsyncMock(side_effect=TimeoutError)
+        proc.wait = AsyncMock()
+        monkeypatch.setattr(
+            PlaybackQueue, "_compute_timeout", AsyncMock(return_value=1)
+        )
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        )
+
+        await playback.play_audio(audio)
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
+        result = playback.last_result
+        assert result is not None
+        assert result.rc == -1
+        assert result.stderr == "timeout after 1.0s"
+
     def test_nonzero_exit_logs_error_and_records(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

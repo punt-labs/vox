@@ -47,14 +47,18 @@ class SynthesisOutcome:
             source = cached_path.open("rb")
         except FileNotFoundError:
             return None
-        with source, tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as dest:
-            outcome = cls(path=Path(dest.name), cached=True)
-            try:
+        outcome = None
+        try:
+            with (
+                source,
+                tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as dest,
+            ):
+                outcome = cls(path=Path(dest.name), cached=True)
                 shutil.copyfileobj(source, dest)
-                dest.flush()
-            except BaseException:
+        except BaseException:
+            if outcome is not None:
                 outcome.discard()
-                raise
+            raise
         return outcome
 
     def discard(self) -> None:

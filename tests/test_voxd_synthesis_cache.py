@@ -2,7 +2,10 @@
 
 import asyncio
 import shutil
+import tempfile
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 from unittest.mock import patch
@@ -15,9 +18,9 @@ from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
-@pytest.mark.parametrize("copy_fails", [False, True])
+@pytest.mark.parametrize("result", ["success", "error", "evicted"])
 async def test_cancelled_cache_copy_is_released(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, *, copy_fails: bool
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, result: str
 ) -> None:
     cached = tmp_path / "cached.mp3"
     cached.write_bytes(b"audio")
@@ -26,15 +29,24 @@ async def test_cancelled_cache_copy_is_released(
     resume = threading.Event()
     collected = asyncio.Event()
     copy = shutil.copyfileobj
+    copy_cached = SynthesisOutcome._copy_cached  # pyright: ignore[reportPrivateUsage]
     collect = SynthesisOutcome._discard_unclaimed  # pyright: ignore[reportPrivateUsage]
 
-    def delayed_copy(source: BinaryIO, dest: BinaryIO) -> None:
-        loop.call_soon_threadsafe(started.set_result, Path(dest.name))
+    def wait_for_cancel(path: Path) -> None:
+        loop.call_soon_threadsafe(started.set_result, path)
         if not resume.wait(timeout=5):
             raise TimeoutError("cache copy did not resume")
-        if copy_fails:
+
+    def delayed_copy(source: BinaryIO, dest: BinaryIO) -> None:
+        wait_for_cancel(Path(dest.name))
+        if result == "error":
             raise OSError("cache copy denied")
         copy(source, dest)
+
+    def copy_after_eviction(path: Path) -> SynthesisOutcome | None:
+        if result == "evicted":
+            wait_for_cancel(path)
+        return copy_cached(path)
 
     def collect_outcome(work: asyncio.Future[SynthesisOutcome | None]) -> None:
         collect(work)
@@ -43,6 +55,7 @@ async def test_cancelled_cache_copy_is_released(
     with (
         patch("punt_vox.voxd.synthesis_result.shutil.copyfileobj", delayed_copy),
         patch.object(SynthesisOutcome, "_discard_unclaimed", collect_outcome),
+        patch.object(SynthesisOutcome, "_copy_cached", copy_after_eviction),
     ):
         request = asyncio.create_task(SynthesisOutcome.from_cache(cached))
         try:
@@ -51,15 +64,46 @@ async def test_cancelled_cache_copy_is_released(
             with pytest.raises(asyncio.CancelledError):
                 await request
             assert snapshot.exists()
+            if result == "evicted":
+                cached.unlink()
         finally:
             resume.set()
         await asyncio.wait_for(collected.wait(), timeout=2)
 
     assert not snapshot.exists()
+    if result != "evicted":
+        assert cached.read_bytes() == b"audio"
+    assert ("Abandoned cache copy failed: cache copy denied" in caplog.text) == (
+        result == "error"
+    )
+
+
+@pytest.mark.parametrize("fail_on_close", [False, True])
+async def test_snapshot_errors_leave_no_temp_audio(
+    tmp_path: Path, *, fail_on_close: bool
+) -> None:
+    cached = tmp_path / "cached.mp3"
+    cached.write_bytes(b"audio")
+    make_temp = tempfile.NamedTemporaryFile
+
+    @contextmanager
+    def failing_temp(*, suffix: str, delete: bool) -> Generator[object]:
+        if not fail_on_close:
+            raise OSError("cannot open temp audio")
+        with make_temp(dir=tmp_path, suffix=suffix, delete=delete) as dest:
+            yield dest
+        raise OSError("cannot close temp audio")
+
+    with (
+        patch(
+            "punt_vox.voxd.synthesis_result.tempfile.NamedTemporaryFile", failing_temp
+        ),
+        pytest.raises(OSError, match=r"cannot (open|close) temp audio"),
+    ):
+        await SynthesisOutcome.from_cache(cached)
+
+    assert list(tmp_path.iterdir()) == [cached]
     assert cached.read_bytes() == b"audio"
-    assert (
-        "Abandoned cache copy failed: cache copy denied" in caplog.text
-    ) == copy_fails
 
 
 class TestSynthesisCache:
