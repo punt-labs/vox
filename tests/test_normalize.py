@@ -360,6 +360,7 @@ class TestSymbolStripping:
             ("$1trillion", "1 trillion dollars"),
             ("$5-$10", "5 dollars to 10 dollars"),
             ("$5\u201310", "5 to 10 dollars"),
+            ("$5k\u201310", "5 thousand to 10 thousand dollars"),
             ("£.50\u20131.25/day", "0.50 to 1.25 pounds per day"),
             ("$10k/month", "10 thousand dollars per month"),
             ("$5-$10/month", "5 dollars to 10 dollars per month"),

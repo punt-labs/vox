@@ -87,10 +87,14 @@ class CurrencySpeech:
         end = "" if prefix else match["bare_end"]
         unit = singular if not (scale or end) and cls._is_one(amount) else plural
         number = _SIGNS[sign] + cls._spoken_number(amount)
-        span = f"to {cls._spoken_number(end)}" if end else ""
+        span = cls._speak_bare_end(end, scale) if end else ""
         return " ".join(
             filter(None, (number, scale, span, unit, "" if scale else word))
         )
+
+    @classmethod
+    def _speak_bare_end(cls, end: str, scale: str) -> str:
+        return " ".join(filter(None, ("to", cls._spoken_number(end), scale)))
 
     @staticmethod
     def _is_one(amount: str) -> bool:
