@@ -51,6 +51,14 @@ class BossTools:
                 {
                     "worker_id": _ID,
                     "words": {"type": "string", "description": "Words, verbatim"},
+                    "choice": {
+                        "type": "string",
+                        "enum": ["approve", "deny"],
+                        "description": (
+                            "Required for a pending decision: approve=yes, deny=no. "
+                            "Omit for ordinary input."
+                        ),
+                    },
                     "urgent": {
                         "type": "boolean",
                         "description": "Interrupt the worker's current step first",
@@ -170,7 +178,15 @@ class BossTools:
             raise ValueError("urgent must be a boolean")
         worker = await self._directory.find(self._text(arguments, "worker_id"))
         words = self._text(arguments, "words")
-        return await self._workers.steer(worker["id"], words, urgent=urgent)
+        choice = arguments.get("choice")
+        if choice is not None and choice not in ("approve", "deny"):
+            raise ValueError("choice must be approve or deny")
+        return await self._workers.steer(
+            worker["id"],
+            words,
+            urgent=urgent,
+            choice=choice,
+        )
 
     async def _status(self, arguments: dict[str, object]) -> object:
         worker = await self._directory.find(self._text(arguments, "worker_id"))

@@ -55,9 +55,18 @@ class WorkerCli:
         WorkerCli._run("stop", worker_id=worker_id)
 
     @staticmethod
-    def steer(worker_id: str, words: str, *, urgent: bool = False) -> None:
+    def steer(
+        worker_id: str, words: str, *, urgent: bool = False, choice: str | None = None
+    ) -> None:
         """Send literal input and await acknowledgement, optionally interrupting."""
-        WorkerCli._run("steer", worker_id=worker_id, words=words, urgent=urgent)
+        fields: dict[str, str | bool] = {
+            "worker_id": worker_id,
+            "words": words,
+            "urgent": urgent,
+        }
+        if choice is not None:
+            fields["choice"] = choice
+        WorkerCli._run("steer", **fields)
 
     @staticmethod
     def build_app() -> typer.Typer:

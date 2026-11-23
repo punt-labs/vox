@@ -23,7 +23,11 @@ async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> Non
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
     tools = _tools(workers)
-    answer: dict[str, object] = {"worker_id": "abcd1234", "words": "Yes, allow it."}
+    answer: dict[str, object] = {
+        "worker_id": "abcd1234",
+        "words": "Yes, allow it.",
+        "choice": "approve",
+    }
     first = await tools.answer("steer_worker", answer, tool_call_id="first")
     assert not first[1]
     assert await tools.answer("steer_worker", answer, tool_call_id="first") == first
@@ -33,6 +37,49 @@ async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> Non
         ("abcd1234", "Yes, allow it.", False),
         ("abcd1234", "Yes, allow it.", False),
     ]
+    assert workers.choices == ["approve", "approve"]
+
+
+async def test_explicit_denial_and_receipt_reach_the_worker_boundary() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
+    result, error = await _tools(workers).answer(
+        "steer_worker",
+        {"worker_id": "abcd1234", "words": "No, don't run that", "choice": "deny"},
+        tool_call_id="denial",
+    )
+    assert not error
+    assert json.loads(result)["choice"] == "deny"
+    assert workers.choices == ["deny"]
+
+
+async def test_invalid_choice_never_reaches_worker() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    result, error = await _tools(workers).answer(
+        "steer_worker",
+        {"worker_id": "abcd1234", "words": "maybe", "choice": "maybe"},
+        tool_call_id="ambiguous",
+    )
+    assert error and "choice must be approve or deny" in result
+    assert workers.steered == []
+
+
+async def test_status_advertises_choices_only_with_a_pending_decision() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
+    tools = _tools(workers)
+    result, error = await tools.answer(
+        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="pending"
+    )
+    assert not error
+    assert json.loads(result)["decision_choices"] == ["approve", "deny"]
+    workers.known = [payload("abcd1234")]
+    result, error = await tools.answer(
+        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="clear"
+    )
+    assert not error
+    assert json.loads(result)["decision_choices"] == []
 
 
 def _tools(workers: FakeWorkers) -> BossTools:

@@ -12,6 +12,7 @@ from uuid import uuid4
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.environment import WorkerEnvironment
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 
 
 @final
@@ -74,6 +75,12 @@ class TmuxWorkerProvider:
             self._run("paste-buffer", "-b", buffer, "-t", f"={handle}:")
         finally:
             self._run("delete-buffer", "-b", buffer, check=False)
+
+    def decide(
+        self, handle: str, choice: DecisionChoice, *, profile: HarnessProfile
+    ) -> None:
+        """Send the selected permission keys without pasting or submitting text."""
+        self._run("send-keys", "-t", f"={handle}:", *profile.decision_keys(choice))
 
     def status(self, handle: str) -> bool:
         """Report whether the session is still alive."""

@@ -10,6 +10,7 @@ from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_projection import HookText
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.contracts import WorkerInput
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.trust import ClaudeTrust
 
 
@@ -67,6 +68,11 @@ class ClaudeProfile:
     def matches_input(receipt: WorkerInput, words: str) -> bool:
         """Match an untruncated input receipt exactly."""
         return receipt.decision or receipt.text == words
+
+    @staticmethod
+    def decision_keys(choice: DecisionChoice) -> tuple[str, ...]:
+        """Select Yes by number or decline with Escape, independent of focus."""
+        return {"approve": ("1",), "deny": ("Escape",)}[choice]
 
     def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
         """Search retained submissions, not just the latest prompt at poll time."""

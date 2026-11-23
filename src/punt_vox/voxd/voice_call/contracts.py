@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["CallInput", "ProjectAllowlist", "WorkerControl"]
@@ -28,7 +28,14 @@ class WorkerControl(Protocol):
         """Return every known worker, reconciled with its live session."""
         ...
 
-    async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
+    async def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        choice: DecisionChoice | None = None,
+    ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         ...
 

@@ -21,6 +21,14 @@ def test_seed_lists_projects_and_workers_newest_first() -> None:
     assert [w["worker_id"] for w in workers] == ["bbb", "a"]
 
 
+def test_seed_maps_explicit_answers_and_reasks_ambiguous_ones() -> None:
+    prompt = CallSeed(("/repo",), []).prompt()
+    assert "choice=approve for an explicit yes" in prompt
+    assert "choice=deny for an explicit no" in prompt
+    assert "ambiguous, ask yes or no again instead of steering" in prompt
+    assert "never set urgent for a decision" in prompt
+
+
 def test_seed_drops_oldest_workers_to_stay_under_10_kb() -> None:
     workers = [
         payload(f"w{i:03d}" + "x" * i, "t" * 380, goal="g" * 380) for i in range(40)

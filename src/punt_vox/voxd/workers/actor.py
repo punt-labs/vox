@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
     from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.workers.registry import WorkerRegistry
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -61,10 +61,17 @@ class WorkerActor:
             records = await asyncio.to_thread(self._registry.list)
         return [WorkerRecordCodec.encode(record) for record in records]
 
-    async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
+    async def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        choice: DecisionChoice | None = None,
+    ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         return await self.steer_request(
-            {"worker_id": worker_id, "words": words, "urgent": urgent}
+            {"worker_id": worker_id, "words": words, "urgent": urgent, "choice": choice}
         )
 
     async def steer_request(self, msg: dict[str, object]) -> SteerReceipt:

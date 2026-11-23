@@ -23,6 +23,16 @@ from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.worker_client import WorkerClient
 
 
+@pytest.mark.parametrize("choice", ["maybe", "", 1, [], {}])
+async def test_invalid_choice_is_rejected_before_delivery(choice: object) -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    with pytest.raises(ValueError, match="choice must be approve or deny"):
+        await WorkerSteering(registry, asyncio.Lock()).handle(
+            {"worker_id": "w", "words": "answer", "choice": choice}
+        )
+    registry.steer.assert_not_called()
+
+
 @pytest.mark.subprocess
 def test_receipt_types_import_without_worker_implementations() -> None:
     result = subprocess.run(
@@ -33,7 +43,7 @@ def test_receipt_types_import_without_worker_implementations() -> None:
                 "from punt_vox.voxd.workers.steering_types import SteerReceipt; "
                 "import sys; "
                 "assert SteerReceipt.__required_keys__ == "
-                "{'worker_id', 'heard', 'receipt_seq', 'urgent'}; "
+                "{'worker_id', 'heard', 'receipt_seq', 'urgent', 'choice'}; "
                 "assert 'punt_vox.voxd.workers.steering' not in sys.modules; "
                 "assert 'punt_vox.voxd.workers.registry' not in sys.modules"
             ),
@@ -247,7 +257,7 @@ async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> N
     sequences: dict[str, int] = {}
     release_first = False
 
-    def send(worker: str, words: str, *, urgent: bool) -> int:
+    def send(worker: str, words: str, *, urgent: bool, choice: object = None) -> int:
         baseline = sequences.get(worker, 0)
         sequences[worker] = baseline + 1
         return baseline
@@ -310,11 +320,15 @@ async def test_queued_steer_times_out_without_delivery() -> None:
                 await asyncio.wait_for(
                     steering.handle({"worker_id": "one", "words": "queued"}), 1
                 )
-            registry.steer.assert_called_once_with("one", "first", urgent=False)
+            registry.steer.assert_called_once_with(
+                "one", "first", urgent=False, choice=None
+            )
         finally:
             release.set()
             await asyncio.wait_for(first, 1)
-        registry.steer.assert_called_once_with("one", "first", urgent=False)
+        registry.steer.assert_called_once_with(
+            "one", "first", urgent=False, choice=None
+        )
         response = await steering.handle({"worker_id": "one", "words": "after"})
         assert response["receipt_seq"] == 5
         assert [call.args[1] for call in registry.steer.call_args_list] == [
@@ -346,7 +360,7 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
         steering.handle({"worker_id": "one", "words": "fresh"}), 1
     )
     assert response["heard"] is True
-    registry.steer.assert_called_once_with("one", "fresh", urgent=False)
+    registry.steer.assert_called_once_with("one", "fresh", urgent=False, choice=None)
 
 
 @pytest.mark.asyncio
@@ -434,6 +448,7 @@ async def test_receipt_wait_releases_hook_ingest_lock(heard: bool) -> None:
             "heard": heard,
             "receipt_seq": 5 if heard else None,
             "urgent": True,
+            "choice": None,
         }
     assert store.last_input("w") == (5, "words")
     assert hook_ws.send_json.call_args.args[0]["type"] == "hook_event_accepted"

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -36,6 +36,7 @@ class FakeWorkers:
         self.allowed = projects
         self.started: list[tuple[str, str]] = []
         self.steered: list[tuple[str, str, bool]] = []
+        self.choices: list[DecisionChoice | None] = []
         self.stopped: list[str] = []
         self.known: list[WorkerPayload] = []
         self.gate = asyncio.Event()
@@ -59,13 +60,22 @@ class FakeWorkers:
     async def workers(self) -> list[WorkerPayload]:
         return list(self.known)
 
-    async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
+    async def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        choice: DecisionChoice | None = None,
+    ) -> SteerReceipt:
         self.steered.append((worker_id, words, urgent))
+        self.choices.append(choice)
         return {
             "worker_id": worker_id,
             "heard": True,
             "receipt_seq": 1,
             "urgent": urgent,
+            "choice": choice,
         }
 
 

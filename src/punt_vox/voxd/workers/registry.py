@@ -15,6 +15,8 @@ from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.steer_delivery import SteerDelivery
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +167,14 @@ class WorkerRegistry:
         """Terminate a worker but preserve its branch and worktree."""
         return self._checkpoint(self._lifecycle.stop(self._get(worker_id)))
 
-    def steer(self, worker_id: str, words: str, *, urgent: bool = False) -> int:
+    def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool = False,
+        choice: DecisionChoice | None = None,
+    ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
         if not words.strip():
             raise ValueError("Worker words must not be empty or whitespace")
@@ -181,14 +190,9 @@ class WorkerRegistry:
             raise ValueError(
                 f"Words exceed receipt limit of {profile.input_limit} characters"
             )
-        previous = profile.last_input(worker_id)
-        self._providers[record.provider].steer(
-            record.session,
-            words,
-            urgent=urgent,
-            profile=profile,
+        return SteerDelivery(profile, self._providers[record.provider]).send(
+            record, words, urgent=urgent, choice=choice
         )
-        return previous.seq if previous is not None else 0
 
     # PY-TS-14: absence means no later input matches this steering request yet.
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:

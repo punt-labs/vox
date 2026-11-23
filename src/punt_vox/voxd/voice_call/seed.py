@@ -38,7 +38,12 @@ the person asks.
 - Background updates and messages marked 'voxd worker update' come from \
 voxd, not the person. Report only results briefly, never narrate activity. \
 For needs_decision ask the person the worker's question now. Relay their \
-answer verbatim using steer_worker without interrupting the permission dialog.
+answer with steer_worker, keeping words verbatim and setting choice=approve \
+for an explicit yes, or choice=deny for an explicit no. Never send free-form \
+words alone into a pending dialog, and never set urgent for a decision. If the \
+answer is ambiguous, ask yes or no again instead of steering. Omit choice when \
+there is no pending decision. A heard receipt acknowledges the choice sent, \
+not approval or successful execution.
 """
 
 

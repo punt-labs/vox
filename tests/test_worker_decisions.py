@@ -12,6 +12,8 @@ from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.hooks import WorkerHooks
+from punt_vox.voxd.workers.steering_types import DecisionChoice
+from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 
 def test_pending_decision_order_clear_and_receipt() -> None:
@@ -137,7 +139,10 @@ async def test_admitted_publication_deduplicated(tmp_path: Path) -> None:
         assert queue.empty()
 
 
-def test_registry_hears_pending_dialog_without_user_prompt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("choice", ["approve", "deny"])
+def test_registry_hears_pending_dialog_without_user_prompt(
+    tmp_path: Path, choice: DecisionChoice
+) -> None:
     provider = FakeWorkerProvider()
     provider.ready = True
     registry = _registry(tmp_path, provider)
@@ -159,7 +164,7 @@ def test_registry_hears_pending_dialog_without_user_prompt(tmp_path: Path) -> No
             TrivialProfile, "matches_input", side_effect=profile.matches_input
         ),
     ):
-        baseline = registry.steer(worker.id, "Yes, allow it.")
+        baseline = registry.steer(worker.id, "The person's answer", choice=choice)
         assert baseline == 3
         assert registry.receipt(worker.id, "Yes, allow it.", baseline) is None
         store.ingest(
@@ -168,6 +173,51 @@ def test_registry_hears_pending_dialog_without_user_prompt(tmp_path: Path) -> No
         )
         assert registry.receipt(worker.id, "Yes, allow it.", baseline) == 5
         assert store.last_input(worker.id) == (0, "")
+
+
+@pytest.mark.parametrize("choice", ["approve", "deny"])
+def test_choice_keys_never_paste_words_or_confirm_highlighted_yes(
+    choice: DecisionChoice,
+) -> None:
+    profile = ClaudeProfile(HookContextStore())
+    with patch.object(TmuxWorkerProvider, "_run") as command:
+        TmuxWorkerProvider().decide("worker", choice, profile=profile)
+    command.assert_called_once_with(
+        "send-keys", "-t", "=worker:", "1" if choice == "approve" else "Escape"
+    )
+    assert "Enter" not in profile.decision_keys(choice)
+
+
+@pytest.mark.parametrize(
+    "pending,choice,urgent",
+    [
+        (True, None, False),
+        (False, "approve", False),
+        (False, "deny", False),
+        (True, "approve", True),
+        (True, "deny", True),
+    ],
+)
+def test_mismatched_decision_requests_never_touch_the_transport(
+    tmp_path: Path, pending: bool, choice: DecisionChoice | None, urgent: bool
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    with (
+        patch.object(
+            TrivialProfile,
+            "last_input",
+            return_value=WorkerInput(3, "", decision=pending),
+        ),
+        patch.object(FakeWorkerProvider, "steer") as text,
+        patch.object(FakeWorkerProvider, "decide") as decision,
+        pytest.raises(ValueError, match=r"decision|choice"),
+    ):
+        registry.steer(worker.id, "No, don't run that", choice=choice, urgent=urgent)
+    text.assert_not_called()
+    decision.assert_not_called()
 
 
 async def test_delayed_decision_does_not_publish_an_obsolete_question(

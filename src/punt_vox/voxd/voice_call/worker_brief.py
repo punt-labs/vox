@@ -33,6 +33,9 @@ class WorkerBrief:
             "task": WorkerBrief._clip(worker["task"]),
             "project": worker["project"],
             "state": worker["state"],
+            "decision_choices": ["approve", "deny"]
+            if worker["last_report"].get("pending_decision") is not None
+            else [],
         }
 
     @staticmethod

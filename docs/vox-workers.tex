@@ -307,6 +307,10 @@ does not promise unbounded delivery history.
 
 \section{Pending decisions and live reports}
 
+\begin{zed}
+  DecisionChoice ::= approve | deny
+\end{zed}
+
 Only admitted worker events update decision state. Notification kinds
 permission\_prompt and idle\_prompt retain their clipped message and sender
 sequence; the next newer non-Notification event clears the question. Older
@@ -319,6 +323,26 @@ events cannot resurrect or clear a newer question.
 \where
   \forall w : WORKER @ \# (decisionReceipts~w) \leq 64
 \end{schema}
+
+\begin{schema}{DecisionDelivery}
+  \Xi WorkerDecisions \\
+  worker? : WORKER \\
+  choice? : DecisionChoice \\
+  sentChoice! : DecisionChoice
+\where
+  worker? \in \dom pendingDecision \\
+  sentChoice! = choice?
+\end{schema}
+
+DecisionDelivery admits only an explicit approve or deny choice while a
+question is pending. Free-form steering without a choice is refused while
+pending; a choice without a pending question and an urgent choice are also
+refused, without sending any keys. The harness maps approve to its explicit
+Yes selector and deny to its decline key; no answer text is pasted into the
+dialog. For Claude these are the numeric key 1 and Escape, respectively,
+neither followed by Enter. A receipt includes the sent choice even on an
+unheard timeout; heard acknowledges a later hook, not permission approval.
+Ambiguous spoken answers require another yes/no question before delivery.
 
 \begin{schema}{InitWorkerDecisions}
   WorkerDecisions
