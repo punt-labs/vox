@@ -365,7 +365,7 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         assert (await actor.workers())[0]["state"] == "exited"
         cleanup.assert_not_called()
         socket = AsyncMock()
-        await hooks.admit(base, socket)
+        await hooks.admit({**base}, socket)
         assert socket.send_json.call_args.args[0]["admitted"] is False
     for index in range(65):
         store.ingest(
