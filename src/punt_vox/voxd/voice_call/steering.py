@@ -60,7 +60,7 @@ class SteeringTool:
             else report.get("prompt_epoch", 0)
         )
         minimum = 1 if choice is not None else 0
-        if type(epoch) is not int or epoch < minimum:
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < minimum:
             raise ValueError(
                 "choice requires prompt_seq from the permission prompt you asked about"
                 if choice is not None

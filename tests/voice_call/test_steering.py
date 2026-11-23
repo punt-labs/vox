@@ -20,7 +20,7 @@ async def test_choice_resolution_keeps_the_announced_question() -> None:
     assert resolved["prompt_seq"] == resolved["prompt_epoch"] == 4
 
 
-@pytest.mark.parametrize("seq", [None, 0, -1, True, "4"])
+@pytest.mark.parametrize("seq", [None, 0, -1, True, False, "4"])
 async def test_choice_requires_a_positive_prompt_sequence(seq: object) -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", prompt_epoch=9)]

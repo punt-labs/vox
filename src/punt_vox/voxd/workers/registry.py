@@ -212,7 +212,11 @@ class WorkerRegistry:
         record: WorkerRecord,
         prompt_seq: int | None,  # None cannot identify a permission question.
     ) -> None:
-        if type(prompt_seq) is not int or prompt_seq <= 0:
+        if (
+            isinstance(prompt_seq, bool)
+            or not isinstance(prompt_seq, int)
+            or prompt_seq <= 0
+        ):
             raise ValueError(
                 "choice requires prompt_seq from the announced permission prompt"
             )
