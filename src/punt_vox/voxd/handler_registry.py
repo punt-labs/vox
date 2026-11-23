@@ -60,7 +60,11 @@ class HandlerRegistry:
         self._health = health
         return self
 
-    def build(self, lifetime: ExitStack | None = None) -> dict[str, MessageHandler]:
+    def build(
+        self,
+        lifetime: ExitStack
+        | None = None,  # PY-TS-14: standalone builds lack a lifespan.
+    ) -> dict[str, MessageHandler]:
         """Return the canonical handler dispatch table."""
         return {
             "synthesize": SynthesizeHandler(

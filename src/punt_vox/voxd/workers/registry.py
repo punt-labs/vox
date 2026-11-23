@@ -60,7 +60,10 @@ class WorkerRegistry:
         return self
 
     def restore(
-        self, records: list[WorkerRecord], *, unconfirmed: set[str] | None = None
+        self,
+        records: list[WorkerRecord],
+        *,
+        unconfirmed: set[str] | None = None,  # PY-TS-14: omit without a probe pass.
     ) -> None:
         """Install reconciled checkpoints before admitting callers."""
         self._inventory.restore(records, unconfirmed=unconfirmed)

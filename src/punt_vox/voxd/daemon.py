@@ -101,7 +101,7 @@ class VoxDaemon:
         # ``vox.music`` scene from its own scratch store, putting a second
         # "Music" frame on their display beside the real one.
         lux_clients: LuxClientFactory | None = None,
-        worker_lifetime: ExitStack | None = None,
+        worker_lifetime: ExitStack | None = None,  # PY-TS-14: router can omit workers.
     ) -> Self:
         """Create a vox daemon."""
         self = super().__new__(cls)

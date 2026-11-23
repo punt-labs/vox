@@ -46,7 +46,10 @@ class WorkerInventory:
         return self._records.worktree(worker_id)
 
     def restore(
-        self, records: list[WorkerRecord], *, unconfirmed: set[str] | None = None
+        self,
+        records: list[WorkerRecord],
+        *,
+        unconfirmed: set[str] | None = None,  # PY-TS-14: omit without a probe pass.
     ) -> None:
         """Install the inventory before any RPC is accepted."""
         self._workers = {record.id: record for record in records}

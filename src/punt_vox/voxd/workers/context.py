@@ -32,7 +32,9 @@ class WorkerContext:
 
     @staticmethod
     def handlers(
-        playback: PlaybackQueue, lifetime: ExitStack | None = None
+        playback: PlaybackQueue,
+        lifetime: ExitStack
+        | None = None,  # PY-TS-14: standalone handlers lack a lifespan.
     ) -> dict[str, MessageHandler]:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
