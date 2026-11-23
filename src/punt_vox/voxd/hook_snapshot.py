@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import TypedDict, final
 
 from punt_vox.voxd.hook_context_projection import HookToolResult
 from punt_vox.voxd.hook_decision_types import PendingDecision
@@ -31,3 +31,22 @@ class WorkerHookCheckpoint(HookContextSnapshot):
     worker_seq: int
     goal_seq: int
     tool_history_checkpoint: ToolHistoryCheckpoint
+
+
+@final
+class CheckpointOrdering:
+    """Check durable ordering fields before a checkpoint becomes live."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def validate(checkpoint: WorkerHookCheckpoint) -> None:
+        """Refuse invalid sequence values without mutating the projection."""
+        sequences = (
+            checkpoint["worker_seq"],
+            checkpoint["prompt_epoch"],
+            checkpoint["result_seq"],
+            checkpoint["goal_seq"],
+        )
+        if not all(type(seq) is int and seq >= 0 for seq in sequences):
+            raise ValueError("Invalid worker hook checkpoint ordering")

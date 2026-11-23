@@ -8,6 +8,7 @@ from punt_vox.voxd.hook_context_projection import HOOK_TOOL_EVENTS, HookText
 from punt_vox.voxd.hook_decisions import HookDecisions
 from punt_vox.voxd.hook_gaps import HookGaps
 from punt_vox.voxd.hook_input_history import HookInputHistory
+from punt_vox.voxd.hook_snapshot import CheckpointOrdering
 from punt_vox.voxd.hook_tool_history import HookToolHistory
 
 if TYPE_CHECKING:
@@ -112,14 +113,7 @@ class SessionContext:
 
     def restore(self, checkpoint: WorkerHookCheckpoint) -> None:
         """Restore the most recent report and decision before admitting new hooks."""
-        sequences = (
-            checkpoint["worker_seq"],
-            checkpoint["prompt_epoch"],
-            checkpoint["result_seq"],
-            checkpoint["goal_seq"],
-        )
-        if not all(type(seq) is int and seq >= 0 for seq in sequences):
-            raise ValueError("Invalid worker hook checkpoint ordering")
+        CheckpointOrdering.validate(checkpoint)
         self._started = checkpoint["session_started"]
         self._assistant = (
             checkpoint["result_seq"],

@@ -678,9 +678,10 @@ to five seconds; delivery across longer outages is not guaranteed.
   live' = live \setminus \{ p : owned | panes~p \notin protected? \}
 \end{schema}
 
-\emph{Startup retires dead workers before hook admission}: only workers
-confirmed dead and checkpointed as exited enter \textit{retired}. Their work
-products are retained, and startup does not invoke harness cleanup.
+\emph{Startup retires dead workers before hook admission}:
+\textit{retired?} names the workers confirmed dead and checkpointed as
+\textit{exited}, not a new worker state. Their work products are retained,
+and startup does not invoke harness cleanup.
 
 \emph{Startup only reaps marked orphans}: the reaper removes only a pane
 marked as owned by this registry and not protected by a live or unreadable

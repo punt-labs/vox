@@ -13,6 +13,7 @@ from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.environment import WorkerEnvironment
 from punt_vox.voxd.workers.steering_types import DecisionChoice
+from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 
 
 @final
@@ -91,12 +92,13 @@ class TmuxWorkerProvider:
 
     def status(self, handle: str) -> bool:
         """Report whether the session is still alive."""
-        if self._run("has-session", "-t", f"={handle}", check=False).returncode != 0:
+        session = self._run("has-session", "-t", f"={handle}", check=False)
+        if TmuxProbe.missing(session):
             return False
         pane = self._run(
             "display-message", "-p", "-t", f"={handle}:", "#{pane_dead}", check=False
         )
-        return pane.returncode == 0 and pane.stdout.strip() == "0"
+        return TmuxProbe.pane_alive(pane)
 
     def stop(self, handle: str) -> None:
         """Kill the session and its pane process group."""
