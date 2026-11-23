@@ -116,7 +116,7 @@ async def test_worker_delivery_retries_unfinished_recovery() -> None:
     ):
         await HookContextClient.send_event(payload, worker_only=True)
     assert request.await_count == 3
-    assert request.await_args.args[0]["payload"] == payload
+    assert request.await_args_list[-1].args[0]["payload"] == payload
 
 
 def test_checkpoint_writer_matches_recovery_schema() -> None:
