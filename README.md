@@ -392,7 +392,15 @@ vox daemon restart
 
 Run it as your normal user, **not** under `sudo`. On **macOS** it needs no password, because `voxd` is a user LaunchAgent. On **Linux** it asks for your `sudo` password once, only for the `systemctl` call that manages the system service.
 
-#### 4. Verify
+#### 4. Select the Provider in Your Repository
+
+Adding credentials does not change a repository's existing provider. From the repository you want to switch, run, for example:
+
+```bash
+vox provider elevenlabs
+```
+
+#### 5. Verify
 
 Report system checks and per-provider readiness:
 
@@ -428,7 +436,7 @@ ElevenLabs is the only provider with expressive tags, so `/vibe` changes the voi
 | macOS say | — | samantha | No setup on macOS, works offline |
 | espeak-ng | — | en | No setup on Linux, works offline |
 
-Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials are valid) > say (macOS) / espeak (Linux).
+During setup, if no preferred provider is ready, vox tries ElevenLabs > OpenAI > Polly (if AWS credentials are valid) > say (macOS) / espeak (Linux).
 
 ### Per-Call API Keys for Billing Isolation
 
