@@ -284,6 +284,7 @@ async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> 
 async def test_startup_reconciles_dead_worker_before_hook_admission(
     tmp_path: Path,
 ) -> None:
+    """StartupAdoptsAndReaps: Startup retires dead workers before hook admission."""
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
     worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
@@ -434,6 +435,49 @@ async def test_positive_liveness_restores_hooks_despite_progress_error(
         progress.assert_called_once()
         await hooks.admit(request, socket)
         assert socket.send_json.call_args.args[0]["admitted"] is True
+
+
+async def test_unknown_startup_liveness_accepts_terminal_hooks_only(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    store = HookContextStore()
+    hooks_request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+    }
+    socket = AsyncMock()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        for seq, event in enumerate(("Stop", "SessionEnd"), 1):
+            payload = {
+                **hooks_request,
+                "hook_event_name": event,
+                "relay_seq": seq,
+                "last_assistant_message": "Finished while the daemon was away.",
+            }
+            await hooks.admit(payload, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is True
+            await hooks.ingest(payload, worker_only=True)
+        await hooks.admit({**hooks_request, "hook_event_name": "SessionStart"}, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+    [saved] = records.load()
+    assert saved.state != "exited"
+    assert saved.last_report["worker_seq"] == 2
+    assert saved.last_report["last_assistant_message"] == (
+        "Finished while the daemon was away."
+    )
 
 
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(

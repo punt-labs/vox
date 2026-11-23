@@ -728,6 +728,9 @@ to five seconds; delivery across longer outages is not guaranteed.
 \emph{Startup retires dead workers before hook admission}:
 \textit{retired?} names the workers confirmed dead and checkpointed as
 \textit{exited}, not a new worker state. Their work products are retained.
+The \textit{hookEligible!} set describes ordinary active hook admission.
+A protected worker whose liveness is unknown can still send a terminal
+report; receiving one does not widen its hook admission or confirm exit.
 Startup adds them to \textit{pending}, enabling background
 \textit{RetryCleanup} or a retry through explicit stop. The daemon serves
 requests after recovery. Independent tmux
