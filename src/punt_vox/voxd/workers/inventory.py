@@ -79,15 +79,17 @@ class WorkerInventory:
         if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
             return None
         record = self._workers.get(worker_id)
-        if record is None or "launch_error" in record.last_report:
+        if record is None or not self._accepts(record, event):
             return None
-        if record.state == "stopped":
-            return None
-        if self.exited(record) and event not in ("Stop", "SessionEnd"):
-            return None
-        if Path(cwd).is_absolute() and record.worktree == str(Path(cwd).resolve()):
+        path = Path(cwd)
+        if path.is_absolute() and record.worktree == str(path.resolve()):
             return record
         return None
+
+    def _accepts(self, record: WorkerRecord, event: object) -> bool:
+        if "launch_error" in record.last_report or record.state == "stopped":
+            return False
+        return event in ("Stop", "SessionEnd") or not self.exited(record)
 
     @staticmethod
     def received(record: WorkerRecord, sequence: int) -> bool:
