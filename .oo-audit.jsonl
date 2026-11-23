@@ -2575,3 +2575,4 @@
 {"ts":"2026-11-23T20:43:02Z","commit":"af322cd","source":null,"files_scored":482,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-23T21:30:50Z","commit":"fbfe473","source":null,"files_scored":485,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/cli_daemon.py":{"avg_params":[1.93,1.87],"avg_complexity":[1.67,1.6],"module_size":[170.0,160.0]}},"removed":[]}
 {"ts":"2026-11-23T21:32:22Z","commit":"181467b","source":null,"files_scored":485,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/desktop_install.py":{"max_complexity":[6.0,5.0],"avg_complexity":[2.27,2.18],"module_size":[112.0,111.0]}},"removed":[]}
+{"ts":"2026-11-23T21:50:46Z","commit":"d063c7a","source":null,"files_scored":485,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/frontmatter_block.py":{"avg_params":[0.91,0.9]}},"removed":[]}
