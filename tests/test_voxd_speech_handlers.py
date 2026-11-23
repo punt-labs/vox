@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from punt_vox import cache
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.provider_faults import (
     ProviderConfigError,
@@ -519,6 +522,67 @@ class TestHandleSynthesizeCachedSignal:
         playing = [m for m in sent if m.get("type") == "playing"]
         assert len(playing) == 1
         assert playing[0]["cached"] is False
+
+
+async def test_queued_cache_hit_survives_eviction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(cache, "MAX_ENTRIES", 1)
+    source = tmp_path / "speech.mp3"
+    source.write_bytes(b"speech")
+    queued = cache.cache_put(cache.CacheKey("hello", "", "elevenlabs"), source)
+    assert queued is not None
+
+    monkeypatch.setattr(PlaybackQueue, "_compute_timeout", AsyncMock(return_value=1.0))
+    monkeypatch.setattr(
+        PlaybackQueue, "_spawn_and_wait", AsyncMock(return_value=(0, 1.0, ""))
+    )
+    playback = PlaybackQueue()
+    handler = _make_synthesize_handler(playback=playback)
+    playing = asyncio.Event()
+    ws = MagicMock()
+
+    async def send(frame: dict[str, object]) -> None:
+        if frame["type"] == "playing":
+            assert frame["cached"] is True
+            playing.set()
+
+    ws.send_json = AsyncMock(side_effect=send)
+    request = asyncio.create_task(
+        handler(
+            {
+                "type": "synthesize",
+                "id": "queued",
+                "text": "hello",
+                "provider": "elevenlabs",
+            },
+            ws,
+        )
+    )
+    async with asyncio.timeout(2):
+        try:
+            await playing.wait()
+            assert playback.queue_size == 1
+            os.utime(queued, (1, 1))
+            assert cache.cache_put(cache.CacheKey("later", "", "elevenlabs"), source)
+            assert not queued.exists()
+            consumer = asyncio.create_task(playback.consumer())
+            try:
+                await request
+            finally:
+                consumer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await consumer
+        finally:
+            request.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await request
+
+    result = playback.last_result
+    assert result is not None
+    assert result.ok, result.failure_detail()
+    assert not result.path.exists()
 
 
 class TestDedupHitLogIsInjectionSafe:

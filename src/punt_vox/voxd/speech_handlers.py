@@ -287,9 +287,16 @@ class SynthesizeHandler(MessageHandler):
         # `cached` rides the 'playing' response (the client's terminal).
         done_event = asyncio.Event()
         item = PlaybackItem(
-            path=outcome.path, request_id=req.request_id, notify=done_event
+            path=outcome.path,
+            request_id=req.request_id,
+            notify=done_event,
+            discard=outcome.discard,
         )
-        await self._playback.enqueue(item)
+        try:
+            await self._playback.enqueue(item)
+        except BaseException:
+            outcome.discard()
+            raise
         await req.reply({"type": "playing", "cached": outcome.cached})
         await done_event.wait()
         with contextlib.suppress(WebSocketDisconnect, RuntimeError):

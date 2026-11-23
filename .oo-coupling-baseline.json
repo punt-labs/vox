@@ -2292,8 +2292,8 @@
     "efferent_coupling": 4.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.8,
-    "avg_lcom": 0.8
+    "max_lcom": 0.762,
+    "avg_lcom": 0.762
   },
   "src/punt_vox/voxd/playback_result.py": {
     "efferent_coupling": 2.0,

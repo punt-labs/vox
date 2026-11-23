@@ -77,13 +77,14 @@ def cache_get(key: CacheKey) -> Path | None:
     data ever reaches this function.
     """
     path = key.path_in(CACHE_DIR)
-    if not path.exists():
+    try:
+        if path.stat().st_size == 0:
+            logger.debug("Cache hit but empty file, treating as miss: %s", path.name)
+            path.unlink(missing_ok=True)
+            return None
+        os.utime(path, None)
+    except FileNotFoundError:
         return None
-    if path.stat().st_size == 0:
-        logger.debug("Cache hit but empty file, treating as miss: %s", path.name)
-        path.unlink(missing_ok=True)
-        return None
-    path.touch()
     logger.debug("Cache hit: %s", path.name)
     return path
 

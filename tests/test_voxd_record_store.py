@@ -101,7 +101,7 @@ class TestContainment:
         target = tmp_path / "outside.mp3"
 
         with pytest.raises(ValueError, match="absolute"):
-            store.place(source=src, text="x", name=str(target), cached=False)
+            store.place(source=src, text="x", name=str(target))
         assert not target.exists()
 
     def test_default_name_is_content_addressed(self, store: RecordStore) -> None:
@@ -312,7 +312,7 @@ class TestPlacement:
         src = tmp_path / "src.mp3"
         src.write_bytes(b"\xff\xfb" * 100)
 
-        write = store.place(source=src, text="hello", name="out.mp3", cached=False)
+        write = store.place(source=src, text="hello", name="out.mp3")
 
         assert write.path == (store.root / "out.mp3").resolve()
         assert write.path.read_bytes() == b"\xff\xfb" * 100
@@ -324,26 +324,16 @@ class TestPlacement:
         src = tmp_path / "src.mp3"
         src.write_bytes(b"\x00\x01\x02")
 
-        write = store.place(source=src, text="some text", name=None, cached=False)
+        write = store.place(source=src, text="some text", name=None)
 
         assert write.path == (store.root / generate_filename("some text")).resolve()
         assert write.path.exists()
-
-    def test_cached_source_is_preserved(
-        self, store: RecordStore, tmp_path: Path
-    ) -> None:
-        src = tmp_path / "cache_entry.mp3"
-        src.write_bytes(b"cached")
-
-        store.place(source=src, text="hi", name="out.mp3", cached=True)
-
-        assert src.exists()
 
     def test_fresh_source_is_removed(self, store: RecordStore, tmp_path: Path) -> None:
         src = tmp_path / "ephemeral.mp3"
         src.write_bytes(b"fresh")
 
-        store.place(source=src, text="hi", name="out.mp3", cached=False)
+        store.place(source=src, text="hi", name="out.mp3")
 
         assert not src.exists()
 
@@ -365,7 +355,7 @@ class TestPlacement:
 
         monkeypatch.setattr(Path, "replace", racing_replace)
 
-        write = store.place(source=src, text="t", name="out.mp3", cached=False)
+        write = store.place(source=src, text="t", name="out.mp3")
 
         assert write.byte_count == 5
 
@@ -384,7 +374,7 @@ class TestPlacement:
         src = tmp_path / "ephemeral.mp3"
         src.write_bytes(b"fresh-audio")
         src.chmod(0o644)
-        write = store.place(source=src, text="hi", name="out.mp3", cached=False)
+        write = store.place(source=src, text="hi", name="out.mp3")
 
         assert write.path.read_bytes() == b"fresh-audio"
         assert write.path.stat().st_mode & 0o777 == 0o600
@@ -405,7 +395,7 @@ class TestPlacement:
 
         monkeypatch.setattr(Path, "replace", selective_replace)
 
-        write = store.place(source=src, text="hi", name="out.mp3", cached=False)
+        write = store.place(source=src, text="hi", name="out.mp3")
 
         assert write.path.read_bytes() == b"xdev-audio"
         assert write.path.stat().st_mode & 0o777 == 0o600
@@ -424,30 +414,16 @@ class TestPlacement:
         monkeypatch.setattr(Path, "replace", denied_replace)
 
         with pytest.raises(OSError, match="permission denied"):
-            store.place(source=src, text="hi", name="out.mp3", cached=False)
+            store.place(source=src, text="hi", name="out.mp3")
 
         assert not (store.root / "out.mp3").exists()
         assert not list(store.root.glob("*.mp3.tmp"))
-
-    def test_cached_copy_lands_0600_and_preserves_source(
-        self, store: RecordStore, tmp_path: Path
-    ) -> None:
-        src = tmp_path / "cache_entry.mp3"
-        src.write_bytes(b"cached-audio")
-
-        write = store.place(source=src, text="hi", name="out.mp3", cached=True)
-
-        assert src.exists()
-        assert write.path.read_bytes() == b"cached-audio"
-        assert write.path.stat().st_mode & 0o777 == 0o600
 
     def test_missing_source_leaves_no_partial_file(
         self, store: RecordStore, tmp_path: Path
     ) -> None:
         with pytest.raises(OSError, match="No such file"):
-            store.place(
-                source=tmp_path / "missing.mp3", text="hi", name="out.mp3", cached=False
-            )
+            store.place(source=tmp_path / "missing.mp3", text="hi", name="out.mp3")
 
         assert not (store.root / "out.mp3").exists()
         assert not list(store.root.glob("*.mp3.tmp"))

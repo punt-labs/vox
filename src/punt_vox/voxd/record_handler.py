@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.voxd._parse import parse_present_str
@@ -126,17 +127,26 @@ class RecordHandler(MessageHandler):
         self, req: _SpeechRequest, name: str | None, outcome: SynthesisOutcome
     ) -> RecordWrite | None:
         """Land the synthesized file in the store, or reply error and return None."""
-        try:
-            return await asyncio.to_thread(
+        work = asyncio.get_running_loop().run_in_executor(
+            None,
+            partial(
                 self._store.place,
                 source=outcome.path,
                 text=req.text,
                 name=name,
-                cached=outcome.cached,
-            )
+            ),
+        )
+        try:
+            write = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            work.add_done_callback(outcome.discard_after)
+            raise
         except Exception as exc:
+            outcome.discard()
             # Any place() failure (not just OSError) must reach the already-ack'd
             # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
             await req.fault(SafeFault.from_exception(exc))
             return None
+        outcome.discard()
+        return write
