@@ -23,17 +23,21 @@ logger = logging.getLogger(__name__)
 
 @final
 class WorkerRetirement:
-    """Run terminal cleanup once per worker until the record can be updated."""
+    """Run terminal cleanup once per worker and checkpoint its outcome."""
 
-    __slots__ = ("_executor", "_jobs", "_profiles")
-    _jobs: dict[str, Future[WorkerRecord]]
+    __slots__ = ("_executor", "_inventory", "_jobs", "_profiles")
+    _jobs: dict[str, Future[None]]
     _executor: ThreadPoolExecutor
+    _inventory: WorkerInventory
     _profiles: dict[str, HarnessProfile]
 
-    def __new__(cls, profiles: dict[str, HarnessProfile]) -> Self:
+    def __new__(
+        cls, profiles: dict[str, HarnessProfile], inventory: WorkerInventory
+    ) -> Self:
         """Use one background writer for harness cleanup."""
         self = super().__new__(cls)
         self._profiles = profiles
+        self._inventory = inventory
         self._jobs = {}
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="vox-cleanup"
@@ -45,21 +49,18 @@ class WorkerRetirement:
         if (
             record.state == "exited"
             and WorkerCleanup.pending(record)
-            and record.id not in self._jobs
+            and not self.queued(record.id)
         ):
-            self._jobs[record.id] = self._executor.submit(
-                WorkerCleanup.run, record, self._profiles
-            )
+            self._jobs[record.id] = self._executor.submit(self._cleanup, record)
 
     def observe(
         self,
         record: WorkerRecord,
         lifecycle: WorkerLifecycle,
-        inventory: WorkerInventory,
     ) -> WorkerRecord:
         """Checkpoint confirmed death and enqueue cleanup without awaiting it."""
         try:
-            observed, alive = lifecycle.observe(self.status(record))
+            observed, alive = lifecycle.observe(record)
         except (
             KeyError,
             OSError,
@@ -74,32 +75,37 @@ class WorkerRetirement:
             )
             return record
         if alive:
-            inventory.confirm(record.id)
-        elif observed.state == "exited":
-            inventory.close(record.id)
+            self._inventory.confirm(record.id)
+        elif observed.state == "exited" and record.state != "exited":
+            self._inventory.close(record.id)
             try:
-                inventory.save(observed)
+                self._inventory.save(observed)
             except (OSError, ValueError) as exc:
                 logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
-            self.schedule(observed)
+            else:
+                self.schedule(observed)
         return observed
-
-    def status(self, record: WorkerRecord) -> WorkerRecord:
-        """Fold finished cleanup without blocking a snapshot."""
-        job = self._jobs.get(record.id)
-        return self.finish(record) if job is not None and job.done() else record
 
     def queued(self, worker_id: str) -> bool:
         """Check whether cleanup is already queued or running."""
         job = self._jobs.get(worker_id)
-        return job is not None and not job.done()
+        if job is None or not job.done():
+            return job is not None
+        del self._jobs[worker_id]
+        return False
 
-    def finish(self, record: WorkerRecord) -> WorkerRecord:
+    def _cleanup(self, record: WorkerRecord) -> None:
+        result = WorkerCleanup.run(record, self._profiles)
+        try:
+            self._inventory.update(
+                record.id, lambda current: self._merge(current, result)
+            )
+        except (OSError, ValueError) as exc:
+            logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)
+
+    @staticmethod
+    def _merge(record: WorkerRecord, result: WorkerRecord) -> WorkerRecord:
         """Fold cleanup markers only, preserving any late worker reports."""
-        job = self._jobs.pop(record.id, None)
-        if job is None:
-            return record
-        result = job.result()
         keys = ("cleanup_pending", "cleanup_error")
         return replace(
             record,

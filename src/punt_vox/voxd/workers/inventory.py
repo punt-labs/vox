@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.workers.model import WorkerRecord
     from punt_vox.voxd.workers.records import WorkerRecords
 
@@ -16,10 +19,11 @@ if TYPE_CHECKING:
 class WorkerInventory:
     """Own the in-process inventory, persistence and hook identity."""
 
-    __slots__ = ("_exited", "_records", "_unconfirmed", "_workers")
+    __slots__ = ("_exited", "_records", "_unconfirmed", "_updates", "_workers")
     _exited: set[str]
     _records: WorkerRecords
     _unconfirmed: set[str]
+    _updates: RLock
     _workers: dict[str, WorkerRecord]
 
     def __new__(cls, records: WorkerRecords) -> Self:
@@ -29,6 +33,7 @@ class WorkerInventory:
         self._workers = {}
         self._exited = set()
         self._unconfirmed = set()
+        self._updates = RLock()
         return self
 
     @property
@@ -68,6 +73,13 @@ class WorkerInventory:
             self._records.save(record)
             self.remember(record)
         return record
+
+    def update(
+        self, worker_id: str, transform: Callable[[WorkerRecord], WorkerRecord]
+    ) -> WorkerRecord:
+        """Serialize updates that can race with retirement cleanup completion."""
+        with self._updates:
+            return self.save(transform(self.get(worker_id)))
 
     def remember(self, record: WorkerRecord) -> None:
         """Retain a record in memory if rollback cannot persist it."""

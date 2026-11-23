@@ -56,7 +56,7 @@ class WorkerRegistry:
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
         self._inventory = WorkerInventory(records)
-        self._retirement = WorkerRetirement(profiles)
+        self._retirement = WorkerRetirement(profiles, self._inventory)
         return self
 
     def restore(
@@ -133,7 +133,7 @@ class WorkerRegistry:
     def list(self) -> list[WorkerRecord]:
         """Report current state and close hook admission for confirmed exits."""
         return [
-            self._retirement.observe(record, self._lifecycle, self._inventory)
+            self._retirement.observe(record, self._lifecycle)
             for record in self._inventory.registered()
         ]
 
@@ -149,17 +149,21 @@ class WorkerRegistry:
         self, record: WorkerRecord, checkpoint: WorkerHookCheckpoint
     ) -> None:
         """Update terminal progress without changing phase or cleanup markers."""
-        self._inventory.save(
-            replace(record, last_report={**record.last_report, **checkpoint})
+        self._inventory.update(
+            record.id,
+            lambda current: replace(
+                current, last_report={**current.last_report, **checkpoint}
+            ),
         )
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        current = self._inventory.get(worker_id)
-        if self._retirement.queued(worker_id):
-            return self._inventory.save(self._lifecycle.terminate(current))
-        current = self._retirement.status(current)
-        return self._inventory.save(self._lifecycle.stop(current))
+        return self._inventory.update(
+            worker_id,
+            self._lifecycle.terminate
+            if self._retirement.queued(worker_id)
+            else self._lifecycle.stop,
+        )
 
     def steer(
         self,
@@ -181,7 +185,7 @@ class WorkerRegistry:
                 "Worker words must not contain control characters or newlines"
             )
         record = self._retirement.observe(
-            self._inventory.get(worker_id), self._lifecycle, self._inventory
+            self._inventory.get(worker_id), self._lifecycle
         )
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
