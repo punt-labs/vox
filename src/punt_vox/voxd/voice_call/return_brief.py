@@ -2,39 +2,33 @@
 
 from __future__ import annotations
 
-import json
-import logging
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final
 
-from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
+from punt_vox.voxd.voice_call.departure_cursor import DepartureCursor
 from punt_vox.voxd.voice_call.seed import CallSeed
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
-
-logger = logging.getLogger(__name__)
 
 
 @final
 class ReturnBrief:
     """Use only the provider's curated worker snapshot, never the live event log."""
 
-    __slots__ = ("_covered", "_file", "_known", "_labels")
-    _file: AtomicFile
+    __slots__ = ("_covered", "_cursor", "_labels")
     _covered: dict[str, int]
+    _cursor: DepartureCursor
     _labels: dict[str, str]
-    _known: dict[str, int]
 
     def __new__(cls, path: Path) -> Self:
         """Bind the durable departure state for one prospective call."""
         self = super().__new__(cls)
-        self._file = AtomicFile(path)
+        self._cursor = DepartureCursor(path)
         self._covered = {}
         self._labels = {}
-        self._known = {}
         return self
 
     @property
@@ -71,37 +65,18 @@ class ReturnBrief:
         self, workers: list[WorkerPayload]
     ) -> tuple[str | None, dict[str, str]]:
         """Name the most recent away results and the current worker questions."""
-        cursor = self._read_cursor()
-        if cursor is None:
-            self._known = {w["id"]: self._sequence(w, "result_seq") for w in workers}
+        baseline = ((w["id"], self._sequence(w, "result_seq")) for w in workers)
+        if not self._cursor.load(baseline):
             return None, {}
-        self._known = cursor
         updates: list[tuple[str, str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
             worker_id = worker["id"]
-            update, result = self._update(worker, self._known.get(worker_id, 0))
+            update, result = self._update(worker, self._cursor.sequence(worker_id))
             if update:
                 project = Path(worker["project"]).name or "the project"
                 updates.append((worker_id, project, update))
-            if result:
-                self._known[worker_id] = result
+            self._cursor.record(worker_id, result)
         return self._labelled_updates(updates)
-
-    def _read_cursor(self) -> dict[str, int] | None:
-        try:
-            saved = self._file.read()
-            if not saved and not self._file.path.is_file():
-                return None
-            cursor: object = json.loads(saved)
-            if isinstance(cursor, dict) and all(
-                type(seq) is int and seq >= 0
-                for seq in cast("dict[str, object]", cursor).values()
-            ):
-                return cast("dict[str, int]", cursor)
-        except (OSError, ValueError, RecursionError):
-            pass
-        logger.warning("Ignoring invalid call departure cursor")
-        return None
 
     @staticmethod
     def _labelled_updates(
@@ -127,9 +102,7 @@ class ReturnBrief:
 
     def depart(self, reported: dict[str, int]) -> None:
         """Persist only baseline or submitted results, never a late snapshot."""
-        for worker, sequence in reported.items():
-            self._known[worker] = max(sequence, self._known.get(worker, 0))
-        self._file.replace(json.dumps(self._known) + "\n", mode=0o600)
+        self._cursor.save(reported)
 
     @classmethod
     def _update(cls, worker: WorkerPayload, prior: int) -> tuple[str, int]:

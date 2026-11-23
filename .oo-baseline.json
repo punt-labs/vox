@@ -6265,6 +6265,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/voice_call/departure_cursor.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 7.0,
+    "avg_complexity": 2.5,
+    "module_size": 46.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/voice_call/handlers.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -6334,9 +6347,9 @@
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
     "avg_params": 1.18,
-    "max_complexity": 7.0,
-    "avg_complexity": 3.0,
-    "module_size": 121.0,
+    "max_complexity": 6.0,
+    "avg_complexity": 2.91,
+    "module_size": 115.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
