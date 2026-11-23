@@ -97,7 +97,7 @@ def test_terminal_stop_retries_only_failed_cleanup(tmp_path: Path) -> None:
     assert "cleanup_error" not in cleaned.last_report
 
 
-def test_dead_worker_is_terminated_before_becoming_terminal(tmp_path: Path) -> None:
+def test_dead_worker_is_persisted_and_explicit_stop_clears_pane(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
     record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
@@ -106,8 +106,9 @@ def test_dead_worker_is_terminated_before_becoming_terminal(tmp_path: Path) -> N
         patch.object(FakeWorkerProvider, "stop") as stop,
         patch.object(WorkerRecords, "save") as save,
     ):
-        assert registry.list()[0].state == "exited"
+        retired = registry.list()[0]
+        assert retired.state == "exited"
         stop.assert_not_called()
-        save.assert_not_called()
+        save.assert_called_once_with(retired)
         assert registry.stop(record.id).state == "exited"
     stop.assert_called_once()
