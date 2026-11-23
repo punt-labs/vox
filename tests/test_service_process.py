@@ -664,6 +664,18 @@ def test_read_port_file_read_error_is_surfaced(
         ProcessManager().read_port_file()
 
 
+def test_read_port_file_invalid_utf8_is_a_read_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A serve.port that is not UTF-8 is unreadable evidence, not absence."""
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_bytes(b"\xff")
+    with pytest.raises(PortProbeError) as raised:
+        ProcessManager().read_port_file()
+    assert str(raised.value) == f"cannot read {tmp_path / 'serve.port'}: invalid UTF-8"
+    assert raised.value.__cause__ is None
+
+
 @pytest.mark.parametrize(
     ("content", "kept", "outcome"),
     [
