@@ -70,3 +70,20 @@ def test_reset_clears_the_flag_without_an_ipc() -> None:
     assert player.pauses == 1  # only the earlier pause; reset added no IPC
     assert player.resumes == 0
     assert player.stops == 0
+
+
+def test_transport_controls_cannot_release_call_hold() -> None:
+    player = FakePlayer()
+    suspension = PlaybackSuspension(player)
+
+    with suspension.hold_for_call():
+        suspension.reset()
+        suspension.resume()
+        assert suspension.is_paused
+        assert player.pauses == 1
+        assert player.resumes == 0
+        suspension.pause()
+
+    assert (suspension.is_paused, player.resumes) == (True, 0)
+    suspension.resume()
+    assert (suspension.is_paused, player.resumes) == (False, 1)

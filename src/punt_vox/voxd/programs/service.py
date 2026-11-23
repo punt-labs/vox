@@ -12,6 +12,7 @@ service owns only the mint side-effect (a domain object must not call
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Final, Self, final
 
@@ -47,6 +48,7 @@ from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from punt_vox.voxd.programs.active_context import ActiveSource
@@ -123,7 +125,7 @@ class ProgramService:
         # resolves each Part's path via ``locate`` (it is the PlayerDirectory).
         self._supervisor = MpvSupervisor(mpv_socket, sleeper)
         player = MpvProgramPlayer(self._supervisor, self)
-        # The suspension holds the one paused flag and delegates click-free
+        # The suspension holds the effective pause and delegates click-free
         # pause/resume to the player; the service drives it and reports paused.
         self._suspension = PlaybackSuspension(player)
         self._loop = ProgramLoop(
@@ -192,7 +194,7 @@ class ProgramService:
 
         A generate Program reports the full Program status; a replay Selection
         reports the consume-only radio status; an idle daemon reports idle. The
-        transport ``paused`` flag rides every active status (never idle), read
+        transport ``paused`` flag rides statuses with a playback cursor, read
         authoritatively from the one suspension, so a client's PlayerView can tell
         a held source from a progressing one.
         """
@@ -200,7 +202,9 @@ class ProgramService:
         if active is None:
             return ProgramStatus.idle()
         base = self._projection.of(active)
-        return replace(base, paused=self._suspension.is_paused)
+        return replace(
+            base, paused=base.now_playing is not None and self._suspension.is_paused
+        )
 
     def catalog_albums(self) -> tuple[Album, ...]:
         """Return every catalog album, newest first (the ``list`` view)."""
@@ -289,7 +293,6 @@ class ProgramService:
             ),
             RotatePolicy(),
         )
-        # A turn-on displaces whatever was active, so any held pause is dropped.
         self._suspension.reset()
         self._channel.post(
             SwitchProgram(self._channel, self._context, program, active, target=None)
@@ -373,12 +376,21 @@ class ProgramService:
         self._suspension.resume()
         self._changes.emit()
 
+    @contextmanager
+    def hold_music_for_call(self) -> Generator[None]:
+        """Suspend music while a call runs, independently of transport controls."""
+        try:
+            with self._suspension.hold_for_call():
+                self._changes.emit()
+                yield
+        finally:
+            self._changes.emit()
+
     def stop(self) -> None:
         """Stop the active source (a Program keeps its pool; a replay goes idle).
 
-        Resetting the suspension first returns the player to the not-paused, unheld
-        state, so ``stop`` from a paused source lands idle exactly as from a playing
-        one (Z ``Stop`` from either active mode), leaving no paused residue.
+        Resetting the user pause first lets ``stop`` from a paused source land idle
+        exactly as from a playing one (Z ``Stop`` from either active mode).
         """
         self._suspension.reset()
         self._channel.post(TurnOff(self._channel, self._context, self._idle_program()))
@@ -390,16 +402,15 @@ class ProgramService:
 
         A switch is start-or-switch (Z Fork A, SWITCH): from idle it starts, and
         from a playing *or* paused source it displaces the active album and begins
-        the new one at part 1, mode playing. Resetting the suspension first drops
-        any held/paused state so the newly chosen album plays rather than inheriting
-        the displaced one's pause.
+        the new one at part 1. Resetting the user pause prevents the newly chosen
+        album from inheriting the displaced one's pause; a call hold still applies.
         """
         if not selection:
             msg = "no albums match the selection"
             raise ValueError(msg)
-        self._suspension.reset()
         playback = SelectionPlayback(selection, RotatePolicy())
         active = ActiveSelection(self._root, selection, label)
+        self._suspension.reset()
         self._channel.post(
             SwitchSelection(self._channel, self._context, playback, active)
         )
