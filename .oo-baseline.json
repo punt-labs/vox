@@ -1835,10 +1835,10 @@
   "src/punt_vox/private_state.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.82,
+    "avg_params": 0.78,
     "max_complexity": 3.0,
-    "avg_complexity": 1.82,
-    "module_size": 70.0,
+    "avg_complexity": 1.67,
+    "module_size": 59.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
