@@ -88,13 +88,13 @@ async def test_daemon_starts_within_budget_despite_multiple_stalled_probes(
 
     with (
         patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
-        patch.object(TmuxWorkerProvider, "status", side_effect=stalled),
+        patch.object(TmuxWorkerProvider, "status", side_effect=stalled) as status,
         patch.object(TmuxWorkerProvider, "stop") as stop,
     ):
         try:
             async with asyncio.timeout(2.5):
                 app = await asyncio.to_thread(build_app)
-                assert not simultaneous.n_waiting
+                assert status.call_count == 2
                 await asyncio.to_thread(_rpc_health, app)
         finally:
             release.set()
