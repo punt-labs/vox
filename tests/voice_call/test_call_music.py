@@ -16,6 +16,7 @@ from websockets.asyncio.server import serve
 from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.programs.mpv.mpv_program_player import MpvProgramPlayer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.voice_agent import Conversation
@@ -51,6 +52,7 @@ async def test_call_music_lifecycle(
     connecting = asyncio.Event()
     connect = asyncio.Event()
     hangup = asyncio.Event()
+    resumed = asyncio.Event()
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
     seed_album(tmp_path, 1)
@@ -62,6 +64,7 @@ async def test_call_music_lifecycle(
     monkeypatch.setattr(WorkerHandlers, "handlers", Mock(return_value={}))
     monkeypatch.setattr("punt_vox.voxd.voice_call.handlers.calls_dir", lambda: tmp_path)
     monkeypatch.setattr(AgentOperations, "prepare", AsyncMock())
+    monkeypatch.setattr(MpvProgramPlayer, "resume", Mock(side_effect=resumed.set))
     monkeypatch.setattr(
         Conversation, "open", functools.partial(Conversation.open, allow_loopback=True)
     )
@@ -130,13 +133,13 @@ async def test_call_music_lifecycle(
             paused_during_call = programs.service.status().paused
             if outcome == "remote":
                 hangup.set()
-                while (
+                await resumed.wait()
+                assert (
                     cast("dict[str, object]", (await rpc("call_status"))["result"])[
                         "state"
                     ]
-                    == "live"
-                ):
-                    await asyncio.sleep(0.01)
+                    == "ended"
+                )
             elif outcome == "local":
                 assert (
                     cast("dict[str, object]", (await rpc("call_stop"))["result"])[
