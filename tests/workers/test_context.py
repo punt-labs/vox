@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
-from test_workers import FakeWorkerProvider, _registry
+from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.daemon import build_app
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.reaper import WorkerReaper
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
@@ -30,6 +32,40 @@ def test_worker_records_load_once_during_recovery() -> None:
     ):
         WorkerSubsystem.recover(HookContextStore(), WorkerSubsystem.policy())
         load.assert_called_once_with(strict=False)
+
+
+def test_daemon_shutdown_cancels_queued_worker_cleanup(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    one, two = (
+        registry.start(task, str(tmp_path), provider="fake", harness="test")
+        for task in ("one", "two")
+    )
+    provider.alive = False
+    started, release, queued = (threading.Event() for _ in range(3))
+
+    def cleanup(path: Path) -> None:
+        if str(path) == one.worktree:
+            started.set()
+            assert release.wait(3)
+        if str(path) == two.worktree:
+            queued.set()
+
+    with (
+        patch.object(TrivialProfile, "cleanup", side_effect=cleanup),
+        patch.object(WorkerSubsystem, "recover", return_value=WorkerActor(registry)),
+    ):
+        try:
+            with TestClient(build_app()):
+                registry.list()
+                assert started.wait(1)
+                before_shutdown = time.monotonic()
+            assert time.monotonic() - before_shutdown < 1.0
+        finally:
+            release.set()
+        assert not queued.wait(0.5)
+        saved = WorkerRecords(tmp_path / "workers").load()
+        assert next(r for r in saved if r.id == two.id).last_report["cleanup_pending"]
 
 
 def _rpc_health(app: Starlette) -> None:

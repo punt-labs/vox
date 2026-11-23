@@ -14,6 +14,8 @@ from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
+    from contextlib import ExitStack
+
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.playback import PlaybackQueue
@@ -29,7 +31,9 @@ class WorkerContext:
     __slots__ = ()
 
     @staticmethod
-    def handlers(playback: PlaybackQueue) -> dict[str, MessageHandler]:
+    def handlers(
+        playback: PlaybackQueue, lifetime: ExitStack | None = None
+    ) -> dict[str, MessageHandler]:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
         try:
@@ -38,6 +42,8 @@ class WorkerContext:
         except Exception:
             logger.exception("Worker startup recovery failed")
             return WorkerContext._degraded(store)
+        if lifetime is not None:
+            lifetime.callback(actor.shutdown)
         events = ProgressEvents()
         return {
             **WorkerHandlers(actor).handlers(store, events),

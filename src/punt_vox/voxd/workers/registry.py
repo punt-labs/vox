@@ -67,6 +67,10 @@ class WorkerRegistry:
         for record in records:
             self._retirement.schedule(record)
 
+    def shutdown(self) -> None:
+        """Bound the final wait for worker retirement cleanup."""
+        self._retirement.shutdown()
+
     @property
     def hook_records(self) -> WorkerInventory:
         """Expose admission and receipt lookup without exposing worker control."""

@@ -17,6 +17,8 @@ from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHan
 from punt_vox.voxd.workers.context import WorkerContext
 
 if TYPE_CHECKING:
+    from contextlib import ExitStack
+
     from punt_vox.voxd.health import DaemonHealth
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -58,7 +60,7 @@ class HandlerRegistry:
         self._health = health
         return self
 
-    def build(self) -> dict[str, MessageHandler]:
+    def build(self, lifetime: ExitStack | None = None) -> dict[str, MessageHandler]:
         """Return the canonical handler dispatch table."""
         return {
             "synthesize": SynthesizeHandler(
@@ -80,6 +82,6 @@ class HandlerRegistry:
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
             "provider_status": ProviderStatusHandler(),
-            **WorkerContext.handlers(self._playback),
+            **WorkerContext.handlers(self._playback, lifetime),
             **self._programs.handlers(),
         }

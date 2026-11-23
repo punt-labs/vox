@@ -61,6 +61,10 @@ class WorkerActor:
             record = await asyncio.to_thread(self._registry.stop, worker_id)
         return WorkerRecordCodec.public(record)
 
+    def shutdown(self) -> None:
+        """Close the worker subsystem's cleanup queue."""
+        self._registry.shutdown()
+
     async def workers(self) -> list[WorkerPayload]:
         """Reconcile and return every known worker."""
         async with self._lock:

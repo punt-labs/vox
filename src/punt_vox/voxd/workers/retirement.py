@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.workers.cleanup import WorkerCleanup
+from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
 
 if TYPE_CHECKING:
     from concurrent.futures import Future
@@ -27,7 +27,7 @@ class WorkerRetirement:
 
     __slots__ = ("_executor", "_inventory", "_jobs", "_profiles")
     _jobs: dict[str, Future[None]]
-    _executor: ThreadPoolExecutor
+    _executor: WorkerCleanupQueue
     _inventory: WorkerInventory
     _profiles: dict[str, HarnessProfile]
 
@@ -39,9 +39,7 @@ class WorkerRetirement:
         self._profiles = profiles
         self._inventory = inventory
         self._jobs = {}
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="vox-cleanup"
-        )
+        self._executor = WorkerCleanupQueue()
         return self
 
     def schedule(self, record: WorkerRecord) -> None:
@@ -51,7 +49,11 @@ class WorkerRetirement:
             and WorkerCleanup.pending(record)
             and not self.queued(record.id)
         ):
-            self._jobs[record.id] = self._executor.submit(self._cleanup, record)
+            self._jobs[record.id] = self._executor.submit(lambda: self._cleanup(record))
+
+    def shutdown(self) -> None:
+        """Stop accepting cleanup and discard work that has not started."""
+        self._executor.shutdown()
 
     def observe(
         self,

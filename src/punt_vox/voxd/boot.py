@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import ExitStack
 from typing import Self, final
 
 from punt_vox.logging_config import configure_daemon_logging
@@ -94,13 +95,14 @@ class DaemonBoot:
         # Health needs the router's client_count and the router needs health, so
         # the count is read through a lambda that resolves after both exist.
         health = DaemonHealth(playback, lambda: router.client_count, self._port)
+        lifetime = ExitStack()
         router = WebSocketRouter(
             handlers=HandlerRegistry(
                 synthesis=synthesis,
                 playback=playback,
                 programs=programs,
                 health=health,
-            ).build(),
+            ).build(lifetime),
             auth_token=auth_token,
         )
         return VoxDaemon(
@@ -110,4 +112,5 @@ class DaemonBoot:
             programs=programs,
             health=health,
             router=router,
+            worker_lifetime=lifetime,
         )
