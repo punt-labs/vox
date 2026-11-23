@@ -141,7 +141,7 @@ class CallHandlers:
     async def _teardown(self) -> dict[str, object]:
         async with self._lock:
             self._require_idle()
-            await asyncio.to_thread(self._connector.agent().teardown)
+            await asyncio.to_thread(lambda: self._connector.agent().teardown())
             return self._status()
 
     async def _start(self, msg: dict[str, object]) -> dict[str, object]:

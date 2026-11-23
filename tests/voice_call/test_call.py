@@ -16,6 +16,7 @@ from websockets.asyncio.server import serve
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.boss_tools import BossTools
+from punt_vox.voxd.voice_call.connector import CallConnector
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.seed import CallSeed
@@ -769,4 +770,25 @@ async def test_agent_teardown_refuses_a_live_call(tmp_path: Path) -> None:
         reported = await _rpc(handlers, {"type": "call_teardown"})
     assert "already running" in str(refused.get("message"))
     assert "result" in reported
+    assert connector.teardowns == 1
+
+
+async def test_agent_teardown_resolves_the_cold_connector_off_loop(
+    tmp_path: Path,
+) -> None:
+    workers = FakeWorkers()
+    connector = _Connector("ws://unused")
+    handlers = CallHandlers(
+        workers, workers, cast("PlaybackQueue", FakePlayback()), trace_dir=tmp_path
+    )
+    loop_thread = threading.get_ident()
+
+    def resolve() -> _Connector:
+        assert threading.get_ident() != loop_thread
+        return connector
+
+    with patch.object(CallConnector, "agent", side_effect=resolve):
+        reply = await _rpc(handlers, {"type": "call_teardown"})
+
+    assert reply["result"] == {"state": "idle"}
     assert connector.teardowns == 1
