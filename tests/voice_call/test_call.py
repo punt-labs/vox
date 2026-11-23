@@ -296,6 +296,15 @@ def test_return_opener_distinguishes_two_workers_in_the_same_repository(
         "While you were away, worker 1 in repo finished: Wrote hello.py. "
         "Worker 2 in repo needs your input: Which suite?"
     )
+    lookup = next(
+        line.split(": ", 1)[1]
+        for line in options.prompt.splitlines()
+        if line.startswith("Spoken worker labels to worker IDs (JSON): ")
+    )
+    assert json.loads(lookup) == {
+        "Worker 1 in repo": finished["id"],
+        "Worker 2 in repo": blocked["id"],
+    }
 
 
 async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None:

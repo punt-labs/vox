@@ -42,45 +42,49 @@ class ReturnBrief:
         tool_ids: tuple[str, ...],
     ) -> SessionOptions:
         """Build the call prompt and opener from the same worker snapshot."""
+        opening, labels = self._opening(workers)
         return SessionOptions(
-            CallSeed(projects, workers).prompt(),
+            CallSeed(projects, workers).prompt(labels),
             tool_ids,
-            first_message=self._opening(workers),
+            first_message=opening,
         )
 
-    def _opening(self, workers: list[WorkerPayload]) -> str | None:
+    def _opening(
+        self, workers: list[WorkerPayload]
+    ) -> tuple[str | None, dict[str, str]]:
         """Name the most recent away results and the current worker questions."""
         saved = self._file.read()
         if not saved:
-            return None
+            return None, {}
         cursor = cast("dict[str, int]", json.loads(saved))
-        updates: list[tuple[str, str]] = []
+        updates: list[tuple[str, str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
             if update := self._update(worker, cursor.get(worker["id"], 0)):
                 project = Path(worker["project"]).name or "the project"
-                updates.append((project, update))
+                updates.append((worker["id"], project, update))
             self._covered[worker["id"]] = self._sequence(worker, "worker_seq")
-        opening = self._labelled_updates(updates)
-        return (
-            f"While you were away, {opening[:1].lower()}{opening[1:]}"
-            if opening
-            else None
-        )
+        return self._labelled_updates(updates)
 
     @staticmethod
-    def _labelled_updates(updates: list[tuple[str, str]]) -> str:
-        counts = Counter(project for project, _ in updates)
+    def _labelled_updates(
+        updates: list[tuple[str, str, str]],
+    ) -> tuple[str | None, dict[str, str]]:
+        counts = Counter(project for _, project, _ in updates)
         ordinals: Counter[str] = Counter()
+        labels: dict[str, str] = {}
         spoken: list[str] = []
-        for project, update in updates:
-            ordinals[project] += 1
-            label = (
-                f"The worker in {project}"
-                if counts[project] == 1
-                else f"Worker {ordinals[project]} in {project}"
-            )
+        for worker_id, project, update in updates:
+            if counts[project] == 1:
+                label = f"The worker in {project}"
+            else:
+                ordinals[project] += 1
+                label = f"Worker {ordinals[project]} in {project}"
+                labels[label] = worker_id
             spoken.append(f"{label} {update}")
-        return " ".join(spoken)
+        if not spoken:
+            return None, labels
+        opening = " ".join(spoken)
+        return f"While you were away, {opening[:1].lower()}{opening[1:]}", labels
 
     def depart(self, workers: list[WorkerPayload]) -> None:
         """Save the report boundary without writing tasks or results again."""

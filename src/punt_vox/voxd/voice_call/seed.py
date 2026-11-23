@@ -72,20 +72,25 @@ class CallSeed:
         self._workers = sorted(workers, key=lambda w: w["created_at"], reverse=True)
         return self
 
-    def prompt(self) -> str:
+    def prompt(self, labels: dict[str, str] | None = None) -> str:
         """Return the prompt, dropping the oldest workers until it fits LIMIT."""
         briefs = [WorkerBrief.detail(worker) for worker in self._workers]
-        text = self._render(briefs)
+        text = self._render(briefs, labels or {})
         while len(text.encode()) > self.LIMIT and briefs:
             briefs.pop()
-            text = self._render(briefs)
+            text = self._render(briefs, labels or {})
         return self._cut(text)
 
-    def _render(self, briefs: list[dict[str, object]]) -> str:
+    def _render(self, briefs: list[dict[str, object]], labels: dict[str, str]) -> str:
         projects = json.dumps(list(self._projects), ensure_ascii=False)
         lines = [_ROLE, f"Repositories a worker may use: {projects}"]
         if len(self._projects) == 1:
             lines.append("start_worker uses that repository when no project is given.")
+        if labels:
+            lines.append(
+                "Spoken worker labels to worker IDs (JSON): "
+                + json.dumps(labels, ensure_ascii=False, separators=(",", ":"))
+            )
         state = {
             "workers": briefs,
             "older_workers_omitted": len(self._workers) - len(briefs),
