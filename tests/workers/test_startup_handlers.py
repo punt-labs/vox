@@ -36,3 +36,25 @@ async def test_worker_handlers_wait_for_shared_recovery() -> None:
             release.set()
         await admission({"id": "second"}, socket)
     handler.assert_awaited_once_with({"id": "second"}, socket)
+
+
+async def test_failed_recovery_is_logged_and_returns_rpc_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def recover() -> None:
+        raise OSError("not for the wire")
+
+    handler = AsyncMock()
+    gated = StartupHandlers.start(recover, {"worker_hook_admission": handler})
+    socket = AsyncMock()
+    await gated["worker_hook_admission"]({"id": "admit"}, socket)
+
+    handler.assert_not_awaited()
+    socket.send_json.assert_awaited_once_with(
+        {
+            "type": "error",
+            "id": "admit",
+            "message": "Worker startup recovery failed; check the daemon log",
+        }
+    )
+    assert "Worker startup recovery failed (OSError)" in caplog.text
