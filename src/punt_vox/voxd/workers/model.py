@@ -42,5 +42,9 @@ class WorkerRecord:
         return replace(
             self,
             state="exited",
-            last_report={**self.last_report, "cleanup_pending": True},
+            last_report={
+                **self.last_report,
+                "cleanup_pending": True,
+                "pane_stop_pending": True,
+            },
         )

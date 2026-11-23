@@ -26,5 +26,5 @@ def test_failed_cleanup_keeps_result_and_is_retryable(tmp_path: Path) -> None:
 
     cleaned = WorkerCleanup.run(failed, profiles)
     assert cleaned.state == "exited"
-    assert cleaned.last_report == record.last_report
+    assert cleaned.last_report == {**record.last_report, "pane_stop_pending": True}
     assert not WorkerCleanup.pending(cleaned)

@@ -118,8 +118,8 @@ neither supplies a fresh report nor a new liveness fact.
   pending' = pending
 \end{schema}
 
-The exited phase includes an exit confirmed by listing, even when that
-observation has not changed the durable phase. Only a registered worker's
+The exited phase includes an exit confirmed and checkpointed by listing.
+Only a registered worker's
 Stop or SessionEnd from its worktree can take this transition. The merge
 starts from the saved projection and respects its hook sequence ordering;
 SessionEnd does not erase a saved result. The merged report also becomes
@@ -150,7 +150,9 @@ Confirmed provider death selects exited; explicit stop and successful launch
 rollback select stopped. If rollback cannot confirm termination, starting is
 retained with a durable launch error and explicit stop can retry termination.
 Cleanup success removes the pending marker. On failure it remains, and an error
-may be attached to the opaque report without changing process phase.
+may be attached to the opaque report without changing process phase. The model
+does not distinguish an exited pane from its remaining tmux session. Explicit
+stop can still remove that session once without changing the exited phase.
 
 \begin{schema}{FailedLaunch}
   \Delta Workers \\

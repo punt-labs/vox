@@ -97,8 +97,11 @@ class WorkerLifecycle:
 
     def stop(self, record: WorkerRecord) -> WorkerRecord:
         """Terminal phase is stable, but failed cleanup remains retryable."""
-        if record.state == "exited":
+        if record.last_report.get("pane_stop_pending") is True:
             self._providers[record.provider].stop(record.session)
+            report = dict(record.last_report)
+            del report["pane_stop_pending"]
+            record = replace(record, last_report=report)
         if record.state in ("stopped", "exited"):
             return (
                 WorkerCleanup.run(record, self._profiles)

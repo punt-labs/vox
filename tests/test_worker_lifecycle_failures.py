@@ -110,5 +110,7 @@ def test_dead_worker_is_persisted_and_explicit_stop_clears_pane(tmp_path: Path) 
         assert retired.state == "exited"
         stop.assert_not_called()
         save.assert_called_once_with(retired)
-        assert registry.stop(record.id).state == "exited"
+        stopped = registry.stop(record.id)
+        assert stopped.state == "exited"
+        assert registry.stop(record.id) == stopped
     stop.assert_called_once()
