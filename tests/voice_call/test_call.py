@@ -276,6 +276,18 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
     assert opening[2] is None
 
 
+def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> None:
+    brief = ReturnBrief(tmp_path / "departure.json")
+    worker = payload(
+        "worker", last_assistant_message="Done.", worker_seq=5, result_seq=3
+    )
+
+    options = brief.options([worker], ("/repo",), ())
+
+    assert options.first_message is None
+    assert brief.covered == {"worker": 5}
+
+
 def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
     brief = ReturnBrief(tmp_path / "departure.json")
     brief.depart({"worker": 0})

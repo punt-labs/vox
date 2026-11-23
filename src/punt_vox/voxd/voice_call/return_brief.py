@@ -51,6 +51,9 @@ class ReturnBrief:
         tool_ids: tuple[str, ...],
     ) -> SessionOptions:
         """Build the call prompt and opener from the same worker snapshot."""
+        self._covered.update(
+            (worker["id"], self._sequence(worker, "worker_seq")) for worker in workers
+        )
         opening, labels = self._opening(workers)
         self._labels.update(
             (label.casefold(), worker_id) for label, worker_id in labels.items()
@@ -79,7 +82,6 @@ class ReturnBrief:
                 updates.append((worker_id, project, update))
             if result:
                 self._known[worker_id] = result
-            self._covered[worker_id] = self._sequence(worker, "worker_seq")
         return self._labelled_updates(updates)
 
     @staticmethod
