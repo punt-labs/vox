@@ -29,7 +29,7 @@ While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names eight properties, and the tests carry the same names:
+The model names nine properties:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -44,8 +44,8 @@ The model names eight properties, and the tests carry the same names:
   \item[C4] \emph{Output held across a cut}: an interruption ends the reply
     but not the call's hold on playback
     (\texttt{test\_the\_call\_keeps\_the\_output\_across\_a\_cut}).
-  \item[C5] \emph{Output released at the end}: no ended or failed call holds
-    playback.
+  \item[C5] \emph{Output released before cleanup finishes}: a remote hang-up
+    can drain the last reply, but no settled call holds playback.
   \item[C6] \emph{Durable once}: a re-asked durable tool call replays and
     never runs its operation a second time
     (\texttt{test\_reask\_during\_a\_slow\_start\_starts\_one\_worker}).
@@ -74,10 +74,12 @@ The model names eight properties, and the tests carry the same names:
 
 \begin{schema}{Call}
   call : CALL \\
-  holding, replying : ZBOOL \\
+  holding, replying, settled : ZBOOL \\
   durable, ran : \power KEY
 \where
-  call \in \{ idle, ended, failed \} \implies holding = zfalse \\
+  (call \in \{ idle, connecting \} \lor settled = ztrue) \implies holding = zfalse \\
+  call = idle \implies settled = ztrue \\
+  call \in \{ connecting, live \} \implies settled = zfalse \\
   replying = ztrue \implies holding = ztrue \\
   ran \subseteq durable
 \end{schema}
@@ -91,6 +93,7 @@ operation has run or is in flight; \texttt{ran} those that finished.
   call' = idle \\
   holding' = zfalse \\
   replying' = zfalse \\
+  settled' = ztrue \\
   durable' = \emptyset \\
   ran' = \emptyset
 \end{schema}
@@ -98,27 +101,43 @@ operation has run or is in flight; \texttt{ran} those that finished.
 \section{Lifecycle}
 
 \begin{schema}{ManagedAgent}
-  registered, provisioning : ZBOOL
+  registered, provisioning, awaitingProvision : ZBOOL
 \where
-  registered = ztrue \implies provisioning = zfalse
+  registered = ztrue \implies provisioning = zfalse \\
+  awaitingProvision = ztrue \implies provisioning = ztrue
 \end{schema}
 
-Registration can predate \texttt{InitCall}; a new daemon does not discard it.
+\begin{schema}{InitManagedAgent}
+  ManagedAgent' \\
+  savedRegistration? : ZBOOL
+\where
+  registered' = savedRegistration? \\
+  provisioning' = zfalse \\
+  awaitingProvision' = zfalse
+\end{schema}
+
+\texttt{registered} denotes a complete on-disk registration. It may
+predate the daemon, which does not discard it. Partially created resources
+are represented only as retryable cleanup: the next provisioning attempt
+cleans the partial record first, under the same registration lock.
 
 \begin{schema}{Start}
   \Delta Call \\
   \Xi ManagedAgent
 \where
   call \in \{ idle, ended, failed \} \\
+  settled = ztrue \\
   call' = connecting \\
+  settled' = zfalse \\
   holding' = zfalse \\
   replying' = zfalse \\
   durable' = \emptyset \\
   ran' = \emptyset
 \end{schema}
 
-\texttt{Start} is refused from \emph{connecting} or \emph{live} (C1), and a
-new call gets a fresh cache.
+\texttt{Start} is refused until the prior call task has finished (C1).
+A new call gets a fresh cache. A request that fails before launching a
+task leaves the previous call unchanged.
 
 \begin{schema}{BeginProvisionAgent}
   \Xi Call \\
@@ -128,68 +147,139 @@ new call gets a fresh cache.
   registered = zfalse \\
   provisioning = zfalse \\
   registered' = registered \\
-  provisioning' = ztrue
+  provisioning' = ztrue \\
+  awaitingProvision' = ztrue
 \end{schema}
 
 \begin{schema}{ProvisionAgent}
-  \Xi Call \\
+  \Delta Call \\
   \Delta ManagedAgent \\
   success? : ZBOOL
 \where
   provisioning = ztrue \\
   registered' = success? \\
-  provisioning' = zfalse
-\end{schema}
-
-Cancellation stops the call's wait for the provisioning thread, not the
-thread itself. \texttt{ProvisionAgent} records whether registration succeeded,
-not whether the call connected, and may finish after hang-up without
-changing the call state.
-
-\begin{schema}{Connect}
-  \Delta Call \\
-  \Xi ManagedAgent
-\where
-  call = connecting \\
-  registered = ztrue \\
-  call' = live \\
+  provisioning' = zfalse \\
+  awaitingProvision' = zfalse \\
+  (awaitingProvision = ztrue \land success? = zfalse) \implies
+    (call = connecting \land call' = failed) \\
+  (awaitingProvision = zfalse \lor success? = ztrue) \implies call' = call \\
+  settled' = settled \\
   holding' = holding \\
   replying' = replying \\
   durable' = durable \\
   ran' = ran
 \end{schema}
 
-\begin{schema}{End}
+Cancellation stops the call's wait for the provisioning thread, not the
+thread itself. \texttt{ProvisionAgent} records whether registration succeeded,
+not whether the call connected. Failure of the attempt awaited by the
+connecting call fails that call. Once detached, the attempt can finish
+without changing any call state, including that of a later call.
+
+\begin{schema}{Connect}
   \Delta Call \\
   \Xi ManagedAgent \\
-  failure? : ZBOOL
+  accepted? : ZBOOL
+\where
+  call = connecting \\
+  registered = ztrue \\
+  accepted? = ztrue \\
+  call' = live \\
+  settled' = settled \\
+  holding' = holding \\
+  replying' = replying \\
+  durable' = durable \\
+  ran' = ran
+\end{schema}
+
+Acceptance here includes validating or provisioning the registration,
+obtaining the signed URL, preparing the worker snapshot, and completing the
+ElevenLabs handshake. A mismatched registration is refused rather than
+deleted on connect; failures outside registration itself end through
+\texttt{End}. A connect timeout cancels the task (an ended call) but
+returns an error to the requesting client.
+
+\begin{schema}{End}
+  \Delta Call \\
+  \Delta ManagedAgent \\
+  failure?, draining? : ZBOOL
 \where
   call \in \{ connecting, live \} \\
   failure? = ztrue \implies call' = failed \\
   failure? = zfalse \implies call' = ended \\
+  settled' = zfalse \\
+  draining? = ztrue \implies
+    (call = live \land failure? = zfalse \land holding' = holding) \\
+  draining? = zfalse \implies holding' = zfalse \\
+  replying' = zfalse \\
+  durable' = durable \\
+  ran' = ran \\
+  registered' = registered \\
+  provisioning' = provisioning \\
+  awaitingProvision' = zfalse
+\end{schema}
+
+\texttt{End} covers hang-up, stop, timeout and failure. Its precondition
+admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
+\emph{failed} except a new \texttt{Start}, which is C3. Terminal status
+can be visible before the call task has finished its cleanup, including
+draining the final reply after a remote hang-up.
+
+\begin{schema}{SettleCall}
+  \Delta Call \\
+  \Xi ManagedAgent
+\where
+  call \in \{ ended, failed \} \\
+  settled = zfalse \\
+  settled' = ztrue \\
+  call' = call \\
   holding' = zfalse \\
   replying' = zfalse \\
   durable' = durable \\
   ran' = ran
 \end{schema}
 
-\texttt{End} covers hang-up, stop, timeout and failure. Its precondition
-admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
-\emph{failed} except a new \texttt{Start}, which is C3.
-
 \begin{schema}{TeardownAgent}
   \Xi Call \\
   \Delta ManagedAgent
 \where
   call \in \{ idle, ended, failed \} \\
+  settled = ztrue \\
+  provisioning = zfalse \\
   registered' = zfalse \\
-  provisioning' = provisioning
+  provisioning' = provisioning \\
+  awaitingProvision' = awaitingProvision
+\end{schema}
+
+\begin{schema}{TeardownRefused}
+  \Xi Call \\
+  \Xi ManagedAgent
+\where
+  settled = zfalse \lor provisioning = ztrue
+\end{schema}
+
+\begin{schema}{TeardownIncomplete}
+  \Xi Call \\
+  \Delta ManagedAgent \\
+  stillRegistered? : ZBOOL
+\where
+  settled = ztrue \\
+  provisioning = zfalse \\
+  stillRegistered? = ztrue \implies registered = ztrue \\
+  registered' = stillRegistered? \\
+  provisioning' = provisioning \\
+  awaitingProvision' = awaitingProvision
 \end{schema}
 
 \texttt{TeardownAgent} models success, including when nothing is registered.
-Teardown is serialized with call startup and refused during an active call
-(C9). It removes only the managed agent and tools; it does not touch workers
-or the departure cursor. A failed deletion retains its cleanup record for retry.
+The handlers serialize teardown with call startup and refuse it until the
+call task finishes (C9). The registration lock then serializes the provider
+changes: an in-flight provisioning attempt must finish before deletion can
+succeed, or lock acquisition times out and \texttt{TeardownRefused} leaves
+state unchanged. The model does not track the wait queue. A deletion
+failure reports \texttt{TeardownIncomplete}; the surviving record may still
+name the agent or may contain only tools to retry. No teardown outcome
+touches workers or the departure cursor.
 
 \section{Playback}
 
@@ -200,6 +290,7 @@ or the departure cursor. A failed deletion retains its cleanup record for retry.
   holding' = ztrue \\
   replying' = ztrue \\
   call' = call \\
+  settled' = settled \\
   durable' = durable \\
   ran' = ran
 \end{schema}
@@ -211,6 +302,7 @@ or the departure cursor. A failed deletion retains its cleanup record for retry.
   replying' = zfalse \\
   holding' = holding \\
   call' = call \\
+  settled' = settled \\
   durable' = durable \\
   ran' = ran
 \end{schema}
@@ -228,6 +320,7 @@ or the departure cursor. A failed deletion retains its cleanup record for retry.
   durable' = durable \cup \{ k? \} \\
   ran' = ran \\
   call' = call \\
+  settled' = settled \\
   holding' = holding \\
   replying' = replying
 \end{schema}
@@ -248,6 +341,7 @@ or the departure cursor. A failed deletion retains its cleanup record for retry.
   ran' = ran \cup \{ k? \} \\
   durable' = durable \\
   call' = call \\
+  settled' = settled \\
   holding' = holding \\
   replying' = replying
 \end{schema}
