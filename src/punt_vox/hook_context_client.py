@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
-from punt_vox.hook_delivery_retry import HookAdmissionPendingError, HookDeliveryRetry
+from punt_vox.hook_delivery_retry import HookDeliveryResult, HookDeliveryRetry
 
 
 @final
@@ -32,7 +32,9 @@ class HookContextClient:
         await HookDeliveryRetry.run(lambda: cls._deliver(payload, worker_only=True))
 
     @classmethod
-    async def _deliver(cls, payload: dict[str, object], *, worker_only: bool) -> None:
+    async def _deliver(
+        cls, payload: dict[str, object], *, worker_only: bool
+    ) -> HookDeliveryResult:
         """Start each attempt at admission, preserving the stamped event."""
         if worker_only:
             admission = await cls._request(
@@ -46,14 +48,13 @@ class HookContextClient:
             )
             if admission.get("admitted") is not True:
                 if admission.get("retryable") is True:
-                    raise HookAdmissionPendingError(
-                        "Worker hook admission pending liveness"
-                    )
-                return
+                    return HookDeliveryResult.PENDING
+                return HookDeliveryResult.DENIED
         await cls._request(
             {"type": "hook_event", "payload": payload, "worker_only": worker_only},
             expected="hook_event_accepted",
         )
+        return HookDeliveryResult.DELIVERED
 
     @classmethod
     async def snapshot(cls, session: str) -> dict[str, object]:

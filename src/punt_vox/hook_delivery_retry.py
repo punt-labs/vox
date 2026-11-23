@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum, auto
 from typing import TYPE_CHECKING, final
 
 from punt_vox.client_errors import (
@@ -15,8 +16,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 
-class HookAdmissionPendingError(VoxdProtocolError):
-    """The registered worker is still awaiting a positive liveness probe."""
+class HookDeliveryResult(Enum):
+    """Distinguish completed delivery from permanent and temporary denial."""
+
+    DELIVERED = auto()
+    DENIED = auto()
+    PENDING = auto()
 
 
 @final
@@ -26,23 +31,24 @@ class HookDeliveryRetry:
     __slots__ = ()
 
     @classmethod
-    async def run(cls, deliver: Callable[[], Awaitable[None]]) -> None:
+    async def run(cls, deliver: Callable[[], Awaitable[HookDeliveryResult]]) -> None:
         """Keep the event intact across attempts."""
         async with asyncio.timeout(5):
             for delay in (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0, None):
                 try:
-                    await deliver()
+                    result = await deliver()
                 except (VoxdConnectionError, VoxdProtocolError) as exc:
                     if delay is None or not cls._retryable(exc):
                         raise
-                    await asyncio.sleep(delay)
                 else:
-                    return
+                    if result is not HookDeliveryResult.PENDING:
+                        return
+                    if delay is None:
+                        raise TimeoutError("Worker hook admission pending liveness")
+                await asyncio.sleep(delay)
 
     @staticmethod
     def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
-        if isinstance(exc, HookAdmissionPendingError):
-            return True
         if isinstance(exc, VoxdProtocolError):
             return isinstance(exc.__cause__, TimeoutError)
         return not isinstance(exc, VoxdHandshakeRejectedError)

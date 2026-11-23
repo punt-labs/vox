@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-from punt_vox.hook_context_client import HookContextClient
+import pytest
 
-if TYPE_CHECKING:
-    import pytest
+from punt_vox.hook_context_client import HookContextClient
 
 
 async def test_worker_session_identity_requires_server_admission(
@@ -33,3 +31,22 @@ async def test_worker_session_identity_requires_server_admission(
         },
         {"type": "hook_event", "payload": payload, "worker_only": True},
     ]
+
+
+async def test_pending_admission_exhausts_retry_budget_as_timeout() -> None:
+    payload: dict[str, object] = {"session_id": "worker", "hook_event_name": "Stop"}
+    request = AsyncMock(return_value={"admitted": False, "retryable": True})
+
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock) as delay,
+        pytest.raises(TimeoutError, match="pending liveness"),
+    ):
+        await HookContextClient.send_event(payload, worker_only=True)
+
+    assert request.await_count == delay.await_count + 1
+    assert delay.await_count > 0
+    assert all(
+        call.args[0]["type"] == "worker_hook_admission"
+        for call in request.await_args_list
+    )
