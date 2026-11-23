@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, cast, final
 from markdown_it import MarkdownIt
 from markdown_it.rules_inline import backtick, image
 
+from punt_vox._speech_punctuation import SpeechPunctuation
+
 if TYPE_CHECKING:
     from markdown_it.rules_inline import StateInline
     from markdown_it.token import Token
@@ -28,37 +30,46 @@ class InlineCode:
     """Rewrite inline code without re-rendering the Markdown around it."""
 
     @classmethod
-    def rewrite_vibed(cls, text: str, transform: Callable[[str], str]) -> str:
-        """Recognize fences with leading synthesis tags without removing those tags."""
-        return cls.rewrite(
-            text, transform, markdown=_VIBE_BEFORE_FENCE.sub(r"\1", text)
-        )
+    def rewrite(cls, text: str, transform: Callable[[str], str]) -> str:
+        """Apply *transform* inside matched spans, leaving delimiters intact."""
+        return cls._rewrite(text, lambda body, _: transform(body))
 
     @classmethod
-    def rewrite(
+    def rewrite_currency(cls, text: str, *, vibed: bool = False) -> str:
+        """Spell code currency signs literally, except in paths."""
+        return cls._rewrite(text, SpeechPunctuation.spell_code_currency, vibed=vibed)
+
+    @classmethod
+    def _rewrite(
         cls,
         text: str,
-        transform: Callable[[str], str],
+        transform: Callable[[str, str], str],
         *,
-        markdown: str | None = None,
+        vibed: bool = False,
     ) -> str:
-        """Rewrite spans in raw text using an optional line-aligned parse view."""
+        """Pass each span's body and adjacent token prefix to *transform*."""
         if "`" not in text:
             return text
         lines = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
         parts: list[str] = []
         cursor = 0
-        for start, end in cls._source_spans(text, lines, markdown):
-            parts.extend((text[cursor:start], transform(text[start:end])))
+        markdown = _VIBE_BEFORE_FENCE.sub(r"\1", text) if vibed else text
+        for opening, start, end in cls._source_spans(text, lines, markdown):
+            prefix = opening
+            while prefix > 0 and not text[prefix - 1].isspace():
+                prefix -= 1
+            parts.extend(
+                (text[cursor:start], transform(text[start:end], text[prefix:opening]))
+            )
             cursor = end
         parts.append(text[cursor:])
         return "".join(parts)
 
     @classmethod
     def _source_spans(
-        cls, text: str, lines: Sequence[int], markdown: str | None
-    ) -> Iterator[tuple[int, int]]:
-        for token in cls._MARKDOWN.parse(text if markdown is None else markdown):
+        cls, text: str, lines: Sequence[int], markdown: str
+    ) -> Iterator[tuple[int, int, int]]:
+        for token in cls._MARKDOWN.parse(markdown):
             if token.type != "inline" or token.map is None or not token.children:
                 continue
             spans = tuple(cls._spans(token.children))
@@ -69,7 +80,7 @@ class InlineCode:
             )
             for opening, closing, width in spans:
                 if opening in ticks and closing in ticks:
-                    yield ticks[opening] + width, ticks[closing]
+                    yield ticks[opening], ticks[opening] + width, ticks[closing]
 
     @staticmethod
     def _source_ticks(text: str, lines: Sequence[int], content: str) -> dict[int, int]:

@@ -48,9 +48,9 @@ class SpeechPunctuation:
         return cls._spell_currency(core), suffix
 
     @classmethod
-    def spell_code_currency(cls, text: str) -> str:
+    def spell_code_currency(cls, text: str, prefix: str) -> str:
         """Say a code currency symbol literally rather than as a monetary unit."""
-        return _TOKEN_RE.sub(cls._spell_code_token, text)
+        return _TOKEN_RE.sub(lambda token: cls._spell_code_token(token, prefix), text)
 
     @staticmethod
     def is_path(core: str) -> bool:
@@ -58,9 +58,10 @@ class SpeechPunctuation:
         return _FILE_PATH_RE.match(core) is not None
 
     @classmethod
-    def _spell_code_token(cls, match: re.Match[str]) -> str:
+    def _spell_code_token(cls, match: re.Match[str], prefix: str) -> str:
         token = match[0]
-        if _CODE_PATH_RE.match(_LEADING_NON_SPEECH_RE.sub("", token)):
+        context = token if match.start() else prefix + token
+        if _CODE_PATH_RE.match(_LEADING_NON_SPEECH_RE.sub("", context)):
             return token
         return _CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
 

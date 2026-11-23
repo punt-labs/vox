@@ -535,14 +535,12 @@ class SpeechText:
     @classmethod
     def normalize(cls, text: str) -> str:
         """Normalize text without interpreting expressive tags."""
-        return cls._words(
-            InlineCode.rewrite(text, SpeechPunctuation.spell_code_currency)
-        )
+        return cls._words(InlineCode.rewrite_currency(text))
 
     @classmethod
     def for_synthesis(cls, text: str, *, expressive: bool) -> str:
         """Normalize text, retaining expressive tags only for supported models."""
-        prepared = InlineCode.rewrite_vibed(text, SpeechPunctuation.spell_code_currency)
+        prepared = InlineCode.rewrite_currency(text, vibed=True)
         if not expressive:
             return cls._words(VIBE_TAG_RE.sub("", prepared))
         return " ".join(filter(None, cls._expressive_parts(prepared)))
