@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import final
 
-_PARAGRAPH_BREAK = re.compile(r"(\r?\n[ \t]*\r?\n)")
+from punt_vox.markdown_fence import Fence
+
+_ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
 _BACKTICKS = re.compile(r"`+")
 
 
@@ -17,12 +19,31 @@ class InlineCode:
     @classmethod
     def rewrite(cls, text: str, transform: Callable[[str], str]) -> str:
         """Apply *transform* inside matched spans, leaving delimiters intact."""
-        paragraphs = _PARAGRAPH_BREAK.split(text)
-        paragraphs[::2] = [
-            cls._rewrite_paragraph(paragraph, transform)
-            for paragraph in paragraphs[::2]
-        ]
-        return "".join(paragraphs)
+        if "`" not in text:
+            return text
+        return "".join(
+            cls._rewrite_paragraph(block, transform) if inline else block
+            for block, inline in cls._blocks(text)
+        )
+
+    @staticmethod
+    def _blocks(text: str) -> Iterator[tuple[str, bool]]:
+        paragraph: list[str] = []
+        fence: Fence | None = None
+        for line in text.splitlines(keepends=True):
+            delimiter = Fence.parse(line)
+            if fence is not None:
+                yield line, False
+                if delimiter is not None and delimiter.closes(fence):
+                    fence = None
+            elif delimiter is not None or not line.strip() or _ATX_HEADING.match(line):
+                yield "".join(paragraph), True
+                paragraph.clear()
+                yield line, delimiter is None
+                fence = delimiter
+            else:
+                paragraph.append(line)
+        yield "".join(paragraph), True
 
     @classmethod
     def _rewrite_paragraph(cls, text: str, transform: Callable[[str], str]) -> str:
