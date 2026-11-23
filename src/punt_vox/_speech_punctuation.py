@@ -26,6 +26,9 @@ _LEADING_NON_SPEECH_RE = re.compile(
     r"[^\w~/.])+"
 )
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
+_FILE_PATH_RE = re.compile(r"^[~/.]?/")
+_CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
+_TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 
 
@@ -43,6 +46,42 @@ class SpeechPunctuation:
         core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
         suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
         return cls._spell_currency(core), suffix
+
+    @classmethod
+    def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
+        """Say a code currency symbol literally rather than as a monetary unit."""
+        return _TOKEN_RE.sub(
+            lambda token: cls._spell_code_token(token, in_path=in_path), text
+        )
+
+    @staticmethod
+    def is_code_path(text: str) -> bool:
+        """Recognize paths inside or directly adjacent to an inline span."""
+        return _CODE_PATH_RE.match(text.lstrip("`'\"\u2018\u2019“”([{<")) is not None
+
+    @staticmethod
+    def is_path(core: str) -> bool:
+        """Recognize path prefixes on a token without leading wrappers."""
+        return _FILE_PATH_RE.match(core) is not None
+
+    @classmethod
+    def _spell_code_token(cls, match: re.Match[str], *, in_path: bool) -> str:
+        token = match[0]
+        if (in_path and match.start() == 0) or cls.is_code_path(token):
+            return token
+        return _CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
+
+    @staticmethod
+    def _spell_code_symbol(match: re.Match[str]) -> str:
+        symbol, amount = match.group("symbol", "amount")
+        before, after = match.group("sign_before", "sign_after")
+        unit, _ = _CURRENCY_UNITS[symbol]
+        left = " " if match.string[match.start() - 1 : match.start()].isalnum() else ""
+        right = " " if match.string[match.end() : match.end() + 1].isalnum() else ""
+        return (
+            f"{left}{_SIGN_WORDS[before or '']}{unit} sign "
+            f"{_SIGN_WORDS[after or '']}{amount}{right}"
+        )
 
     @staticmethod
     def _spell_currency(core: str) -> str:

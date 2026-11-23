@@ -1401,6 +1401,44 @@ class TestApplyVibeForSynthesis:
         result = self._apply("hello", "[warm]", "elevenlabs", "eleven_v3")
         assert result == "[warm] hello"
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            (
+                "eleven_v3",
+                "Run dollar sign 1 [warm] dollar sign 2 then pay 5 dollars",
+            ),
+            (
+                "eleven_flash_v2_5",
+                "Run dollar sign 1 dollar sign 2 then pay 5 dollars",
+            ),
+        ],
+    )
+    def test_code_currency_span_survives_tag_handling(
+        self, model: str, expected: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("TTS_MODEL", raising=False)
+        raw = "Run `$1 [warm] $2` then pay $5"
+        assert self._apply(raw, None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize(
+        ("model", "prefix"),
+        [("eleven_v3", "[warm] "), ("eleven_flash_v2_5", "")],
+    )
+    def test_tag_before_fence_does_not_hide_following_code_span(
+        self, model: str, prefix: str
+    ) -> None:
+        raw = "[warm] ```sh\necho\n```\nUse `$1` then pay $5"
+        assert self._apply(raw, None, "elevenlabs", model) == (
+            f"{prefix}sh echo Use dollar sign 1 then pay 5 dollars"
+        )
+
+    def test_tagged_fence_marker_inside_code_is_not_a_closer(self) -> None:
+        raw = "```sh\n[warm] ```\nInside `$1`\n[warm] ```\n```\n\nOutside `$2`"
+        assert self._apply(raw, None, "elevenlabs", "eleven_flash_v2_5") == (
+            "sh Inside 1 dollar Outside dollar sign 2"
+        )
+
 
 class TestOpenAIProviderKeyCapture:
     """The key is the one in effect when the provider was built, not at first use.
