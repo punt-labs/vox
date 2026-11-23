@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.wire_reply import WireReply
 from punt_vox.voxd.workers.hook_reports import HookReports
+from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
+    from punt_vox.voxd.workers.model import WorkerRecord
 
 __all__ = ["WorkerHooks"]
 
@@ -48,9 +50,7 @@ class WorkerHooks:
         """Check advisory metadata without waiting behind worker launches."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            admitted = await asyncio.to_thread(
-                self._registry.admits_hook, msg.get("session_id"), msg.get("cwd")
-            )
+            admitted = await asyncio.to_thread(self._target, msg) is not None
         except (OSError, ValueError, RuntimeError) as exc:
             await reply.error(str(exc))
             return
@@ -58,9 +58,7 @@ class WorkerHooks:
 
     async def ingest(self, payload: dict[str, object], *, worker_only: bool) -> None:
         """Revalidate admission and checkpoint before returning a delivery receipt."""
-        if not worker_only and not await asyncio.to_thread(
-            self._registry.admits_hook, payload.get("session_id"), payload.get("cwd")
-        ):
+        if not worker_only and await asyncio.to_thread(self._target, payload) is None:
             self._store.ingest(payload)
             return
         async with self._lock:
@@ -73,25 +71,44 @@ class WorkerHooks:
     def _ingest(
         self, payload: dict[str, object], *, worker_only: bool
     ) -> WorkerProgress | None:
-        session, cwd = payload.get("session_id"), payload.get("cwd")
-        admitted = self._registry.admits_hook(session, cwd)
-        if worker_only and not admitted:
+        record = self._target(payload)
+        if record is None:
+            if not worker_only:
+                self._store.ingest(payload)
             return None
         sequence = payload.get("relay_seq")
-        if (
-            admitted
-            and type(sequence) is int
-            and self._registry.has_hook_receipt(str(session), sequence)
+        if type(sequence) is int and self._registry.hook_records.received(
+            record, sequence
         ):
             return None
-        self._store.ingest(payload, worker_input=admitted)
-        self._registry.checkpoint_progress(session, cwd)
-        if not admitted:
-            return None
-        snapshot = self._store.snapshot(str(session))
+        store = self._project(record, payload)
+        snapshot = store.snapshot(record.id)
         return self._reports.observe(
-            str(session),
+            record.id,
             payload,
             snapshot["pending_decision"],
-            latest=self._store.worker_sequence(str(session)),
+            latest=store.worker_sequence(record.id),
         )
+
+    def _target(self, msg: dict[str, object]) -> WorkerRecord | None:
+        return self._registry.hook_records.match(
+            msg.get("session_id"), msg.get("cwd"), msg.get("hook_event_name")
+        )
+
+    def _project(
+        self, record: WorkerRecord, payload: dict[str, object]
+    ) -> HookContextStore:
+        if not self._registry.hook_records.exited(record):
+            self._store.ingest(payload, worker_input=True)
+            self._registry.checkpoint_progress(record)
+            return self._store
+        store = HookContextStore()
+        try:
+            WorkerRecovery.restore_checkpoint(record, store)
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("Saved worker hook checkpoint is unavailable") from None
+        store.ingest(payload, worker_input=True)
+        checkpoint = store.checkpoint(record.id)
+        if checkpoint is not None:
+            self._registry.checkpoint_exit(record, checkpoint)
+        return store

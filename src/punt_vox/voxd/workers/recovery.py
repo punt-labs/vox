@@ -23,18 +23,21 @@ class WorkerRecovery:
     def restore(records: list[WorkerRecord], store: HookContextStore) -> None:
         """Restore each supported active checkpoint in isolation."""
         for record in records:
-            if (
-                record.state not in ("starting", "ready")
-                or "worker_seq" not in record.last_report
-            ):
+            if record.state not in ("starting", "ready"):
                 continue
             try:
-                store.restore(
-                    record.id, cast("WorkerHookCheckpoint", record.last_report)
-                )
+                WorkerRecovery.restore_checkpoint(record, store)
             except (KeyError, TypeError, ValueError) as exc:
                 logger.warning(
                     "Worker %s hook checkpoint unavailable (%s)",
                     record.id,
                     type(exc).__name__,
                 )
+
+    @staticmethod
+    def restore_checkpoint(record: WorkerRecord, store: HookContextStore) -> None:
+        """Load an existing projection; malformed checkpoints are not overwritten."""
+        if "worker_seq" in record.last_report:
+            store.restore(record.id, cast("WorkerHookCheckpoint", record.last_report))
+        elif record.last_report.get("last_assistant_message"):
+            raise ValueError("Worker result has no checkpoint ordering")

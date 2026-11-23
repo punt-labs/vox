@@ -40,6 +40,7 @@ class HookContextClient:
                     "type": "worker_hook_admission",
                     "session_id": payload.get("session_id"),
                     "cwd": payload.get("cwd"),
+                    "hook_event_name": payload.get("hook_event_name"),
                 },
                 expected="worker_hook_admission",
             )

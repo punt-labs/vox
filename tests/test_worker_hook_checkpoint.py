@@ -29,6 +29,7 @@ from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
+from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
@@ -384,6 +385,26 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         )
     [saved] = records.load()
     assert saved.last_report["last_assistant_message"] == "Finished the tests."
+    completion_socket = AsyncMock()
+    await hooks.admit({**base, "hook_event_name": "Stop"}, completion_socket)
+    assert completion_socket.send_json.call_args.args[0]["admitted"] is True
+    await hooks.ingest(
+        {
+            **base,
+            "hook_event_name": "Stop",
+            "relay_seq": 4,
+            "last_assistant_message": "Finished the build too.",
+        },
+        worker_only=True,
+    )
+    await hooks.ingest(
+        {**base, "hook_event_name": "SessionEnd", "relay_seq": 5},
+        worker_only=True,
+    )
+    [merged] = records.load()
+    assert merged.last_report["last_assistant_message"] == "Finished the build too."
+    assert merged.last_report["session_started"] is True
+    assert merged.last_report["worker_seq"] == 5
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
@@ -612,7 +633,12 @@ async def test_unadmitted_worker_events_never_leave_the_client() -> None:
     ) as request:
         await HookContextClient.send_event(payload, worker_only=True)
     request.assert_awaited_once_with(
-        {"type": "worker_hook_admission", "session_id": "unknown", "cwd": "/repo"},
+        {
+            "type": "worker_hook_admission",
+            "session_id": "unknown",
+            "cwd": "/repo",
+            "hook_event_name": None,
+        },
         expected="worker_hook_admission",
     )
 
@@ -755,7 +781,7 @@ async def test_admission_path_errors_are_wire_errors(tmp_path: Path) -> None:
     registry = _registry(tmp_path, FakeWorkerProvider())
     socket = AsyncMock()
     with patch.object(
-        WorkerRegistry, "admits_hook", side_effect=OSError("path unavailable")
+        WorkerInventory, "match", side_effect=OSError("path unavailable")
     ):
         await WorkerHandlers.build(registry, HookContextStore())[
             "worker_hook_admission"

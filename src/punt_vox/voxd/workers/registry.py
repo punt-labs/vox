@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 import subprocess
 import unicodedata
+from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Self, cast, final
 from uuid import uuid4
 
-from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
+from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
+from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
@@ -27,21 +28,17 @@ class WorkerRegistry:
     """Resolve providers and harnesses by name, never by special-case branches."""
 
     __slots__ = (
-        "_closed_hooks",
+        "_inventory",
         "_lifecycle",
         "_policy",
         "_profiles",
         "_providers",
-        "_records",
-        "_workers",
     )
-    _closed_hooks: set[str]
+    _inventory: WorkerInventory
     _lifecycle: WorkerLifecycle
     _policy: WorkerRepoPolicy
     _profiles: dict[str, HarnessProfile]
     _providers: dict[str, WorkerProvider]
-    _records: WorkerRecords
-    _workers: dict[str, WorkerRecord]
 
     def __new__(
         cls,
@@ -52,16 +49,20 @@ class WorkerRegistry:
     ) -> Self:
         """Wire an empty registry for startup recovery."""
         self = super().__new__(cls)
-        self._policy, self._records = policy, records
+        self._policy = policy
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
-        self._closed_hooks = set()
-        self._workers = {}
+        self._inventory = WorkerInventory(records)
         return self
 
     def restore(self, records: list[WorkerRecord]) -> None:
         """Install reconciled checkpoints before admitting callers."""
-        self._workers = {record.id: record for record in records}
+        self._inventory.restore(records)
+
+    @property
+    def hook_records(self) -> WorkerInventory:
+        """Expose admission and receipt lookup without exposing worker control."""
+        return self._inventory
 
     def start(
         self,
@@ -78,7 +79,7 @@ class WorkerRegistry:
             raise ValueError("Unknown worker provider or harness")
         repo = self._policy.resolve(project)
         worker_id = str(uuid4())
-        worktree = self._records.worktree(worker_id)
+        worktree = self._inventory.worktree(worker_id)
         branch = f"vox-worker/{worker_id}"
         handle = f"vox-worker-{worker_id}"
         record = WorkerRecord(
@@ -94,47 +95,39 @@ class WorkerRegistry:
             created_at=datetime.now(UTC).isoformat(),
             last_report={},
         )
-        self._records.save(record)
-        self._workers[worker_id] = record
+        self._inventory.save(record)
         profile = self._profiles[harness]
         try:
             self._policy.create(repo, worktree, branch)
             profile.prepare(worktree)
             self._providers[provider].start(
                 WorkerLaunch(
-                    handle, worker_id, worktree, task, self._records.namespace
+                    handle, worker_id, worktree, task, self._inventory.namespace
                 ),
                 profile,
             )
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._rollback(record, exc)
             raise
-        return self._checkpoint(self._lifecycle.observe(record))
-
-    def _checkpoint(self, record: WorkerRecord) -> WorkerRecord:
-        if self._workers.get(record.id) == record:
-            return record
-        self._records.save(record)
-        self._workers[record.id] = record
-        return record
+        return self._inventory.save(self._lifecycle.observe(record))
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
         record = self._lifecycle.rollback(record, error)
         try:
-            self._checkpoint(record)
+            self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
-            self._workers[record.id] = record
+            self._inventory.remember(record)
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
         """Report current state and close hook admission for confirmed exits."""
-        return [self._observe(record) for record in self._workers.values()]
+        return [self._observe(record) for record in self._inventory.registered()]
 
     def _observe(self, record: WorkerRecord) -> WorkerRecord:
         try:
             observed = self._lifecycle.observe(record)
             if observed.state == "exited":
-                self._closed_hooks.add(record.id)
+                self._inventory.close(record.id)
             return observed
         except (
             KeyError,
@@ -150,46 +143,27 @@ class WorkerRegistry:
             )
             return record
 
-    def _get(self, worker_id: str) -> WorkerRecord:
-        try:
-            return self._workers[worker_id]
-        except KeyError:
-            raise ValueError(f"no worker {worker_id}") from None
-
     def admits_hook(self, worker_id: object, cwd: object) -> bool:
-        """Accept only an active worker's exact session and canonical worktree."""
-        if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
-            return False
-        record = self._workers.get(worker_id)
-        return (
-            record is not None
-            and worker_id not in self._closed_hooks
-            and record.state in ("starting", "ready")
-            and "launch_error" not in record.last_report
-            and Path(cwd).is_absolute()
-            and record.worktree == str(Path(cwd).resolve())
-        )
+        """Check that a worker accepts active hook traffic from this worktree."""
+        return self._inventory.match(worker_id, cwd, None) is not None
 
-    def checkpoint_progress(self, worker_id: object, cwd: object) -> None:
+    def checkpoint_progress(self, record: WorkerRecord) -> None:
         """Persist curated progress before a managed hook delivery is acknowledged."""
-        if self.admits_hook(worker_id, cwd):
-            self._checkpoint(
-                self._lifecycle.report(self._workers[cast("str", worker_id)])
-            )
+        self._inventory.save(self._lifecycle.report(record))
 
-    def has_hook_receipt(self, worker_id: str, sequence: int) -> bool:
-        """Detect a retry of a hook already saved by this or a previous daemon."""
-        report = self._get(worker_id).last_report
-        gaps = report.get("gaps")
-        return (
-            "worker_seq" in report
-            and isinstance(gaps, dict)
-            and HookGaps.received(cast("HookGapReport", gaps), sequence)
+    def checkpoint_exit(
+        self, record: WorkerRecord, checkpoint: WorkerHookCheckpoint
+    ) -> None:
+        """Update terminal progress without changing phase or cleanup markers."""
+        self._inventory.save(
+            replace(record, last_report={**record.last_report, **checkpoint})
         )
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        return self._checkpoint(self._lifecycle.stop(self._get(worker_id)))
+        return self._inventory.save(
+            self._lifecycle.stop(self._inventory.get(worker_id))
+        )
 
     def steer(
         self,
@@ -210,10 +184,10 @@ class WorkerRegistry:
             raise ValueError(
                 "Worker words must not contain control characters or newlines"
             )
-        record = self._lifecycle.observe(self._get(worker_id))
+        record = self._lifecycle.observe(self._inventory.get(worker_id))
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
-        self._checkpoint(record)
+        self._inventory.save(record)
         if choice is not None:
             self._question(record, prompt_seq)
         if prompt_epoch is not None and prompt_epoch != record.last_report.get(
@@ -260,7 +234,7 @@ class WorkerRegistry:
     # PY-TS-14: absence means no later input matches this steering request yet.
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
         """Recognize a later matching input without inferring turn completion."""
-        profile = self._profiles[self._get(worker_id).harness]
+        profile = self._profiles[self._inventory.get(worker_id).harness]
         for receipt in profile.inputs_since(worker_id, baseline):
             if receipt.seq > baseline and profile.matches_input(receipt, words):
                 return receipt.seq
