@@ -25,11 +25,20 @@ class CallWorkerChecks:
         return super().__new__(cls)
 
     def run(self) -> list[CheckResult]:
-        """Report tmux and the installed version on Linux systemd hosts."""
+        """Report tmux and the worker launcher on Linux systemd hosts."""
         results = [self._tmux()]
         if sys.platform == "linux" and Path("/run/systemd/system").is_dir():
             if path := shutil.which("systemd-run"):
                 results.append(self._systemd(path))
+            else:
+                results.append(
+                    CheckResult.of(
+                        WARN,
+                        "systemd-run: not found — call workers launched by the Vox "
+                        f"service need it (systemd {_MIN_SYSTEMD_VERSION}+)",
+                        required=False,
+                    )
+                )
         return results
 
     @staticmethod

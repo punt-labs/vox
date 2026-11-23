@@ -17,7 +17,6 @@ from punt_vox.doctor_call_workers import CallWorkerChecks
         ("linux", True, "253 (253.5-1)", "warn"),
         ("linux", True, "254 (254.1-1)", "pass"),
         ("linux", True, "255.4-1ubuntu8.13", "pass"),
-        ("linux", True, None, None),
         ("linux", False, "249", None),
         ("darwin", True, "249", None),
     ],
@@ -25,15 +24,11 @@ from punt_vox.doctor_call_workers import CallWorkerChecks
 def test_call_checks_report_systemd_worker_requirement(
     platform: str,
     systemd_booted: bool,
-    version: str | None,
+    version: str,
     status_kind: str | None,
 ) -> None:
     def which(name: str) -> str | None:
-        return (
-            "/bin/systemd-run"
-            if version is not None and name == "systemd-run"
-            else None
-        )
+        return "/bin/systemd-run" if name == "systemd-run" else None
 
     with (
         patch("sys.platform", platform),
@@ -50,7 +45,9 @@ def test_call_checks_report_systemd_worker_requirement(
         results = CallWorkerChecks().run()
 
     rows = [
-        result for result in results if result.message.startswith("systemd version:")
+        result
+        for result in results
+        if result.message.startswith(("systemd version:", "systemd-run:"))
     ]
     if status_kind is None:
         probe.assert_not_called()
@@ -63,11 +60,29 @@ def test_call_checks_report_systemd_worker_requirement(
     assert result.status_kind == status_kind
     assert not result.required
     if status_kind == "warn":
-        assert version is not None
         assert version.split()[0] in result.message
         assert "call workers" in result.message
         assert "254+" in result.message
         assert "Ubuntu 24.04" in result.message
+
+
+def test_missing_systemd_run_is_advisory() -> None:
+    with (
+        patch("sys.platform", "linux"),
+        patch("punt_vox.doctor_call_workers.Path") as path,
+        patch("shutil.which", return_value=None),
+        patch("subprocess.run") as probe,
+    ):
+        path.return_value.is_dir.return_value = True
+        results = CallWorkerChecks().run()
+
+    probe.assert_not_called()
+    (result,) = [row for row in results if row.message.startswith("systemd-run:")]
+    assert result.status_kind == "warn"
+    assert not result.required
+    assert "not found" in result.message
+    assert "call workers" in result.message
+    assert "254+" in result.message
 
 
 @pytest.mark.parametrize(

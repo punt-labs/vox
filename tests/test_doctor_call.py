@@ -21,9 +21,12 @@ def test_call_checks_report_host_requirements(
         return "/bin/tmux" if tmux_found and name == "tmux" else None
 
     with (
+        patch("sys.platform", "linux"),
+        patch("punt_vox.doctor_call_workers.Path") as path,
         patch("shutil.which", side_effect=which),
         patch("punt_vox.doctor_call_scope.httpx.get") as request,
     ):
+        path.return_value.is_dir.return_value = False
         results = CallChecks().run()
 
     request.assert_not_called()
