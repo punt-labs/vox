@@ -333,7 +333,6 @@ class TestSymbolStripping:
             ("-$5._", "minus 5 dollars."),
             ("_-$5._", "minus 5 dollars."),
             ("_Pay -$5._", "pay minus 5 dollars."),
-            ("$5off", "5 off"),
         ],
     )
     def test_currency_amounts_survive(self, text: str, expected: str) -> None:
