@@ -26,13 +26,14 @@ _SCALES = {
     "billion": "billion",
     "trillion": "trillion",
 }
+_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+"
 _AMOUNT = (
     r"(?P<{p}sign_before>[-+\u2212])?"
     rf"(?P<{{p}}symbol>[{''.join(_UNITS)}])"
     r"(?({p}sign_before)|(?P<{p}sign_after>[-+\u2212])?)"
-    r"(?P<{p}amount>(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?|\.\d+)"
+    rf"(?P<{{p}}amount>{_NUMBER})"
 )
-_CODE_AMOUNT = re.compile(_AMOUNT.format(p=""))
+_CODE_AMOUNT = re.compile(_AMOUNT.replace("{p}", ""))
 _LETTER = r"[^\W\d_]"
 
 
@@ -55,8 +56,9 @@ class CurrencySpeech:
         )
         return re.compile(
             rf"{_CODE_AMOUNT.pattern}(?P<word>{word})?"
-            rf"(?:[-\u2013]{_AMOUNT.format(p='end_')}(?P<end_word>{word})?)?"
-            rf"(?:/(?P<rate>{word}))?"
+            rf"(?:[-\u2013]{_AMOUNT.replace('{p}', 'end_')}(?P<end_word>{word})?"
+            rf"|\u2013(?P<bare_end>{_NUMBER}))?"
+            rf"(?P<rates>(?:/{word})*)"
         )
 
     @classmethod
@@ -68,30 +70,35 @@ class CurrencySpeech:
         spoken = cls._speak_amount(match)
         if match["end_symbol"]:
             spoken += f" to {cls._speak_amount(match, 'end_')}"
-        if rate := match["rate"]:
-            spoken += f" per {rate}"
-        return spoken
+        return spoken + match["rates"].replace("/", " per ")
 
     @classmethod
     def speak_code(cls, token: str) -> str:
         """Spell code currency signs literally within a token."""
         return _CODE_AMOUNT.sub(cls._speak_code_sign, token)
 
-    @staticmethod
-    def _speak_amount(match: re.Match[str], prefix: str = "") -> str:
+    @classmethod
+    def _speak_amount(cls, match: re.Match[str], prefix: str = "") -> str:
         symbol, amount = match[prefix + "symbol"], match[prefix + "amount"]
         sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
         word = match[prefix + "word"] or ""
         scale = _SCALES.get(word.lower(), "")
         singular, plural = _UNITS[symbol]
-        is_one = (
-            not scale and "." not in amount and Decimal(amount.replace(",", "")) == 1
-        )
-        unit = singular if is_one else plural
-        number = "0" + amount if amount.startswith(".") else amount
+        end = "" if prefix else match["bare_end"]
+        unit = singular if not (scale or end) and cls._is_one(amount) else plural
+        number = _SIGNS[sign] + cls._spoken_number(amount)
+        span = f"to {cls._spoken_number(end)}" if end else ""
         return " ".join(
-            filter(None, (_SIGNS[sign] + number, scale, unit, "" if scale else word))
+            filter(None, (number, scale, span, unit, "" if scale else word))
         )
+
+    @staticmethod
+    def _is_one(amount: str) -> bool:
+        return "." not in amount and Decimal(amount.replace(",", "")) == 1
+
+    @staticmethod
+    def _spoken_number(amount: str) -> str:
+        return "0" + amount if amount.startswith(".") else amount
 
     @staticmethod
     def _speak_code_sign(match: re.Match[str]) -> str:
