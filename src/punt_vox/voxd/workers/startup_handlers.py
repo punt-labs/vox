@@ -55,7 +55,11 @@ class StartupHandlers:
             logger.error("Worker startup recovery failed (%s)", type(error).__name__)
         ready.set_result(error is None)
 
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
+    async def __call__(
+        self,
+        msg: dict[str, object],  # PY-TS-14: route handlers validate their own JSON.
+        websocket: WebSocket,
+    ) -> None:
         """Wait for durable worker state before dispatching."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
@@ -66,7 +70,7 @@ class StartupHandlers:
                 {
                     "type": "error",
                     "code": VoxdRecoveryPendingError.CODE,
-                    "message": "Worker startup recovery is still in progress; retry the request",
+                    "message": "Worker recovery pending; retry the request",
                 }
             )
             return

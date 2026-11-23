@@ -83,7 +83,7 @@ async def test_recovery_deadline_drops_expired_rpc_without_cancelling_recovery(
                     "type": "error",
                     "id": "expired",
                     "code": "worker_recovery_pending",
-                    "message": "Worker startup recovery is still in progress; retry the request",
+                    "message": "Worker recovery pending; retry the request",
                 }
             )
         finally:
