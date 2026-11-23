@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Hooks no longer hang when given a relative working directory outside a Git
-  worktree. (PL-820)
-
 ### Removed
 
 - The unused append-log factory and stderr reporter from `PrivateState`.
@@ -26,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
+
+### Fixed
+
+- Hooks no longer hang when given a relative working directory outside a Git
+  worktree. (PL-820)
+
+- A `serve.port` holding bytes that are not UTF-8 no longer crashes vox
+  with a traceback where it reads the file: `vox daemon status` (with no
+  voxd on the service port) reports `unknown` with "invalid UTF-8", and
+  `vox daemon install`, or `uninstall` when it stopped no voxd, fails with
+  that message. (PL-1189)
 
 ### Added
 
