@@ -69,7 +69,7 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.0,
     "max_complexity": 5.0,
-    "avg_complexity": 2.57,
+    "avg_complexity": 2.86,
     "module_size": 79.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,

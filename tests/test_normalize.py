@@ -345,6 +345,10 @@ class TestSymbolStripping:
         [
             ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
             (
+                "Use `$1suffix prefix$2` then pay $5",
+                "Use dollar sign 1 suffix prefix dollar sign 2 then pay 5 dollars",
+            ),
+            (
                 "Use ``printf ` $1 $2`` then pay -$5",
                 "Use printf dollar sign 1 dollar sign 2 then pay minus 5 dollars",
             ),

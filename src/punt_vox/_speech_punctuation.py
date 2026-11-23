@@ -21,9 +21,6 @@ _CURRENCY_AMOUNT = re.compile(
     r"(?(sign_before)|(?P<sign_after>[-+\u2212])?)"
     r"(?P<amount>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
 )
-_CODE_CURRENCY_AMOUNT = re.compile(
-    rf"(?<![^\W_]){_CURRENCY_AMOUNT.pattern}(?=_*(?!\w|[.,]\d))"
-)
 _LEADING_NON_SPEECH_RE = re.compile(
     rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
     r"[^\w~/.])+"
@@ -64,15 +61,18 @@ class SpeechPunctuation:
         token = match[0]
         if cls.is_path(_LEADING_NON_SPEECH_RE.sub("", token)):
             return token
-        return _CODE_CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
+        return _CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
 
     @staticmethod
     def _spell_code_symbol(match: re.Match[str]) -> str:
         symbol, amount = match.group("symbol", "amount")
         before, after = match.group("sign_before", "sign_after")
         unit, _ = _CURRENCY_UNITS[symbol]
+        left = " " if match.string[match.start() - 1 : match.start()].isalnum() else ""
+        right = " " if match.string[match.end() : match.end() + 1].isalnum() else ""
         return (
-            f"{_SIGN_WORDS[before or '']}{unit} sign {_SIGN_WORDS[after or '']}{amount}"
+            f"{left}{_SIGN_WORDS[before or '']}{unit} sign "
+            f"{_SIGN_WORDS[after or '']}{amount}{right}"
         )
 
     @staticmethod
