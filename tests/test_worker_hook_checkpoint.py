@@ -405,6 +405,51 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     assert merged.last_report["last_assistant_message"] == "Finished the build too."
     assert merged.last_report["session_started"] is True
     assert merged.last_report["worker_seq"] == 5
+    context_socket = AsyncMock()
+    await HookContextHandlers(store).snapshot({"session_id": worker.id}, context_socket)
+    response = context_socket.send_json.call_args.args[0]
+    assert response["type"] == "hook_context"
+    assert response["snapshot"]["last_assistant_message"] == ("Finished the build too.")
+    assert store.worker_sequence(worker.id) == 5
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"later-ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+
+
+async def test_first_worker_completion_after_exit_ignores_ordinary_context(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    actor = WorkerActor(registry, store)
+    provider.alive = False
+    assert (await actor.workers())[0]["state"] == "exited"
+    payload = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Stop",
+        "relay_seq": 1,
+    }
+    store.ingest({**payload, "last_assistant_message": "Ordinary context."})
+    await actor.hooks(store).ingest(
+        {**payload, "last_assistant_message": "The first worker result."},
+        worker_only=True,
+    )
+    assert (
+        store.snapshot(worker.id)["last_assistant_message"]
+        == "The first worker result."
+    )
+    [saved] = WorkerRecords(tmp_path / "workers").load()
+    assert saved.last_report["last_assistant_message"] == "The first worker result."
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(

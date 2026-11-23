@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.wire_reply import WireReply
 from punt_vox.voxd.workers.hook_reports import HookReports
 from punt_vox.voxd.workers.recovery import WorkerRecovery
@@ -14,6 +13,7 @@ from punt_vox.voxd.workers.registry import WorkerRegistry
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.hook_context_store import HookContextStore
     from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
     from punt_vox.voxd.workers.model import WorkerRecord
@@ -81,13 +81,13 @@ class WorkerHooks:
             record, sequence
         ):
             return None
-        store = self._project(record, payload)
-        snapshot = store.snapshot(record.id)
+        self._project(record, payload)
+        snapshot = self._store.snapshot(record.id)
         return self._reports.observe(
             record.id,
             payload,
             snapshot["pending_decision"],
-            latest=store.worker_sequence(record.id),
+            latest=self._store.worker_sequence(record.id),
         )
 
     def _target(self, msg: dict[str, object]) -> WorkerRecord | None:
@@ -95,20 +95,24 @@ class WorkerHooks:
             msg.get("session_id"), msg.get("cwd"), msg.get("hook_event_name")
         )
 
-    def _project(
-        self, record: WorkerRecord, payload: dict[str, object]
-    ) -> HookContextStore:
-        if not self._registry.hook_records.exited(record):
-            self._store.ingest(payload, worker_input=True)
-            self._registry.checkpoint_progress(record)
-            return self._store
-        store = HookContextStore()
+    def _project(self, record: WorkerRecord, payload: dict[str, object]) -> None:
+        exited = self._registry.hook_records.exited(record)
+        if exited:
+            self._restore_exit(record)
         try:
-            WorkerRecovery.restore_checkpoint(record, store)
+            self._store.ingest(payload, worker_input=True)
+            if exited:
+                checkpoint = self._store.checkpoint(record.id)
+                if checkpoint is not None:
+                    self._registry.checkpoint_exit(record, checkpoint)
+            else:
+                self._registry.checkpoint_progress(record)
+        finally:
+            if exited:
+                self._store.release_worker(record.id)
+
+    def _restore_exit(self, record: WorkerRecord) -> None:
+        try:
+            self._store.restore(record.id, WorkerRecovery.checkpoint(record))
         except (KeyError, TypeError, ValueError):
             raise ValueError("Saved worker hook checkpoint is unavailable") from None
-        store.ingest(payload, worker_input=True)
-        checkpoint = store.checkpoint(record.id)
-        if checkpoint is not None:
-            self._registry.checkpoint_exit(record, checkpoint)
-        return store

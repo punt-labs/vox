@@ -72,10 +72,11 @@ class HookContextStore:
         context = self._sessions.get(session)
         return context.checkpoint() if context is not None else None
 
-    def restore(self, session: str, checkpoint: WorkerHookCheckpoint) -> None:
-        """Rebuild one managed session without replaying hooks or progress events."""
+    def restore(self, session: str, checkpoint: WorkerHookCheckpoint | None) -> None:
+        """Restore a managed projection, or start clean when no checkpoint exists."""
         context = SessionContext()
-        context.restore(checkpoint)
+        if checkpoint is not None:
+            context.restore(checkpoint)
         self._sessions.remember(session, context, managed=True)
 
     def release_worker(self, session: str) -> None:
