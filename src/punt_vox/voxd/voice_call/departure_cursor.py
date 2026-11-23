@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import stat
-from contextlib import suppress
 from typing import TYPE_CHECKING, Self, cast, final
 
-from punt_vox.atomic_file import AtomicFile
+from punt_vox.voxd.voice_call.cursor_file import CursorFile
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -23,13 +20,13 @@ class DepartureCursor:
     """Use a fresh baseline when the saved cursor is absent or unusable."""
 
     __slots__ = ("_file", "_known")
-    _file: AtomicFile
+    _file: CursorFile
     _known: dict[str, int]
 
     def __new__(cls, path: Path) -> Self:
         """Bind the cursor file for the lifetime of one call."""
         self = super().__new__(cls)
-        self._file = AtomicFile(path)
+        self._file = CursorFile(path)
         self._known = {}
         return self
 
@@ -50,23 +47,13 @@ class DepartureCursor:
 
     def save(self, reported: dict[str, int]) -> None:
         """Include results submitted for speech and atomically save the cursor."""
-        with suppress(FileNotFoundError):
-            self._require_regular(self._file.path.stat().st_mode)
         for worker_id, sequence in reported.items():
             self._known[worker_id] = max(sequence, self.sequence(worker_id))
-        self._file.replace(json.dumps(self._known) + "\n", mode=0o600)
-
-    @staticmethod
-    def _require_regular(mode: int) -> None:
-        if not stat.S_ISREG(mode):
-            raise ValueError("Call departure cursor is not a regular file")
+        self._file.replace(json.dumps(self._known) + "\n")
 
     def _read(self) -> dict[str, int] | None:
         try:
-            fd = os.open(self._file.path, os.O_RDONLY | os.O_NONBLOCK)
-            with os.fdopen(fd, encoding="utf-8") as stream:
-                self._require_regular(os.fstat(stream.fileno()).st_mode)
-                cursor: object = json.load(stream)
+            cursor: object = json.loads(self._file.read())
             if isinstance(cursor, dict) and all(
                 type(seq) is int and seq >= 0
                 for seq in cast("dict[str, object]", cursor).values()
