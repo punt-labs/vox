@@ -99,7 +99,9 @@ class BossTools:
         """Return how many tool calls were answered from an earlier execution."""
         return self._cache.hits
 
-    async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
+    async def answer(
+        self, name: str, arguments: dict[str, object], *, tool_call_id: str
+    ) -> tuple[str, bool]:
         """Return the JSON result for the agent and whether it reports an error."""
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
@@ -115,12 +117,17 @@ class BossTools:
 
         try:
             resolved = self._with_defaults(name, arguments)
+            cache_arguments = (
+                {**resolved, "tool_call_id": tool_call_id}
+                if name == "steer_worker"
+                else resolved
+            )
 
             async def execute() -> str:
                 return json.dumps(await operation(resolved), ensure_ascii=False)
 
             result = await self._cache.run(
-                ToolResultCache.key(name, resolved),
+                ToolResultCache.key(name, cache_arguments),
                 execute,
                 durable=name in self._DURABLE,
             )
