@@ -6,16 +6,17 @@ from typing import Literal, Required, Self, TypedDict, cast, final
 
 from punt_vox.client_errors import VoxdProtocolError
 
-__all__ = ["CallStatus", "CallStatusView"]
+__all__ = ["CallStatusView"]
 
 _TEXT_WIDTH = 72
 _STATES = frozenset({"idle", "connecting", "live", "ended", "failed"})
 
 
-class CallStatus(TypedDict, total=False):
+class _CallStatus(TypedDict, total=False):
     """The fields of voxd's ``call_status`` result this view reads."""
 
     state: Required[str]
+    call_id: str
     trace: str
     error: str | None  # None unless the call failed.
     transcript: list[object]
@@ -27,20 +28,24 @@ class CallStatusView:
     """One ``call_status`` snapshot: the live line and the end-of-call report."""
 
     __slots__ = ("_status",)
-    _status: CallStatus
+    _status: _CallStatus
 
     def __new__(cls, status: object) -> Self:
         """Wrap a ``call_status`` result.
 
         Raises:
-            VoxdProtocolError: If it is not a status with a known call state,
-                so an unreadable reply is never mistaken for an ended call.
+            VoxdProtocolError: If the state or a supplied call ID is invalid.
         """
         fields = cast("dict[str, object]", status) if isinstance(status, dict) else {}
         if fields.get("state") not in _STATES:
             raise VoxdProtocolError(f"Unexpected call status: {status!r}")
+        call_id = fields.get("call_id")
+        if "call_id" in fields and (
+            not isinstance(call_id, str) or not call_id.strip()
+        ):
+            raise VoxdProtocolError("Invalid call ID in voxd status")
         self = super().__new__(cls)
-        self._status = cast("CallStatus", fields)
+        self._status = cast("_CallStatus", fields)
         return self
 
     @property
@@ -57,6 +62,11 @@ class CallStatusView:
     def failed(self) -> bool:
         """Return whether the call ended in a failure."""
         return self.state == "failed"
+
+    @property
+    def call_id(self) -> str:
+        """Return the call's identifier, or empty when not provided."""
+        return self._status.get("call_id", "")
 
     @property
     def trace(self) -> str:

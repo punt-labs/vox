@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import time
 import uuid
 from contextlib import nullcontext
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import calls_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
-from punt_vox.voxd.voice_agent.trace import EventTrace
+from punt_vox.voxd.voice_call.active_call import ActiveCall, CallTrace
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
@@ -28,6 +25,7 @@ from punt_vox.voxd.wire_reply import WireReply
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
+    from uuid import UUID
 
     from starlette.websockets import WebSocket
 
@@ -46,19 +44,6 @@ __all__ = ["CallHandlers"]
 
 _CONNECT_TIMEOUT_S: Final = 30.0  # Provisioning the agent and the handshake.
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class _ActiveCall:
-    """A running call, its task and the trace file only it writes."""
-
-    call: VoiceAgentCall
-    task: asyncio.Task[None]
-    trace_path: Path
-
-    def status(self) -> dict[str, object]:
-        """Return the call's status and where its trace is written."""
-        return {**self.call.status(), "trace": str(self.trace_path)}
 
 
 @final
@@ -84,12 +69,14 @@ class CallHandlers:
     _connector: AgentOperations
     _hold_music: Callable[[], AbstractContextManager[None]]
     _trace_dir: Path
-    _active: _ActiveCall | None  # None before the first call.
+    _active: ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
     _opener: Opener | None
     ROUTES: ClassVar[tuple[str, ...]] = (
         "call_start",
+        "call_start_scoped",
         "call_stop",
+        "call_stop_scoped",
         "call_status",
         "call_teardown",
     )
@@ -126,12 +113,12 @@ class CallHandlers:
         """Answer one lifecycle RPC with the call's status."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            match msg.get("type"):
+            match str(msg.get("type")).removesuffix("_scoped"):
                 case "call_start":
                     status = await self._start(msg)
                 case "call_stop":
                     async with self._lock:
-                        status = await self._stop()
+                        status = await self._stop(ActiveCall.requested_id(msg))
                 case "call_teardown":
                     status = await self._teardown()
                 case _:
@@ -145,7 +132,7 @@ class CallHandlers:
         return self._active.status() if self._active is not None else {"state": "idle"}
 
     def _require_idle(self) -> None:
-        if self._active is not None and not self._active.task.done():
+        if self._active is not None and self._active.running:
             raise ValueError("a call is already running; stop it first")
 
     async def _teardown(self) -> dict[str, object]:
@@ -158,15 +145,12 @@ class CallHandlers:
         """Launch under the lock, then wait unlocked so call_stop can cancel."""
         async with self._lock:
             active = await self._launch(msg)
-        try:
-            await asyncio.wait_for(active.call.connected(), _CONNECT_TIMEOUT_S)
-        except TimeoutError:
-            active.call.mark_failed("the ElevenLabs conversation did not connect")
-            await self._cancel(active)
+        await active.wait_connected(_CONNECT_TIMEOUT_S)
         return active.status()
 
-    async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
+    async def _launch(self, msg: dict[str, object]) -> ActiveCall:
         self._require_idle()
+        call_id = ActiveCall.requested_id(msg) or uuid.uuid4()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
             if "script" in msg
@@ -174,17 +158,13 @@ class CallHandlers:
         )
         await self._connector.prepare()
         await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
-        stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
-        path = self._trace_dir / f"call-{stamp}.jsonl"
-        stream = os.fdopen(
-            os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
-        )
+        trace = CallTrace.reserve(self._trace_dir, call_id)
         returning = ReturnBrief(self._trace_dir / "departure.json")
         call = VoiceAgentCall(
             BossTools(self._workers, self._projects, spoken_labels=returning.labels),
             audio,
             AgentSpeaker(self._playback),
-            trace=EventTrace(stream),
+            trace=trace.events,
             opener=self._opener,
             progress=self._progress,
         )
@@ -207,19 +187,17 @@ class CallHandlers:
                 logger.warning("Call departure not saved (%s)", type(exc).__name__)
 
         async def run() -> None:
-            with stream, self._hold_music():
+            with self._hold_music():
                 await call.run(dial, returning.covered, depart=depart)
 
         task = asyncio.create_task(run())
-        self._active = _ActiveCall(call, task, path)
+        task.add_done_callback(lambda _: trace.stream.close())
+        self._active = ActiveCall(call_id, call, task, trace.path)
         return self._active
 
-    async def _stop(self) -> dict[str, object]:
-        if self._active is not None:
-            await self._cancel(self._active)
-        return self._status()
-
-    @staticmethod
-    async def _cancel(active: _ActiveCall) -> None:
-        active.task.cancel()
-        await asyncio.gather(active.task, return_exceptions=True)
+    async def _stop(self, call_id: UUID | None) -> dict[str, object]:
+        active = self._active
+        if active is None:
+            return {"state": "idle"}
+        await active.cancel(call_id)
+        return active.status()
