@@ -52,9 +52,10 @@ class ProgressEvents:
 class CallProgress:
     """Send hidden context immediately, speaking results only at a lull."""
 
-    __slots__ = ("_activity", "_events")
+    __slots__ = ("_activity", "_events", "_reported")
     _activity: float
     _events: ProgressEvents
+    _reported: dict[str, int]
     LULL = 2.0
 
     def __new__(cls, events: ProgressEvents) -> Self:
@@ -62,7 +63,13 @@ class CallProgress:
         self = super().__new__(cls)
         self._events = events
         self._activity = 0.0
+        self._reported = {}
         return self
+
+    @property
+    def reported(self) -> dict[str, int]:
+        """Return result sequences successfully submitted for speech."""
+        return self._reported.copy()
 
     def activity(self) -> None:
         """Postpone result announcements while either participant is speaking."""
@@ -138,4 +145,8 @@ class CallProgress:
             "Briefly report the result from the matching background update; "
             "if a decision is needed, ask the person now."
         )
+        if event.kind == "finished":
+            self._reported[event.worker_id] = max(
+                event.seq, self._reported.get(event.worker_id, 0)
+            )
         self.activity()

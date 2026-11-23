@@ -180,10 +180,9 @@ class CallHandlers:
             )
             return url, options
 
-        async def depart() -> None:
+        async def depart(reported: dict[str, int]) -> None:
             try:
-                workers = await self._workers.workers()
-                await asyncio.to_thread(returning.depart, workers)
+                await asyncio.to_thread(returning.depart, reported)
             except (OSError, RuntimeError, ValueError) as exc:
                 logger.warning("Call departure not saved (%s)", type(exc).__name__)
 

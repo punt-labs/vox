@@ -5,9 +5,11 @@ import base64
 import functools
 import json
 import threading
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from starlette.websockets import WebSocket
 from websockets.asyncio.server import serve
 
@@ -22,13 +24,14 @@ from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
-    import pytest
     from websockets.asyncio.server import ServerConnection
 
     from punt_vox.voxd.playback import PlaybackQueue
-    from punt_vox.voxd.workers.types import WorkerPayload
+    from punt_vox.voxd.voice_agent.contracts import SessionOptions
+    from punt_vox.voxd.voice_agent.trace import EventTrace
 
 _METADATA = {
     "type": "conversation_initiation_metadata",
@@ -270,7 +273,7 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
 
 def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
     brief = ReturnBrief(tmp_path / "departure.json")
-    brief.depart([payload("worker")])
+    brief.depart({"worker": 0})
     result = payload(
         "worker", last_assistant_message="A long result.\n" * 20, result_seq=1
     )
@@ -288,7 +291,7 @@ def test_return_opener_distinguishes_two_workers_in_the_same_repository(
     tmp_path: Path,
 ) -> None:
     brief = ReturnBrief(tmp_path / "departure.json")
-    brief.depart([payload("first"), payload("second")])
+    brief.depart({"first": 0, "second": 0})
     finished = payload("second", last_assistant_message="Wrote hello.py.", result_seq=1)
     blocked = payload("first", pending_decision={"message": "Which suite?"})
 
@@ -313,7 +316,7 @@ async def test_spoken_label_can_find_worker_outside_bounded_roster(
     tmp_path: Path,
 ) -> None:
     brief = ReturnBrief(tmp_path / "departure.json")
-    brief.depart([])
+    brief.depart({})
     workers = FakeWorkers()
     workers.known = [
         payload(f"{index:036d}", last_assistant_message="Done.", result_seq=1)
@@ -408,7 +411,7 @@ async def test_local_hangup_releases_playback_before_saving_departure(
         await socket.send(_audio(b"\x01\x00" * 8, 1))
         await socket.wait_closed()
 
-    def depart(_brief: ReturnBrief, _workers: list[WorkerPayload]) -> None:
+    def depart(_brief: ReturnBrief, _reported: dict[str, int]) -> None:
         released_at_departure.append(playback.released)
 
     pcm = tmp_path / "turn.pcm"
@@ -435,6 +438,76 @@ async def test_local_hangup_releases_playback_before_saving_departure(
 
     assert released_at_departure == [1]
     assert not playback.sinks[0].finished
+
+
+@pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])
+async def test_result_after_live_progress_stops_is_away(
+    tmp_path: Path,
+    remote: bool,
+) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("working")]
+    openings: list[str | None] = []
+    end = asyncio.Event()
+
+    async def peer(socket: ServerConnection) -> None:
+        init = json.loads(await socket.recv())
+        openings.append(
+            init["conversation_config_override"]["agent"].get("first_message")
+        )
+        await socket.send(json.dumps(_METADATA))
+        if len(openings) == 1 and remote:
+            await end.wait()
+        else:
+            await socket.wait_closed()
+
+    @asynccontextmanager
+    async def opener(
+        url: str, options: SessionOptions, *, trace: EventTrace
+    ) -> AsyncIterator[Conversation]:
+        async with _LOOPBACK(url, options, trace=trace) as conv:
+            try:
+                yield conv
+            finally:
+                if len(openings) == 1:
+                    workers.known = [
+                        payload(
+                            "working",
+                            last_assistant_message="Finished at hang-up.",
+                            result_seq=1,
+                        )
+                    ]
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    start: dict[str, object] = {
+        "type": "call_start",
+        "script": [{"pcm_path": str(pcm)}],
+    }
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=_Connector(
+                f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+            ),
+            trace_dir=tmp_path,
+            opener=opener,
+        )
+        assert "result" in await _rpc(handlers, start)
+        if remote:
+            end.set()
+            while not (tmp_path / "departure.json").exists():
+                await asyncio.sleep(0.01)
+        await _rpc(handlers, {"type": "call_stop"})
+        assert "result" in await _rpc(handlers, start)
+        await _rpc(handlers, {"type": "call_stop"})
+
+    assert openings == [
+        None,
+        "While you were away, the worker in repo finished: Finished at hang-up.",
+    ]
 
 
 async def test_start_without_a_key_is_refused(

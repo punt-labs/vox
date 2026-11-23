@@ -19,10 +19,11 @@ if TYPE_CHECKING:
 class ReturnBrief:
     """Use only the provider's curated worker snapshot, never the live event log."""
 
-    __slots__ = ("_covered", "_file", "_labels")
+    __slots__ = ("_covered", "_file", "_known", "_labels")
     _file: AtomicFile
     _covered: dict[str, int]
     _labels: dict[str, str]
+    _known: dict[str, int]
 
     def __new__(cls, path: Path) -> Self:
         """Bind the durable departure state for one prospective call."""
@@ -30,6 +31,7 @@ class ReturnBrief:
         self._file = AtomicFile(path)
         self._covered = {}
         self._labels = {}
+        self._known = {}
         return self
 
     @property
@@ -65,14 +67,19 @@ class ReturnBrief:
         """Name the most recent away results and the current worker questions."""
         saved = self._file.read()
         if not saved:
+            self._known = {w["id"]: self._sequence(w, "result_seq") for w in workers}
             return None, {}
-        cursor = cast("dict[str, int]", json.loads(saved))
+        self._known = cast("dict[str, int]", json.loads(saved))
         updates: list[tuple[str, str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
-            if update := self._update(worker, cursor.get(worker["id"], 0)):
+            worker_id = worker["id"]
+            update, result = self._update(worker, self._known.get(worker_id, 0))
+            if update:
                 project = Path(worker["project"]).name or "the project"
-                updates.append((worker["id"], project, update))
-            self._covered[worker["id"]] = self._sequence(worker, "worker_seq")
+                updates.append((worker_id, project, update))
+            if result:
+                self._known[worker_id] = result
+            self._covered[worker_id] = self._sequence(worker, "worker_seq")
         return self._labelled_updates(updates)
 
     @staticmethod
@@ -96,21 +103,25 @@ class ReturnBrief:
         opening = " ".join(spoken)
         return f"While you were away, {opening[:1].lower()}{opening[1:]}", labels
 
-    def depart(self, workers: list[WorkerPayload]) -> None:
-        """Save the report boundary without writing tasks or results again."""
-        cursor = {row["id"]: self._sequence(row, "result_seq") for row in workers}
-        self._file.replace(json.dumps(cursor) + "\n", mode=0o600)
+    def depart(self, reported: dict[str, int]) -> None:
+        """Persist only baseline or submitted results, never a late snapshot."""
+        for worker, sequence in reported.items():
+            self._known[worker] = max(sequence, self._known.get(worker, 0))
+        self._file.replace(json.dumps(self._known) + "\n", mode=0o600)
 
     @classmethod
-    def _update(cls, worker: WorkerPayload, prior: int) -> str:
+    def _update(cls, worker: WorkerPayload, prior: int) -> tuple[str, int]:
         snippets: list[str] = []
         result = worker["last_report"].get("last_assistant_message")
-        if cls._sequence(worker, "result_seq") > prior and isinstance(result, str):
+        sequence = cls._sequence(worker, "result_seq")
+        if sequence > prior and isinstance(result, str):
             snippets.append(f"finished: {cls._speech(result)}")
+        else:
+            sequence = 0
         if question := cls._pending_question(worker):
             subject = "It " if snippets else ""
             snippets.append(f"{subject}needs your input: {cls._speech(question)}")
-        return " ".join(snippets)
+        return " ".join(snippets), sequence
 
     @staticmethod
     def _pending_question(worker: WorkerPayload) -> str:

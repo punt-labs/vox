@@ -208,12 +208,13 @@ come from the current projection, never from that cursor. The snapshot
 and cut come from the same worker view, after subscription and before
 the provider can speak. The provider gets one first-message override
 only when the selected reports are nonempty.
-The cursor is the worker state at departure, not a receipt that the caller
-heard a result. A local hang-up stops playback before saving the cursor;
-a remote hang-up saves the cursor before draining remaining audio.
-The live stream retains
-its existing bounded queue;
-the cut filters duplicates among events that remain queued.
+The first established call seeds the result cursor at dial. Subsequent
+calls advance it for results in the opener or successfully submitted for
+live speech, not for hidden context or fresh registry writes at hang-up.
+Submission is not a receipt that the caller heard the playback.
+Local hang-up stops playback; remote hang-up drains remaining audio.
+Neither updates the cursor from a late snapshot. The live stream retains
+its bounded queue; the cut filters duplicates among events that remain queued.
 
 \begin{zed}
   [CALLWORKER]
@@ -268,11 +269,11 @@ the cut filters duplicates among events that remain queued.
 \begin{schema}{DepartCall}
   \Delta ReturnBoundary \\
   established? : ZBOOL \\
-  result? : CALLWORKER \pfun \nat
+  knownResult? : CALLWORKER \pfun \nat
 \where
   subscribed' = zfalse \\
   cut' = \emptyset \\
-  established? = ztrue \implies departed' = ztrue \land cursor' = result? \\
+  established? = ztrue \implies departed' = ztrue \land cursor' = knownResult? \\
   established? = zfalse \implies departed' = departed \land cursor' = cursor
 \end{schema}
 

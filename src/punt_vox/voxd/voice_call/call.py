@@ -105,7 +105,7 @@ class VoiceAgentCall:
         dial: Dial,
         covered: dict[str, int] | None = None,
         *,
-        depart: Callable[[], Awaitable[None]] | None = None,
+        depart: Callable[[dict[str, int]], Awaitable[None]] | None = None,
     ) -> None:
         """Dial, then hold the call until it ends, fails, or is cancelled."""
         hung_up = False  # Only a remote hang-up lets the last reply play out.
@@ -132,7 +132,7 @@ class VoiceAgentCall:
             finally:
                 try:
                     if depart is not None and self._conversation_id is not None:
-                        await depart()
+                        await depart(self._progress.reported)
                 finally:
                     if hung_up:
                         await self._speaker.finish()
