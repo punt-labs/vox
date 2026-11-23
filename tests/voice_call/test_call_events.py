@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -82,6 +84,38 @@ def _call(peer: _Peer) -> VoiceAgentCall:
 
 async def _dial() -> tuple[str, SessionOptions]:
     return "ws://peer", SessionOptions("prompt", ())
+
+
+async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    stream = io.StringIO()
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=EventTrace(stream),
+    )
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall(
+            "approval",
+            "steer_worker",
+            {
+                "worker_id": "abcd1234",
+                "words": "private spoken answer",
+                "choice": "approve",
+                "prompt_seq": 4,
+            },
+            expects_response=True,
+        ),
+    )
+    trace = json.loads(stream.getvalue())
+    assert trace["type"] == "worker_steer_receipt"
+    assert trace["detail"]["choice"] == "approve"
+    assert trace["detail"]["prompt_seq"] == 4
+    assert trace["detail"]["heard"] is True
+    assert "private spoken answer" not in stream.getvalue()
 
 
 async def test_reissued_steer_ids_share_a_prompt_but_not_the_next_prompt() -> None:

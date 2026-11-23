@@ -200,6 +200,14 @@ class Conversation:
                 return {
                     "tool_call_id": event.tool_call_id,
                     "tool_name": event.tool_name,
+                    **(
+                        {
+                            field: event.parameters.get(field)
+                            for field in ("choice", "prompt_seq")
+                        }
+                        if event.tool_name == "steer_worker"
+                        else {}
+                    ),
                 }
             case AgentToolResponse():
                 return {"tool_call_id": event.tool_call_id, "is_error": event.is_error}

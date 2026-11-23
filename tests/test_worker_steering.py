@@ -487,6 +487,33 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deadline_is_rechecked_after_the_actor_lock_is_acquired() -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    actor = asyncio.Lock()
+    steering = WorkerSteering(registry, actor)
+
+    async def acquire_late(lock: asyncio.Lock, deadline: float) -> None:
+        del deadline
+        await lock.acquire()
+
+    with (
+        patch.object(WorkerSteering, "_acquire", side_effect=acquire_late),
+        pytest.raises(ValueError, match="steering deadline expired before delivery"),
+    ):
+        await steering._deliver(
+            "worker",
+            "Continue.",
+            urgent=False,
+            deadline=0,
+            choice=None,
+            prompt_epoch=None,
+            prompt_seq=None,
+        )
+    registry.steer.assert_not_called()
+    assert not actor.locked()
+
+
+@pytest.mark.asyncio
 async def test_no_delivery_after_deadline_uses_one_budget_for_both_locks() -> None:
     """No delivery after deadline: acquiring the worker never renews the budget."""
     registry = MagicMock(spec=WorkerRegistry)

@@ -52,3 +52,24 @@ async def test_ordinary_text_keeps_exact_words_and_current_epoch() -> None:
     second = await tool.resolve({"worker_id": "abcd", "words": "set X"})
     assert first["prompt_epoch"] == 9
     assert tool.identity(first) != tool.identity(second)
+
+
+@pytest.mark.parametrize(
+    "arguments,error",
+    [
+        ({"urgent": "yes"}, "urgent must be a boolean"),
+        ({"choice": "maybe"}, "choice must be approve or deny"),
+        (
+            {"choice": "approve", "urgent": True, "prompt_seq": 4},
+            "must not interrupt the permission dialog",
+        ),
+    ],
+)
+async def test_invalid_steering_modes_are_rejected_before_delivery(
+    arguments: dict[str, object], error: str
+) -> None:
+    workers = FakeWorkers()
+    with pytest.raises(ValueError, match=error):
+        await SteeringTool(workers, WorkerDirectory(workers)).resolve(
+            {"worker_id": "abcd", "words": "Yes", **arguments}
+        )

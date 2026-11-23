@@ -183,7 +183,11 @@ class VoiceAgentCall:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
         if call.tool_name == "steer_worker" and not is_error:
             receipt: dict[str, object] = json.loads(result)
-            self._trace.record("note", "worker_steer_receipt", receipt)
+            self._trace.record(
+                "note",
+                "worker_steer_receipt",
+                {**receipt, "prompt_seq": call.parameters.get("prompt_seq")},
+            )
         self._tool_calls.append(
             {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}
         )

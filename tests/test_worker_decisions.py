@@ -316,8 +316,10 @@ def test_mismatched_decision_requests_never_touch_the_transport(
     decision.assert_not_called()
 
 
+@pytest.mark.parametrize("prompt_seq", [None, True, False, 0, -1])
 def test_missing_permission_sequence_never_touches_the_transport(
     tmp_path: Path,
+    prompt_seq: int | None,  # None exercises the missing permission sequence.
 ) -> None:
     provider = FakeWorkerProvider()
     provider.ready = True
@@ -328,7 +330,7 @@ def test_missing_permission_sequence_never_touches_the_transport(
         patch.object(FakeWorkerProvider, "decide") as decision,
         pytest.raises(ValueError, match="choice requires prompt_seq"),
     ):
-        registry.steer(worker.id, "Yes", choice="approve")
+        registry.steer(worker.id, "Yes", choice="approve", prompt_seq=prompt_seq)
     text.assert_not_called()
     decision.assert_not_called()
 
