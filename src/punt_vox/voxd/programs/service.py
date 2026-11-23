@@ -189,21 +189,24 @@ class ProgramService:
 
     # -- observation (authoritative, read per call, never cached) ----------
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool = False) -> ProgramStatus:
         """Return the daemon's authoritative status, read fresh per call.
 
         A generate Program reports the full Program status; a replay Selection
         reports the consume-only radio status; an idle daemon reports idle. The
-        transport ``paused`` flag reflects the user's pause choice so PlayerView
-        can offer the right control even while a call holds playback.
+        pause flag normally includes an active call hold. The music panel opts
+        into just the user pause so its toggle remains an intent control.
         """
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
         base = self._projection.of(active)
-        return replace(
-            base, paused=base.now_playing is not None and self._suspension.user_paused
+        paused = (
+            self._suspension.user_paused
+            if user_pause_only
+            else self._suspension.is_paused
         )
+        return replace(base, paused=base.now_playing is not None and paused)
 
     def catalog_albums(self) -> tuple[Album, ...]:
         """Return every catalog album, newest first (the ``list`` view)."""

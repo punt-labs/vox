@@ -135,12 +135,15 @@ async def test_call_music_lifecycle(
             await connecting.wait()
             pause_player.assert_called_once()
             resume_player.assert_not_called()
-            assert programs.service.status().paused == (initial == "paused")
+            assert programs.service.status().paused == (
+                not initial.startswith("stopped")
+            )
             connect.set()
             started = await start
             if outcome == "pause during call":
                 view = PlayerView.from_status(
-                    programs.service.status(), programs.service.catalog_albums()
+                    programs.service.status(user_pause_only=True),
+                    programs.service.catalog_albums(),
                 )
                 buttons = TransportRow(view).to_dict()["children"]
                 assert isinstance(buttons, list)
