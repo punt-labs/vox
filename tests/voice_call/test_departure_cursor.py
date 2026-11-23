@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-from concurrent.futures import Future
 from pathlib import Path
 from threading import Thread
 
@@ -48,13 +47,10 @@ def test_fifo_cursor_is_not_read_or_replaced(
     path = tmp_path / "departure.json"
     os.mkfifo(path)
     cursor = DepartureCursor(path)
-    loaded: Future[bool] = Future()
+    loaded: list[bool] = []
 
     def load_cursor() -> None:
-        try:
-            loaded.set_result(cursor.load([("worker", 3)]))
-        except Exception as exc:
-            loaded.set_exception(exc)
+        loaded.append(cursor.load([("worker", 3)]))
 
     data = b'{"worker": 99}'
     reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
@@ -68,7 +64,7 @@ def test_fifo_cursor_is_not_read_or_replaced(
             with os.fdopen(os.open(path, os.O_WRONLY | os.O_NONBLOCK), "wb"):
                 probe.join(timeout=1)
             pytest.fail("Opening a cursor FIFO blocked")
-        assert not loaded.result(timeout=0)
+        assert loaded == [False]
         assert cursor.sequence("worker") == 3
         assert "Ignoring invalid call departure cursor" in caplog.text
         assert os.read(reader, len(data)) == data
