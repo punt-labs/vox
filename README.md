@@ -203,7 +203,7 @@ There are two chimes: one for task completion and one for a permission prompt. T
 | `/music list` | List saved albums |
 | `/music status` | Show the current music state (same as `/music`) |
 | `/music stop` | Stop background music |
-| `/call` | Talk to voxd's call agent, which delegates coding to persistent workers |
+| `/call --headset` | Talk to voxd's call agent, which delegates coding to persistent workers |
 | `/call status` | Show voxd's call: state, tool calls, transcript so far |
 | `/call start <topic>` | Start a voice call with a read-only call agent about `<topic>` |
 | `/call stop` | Hang up |
@@ -267,7 +267,7 @@ vox also works as a standalone TTS tool, without Claude Code.
 
 | Command | What it does |
 |---------|--------------|
-| `vox call` | Talk to voxd's call agent; prints a live status line, then the transcript |
+| `vox call --headset` | Talk to voxd's call agent while wearing a headset; prints a live status line, then the transcript |
 | `vox call --script greet.jsonl` | Feed recorded caller turns (`{"pcm_path": ..., "pause_s": ...}` per line) instead of the microphone |
 | `vox call status` | Show voxd's call: state, tool calls, transcript so far |
 | `vox call teardown` | Delete the managed ElevenLabs agent and tools; the next call provisions them again |
@@ -587,7 +587,14 @@ When vox is enabled in a repository and lux is running, each Claude Code session
 
 ## Conversation Mode
 
-`vox call` talks to the call agent `voxd` runs: an ElevenLabs voice agent that starts, steers, inspects and stops persistent coding workers in your allowlisted repositories. The call and its workers live in `voxd`, so the workers keep going after the call ends, and the CLI only starts the call, shows one live status line, and prints the transcript when it ends. `vox call stop` (or Ctrl-C) hangs up. `--script` replaces the microphone with recorded 16 kHz mono PCM turns for demos and CI.
+`vox call --headset` talks to the call agent `voxd` runs: an ElevenLabs voice agent that starts, steers, inspects and stops persistent coding workers in your allowlisted repositories. The call and its workers live in `voxd`, so the workers keep going after the call ends, and the CLI only starts the call, shows one live status line, and prints the transcript when it ends. `vox call stop` (or Ctrl-C) hangs up. `--script` replaces the microphone with recorded 16 kHz mono PCM turns for demos and CI.
+
+Live Mode B calls require a headset or `--aec` to declare a system audio path
+already configured for acoustic echo cancellation. Vox does not enable or
+verify system AEC. Run `vox doctor` to check the local ElevenLabs key's Agents
+Write scope (`convai_write`), Claude login expiry, tmux, and echo cancellation.
+The credential checks use the invoking shell; a separately configured daemon
+may use a different key or Claude login.
 
 `vox call start` starts a voice call with a read-only call agent. vox listens through the microphone, transcribes each turn with ElevenLabs, sends it to the agent, and speaks the reply. The agent is a `pi --mode rpc` process that runs for the whole call. It does not see your Claude Code session: it starts from a context snapshot your session writes, and it can only read and search files in the repository.
 

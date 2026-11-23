@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import user_state_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
-from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
@@ -81,7 +80,7 @@ class CallHandlers:
     _trace_dir: Path
     _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
-    _opener: Opener
+    _opener: Opener | None
     ROUTES: ClassVar[tuple[str, ...]] = (
         "call_start",
         "call_stop",
@@ -97,7 +96,7 @@ class CallHandlers:
         *,
         connector: AgentConnector | None = None,  # None: ElevenLabs, from the env key.
         trace_dir: Path | None = None,  # None: the user state directory.
-        opener: Opener = Conversation.open,
+        opener: Opener | None = None,
         progress: ProgressEvents | None = None,  # None creates an unconnected source.
     ) -> Self:
         """Bind the workers, their allowlist, the playback queue and the agent."""
@@ -156,21 +155,18 @@ class CallHandlers:
         try:
             await asyncio.wait_for(active.call.connected(), _CONNECT_TIMEOUT_S)
         except TimeoutError:
+            active.call.mark_failed("the ElevenLabs conversation did not connect")
             await self._cancel(active)
-            raise ConvAIError("the ElevenLabs conversation did not connect") from None
-        status = active.status()
-        if status["state"] == "failed":
-            raise ConvAIError(str(status["error"]))
-        return status
+        return active.status()
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
         self._require_idle()
-        await self._connector.prepare()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
             if "script" in msg
-            else MicInput()
+            else MicInput.with_echo_control(msg.get("echo_control"))
         )
+        await self._connector.prepare()
         await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
         stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
         path = self._trace_dir / f"call-{stamp}.jsonl"

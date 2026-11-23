@@ -6,6 +6,7 @@ import json
 import socket
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,12 @@ from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_call_diagnostics() -> Iterator[None]:
+    with patch("punt_vox.doctor.CallChecks.run", return_value=[]):
+        yield
 
 
 class _FakeVersionInfo(tuple[int, int, int]):

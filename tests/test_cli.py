@@ -1415,7 +1415,12 @@ class TestMainGroup:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("no_elevenlabs_key")
 class TestDoctorCommand:
+    @pytest.fixture
+    def no_elevenlabs_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
     def _run_doctor(
         self,
         tmp_path: Path,
@@ -1448,6 +1453,8 @@ class TestDoctorCommand:
                 return "/opt/homebrew/bin/mpv"
             if name == "uvx" and uvx_found:
                 return "/usr/local/bin/uvx"
+            if name == "tmux":
+                return "/usr/bin/tmux"
             if name in ("espeak-ng", "espeak") and espeak_found == name:
                 return f"/usr/bin/{name}"
             return None
@@ -1517,6 +1524,10 @@ class TestDoctorCommand:
         assert "\u2713 Python" in result.output
         assert "\u2713 ffmpeg" in result.output
         assert "Daemon: running" in result.output
+        assert "ElevenLabs convai_write" in result.output
+        assert "Claude login:" in result.output
+        assert "tmux:" in result.output
+        assert "Echo cancellation: not built in" in result.output
 
     def test_ffmpeg_missing_fails(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)

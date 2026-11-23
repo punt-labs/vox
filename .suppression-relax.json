@@ -1,5 +1,11 @@
 [
   {
+    "file": "src/punt_vox/doctor_call_claude.py",
+    "ceiling": 1,
+    "justify": "Doctor invokes only the locally resolved Claude executable with fixed auth status arguments, no shell or input from configuration.",
+    "added_at": "2026-11-23T13:11:47.257489Z"
+  },
+  {
     "file": "src/punt_vox/voxd/conversation_mode/git_ignores.py",
     "ceiling": 1,
     "justify": "S603 per-file-ignore: GitIgnores runs a fixed git argv (rev-parse, check-ignore) so the secret guard honours every ignore source git does; no shell, no caller-built program name -- the same allowance every other subprocess module in src has",

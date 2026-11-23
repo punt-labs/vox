@@ -126,6 +126,19 @@ def test_bare_call_without_a_script_starts_a_mic_call() -> None:
     assert voxd.sent == [("start", {})]
 
 
+@pytest.mark.parametrize(("flag", "mode"), [("--headset", "headset"), ("--aec", "aec")])
+def test_bare_call_forwards_echo_declaration(flag: str, mode: str) -> None:
+    voxd = _Voxd(_ENDED)
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), [flag])
+
+    assert result.exit_code == 0, result.output
+    assert voxd.sent == [("start", {"echo_control": mode})]
+    bad = runner.invoke(CallCli.build_app(), [flag, "status"])
+    assert bad.exit_code == 2
+    assert "applies only to bare" in bad.output
+
+
 def test_a_failed_call_exits_one_with_its_error() -> None:
     failed: dict[str, object] = {"state": "failed", "error": "ConvAI refused"}
     voxd = _Voxd(failed)
@@ -294,11 +307,11 @@ def test_losing_the_status_mid_call_hangs_up_and_exits_one(lost: object) -> None
 
 def test_a_call_that_failed_to_connect_reports_its_trace() -> None:
     failed = {"state": "failed", "error": "no agent", "trace": "/tmp/t.jsonl"}
-    request = AsyncMock(side_effect=[VoxdProtocolError("did not connect"), failed])
+    request = AsyncMock(return_value=failed)
     with patch.object(DaemonControl, "request", request):
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 1
-    assert "Call unavailable: did not connect" in result.output
+    assert "Call unavailable" in result.output
     assert "error: no agent" in result.output
     assert "trace: /tmp/t.jsonl" in result.output
 
@@ -309,6 +322,32 @@ def test_a_start_refused_beside_a_live_call_reports_no_other_call() -> None:
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 1
     assert "Started a worker" not in result.output
+
+
+def test_echo_refusal_does_not_read_a_previous_failed_call() -> None:
+    request = AsyncMock(
+        side_effect=VoxdProtocolError("Live calls require echo protection")
+    )
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert "Live calls require echo protection" in result.output
+    request.assert_awaited_once_with("start", timeout=60.0)
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--headset", "--aec"], "mutually exclusive"),
+        (["--script", "unused.jsonl", "--headset"], "apply only to live calls"),
+    ],
+)
+def test_conflicting_call_input_flags_are_rejected(
+    flags: list[str], message: str
+) -> None:
+    result = runner.invoke(CallCli.build_app(), flags)
+    assert result.exit_code == 2
+    assert message in result.output
 
 
 @pytest.mark.usefixtures("no_poll_delay")
