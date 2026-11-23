@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from dataclasses import replace
@@ -319,12 +320,42 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         assert records.load()[0].state == "exited"
         assert after.checkpoint(worker.id) is None
         assert (await actor.workers())[0]["state"] == "exited"
-        cleanup.assert_not_called()
+        async with asyncio.timeout(1):
+            while not cleanup.called:
+                await asyncio.sleep(0.01)
+        cleanup.assert_called_once_with(Path(worker.worktree))
         await actor.stop(worker.id)
         cleanup.assert_called_once_with(Path(worker.worktree))
         assert records.load()[0].state == "exited"
         await actor.stop(worker.id)
         cleanup.assert_called_once_with(Path(worker.worktree))
+
+
+async def test_natural_exit_removes_only_worker_trust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    config = tmp_path / ".claude.json"
+    remaining = {"projects": {"other": {"hasTrustDialogAccepted": True}}}
+    config.write_text(json.dumps(remaining))
+    store = HookContextStore()
+    ClaudeProfile(store).prepare(Path(worker.worktree))
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        provider.alive = False
+        assert (await actor.workers())[0]["state"] == "exited"
+        async with asyncio.timeout(1):
+            while json.loads(config.read_text()) != remaining:
+                await asyncio.sleep(0.01)
 
 
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
@@ -364,7 +395,10 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         )
         provider.alive = False
         assert (await actor.workers())[0]["state"] == "exited"
-        cleanup.assert_not_called()
+        async with asyncio.timeout(1):
+            while not cleanup.called:
+                await asyncio.sleep(0.01)
+        cleanup.assert_called_once_with(Path(worker.worktree))
         socket = AsyncMock()
         await hooks.admit({**base}, socket)
         assert socket.send_json.call_args.args[0]["admitted"] is False

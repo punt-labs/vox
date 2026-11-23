@@ -724,11 +724,13 @@ to five seconds; delivery across longer outages is not guaranteed.
 \emph{Startup retires dead workers before hook admission}:
 \textit{retired?} names the workers confirmed dead and checkpointed as
 \textit{exited}, not a new worker state. Their work products are retained.
-Startup adds them to \textit{pending}, enabling \textit{RetryCleanup} through
-explicit stop. The daemon serves requests after recovery. Independent tmux
+Startup adds them to \textit{pending}, enabling background
+\textit{RetryCleanup} or a retry through explicit stop. The daemon serves
+requests after recovery. Independent tmux
 probes run concurrently with a shared deadline; an inconclusive probe leaves
-the registration protected. Worker listing and call snapshots do not run
-trust cleanup.
+the registration protected. A confirmed exit observed during a worker
+listing is checkpointed and schedules trust cleanup without waiting for
+the harness configuration lock.
 
 \emph{Startup only reaps marked orphans}: the reaper removes only a pane
 marked as owned by this registry and not protected by a live or unreadable

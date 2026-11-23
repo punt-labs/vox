@@ -14,6 +14,7 @@ from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
 from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
+from punt_vox.voxd.workers.retirement import WorkerRetirement
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -33,12 +34,14 @@ class WorkerRegistry:
         "_policy",
         "_profiles",
         "_providers",
+        "_retirement",
     )
     _inventory: WorkerInventory
     _lifecycle: WorkerLifecycle
     _policy: WorkerRepoPolicy
     _profiles: dict[str, HarnessProfile]
     _providers: dict[str, WorkerProvider]
+    _retirement: WorkerRetirement
 
     def __new__(
         cls,
@@ -53,11 +56,14 @@ class WorkerRegistry:
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
         self._inventory = WorkerInventory(records)
+        self._retirement = WorkerRetirement(profiles)
         return self
 
     def restore(self, records: list[WorkerRecord]) -> None:
         """Install reconciled checkpoints before admitting callers."""
         self._inventory.restore(records)
+        for record in records:
+            self._retirement.schedule(record)
 
     @property
     def hook_records(self) -> WorkerInventory:
@@ -109,7 +115,9 @@ class WorkerRegistry:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._rollback(record, exc)
             raise
-        return self._inventory.save(self._lifecycle.observe(record))
+        observed = self._inventory.save(self._lifecycle.observe(record))
+        self._retirement.schedule(observed)
+        return observed
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
         record = self._lifecycle.rollback(record, error)
@@ -121,27 +129,10 @@ class WorkerRegistry:
 
     def list(self) -> list[WorkerRecord]:
         """Report current state and close hook admission for confirmed exits."""
-        return [self._observe(record) for record in self._inventory.registered()]
-
-    def _observe(self, record: WorkerRecord) -> WorkerRecord:
-        try:
-            observed = self._lifecycle.observe(record)
-            if observed.state == "exited":
-                self._inventory.close(record.id)
-            return observed
-        except (
-            KeyError,
-            OSError,
-            ValueError,
-            RuntimeError,
-            subprocess.SubprocessError,
-        ) as exc:
-            logger.warning(
-                "Worker %s reconciliation unavailable (%s)",
-                record.id,
-                type(exc).__name__,
-            )
-            return record
+        return [
+            self._retirement.observe(record, self._lifecycle, self._inventory)
+            for record in self._inventory.registered()
+        ]
 
     def admits_hook(self, worker_id: object, cwd: object) -> bool:
         """Check that a worker accepts active hook traffic from this worktree."""
@@ -161,9 +152,8 @@ class WorkerRegistry:
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        return self._inventory.save(
-            self._lifecycle.stop(self._inventory.get(worker_id))
-        )
+        current = self._retirement.finish(self._inventory.get(worker_id))
+        return self._inventory.save(self._lifecycle.stop(current))
 
     def steer(
         self,
@@ -184,7 +174,9 @@ class WorkerRegistry:
             raise ValueError(
                 "Worker words must not contain control characters or newlines"
             )
-        record = self._lifecycle.observe(self._inventory.get(worker_id))
+        record = self._retirement.observe(
+            self._inventory.get(worker_id), self._lifecycle, self._inventory
+        )
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
         self._inventory.save(record)
