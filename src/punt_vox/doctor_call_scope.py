@@ -28,7 +28,7 @@ class ConvAIKeyCheck:
 
     def run(self) -> CheckResult:
         """Check the shell key; voxd may have a separate service environment."""
-        key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        key = os.environ.get("ELEVENLABS_API_KEY", "")
         if not key:
             return CheckResult.of(OPTIONAL, f"{_LABEL}: no key set", required=False)
         try:

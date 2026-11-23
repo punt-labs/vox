@@ -121,8 +121,7 @@ class VoiceAgentCall:
             failure = failures.exceptions[0]
             if not isinstance(failure, _EXPECTED):
                 logger.exception("Mode B call failed", exc_info=failure)
-            self._state = "failed"
-            self._error = str(failure) or type(failure).__name__
+            self.mark_failed(str(failure) or type(failure).__name__)
         finally:
             if self._state in {"connecting", "live"}:
                 self._state = "ended"
@@ -157,6 +156,10 @@ class VoiceAgentCall:
     async def connected(self) -> None:
         """Return once the conversation is live or has already ended."""
         await self._connected.wait()
+
+    def mark_failed(self, error: str) -> None:
+        """Keep the terminal failure reason in subsequent call status replies."""
+        self._state, self._error = "failed", error
 
     def status(self) -> dict[str, object]:
         """Return the call's state and its recent exchange."""

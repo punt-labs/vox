@@ -155,12 +155,8 @@ class CallHandlers:
         try:
             await asyncio.wait_for(active.call.connected(), _CONNECT_TIMEOUT_S)
         except TimeoutError:
+            active.call.mark_failed("the ElevenLabs conversation did not connect")
             await self._cancel(active)
-            return {
-                **active.status(),
-                "state": "failed",
-                "error": "the ElevenLabs conversation did not connect",
-            }
         return active.status()
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:

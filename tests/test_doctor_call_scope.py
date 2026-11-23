@@ -87,3 +87,18 @@ def test_elevenlabs_non_ascii_key_is_invalid(monkeypatch: pytest.MonkeyPatch) ->
     assert "invalid key: contains non-ASCII" in result.message
     assert "test-key" not in result.message
     assert result.status_kind == "warn"
+
+
+def test_elevenlabs_probe_uses_the_configured_key_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = " test-key "
+    monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+    with patch(
+        f"{_SCOPE_CHECK}.httpx.get",
+        side_effect=httpx.LocalProtocolError("secret detail"),
+    ) as request:
+        result = ConvAIKeyCheck().run()
+    assert request.call_args.kwargs["headers"] == {"xi-api-key": key}
+    assert result.status_kind == "warn"
+    assert key not in result.message
