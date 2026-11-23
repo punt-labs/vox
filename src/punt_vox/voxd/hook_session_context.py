@@ -112,6 +112,14 @@ class SessionContext:
 
     def restore(self, checkpoint: WorkerHookCheckpoint) -> None:
         """Restore the most recent report and decision before admitting new hooks."""
+        sequences = (
+            checkpoint["worker_seq"],
+            checkpoint["prompt_epoch"],
+            checkpoint["result_seq"],
+            checkpoint["goal_seq"],
+        )
+        if not all(type(seq) is int and seq >= 0 for seq in sequences):
+            raise ValueError("Invalid worker hook checkpoint ordering")
         self._started = checkpoint["session_started"]
         self._assistant = (
             checkpoint["result_seq"],

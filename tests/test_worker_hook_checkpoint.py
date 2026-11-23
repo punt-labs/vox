@@ -357,6 +357,54 @@ async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
     assert restarted.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
 
 
+@pytest.mark.parametrize(
+    "sequence_field", ["worker_seq", "prompt_epoch", "result_seq", "goal_seq"]
+)
+async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
+    tmp_path: Path, sequence_field: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    before = HookContextStore()
+    before.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            state="ready",
+            last_report={**checkpoint, sequence_field: "invalid"},
+        )
+    )
+    after = HookContextStore()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        actor = WorkerSubsystem.actor(after, WorkerSubsystem.policy())
+        await actor.hooks(after).ingest(
+            {
+                "session_id": worker.id,
+                "cwd": worker.worktree,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Fresh result",
+            },
+            worker_only=True,
+        )
+
+    assert after.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
+    assert "hook checkpoint unavailable (ValueError)" in caplog.text
+
+
 def test_restore_keeps_managed_sessions_outside_ordinary_cache() -> None:
     previous = HookContextStore()
     previous.ingest(
