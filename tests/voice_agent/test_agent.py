@@ -336,6 +336,27 @@ def test_partial_provision_is_cleaned_before_retry(
         assert wire.calls[2][:2] == ("DELETE", "/v1/convai/tools/tool_clock?force=true")
 
 
+def test_failed_partial_cleanup_blocks_reprovisioning(
+    tmp_path: Path, wire: Requests
+) -> None:
+    wire.create_agent_status = 403
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        with pytest.raises(ConvAIError, match="HTTP 403"):
+            agent.connection((_CLOCK,))
+        partial = config.read_bytes()
+        wire.create_agent_status = 200
+        wire.delete_tool_status = 403
+        with pytest.raises(ConvAIError, match="HTTP 403"):
+            agent.connection((_CLOCK,))
+
+    assert config.read_bytes() == partial
+    assert [request[:2] for request in wire.calls[2:]] == [
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true")
+    ]
+
+
 def test_failed_delete_keeps_config_for_retry(tmp_path: Path, wire: Requests) -> None:
     wire.delete_tool_status = 403
     config = tmp_path / _COMPLETED_REGISTRATION

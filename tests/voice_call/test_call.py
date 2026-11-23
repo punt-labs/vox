@@ -426,6 +426,8 @@ async def test_local_hangup_releases_playback_before_saving_departure(
 ) -> None:
     workers, playback = FakeWorkers(), FakePlayback()
     released_at_departure: list[int] = []
+    steps: list[str] = []
+    close_playback = AgentSpeaker.close
 
     async def peer(socket: ServerConnection) -> None:
         await socket.recv()
@@ -435,6 +437,7 @@ async def test_local_hangup_releases_playback_before_saving_departure(
 
     def depart(_brief: ReturnBrief, _reported: dict[str, int]) -> None:
         released_at_departure.append(playback.released)
+        steps.append("departure")
 
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
@@ -449,7 +452,20 @@ async def test_local_hangup_releases_playback_before_saving_departure(
             trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
-        with patch.object(ReturnBrief, "depart", depart):
+
+        async def close(speaker: AgentSpeaker) -> None:
+            status = await _rpc(handlers, {"type": "call_status"})
+            assert cast("dict[str, object]", status["result"])["state"] == "ended"
+            assert playback.mutex.locked()
+            steps.append("terminal")
+            await close_playback(speaker)
+            assert not playback.mutex.locked()
+            steps.append("released")
+
+        with (
+            patch.object(ReturnBrief, "depart", depart),
+            patch.object(AgentSpeaker, "close", close),
+        ):
             assert "result" in await _rpc(
                 handlers,
                 {"type": "call_start", "script": [{"pcm_path": str(pcm)}]},
@@ -459,6 +475,7 @@ async def test_local_hangup_releases_playback_before_saving_departure(
             await _rpc(handlers, {"type": "call_stop"})
 
     assert released_at_departure == [1]
+    assert steps == ["terminal", "released", "departure"]
     assert not playback.sinks[0].finished
 
 
