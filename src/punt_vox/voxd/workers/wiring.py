@@ -15,8 +15,6 @@ from punt_vox.voxd.workers.startup import WorkerStartup
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from punt_vox.voxd.hook_context_store import HookContextStore
 
 
@@ -32,10 +30,8 @@ class WorkerSubsystem:
         return WorkerRepoPolicy(ConfigStore(ConfigStore.global_dir()))
 
     @staticmethod
-    def prepare(
-        store: HookContextStore, policy: WorkerRepoPolicy
-    ) -> tuple[WorkerActor, Callable[[], None]]:
-        """Wire the actor and return the recovery it must await before serving."""
+    def recover(store: HookContextStore, policy: WorkerRepoPolicy) -> WorkerActor:
+        """Recover durable state before sharing the actor with any RPC."""
         records = WorkerRecords(user_state_dir() / "workers")
         provider = TmuxWorkerProvider()
         registry = WorkerRegistry(
@@ -45,7 +41,5 @@ class WorkerSubsystem:
             {"claude": ClaudeProfile(store)},
         )
 
-        def recover() -> None:
-            registry.restore(WorkerStartup.run(records, store, provider))
-
-        return WorkerActor(registry, store), recover
+        registry.restore(WorkerStartup.run(records, store, provider))
+        return WorkerActor(registry, store)

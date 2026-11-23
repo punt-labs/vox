@@ -15,7 +15,6 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 from punt_vox.client_errors import (
     VoxdHandshakeRejectedError,
     VoxdProtocolError,
-    VoxdRecoveryPendingError,
     VoxdRefusedError,
 )
 from punt_vox.hook_context_client import HookContextClient
@@ -103,20 +102,6 @@ async def test_worker_delivery_retries_a_daemon_response_timeout() -> None:
         payload,
         payload,
     ]
-
-
-async def test_worker_delivery_retries_unfinished_recovery() -> None:
-    payload: dict[str, object] = {"session_id": "worker", "relay_seq": 19}
-    request = AsyncMock(
-        side_effect=[VoxdRecoveryPendingError("retry"), {"admitted": True}, {}]
-    )
-    with (
-        patch.object(HookContextClient, "_request", request),
-        patch("asyncio.sleep", new_callable=AsyncMock),
-    ):
-        await HookContextClient.send_event(payload, worker_only=True)
-    assert request.await_count == 3
-    assert request.await_args_list[-1].args[0]["payload"] == payload
 
 
 def test_checkpoint_writer_matches_recovery_schema() -> None:
@@ -242,8 +227,7 @@ async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> 
                 "punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider
             ),
         ):
-            adopted, recover = WorkerSubsystem.prepare(after, policy)
-            recover()
+            adopted = WorkerSubsystem.recover(after, policy)
         events = ProgressEvents()
         resumed = adopted.hooks(after, events)
         async with events.subscribe() as subscription:
@@ -325,8 +309,7 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(ClaudeProfile, "cleanup") as cleanup,
     ):
-        actor, recover = WorkerSubsystem.prepare(after, WorkerSubsystem.policy())
-        recover()
+        actor = WorkerSubsystem.recover(after, WorkerSubsystem.policy())
         ws = AsyncMock()
         await actor.hooks(after).admit(
             {"session_id": worker.id, "cwd": worker.worktree}, ws
@@ -361,8 +344,7 @@ async def test_listing_unpins_exited_worker_without_trust_cleanup(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(ClaudeProfile, "cleanup") as cleanup,
     ):
-        actor, recover = WorkerSubsystem.prepare(store, WorkerSubsystem.policy())
-        recover()
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
         provider.alive = False
         assert (await actor.workers())[0]["state"] == "exited"
         cleanup.assert_not_called()
@@ -415,8 +397,7 @@ async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
     ):
-        actor, recover = WorkerSubsystem.prepare(restarted, WorkerSubsystem.policy())
-        recover()
+        actor = WorkerSubsystem.recover(restarted, WorkerSubsystem.policy())
         assert restarted.checkpoint(worker.id) is None
         assert "hook checkpoint unavailable (ValueError)" in caplog.text
         await actor.hooks(restarted).ingest(
@@ -468,8 +449,7 @@ async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
         patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
     ):
-        actor, recover = WorkerSubsystem.prepare(after, WorkerSubsystem.policy())
-        recover()
+        actor = WorkerSubsystem.recover(after, WorkerSubsystem.policy())
         await actor.hooks(after).ingest(
             {
                 "session_id": worker.id,

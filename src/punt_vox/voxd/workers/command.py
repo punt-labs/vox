@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.process_env import ProcessEnv
+from punt_vox.voxd.workers.startup_probes import StartupProbes
 
 __all__ = ["WorkerCommand"]
 
@@ -59,7 +60,7 @@ class WorkerCommand:
                 capture_output=True,
                 text=True,
                 input=input_text,
-                timeout=15,
+                timeout=StartupProbes.timeout(15),
             )
         except subprocess.SubprocessError:
             if scoped:

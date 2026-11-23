@@ -14,7 +14,6 @@ import websockets
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
-    VoxdRecoveryPendingError,
     VoxdRejectionError,
 )
 from punt_vox.client_exchange import VoxdExchange
@@ -73,18 +72,6 @@ def test_the_reply_is_decoded() -> None:
 def test_a_daemon_error_reply_is_a_rejection() -> None:
     exchange, _ = _exchange({"type": "error", "message": "unknown provider"})
     with pytest.raises(VoxdRejectionError, match="unknown provider"):
-        asyncio.run(exchange.reply(timeout=1))
-
-
-def test_worker_recovery_rejection_is_distinguished() -> None:
-    exchange, _ = _exchange(
-        {
-            "type": "error",
-            "code": "worker_recovery_pending",
-            "message": "retry",
-        }
-    )
-    with pytest.raises(VoxdRecoveryPendingError, match="retry"):
         asyncio.run(exchange.reply(timeout=1))
 
 

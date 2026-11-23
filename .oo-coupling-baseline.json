@@ -553,7 +553,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/hook_context_client.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -3535,7 +3535,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/command.py": {
-    "efferent_coupling": 1.0,
+    "efferent_coupling": 2.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,

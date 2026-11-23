@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-from typing import ClassVar, cast, final
+from typing import cast, final
 from uuid import uuid4
 
-from punt_vox.client_errors import (
-    VoxdConnectionError,
-    VoxdHandshakeRejectedError,
-    VoxdProtocolError,
-    VoxdRecoveryPendingError,
-)
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
+from punt_vox.hook_delivery_retry import HookDeliveryRetry
 
 
 @final
@@ -21,7 +16,6 @@ class HookContextClient:
     """Short-lived RPCs shared by the relay and `vox call context`."""
 
     __slots__ = ()
-    _RETRY_DELAYS: ClassVar[tuple[float, ...]] = (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0)
 
     @classmethod
     async def send_event(
@@ -35,24 +29,7 @@ class HookContextClient:
         if not managed:
             await cls._deliver(payload, worker_only=False)
             return
-        async with asyncio.timeout(5):
-            for delay in (*cls._RETRY_DELAYS, None):
-                try:
-                    await cls._deliver(payload, worker_only=True)
-                except (VoxdConnectionError, VoxdProtocolError) as exc:
-                    if delay is None or not cls._retryable(exc):
-                        raise
-                    await asyncio.sleep(delay)
-                else:
-                    return
-
-    @staticmethod
-    def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
-        if isinstance(exc, VoxdProtocolError):
-            return isinstance(exc, VoxdRecoveryPendingError) or isinstance(
-                exc.__cause__, TimeoutError
-            )
-        return not isinstance(exc, VoxdHandshakeRejectedError)
+        await HookDeliveryRetry.run(lambda: cls._deliver(payload, worker_only=True))
 
     @classmethod
     async def _deliver(cls, payload: dict[str, object], *, worker_only: bool) -> None:

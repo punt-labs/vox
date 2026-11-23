@@ -8,7 +8,6 @@ from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.workers.handlers import WorkerHandlers
-from punt_vox.voxd.workers.startup_handlers import StartupHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
@@ -27,12 +26,9 @@ class WorkerContext:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
         policy = WorkerSubsystem.policy()
-        actor, recover = WorkerSubsystem.prepare(store, policy)
+        actor = WorkerSubsystem.recover(store, policy)
         events = ProgressEvents()
-        workers = WorkerHandlers(actor).handlers(store, events)
-        snapshot = workers.pop("hook_context")
         return {
-            **StartupHandlers.start(recover, workers),
-            "hook_context": snapshot,
+            **WorkerHandlers(actor).handlers(store, events),
             **CallHandlers(actor, policy, playback, progress=events).handlers(),
         }

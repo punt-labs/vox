@@ -115,21 +115,7 @@ class TmuxWorkerProvider:
                 group = None
             self._run("kill-session", "-t", f"={handle}", check=False)
             if group is not None:
-                self._finish(group)
-
-    @staticmethod
-    def _finish(group: int) -> None:
-        if group == os.getpgrp():
-            raise RuntimeError("Worker pane must have its own process group")
-        deadline = time.monotonic() + 3
-        while True:
-            try:
-                os.killpg(group, 0)
-            except ProcessLookupError:
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Worker pane did not exit after stop")
-            time.sleep(0.01)
+                TmuxProbe.wait_for_exit(group)
 
     # PY-TS-14: transport relays the profile's open JSON snapshot schema unchanged.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:

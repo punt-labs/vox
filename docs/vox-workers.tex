@@ -689,7 +689,10 @@ to five seconds; delivery across longer outages is not guaranteed.
 \textit{retired?} names the workers confirmed dead and checkpointed as
 \textit{exited}, not a new worker state. Their work products are retained.
 Startup adds them to \textit{pending}, enabling \textit{RetryCleanup} through
-explicit stop. Worker listing and call snapshots do not run trust cleanup.
+explicit stop. The daemon serves requests after recovery. Independent tmux
+probes run concurrently with a shared deadline; an inconclusive probe leaves
+the registration protected. Worker listing and call snapshots do not run
+trust cleanup.
 
 \emph{Startup only reaps marked orphans}: the reaper removes only a pane
 marked as owned by this registry and not protected by a live or unreadable

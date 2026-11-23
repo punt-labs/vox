@@ -6,13 +6,16 @@ import functools
 import json
 import threading
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from starlette.websockets import WebSocket
+from test_workers import FakeWorkerProvider, _registry
 from websockets.asyncio.server import serve
 
+from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.boss_tools import BossTools
@@ -21,6 +24,9 @@ from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.seed import CallSeed
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
+from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
+from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 from .fakes import FakePlayback, FakeWorkers, payload
 
@@ -286,6 +292,63 @@ def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> Non
 
     assert options.first_message is None
     assert brief.covered == {"worker": 5}
+
+
+async def test_return_call_opens_with_recovered_worker_result(tmp_path: Path) -> None:
+    worker = _registry(tmp_path, FakeWorkerProvider()).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    before = HookContextStore()
+    before.ingest(
+        {
+            "session_id": worker.id,
+            "hook_event_name": "Stop",
+            "relay_seq": 3,
+            "last_assistant_message": "Finished the tests.",
+        },
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    WorkerRecords(tmp_path / "workers").save(
+        replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
+    )
+    (tmp_path / "departure.json").write_text(json.dumps({worker.id: 1}))
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    opening: list[str] = []
+
+    async def peer(socket: ServerConnection) -> None:
+        init = json.loads(await socket.recv())
+        opening.append(init["conversation_config_override"]["agent"]["first_message"])
+        await socket.send(json.dumps(_METADATA))
+        await socket.wait_closed()
+
+    policy = WorkerSubsystem.policy()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch.object(TmuxWorkerProvider, "status", return_value=True),
+    ):
+        actor = WorkerSubsystem.recover(HookContextStore(), policy)
+        async with serve(peer, "127.0.0.1", 0) as server:
+            handlers = CallHandlers(
+                actor,
+                policy,
+                cast("PlaybackQueue", FakePlayback()),
+                connector=_Connector(
+                    f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+                ),
+                trace_dir=tmp_path,
+                opener=_LOOPBACK,
+            )
+            assert "result" in await _rpc(
+                handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]}
+            )
+            assert "result" in await _rpc(handlers, {"type": "call_stop"})
+    assert opening == [
+        f"While you were away, the worker in {tmp_path.name} finished: "
+        "Finished the tests."
+    ]
 
 
 @pytest.mark.parametrize(

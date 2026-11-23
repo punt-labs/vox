@@ -21,7 +21,6 @@ import websockets.asyncio.client
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
-    VoxdRecoveryPendingError,
     VoxdRejectionError,
 )
 from punt_vox.client_fetch import FetchAssembly
@@ -148,8 +147,5 @@ class VoxdExchange:
         except json.JSONDecodeError as exc:
             raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
         if resp.get("type") == "error":
-            message = str(resp.get("message", "unknown error"))
-            if resp.get("code") == VoxdRecoveryPendingError.CODE:
-                raise VoxdRecoveryPendingError(message)
-            raise VoxdRejectionError(message)
+            raise VoxdRejectionError(str(resp.get("message", "unknown error")))
         return resp

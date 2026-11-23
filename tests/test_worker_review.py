@@ -14,6 +14,7 @@ from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
+from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 
 
 def test_worker_environment_keeps_other_tool_credentials_private() -> None:
@@ -90,7 +91,7 @@ def test_tmux_session_disappearing_during_control(operation: str) -> None:
     with (
         patch.object(TmuxWorkerProvider, "_run", side_effect=run),
         patch("os.getpgid", return_value=456),
-        patch.object(TmuxWorkerProvider, "_finish") as finish,
+        patch.object(TmuxProbe, "wait_for_exit") as finish,
     ):
         if operation == "status":
             assert provider.status("worker") is False

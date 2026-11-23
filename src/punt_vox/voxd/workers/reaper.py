@@ -13,6 +13,7 @@ from uuid import UUID
 
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.environment import WorkerEnvironment
+from punt_vox.voxd.workers.startup_probes import StartupProbes
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.records import WorkerRecords
@@ -76,14 +77,22 @@ class WorkerReaper:
         sessions = WorkerCommand("list-sessions", "-F", "#{session_name}").run(
             check=False
         )
-        for handle in sessions.stdout.splitlines():
+        StartupProbes.completed(
+            sessions.stdout.splitlines(),
+            lambda handle: cls._reap_session(records, provider, handle),
+        )
+
+    @classmethod
+    def _reap_session(
+        cls, records: WorkerRecords, provider: TmuxWorkerProvider, handle: str
+    ) -> None:
+        try:
             if cls._orphan(records, handle):
-                try:
-                    provider.stop(handle)
-                except (OSError, RuntimeError) as exc:
-                    logger.warning(
-                        "Worker orphan %s not reaped (%s)", handle, type(exc).__name__
-                    )
+                provider.stop(handle)
+        except (OSError, RuntimeError) as exc:
+            logger.warning(
+                "Worker orphan %s not reaped (%s)", handle, type(exc).__name__
+            )
 
     @staticmethod
     def _orphan(records: WorkerRecords, handle: str) -> bool:
