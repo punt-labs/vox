@@ -6,7 +6,7 @@ import functools
 import json
 import threading
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from starlette.websockets import WebSocket
 from websockets.asyncio.server import serve
@@ -15,6 +15,7 @@ from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
+from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
 from .fakes import FakePlayback, FakeWorkers, payload
 
@@ -278,6 +279,67 @@ def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
         options.first_message
         == f"While you were away, the worker in repo finished: {spoken}"
     )
+
+
+async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("working")]
+    openings: list[str | None] = []
+
+    async def peer(socket: ServerConnection) -> None:
+        init = json.loads(await socket.recv())
+        openings.append(
+            init["conversation_config_override"]["agent"].get("first_message")
+        )
+        await socket.send(json.dumps(_METADATA))
+        if len(openings) > 1:
+            await socket.wait_closed()
+
+    async def finish(_speaker: AgentSpeaker) -> None:
+        workers.known = [
+            payload(
+                "working",
+                last_assistant_message="Finished during playback.",
+                result_seq=1,
+            )
+        ]
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    start: dict[str, object] = {
+        "type": "call_start",
+        "script": [{"pcm_path": str(pcm)}],
+    }
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+
+        def handlers() -> CallHandlers:
+            return CallHandlers(
+                workers,
+                workers,
+                cast("PlaybackQueue", FakePlayback()),
+                connector=_Connector(
+                    f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+                ),
+                trace_dir=tmp_path,
+                opener=_LOOPBACK,
+            )
+
+        with patch.object(AgentSpeaker, "finish", finish):
+            first = handlers()
+            assert "result" in await _rpc(first, start)
+            while (
+                not (tmp_path / "departure.json").is_file()
+                or not workers.known[0]["last_report"]
+            ):
+                await asyncio.sleep(0.01)
+        second = handlers()
+        assert "result" in await _rpc(second, start)
+        await _rpc(second, {"type": "call_stop"})
+
+    assert openings == [
+        None,
+        "While you were away, the worker in repo finished: Finished during playback.",
+    ]
 
 
 async def test_start_without_a_key_is_refused(

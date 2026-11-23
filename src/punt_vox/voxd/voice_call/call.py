@@ -100,7 +100,13 @@ class VoiceAgentCall:
         self._tool_calls = deque(maxlen=_HISTORY)
         return self
 
-    async def run(self, dial: Dial, covered: dict[str, int] | None = None) -> None:
+    async def run(
+        self,
+        dial: Dial,
+        covered: dict[str, int] | None = None,
+        *,
+        depart: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Dial, then hold the call until it ends, fails, or is cancelled."""
         hung_up = False  # Only a remote hang-up lets the last reply play out.
         try:
@@ -120,10 +126,14 @@ class VoiceAgentCall:
             if self._state in {"connecting", "live"}:
                 self._state = "ended"
             self._connected.set()
-            if hung_up:
-                await self._speaker.finish()
-            else:
-                await self._speaker.close()
+            try:
+                if depart is not None and self._conversation_id is not None:
+                    await depart()
+            finally:
+                if hung_up:
+                    await self._speaker.finish()
+                else:
+                    await self._speaker.close()
 
     async def _converse(
         self,
@@ -140,11 +150,6 @@ class VoiceAgentCall:
                 group.create_task(self._pump(conv))
                 group.create_task(self._progress.run(conv, queue, covered))
                 group.create_task(self._listen(conv, group))
-
-    @property
-    def was_connected(self) -> bool:
-        """Distinguish a real departure from a failed dial."""
-        return self._conversation_id is not None
 
     async def connected(self) -> None:
         """Return once the conversation is live or has already ended."""

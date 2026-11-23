@@ -208,8 +208,9 @@ come from the current projection, never from that cursor. The snapshot
 and cut come from the same worker view, after subscription and before
 the provider can speak. The provider gets one first-message override
 only when the selected reports are nonempty.
-The cursor is the worker state at departure, not a receipt that the
-caller heard a result. The live stream retains its existing bounded queue;
+The cursor is the worker state at departure, before draining remaining
+audio, not a receipt that the caller heard a result. The live stream retains
+its existing bounded queue;
 the cut filters duplicates among events that remain queued.
 
 \begin{zed}

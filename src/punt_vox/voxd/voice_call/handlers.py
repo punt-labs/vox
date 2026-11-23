@@ -180,19 +180,16 @@ class CallHandlers:
             )
             return url, options
 
-        async def run() -> None:
+        async def depart() -> None:
             try:
-                await call.run(dial, returning.covered)
-            finally:
-                stream.close()
-                if call.was_connected:
-                    try:
-                        workers = await self._workers.workers()
-                        await asyncio.to_thread(returning.depart, workers)
-                    except (OSError, RuntimeError, ValueError) as exc:
-                        logger.warning(
-                            "Call departure not saved (%s)", type(exc).__name__
-                        )
+                workers = await self._workers.workers()
+                await asyncio.to_thread(returning.depart, workers)
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.warning("Call departure not saved (%s)", type(exc).__name__)
+
+        async def run() -> None:
+            with stream:
+                await call.run(dial, returning.covered, depart=depart)
 
         task = asyncio.create_task(run())
         self._active = _ActiveCall(call, task, path)
