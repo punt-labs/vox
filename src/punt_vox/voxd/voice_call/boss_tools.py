@@ -21,7 +21,9 @@ __all__ = ["BossTools"]
 
 _ID: Final = {
     "type": "string",
-    "description": "A worker_id a tool returned, or a spoken worker label from this call's opener",
+    "description": (
+        "A worker_id a tool returned, or a spoken worker label from this call's opener"
+    ),
 }
 
 
