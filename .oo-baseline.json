@@ -6749,10 +6749,10 @@
   "src/punt_vox/voxd/workers/registry.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.21,
+    "avg_params": 2.13,
     "max_complexity": 9.0,
-    "avg_complexity": 3.64,
-    "module_size": 226.0,
+    "avg_complexity": 3.53,
+    "module_size": 228.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

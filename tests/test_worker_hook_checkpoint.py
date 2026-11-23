@@ -326,25 +326,41 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         cleanup.assert_called_once_with(Path(worker.worktree))
 
 
-async def test_listing_unpins_exited_worker_without_trust_cleanup(
+async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     tmp_path: Path,
 ) -> None:
     provider = FakeWorkerProvider()
     worker = _registry(tmp_path, provider).start(
         "work", str(tmp_path), provider="fake", harness="test"
     )
-    WorkerRecords(tmp_path / "workers").save(replace(worker, provider="tmux"))
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
     store = HookContextStore()
-    store.ingest(
-        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
-        worker_input=True,
-    )
+    base = {"session_id": worker.id, "cwd": worker.worktree}
     with (
         patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
         patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
         patch.object(ClaudeProfile, "cleanup") as cleanup,
     ):
         actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        await hooks.ingest(
+            {**base, "hook_event_name": "SessionStart", "relay_seq": 1},
+            worker_only=True,
+        )
+        await hooks.ingest(
+            {
+                **base,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Finished the tests.",
+            },
+            worker_only=True,
+        )
+        assert records.load()[0].last_report["last_assistant_message"] == (
+            "Finished the tests."
+        )
         provider.alive = False
         assert (await actor.workers())[0]["state"] == "exited"
         cleanup.assert_not_called()
@@ -358,6 +374,15 @@ async def test_listing_unpins_exited_worker_without_trust_cleanup(
         )
     with pytest.raises(ValueError, match="no hook context"):
         store.snapshot(worker.id)
+    with patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress):
+        await hooks.ingest(
+            {**base, "hook_event_name": "SessionStart", "relay_seq": 3},
+            worker_only=True,
+        )
+    [saved] = records.load()
+    assert saved.last_report["last_assistant_message"] == "Finished the tests."
+    assert saved.state == "exited"
+    assert saved.last_report["cleanup_pending"] is True
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(

@@ -124,25 +124,28 @@ class WorkerRegistry:
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
-        """Report current state without changing records or worker resources."""
-        result: list[WorkerRecord] = []
-        for record in self._workers.values():
-            try:
-                result.append(self._lifecycle.observe(record))
-            except (
-                KeyError,
-                OSError,
-                ValueError,
-                RuntimeError,
-                subprocess.SubprocessError,
-            ) as exc:
-                logger.warning(
-                    "Worker %s reconciliation unavailable (%s)",
-                    record.id,
-                    type(exc).__name__,
-                )
-                result.append(record)
-        return result
+        """Report current state and close hook admission for confirmed exits."""
+        return [self._observe(record) for record in self._workers.values()]
+
+    def _observe(self, record: WorkerRecord) -> WorkerRecord:
+        try:
+            observed = self._lifecycle.observe(record)
+            if observed.state == "exited":
+                return self._checkpoint(observed)
+            return observed
+        except (
+            KeyError,
+            OSError,
+            ValueError,
+            RuntimeError,
+            subprocess.SubprocessError,
+        ) as exc:
+            logger.warning(
+                "Worker %s reconciliation unavailable (%s)",
+                record.id,
+                type(exc).__name__,
+            )
+            return record
 
     def _get(self, worker_id: str) -> WorkerRecord:
         try:
