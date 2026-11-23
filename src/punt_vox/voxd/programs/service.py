@@ -194,16 +194,15 @@ class ProgramService:
 
         A generate Program reports the full Program status; a replay Selection
         reports the consume-only radio status; an idle daemon reports idle. The
-        transport ``paused`` flag rides statuses with a playback cursor, read
-        authoritatively from the one suspension, so a client's PlayerView can tell
-        a held source from a progressing one.
+        transport ``paused`` flag reflects the user's pause choice so PlayerView
+        can offer the right control even while a call holds playback.
         """
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
         base = self._projection.of(active)
         return replace(
-            base, paused=base.now_playing is not None and self._suspension.is_paused
+            base, paused=base.now_playing is not None and self._suspension.user_paused
         )
 
     def catalog_albums(self) -> tuple[Album, ...]:

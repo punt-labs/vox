@@ -6,8 +6,7 @@ output and resumes from the exact same decoder position, so there is no underrun
 click and no wall-clock seek to reconstruct. The suspension holds the paused flag
 and delegates the click-free IPC to the injected :class:`Player`.
 
-Status and the loop read the effective pause: a user pause or a call hold.
-The loop reads it at
+The loop reads the effective pause, a user pause or a call hold, at
 two points: at the advance decision, as the ``T3`` guard against an in-flight
 ``eof`` advancing under "paused"; and at load time, to decide whether a reload
 loads paused (Fork B / I6) -- for a prev/next while paused and for a post-crash
@@ -49,6 +48,11 @@ class PlaybackSuspension:
     def is_paused(self) -> bool:
         """Return whether the active source is suspended in place (cursor held)."""
         return self._paused or self._call_held
+
+    @property
+    def user_paused(self) -> bool:
+        """Return the transport pause choice, independent of a call hold."""
+        return self._paused
 
     def pause(self) -> None:
         """Suspend playback where it is -- mpv freezes in place. Idempotent.

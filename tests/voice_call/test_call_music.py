@@ -15,6 +15,8 @@ from websockets.asyncio.server import serve
 
 from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_player.player_view import PlayerView
+from punt_vox.voxd.music_player.transport_row import TransportRow
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.mpv.mpv_program_player import MpvProgramPlayer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
         ("playing", "local"),
         ("playing", "remote"),
         ("playing", "failed"),
+        ("playing", "pause during call"),
         ("paused", "local"),
         ("stopped replay", "local"),
         ("stopped program", "local"),
@@ -64,7 +67,10 @@ async def test_call_music_lifecycle(
     monkeypatch.setattr(WorkerHandlers, "handlers", Mock(return_value={}))
     monkeypatch.setattr("punt_vox.voxd.voice_call.handlers.calls_dir", lambda: tmp_path)
     monkeypatch.setattr(AgentOperations, "prepare", AsyncMock())
-    monkeypatch.setattr(MpvProgramPlayer, "resume", Mock(side_effect=resumed.set))
+    pause_player = Mock()
+    resume_player = Mock(side_effect=resumed.set)
+    monkeypatch.setattr(MpvProgramPlayer, "pause", pause_player)
+    monkeypatch.setattr(MpvProgramPlayer, "resume", resume_player)
     monkeypatch.setattr(
         Conversation, "open", functools.partial(Conversation.open, allow_loopback=True)
     )
@@ -127,10 +133,21 @@ async def test_call_music_lifecycle(
                 rpc("call_start", script=[{"pcm_path": str(pcm)}])
             )
             await connecting.wait()
-            paused_while_connecting = programs.service.status().paused
+            pause_player.assert_called_once()
+            resume_player.assert_not_called()
+            assert programs.service.status().paused == (initial == "paused")
             connect.set()
             started = await start
-            paused_during_call = programs.service.status().paused
+            if outcome == "pause during call":
+                view = PlayerView.from_status(
+                    programs.service.status(), programs.service.catalog_albums()
+                )
+                buttons = TransportRow(view).to_dict()["children"]
+                assert isinstance(buttons, list)
+                assert buttons[1]["publish"] == {"topic": "music.pause"}
+                await rpc("program_pause")
+                pause_player.assert_called_once()
+                resume_player.assert_not_called()
             if outcome == "remote":
                 hangup.set()
                 await resumed.wait()
@@ -140,7 +157,7 @@ async def test_call_music_lifecycle(
                     ]
                     == "ended"
                 )
-            elif outcome == "local":
+            elif outcome in {"local", "pause during call"}:
                 assert (
                     cast("dict[str, object]", (await rpc("call_stop"))["result"])[
                         "state"
@@ -149,10 +166,13 @@ async def test_call_music_lifecycle(
                 )
                 hangup.set()
 
-    assert paused_while_connecting == (not initial.startswith("stopped"))
     if outcome == "failed":
         assert "agent provisioning failed" in str(started)
     else:
         assert cast("dict[str, object]", started["result"])["state"] == "live"
-        assert paused_during_call == (not initial.startswith("stopped"))
-    assert programs.service.status() == baseline
+    if outcome == "pause during call":
+        assert programs.service.status().paused
+        resume_player.assert_not_called()
+    else:
+        assert programs.service.status() == baseline
+        assert resume_player.call_count == (0 if initial == "paused" else 1)
