@@ -391,6 +391,13 @@ class TestSymbolStripping:
             ("Use `../prices/$5`", "Use ../prices/$5"),
             ("Use `./price reports/$5`", "Use ./price reports/$5"),
             ("Use `./price $5`", "Use ./price dollar sign 5"),
+            ("Use `“/tmp/$5”` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (
+                "Use `$HOME/prices/$5` then pay $5",
+                "Use HOME/prices/$5 then pay 5 dollars",
+            ),
+            (r"Use `\/tmp/$5` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (r"Use `prices\/$5` then pay $5", r"Use prices\/$5 then pay 5 dollars"),
             (
                 "Use `echo $((total/$2))` then pay $5",
                 "Use echo total/dollar sign 2 then pay 5 dollars",

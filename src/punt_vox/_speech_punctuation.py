@@ -27,7 +27,7 @@ _LEADING_NON_SPEECH_RE = re.compile(
 )
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
-_CODE_PATH_RE = re.compile(r"^(?:/|[\w.~+-]+/)")
+_CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
 _TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 
@@ -57,7 +57,7 @@ class SpeechPunctuation:
     @staticmethod
     def is_code_path(text: str) -> bool:
         """Recognize paths inside or directly adjacent to an inline span."""
-        return _CODE_PATH_RE.match(text.lstrip("`'\"([{<")) is not None
+        return _CODE_PATH_RE.match(text.lstrip("`'\"\u2018\u2019“”([{<")) is not None
 
     @staticmethod
     def is_path(core: str) -> bool:
