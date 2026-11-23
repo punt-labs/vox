@@ -324,7 +324,19 @@ class TestSymbolStripping:
         ("text", "expected"),
         [
             ("Use `$1` for the first argument", "Use 1 for the first argument"),
-            ("Run ``echo $1 $2`` then pay $5", "Run echo 1 2 then pay 5 dollars"),
+            ("Use `$1`, then pay $5", "Use 1, then pay 5 dollars"),
+            ("Use ``$1``, then pay $5", "Use 1, then pay 5 dollars"),
+            (
+                "Run ``echo $1 $2`` then pay $5",
+                "Run echo 1 dollar 2 dollars then pay 5 dollars",
+            ),
+            (
+                r"The \` discount is -$5 off \` today",
+                "The discount is minus 5 dollars off today",
+            ),
+            (r"Use \`$1\` then pay $5", "Use 1 dollar then pay 5 dollars"),
+            ("Label `\n\n-$5 off\n\n` today", "Label minus 5 dollars off today"),
+            ("Pay `1`$5.", "Pay 1 5 dollars."),
             ("-$5 off", "minus 5 dollars off"),
             ("-€20", "minus 20 euros"),
             ("€-20", "minus 20 euros"),
