@@ -8,7 +8,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "python"
+      - "python:uv"
 
   # GitHub Actions. Without this, SHA-pinned actions rot silently until a
   # release fails — which is how the gh-action-pypi-publish pin went stale.
@@ -19,4 +19,3 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "ci"
