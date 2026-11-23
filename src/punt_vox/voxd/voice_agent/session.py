@@ -16,6 +16,7 @@ from punt_vox.voxd.voice_agent.events import (
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.sender import ConversationSender
+from punt_vox.voxd.voice_agent.tool_calls import ToolCalls
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -42,7 +43,8 @@ class Conversation:
     The caller owns tool dispatch and reports its result against the given ID.
     """
 
-    __slots__ = ("_metadata", "_sender", "_socket", "_trace")
+    __slots__ = ("_metadata", "_sender", "_socket", "_tool_calls", "_trace")
+    _tool_calls: ToolCalls
     _socket: ClientConnection
     _metadata: Metadata
     _trace: OptionalTrace
@@ -57,6 +59,7 @@ class Conversation:
         self._metadata = metadata
         self._trace = trace
         self._sender = ConversationSender(socket, trace)
+        self._tool_calls = ToolCalls()
         return self
 
     @classmethod
@@ -92,7 +95,7 @@ class Conversation:
                 case Metadata():
                     msg = "ElevenLabs sent duplicate conversation metadata"
                     raise ConvAIError(msg)
-                case ClientToolCall() if not self._sender.admit(event):
+                case ClientToolCall() if not self._tool_calls.admit(event):
                     continue
                 case ClientToolCall():
                     return event
@@ -115,6 +118,7 @@ class Conversation:
         self, tool_call_id: str, result: str, *, is_error: bool = False
     ) -> None:
         """Answer one pending client tool call at most once."""
+        self._tool_calls.claim(tool_call_id)
         await self._sender.send_tool_result(tool_call_id, result, is_error=is_error)
 
     @staticmethod

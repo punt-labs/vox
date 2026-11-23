@@ -1,4 +1,4 @@
-"""Outbound conversation messages and client tool response pairing."""
+"""Outbound conversation message framing and tracing."""
 
 from __future__ import annotations
 
@@ -11,31 +11,21 @@ if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
     from punt_vox.voxd.voice_agent.contracts import ClientMessage, OptionalTrace
-    from punt_vox.voxd.voice_agent.events import ClientToolCall
 
 
 @final
 class ConversationSender:
-    """Own outgoing framing, tracing and exactly-once tool replies."""
+    """Frame and trace outgoing messages on one conversation socket."""
 
-    __slots__ = ("_socket", "_tool_calls", "_trace")
+    __slots__ = ("_socket", "_trace")
     _socket: ClientConnection
     _trace: OptionalTrace
-    _tool_calls: dict[str, bool]
 
     def __new__(cls, socket: ClientConnection, trace: OptionalTrace) -> Self:
         """Bind a socket and its optional trace."""
         self = super().__new__(cls)
         self._socket, self._trace = socket, trace
-        self._tool_calls = {}
         return self
-
-    def admit(self, call: ClientToolCall) -> bool:
-        """Remember new calls and reject duplicates, even after a reply."""
-        if call.tool_call_id in self._tool_calls:
-            return False
-        self._tool_calls[call.tool_call_id] = call.expects_response
-        return True
 
     async def send_text(self, text: str) -> None:
         """Send one user message to the active conversation."""
@@ -58,11 +48,7 @@ class ConversationSender:
     async def send_tool_result(
         self, tool_call_id: str, result: str, *, is_error: bool = False
     ) -> None:
-        """Send a single result for a pending client tool call ID."""
-        if not self._tool_calls.get(tool_call_id):
-            msg = "No pending ElevenLabs client tool call expects that result"
-            raise ValueError(msg)
-        self._tool_calls[tool_call_id] = False
+        """Frame a tool result after its response has been claimed."""
         await self._send(
             {
                 "type": "client_tool_result",
