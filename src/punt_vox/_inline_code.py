@@ -8,11 +8,13 @@ from itertools import dropwhile, pairwise
 from typing import TYPE_CHECKING, cast, final
 
 from markdown_it import MarkdownIt
+from markdown_it.rules_block import fence
 from markdown_it.rules_inline import backtick, image
 
 from punt_vox._speech_punctuation import SpeechPunctuation
 
 if TYPE_CHECKING:
+    from markdown_it.rules_block import StateBlock
     from markdown_it.rules_inline import StateInline
     from markdown_it.token import Token
 
@@ -20,10 +22,9 @@ _LINE_END = re.compile(r"\r\n?|\n")
 _TICK = re.compile("`")
 _WORD = re.compile(r"\S+")
 _SOURCE_OFFSET = "vox_source_offset"
+_VIBED = "vox_vibed"
 VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
-_VIBE_BEFORE_FENCE = re.compile(
-    rf"(?<![^\r\n])( {{0,3}})(?:{VIBE_TAG_RE.pattern}[ \t]*)+(?=`{{3,}}|~{{3,}})"
-)
+_FENCE_TAGS = re.compile(rf"(?:{VIBE_TAG_RE.pattern}[ \t]*)+(?=`{{3,}}|~{{3,}})")
 
 
 @final
@@ -60,8 +61,7 @@ class InlineCode:
         lines = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
         parts: list[str] = []
         cursor = 0
-        markdown = _VIBE_BEFORE_FENCE.sub(r"\1", text) if vibed else text
-        spans = cls._source_spans(text, lines, markdown)
+        spans = cls._source_spans(text, lines, vibed=vibed)
         for in_path, start, end in cls._with_path_context(text, spans):
             parts.extend((text[cursor:start], transform(text[start:end], in_path)))
             cursor = end
@@ -85,9 +85,9 @@ class InlineCode:
 
     @classmethod
     def _source_spans(
-        cls, text: str, lines: Sequence[int], markdown: str
+        cls, text: str, lines: Sequence[int], *, vibed: bool
     ) -> Iterator[tuple[int, int, int]]:
-        for token in cls._MARKDOWN.parse(markdown):
+        for token in cls._MARKDOWN.parse(text, {_VIBED: vibed}):
             if token.type != "inline" or token.map is None or not token.children:
                 continue
             spans = tuple(cls._spans(token.children))
@@ -153,7 +153,31 @@ class InlineCode:
             state.tokens[-1].meta[_SOURCE_OFFSET] = start
         return matched
 
+    @staticmethod
+    def _fence_rule(
+        state: StateBlock, start_line: int, end_line: int, *, silent: bool
+    ) -> bool:
+        if not state.env.get(_VIBED):
+            return fence(state, start_line, end_line, silent)
+        shift = state.tShift[start_line]
+        start = state.bMarks[start_line] + shift
+        tags = _FENCE_TAGS.match(state.src, start, state.eMarks[start_line])
+        if tags is None:
+            return fence(state, start_line, end_line, silent)
+        state.tShift[start_line] += tags.end() - start
+        try:
+            return fence(state, start_line, end_line, silent)
+        finally:
+            state.tShift[start_line] = shift
+
     _MARKDOWN = MarkdownIt("commonmark")
+    _MARKDOWN.block.ruler.at(
+        "fence",
+        lambda state, start, end, silent: InlineCode._fence_rule(
+            state, start, end, silent=silent
+        ),
+        {"alt": ["paragraph", "reference", "blockquote", "list"]},
+    )
     _MARKDOWN.inline.ruler.at(
         "backticks", lambda state, silent: InlineCode._code_rule(state, silent=silent)
     )

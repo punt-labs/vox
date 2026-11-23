@@ -1433,6 +1433,12 @@ class TestApplyVibeForSynthesis:
             f"{prefix}sh echo Use dollar sign 1 then pay 5 dollars"
         )
 
+    def test_tagged_fence_marker_inside_code_is_not_a_closer(self) -> None:
+        raw = "```sh\n[warm] ```\nInside `$1`\n[warm] ```\n```\n\nOutside `$2`"
+        assert self._apply(raw, None, "elevenlabs", "eleven_flash_v2_5") == (
+            "sh Inside 1 dollar Outside dollar sign 2"
+        )
+
 
 class TestOpenAIProviderKeyCapture:
     """The key is the one in effect when the provider was built, not at first use.
