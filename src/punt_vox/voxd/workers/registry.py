@@ -23,6 +23,7 @@ from punt_vox.voxd.workers.steering_types import DecisionChoice
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from concurrent.futures import Future
 
 logger = logging.getLogger(__name__)
 
@@ -172,12 +173,16 @@ class WorkerRegistry:
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        return self._inventory.update(
-            worker_id,
-            self._lifecycle.terminate
-            if self._retirement.queued(worker_id)
-            else self._lifecycle.stop,
-        )
+        record, cleanup = self.request_stop(worker_id)
+        if cleanup is None:
+            return record
+        cleanup.result()
+        return self._inventory.get(worker_id)
+
+    def request_stop(self, worker_id: str) -> tuple[WorkerRecord, Future[None] | None]:
+        """Persist termination and start cleanup without waiting for its lease."""
+        record = self._inventory.update(worker_id, self._lifecycle.terminate)
+        return record, self._retirement.schedule(record)
 
     def steer(
         self,

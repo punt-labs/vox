@@ -620,6 +620,64 @@ async def test_quarantined_progress_retries_before_return_opener(
     assert records.load()[0].last_report["worker_seq"] == 3
 
 
+async def test_explicit_stop_cleanup_does_not_block_another_workers_completion(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    stopped = registry.start("stop", str(tmp_path), provider="fake", harness="test")
+    live = registry.start("finish", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    actor = WorkerActor(registry, store)
+    hooks = actor.hooks(store)
+    cursor = tmp_path / "cursor.json"
+    ReturnBrief(cursor).depart({live.id: 0})
+    started, release = Event(), Event()
+
+    def hold_cleanup(path: Path) -> None:
+        if path == Path(stopped.worktree):
+            started.set()
+            assert release.wait(3)
+
+    def report(worker_id: str, _profile: HarnessProfile) -> dict[str, object]:
+        return dict(store.checkpoint(worker_id) or {})
+
+    payload = {
+        "session_id": live.id,
+        "cwd": live.worktree,
+        "hook_event_name": "Stop",
+        "relay_seq": 1,
+        "last_assistant_message": "Finished while cleanup was waiting.",
+    }
+    socket = AsyncMock()
+    with (
+        patch.object(TrivialProfile, "cleanup", side_effect=hold_cleanup),
+        patch.object(FakeWorkerProvider, "progress", side_effect=report),
+        patch.object(
+            FakeWorkerProvider,
+            "status",
+            side_effect=lambda s: s == live.session or provider.alive,
+        ),
+    ):
+        stopping = asyncio.create_task(actor.stop(stopped.id))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            async with asyncio.timeout(1):
+                await hooks.admit(payload, socket)
+                assert socket.send_json.call_args.args[0]["admitted"] is True
+                await hooks.ingest(payload, worker_only=True)
+                opener = ReturnBrief(cursor).options(
+                    await actor.workers(), (str(tmp_path),), ()
+                )
+                assert opener.first_message is not None
+                assert "Finished while cleanup was waiting." in opener.first_message
+            assert not stopping.done()
+        finally:
+            release.set()
+            await stopping
+            actor.shutdown()
+
+
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     tmp_path: Path,
 ) -> None:

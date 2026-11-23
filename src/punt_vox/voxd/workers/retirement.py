@@ -49,14 +49,17 @@ class WorkerRetirement:
         """Bind the actor-owned retention transition, not a cleanup job."""
         self._release = release
 
-    def schedule(self, record: WorkerRecord) -> None:
+    def schedule(self, record: WorkerRecord) -> Future[None] | None:
         """Queue a confirmed exit without waiting for a config file lease."""
         if (
-            record.state == "exited"
+            record.state in ("exited", "stopped")
             and WorkerCleanup.pending(record)
             and not self.queued(record.id)
         ):
-            self._jobs[record.id] = self._executor.submit(lambda: self._cleanup(record))
+            job = self._executor.submit(lambda: self._cleanup(record))
+            self._jobs[record.id] = job
+            return job
+        return None
 
     def shutdown(self) -> None:
         """Stop accepting cleanup and discard work that has not started."""

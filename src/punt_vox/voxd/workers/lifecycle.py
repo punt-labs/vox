@@ -131,12 +131,3 @@ class WorkerLifecycle:
                 "cleanup_pending": True,
             },
         )
-
-    def stop(self, record: WorkerRecord) -> WorkerRecord:
-        """Finish an explicit stop when no background cleanup owns the record."""
-        terminated = self.terminate(record)
-        return (
-            WorkerCleanup.run(terminated, self._profiles)
-            if WorkerCleanup.pending(terminated)
-            else terminated
-        )
