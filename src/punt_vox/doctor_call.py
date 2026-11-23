@@ -1,4 +1,4 @@
-"""Advisory diagnostics for the Mode B call on the local host."""
+"""Advisory diagnostics for the voice call on the local host."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from punt_vox.doctor_result import OK, OPTIONAL, WARN, CheckResult
 
 @final
 class CallChecks:
-    """Collect the optional Mode B prerequisites without starting a call."""
+    """Collect the optional voice call prerequisites without starting a call."""
 
     __slots__ = ()
 

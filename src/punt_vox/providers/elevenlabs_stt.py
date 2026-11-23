@@ -1,13 +1,8 @@
-"""ElevenLabs-backed :class:`STTProvider` -- batch recognition on a closed turn.
+"""ElevenLabs batch speech-to-text for the audio round-trip benchmark.
 
-``speech_to_text.convert`` is a batch call, not a streaming one: it accepts a
-whole audio file and returns a whole transcript. That matches how this
-provider is used -- :class:`~punt_vox.voxd.conversation_mode.turn_detector.TurnDetector`
-already accumulates :class:`AudioChunk` values until a turn closes, and only
-then does :class:`~punt_vox.voxd.conversation_mode.call_session.CallSession`
-hand the accumulated run to :meth:`ElevenLabsSTTProvider.transcribe`. There is
-exactly one event to yield per call -- a single final :class:`TranscriptEvent`
--- because the SDK has nothing to say until the whole file has been sent.
+``speech_to_text.convert`` accepts the accumulated audio as one file and
+returns one transcript, so each request yields one final transcript event.
+Vox calls stream directly to ElevenLabs Conversational AI instead.
 
 Kept out of ``elevenlabs.py`` (PY-OO-2's class-per-module limit): that module
 already houses :class:`~punt_vox.providers.elevenlabs.ElevenLabsProvider`

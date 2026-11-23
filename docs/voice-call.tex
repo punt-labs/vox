@@ -1,7 +1,7 @@
 %
-% mode-b-call.tex
+% voice-call.tex
 %
-% Z specification of the Mode B voice call in voxd
+% Z specification of the voice call in voxd
 % (src/punt_vox/voxd/voice_call/, PL-1371): the call lifecycle that
 % call_start, call_stop and call_status drive, the playback ownership of
 % AgentSpeaker, and the per-call tool result cache. The tests in
@@ -14,14 +14,14 @@
 
 \begin{document}
 
-\title{The Mode B Voice Call: A Z Specification}
+\title{Vox Call: A Z Specification}
 \author{Punt Labs, for PL-1371}
 \date{November 2026}
 \maketitle
 
 \section{Introduction}
 
-voxd runs at most one Mode B call. \texttt{call\_start} creates it in
+voxd runs at most one call. \texttt{call\_start} creates it in
 \emph{connecting}; the call task provisions the ElevenLabs agent and opens
 the conversation, which makes it \emph{live}. A remote hang-up, a
 \texttt{call\_stop} ends it; a connect timeout or other error fails it.

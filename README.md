@@ -118,7 +118,7 @@ sh install.sh
 - **Background music** --- `/music on` generates up to 12 instrumental tracks with the ElevenLabs Music API; see [Background Music](#background-music)
 - **Music Player (lux)** --- a clickable album list and play controls in the [lux](https://github.com/punt-labs/lux) display; see [Music Player](#music-player)
 - **Control Panel (lux)** --- a lux menu entry for notification and voice settings; see [Control Panel](#control-panel)
-- **Voice calls** --- `vox call start` talks with a read-only agent that can search the repository; see [Conversation Mode](#conversation-mode)
+- **Voice calls** --- talk to Vox and delegate coding to persistent workers; see [Vox call](#vox-call)
 
 ## What It Looks Like
 
@@ -205,7 +205,6 @@ There are two chimes: one for task completion and one for a permission prompt. T
 | `/music stop` | Stop background music |
 | `/call --headset` | Talk to voxd's call agent, which delegates coding to persistent workers |
 | `/call status` | Show voxd's call: state, tool calls, transcript so far |
-| `/call start <topic>` | Start a voice call with a read-only call agent about `<topic>` |
 | `/call stop` | Hang up |
 
 ### CLI
@@ -268,13 +267,11 @@ vox also works as a standalone TTS tool, without Claude Code.
 | Command | What it does |
 |---------|--------------|
 | `vox call --headset` | Talk to voxd's call agent while wearing a headset; prints a live status line, then the transcript |
+| `vox call --aec` | Use an audio path already configured for acoustic echo cancellation |
 | `vox call --script greet.jsonl` | Feed recorded caller turns (`{"pcm_path": ..., "pause_s": ...}` per line) instead of the microphone |
 | `vox call status` | Show voxd's call: state, tool calls, transcript so far |
 | `vox call teardown` | Delete the managed ElevenLabs agent and tools; the next call provisions them again |
-| `vox call start --context snapshot.md` | Start a voice call; the call agent opens with the snapshot file |
-| `vox call start --context - < snapshot.md` | Read the snapshot from stdin |
-| `vox call start --context snapshot.md --trace-turns` | Also print a turn-by-turn latency trace |
-| `vox call stop` | Hang up |
+| `vox call stop` | Hang up without stopping workers |
 | `vox call context --session <id>` | Inspect curated Claude Code hook context and sequence gaps |
 
 #### Installation and the Daemon
@@ -545,7 +542,7 @@ This registers `voxd` as a service, creates `keys.env`, and starts the daemon. O
 | Logs | `~/.punt-labs/vox/logs/vox.log` |
 | Runtime state | `~/.punt-labs/vox/run/serve.{port,token}` |
 | Cache | `~/.punt-labs/vox/cache/` |
-| Call summaries | `~/.punt-labs/vox/calls/` |
+| Call traces | `~/.punt-labs/vox/calls/` |
 | Service unit (Linux) | `/etc/systemd/system/voxd.service` |
 | Service plist (macOS) | `~/Library/LaunchAgents/com.punt-labs.voxd.plist` |
 
@@ -585,38 +582,19 @@ When [lux](https://github.com/punt-labs/lux) is running on the same machine, `vo
 
 When vox is enabled in a repository and lux is running, each Claude Code session adds a `Vox` entry to the lux menu. It opens a settings panel for chimes versus voice, the notification level (off, normal, continuous), and the voice, with a preview button. The panel changes the same settings as the CLI and slash commands, so they always agree. If a change cannot be saved or `voxd` is unreachable, the panel says so in a status line.
 
-## Conversation Mode
+## Vox call
 
-`vox call --headset` talks to the call agent `voxd` runs: an ElevenLabs voice agent that starts, steers, inspects and stops persistent coding workers in your allowlisted repositories. The call and its workers live in `voxd`, so the workers keep going after the call ends, and the CLI only starts the call, shows one live status line, and prints the transcript when it ends. `vox call stop` (or Ctrl-C) hangs up. `--script` replaces the microphone with recorded 16 kHz mono PCM turns for demos and CI.
+Talk to Vox without opening a coding session first. `voxd` runs an ElevenLabs
+voice agent that can start, steer, check and stop coding workers. Workers run
+in their own worktrees and keep running after you hang up. On another call,
+ask Vox what the workers did while you were away.
 
-Live Mode B calls require a headset or `--aec` to declare a system audio path
-already configured for acoustic echo cancellation. Vox does not enable or
-verify system AEC. Run `vox doctor` to check the local ElevenLabs key's Agents
-Write scope (`convai_write`), Claude login expiry, tmux, and echo cancellation.
-The credential checks use the invoking shell; a separately configured daemon
-may use a different key or Claude login.
+### Call setup
 
-`vox call start` starts a voice call with a read-only call agent. vox listens through the microphone, transcribes each turn with ElevenLabs, sends it to the agent, and speaks the reply. The agent is a `pi --mode rpc` process that runs for the whole call. It does not see your Claude Code session: it starts from a context snapshot your session writes, and it can only read and search files in the repository.
-
-Separately, the Vox plugin forwards live Claude Code hooks from enabled
-projects to voxd. Use `vox call context --session <id>` to inspect a session's
-goal, active files, recent tool results, open failure, and last assistant
-message without placing a call. Credential-shaped keys are redacted at
-every depth; this does not scrub secrets embedded in free-form text.
-Oversized hooks are reduced to the fields needed for context before delivery.
-Context is bounded and in memory only. Sequence gaps can close as late hooks
-arrive; drops after the last received hook are not visible yet. Gaps measure
-what the current snapshot has not seen, including history lost on a daemon
-restart or session eviction; they do not prove a transport drop. If older
-missing ranges expire, `untracked_through` marks that part of the history.
-Older arrivals in that expired portion are refused because the daemon can
-no longer distinguish them from duplicates.
-Small sender counter files persist so resumed sessions keep their
-sequence numbers. They do not contain hook payloads.
-
-In Claude Code, `/call start <topic>` writes the snapshot from the topic and the current work, then starts the call. `/call stop` hangs up. While a call is active, your own prompts to Claude Code are blocked until you run `/call stop` (or `/vox:call stop`), which still works. When a call ends normally, the agent writes a summary (decisions, action items, context gathered, open questions) to `~/.punt-labs/vox/calls/`, and `/call start` reads it back into your session. The newest 50 summaries are kept.
-
-**Requirements.** The call agent needs `pi` on `PATH`, signed in through its own config (`~/.pi/agent`), plus `git` and ripgrep (`rg`); `vox call start` stops with an install hint if `rg` is missing. A TTS provider must be configured to speak the replies. Microphone capture needs the `call` extra, which installs `sounddevice`. If you used the installer or `uv tool install`, reinstall with the extra:
+The daemon needs an ElevenLabs API key with Agents Write (`convai_write`).
+For coding workers, install Git, tmux and Claude Code on the daemon host
+and sign in to Claude Code as the daemon user. Install the `call` extra for
+live microphone input:
 
 ```bash
 uv tool install --force "punt-vox[call]"
@@ -628,7 +606,70 @@ If you installed with pip:
 pip install "punt-vox[call]"
 ```
 
-`sounddevice` uses PortAudio, a system library that pip and uv cannot install. On macOS, run `brew install portaudio`; on most Linux distributions, install `libportaudio2` (for example `apt install libportaudio2`). Other `vox` commands work without the extra or PortAudio.
+`sounddevice` uses PortAudio. On macOS, run `brew install portaudio`; on
+most Linux distributions, install `libportaudio2`.
+
+To let Vox start workers, add the Git repository's absolute path to the
+durable global config (`~/.punt-labs/vox/vox.md` for a user-run daemon).
+Use the daemon's config path if you run it as a system service:
+
+```yaml
+---
+worker_repos: "['/absolute/path/to/vox-demo']"
+---
+```
+
+This list controls which repositories workers can start in, not which
+commands they can run. Workers inherit the harness's permissions. Vox
+does not add a command allowlist or require a spoken “yes” before running
+commands. If the harness itself prompts, Vox can relay the prompt and
+your answer; the harness still decides when approval is needed.
+
+### Walkthrough
+
+Use a repository named `vox-demo` with a committed `README.md` for this
+example. First check your setup:
+
+```bash
+vox doctor
+```
+
+This checks the local ElevenLabs key's Agents Write scope, Claude login,
+tmux and audio setup. A separately configured daemon may use different
+credentials. Put on a headset and run:
+
+```bash
+vox call --headset
+```
+
+After the greeting, say: “Start a worker in vox-demo. Ask it to read
+README.md and report its title without editing any files.”
+In a second terminal, check the call and hang up:
+
+```bash
+vox call status
+vox call stop
+```
+
+The first terminal prints the transcript, worker tool activity and a
+private trace path. Hanging up (including with Ctrl-C) does not stop the
+worker. In Claude Code, `/call --headset`, `/call status` and `/call stop`
+use the same call.
+
+Use `--aec` instead of `--headset` only if you already have a system audio
+path configured for echo cancellation; Vox does not enable or verify it.
+For demos and CI, `vox call --script <path>` takes JSON Lines with one
+`{"pcm_path": "turn.pcm", "pause_s": 2}` object per turn. Each path points
+to 16 kHz mono signed 16-bit little-endian PCM and can be relative to the
+script. `vox call teardown` deletes the managed ElevenLabs agent and tools
+when no call is active; the next call provisions them again.
+
+Use `vox call context --session <id>` to inspect curated Claude Code
+context such as the session goal, active files and recent tool results
+without placing a call. The daemon keeps this context bounded and in
+memory. Sequence gaps report what this snapshot has not seen, not
+necessarily a lost hook. Credential-shaped keys are redacted, but
+free-form text is not scrubbed.
 
 **Limits on the agent.** It runs with only the `read`, `grep`, `find`, and `ls` tools; no extensions, skills, MCP servers, or repository context files; and an environment reduced to `PATH`, `HOME`, and locale and terminal variables, with no API keys or tokens from your shell. vox checks every tool call before it runs and refuses any path outside the repository, inside `.git/`, matching a secret pattern (`.env*`, keys, credential files, `.git-credentials`), or ignored by git (every `.gitignore`, `.git/info/exclude`, and your global excludes, as reported by git). A directory search is refused if it would read any refused file. Text that looks like a secret is removed from the spoken reply and the saved summary.
 

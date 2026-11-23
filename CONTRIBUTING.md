@@ -14,7 +14,7 @@ uv sync
 
 Run `make hooks` once after cloning to install the local commit and push gates.
 
-Also install the optional `call` extra, which live microphone capture in `vox call start` needs:
+Also install the optional `call` extra for live microphone capture in `vox call`:
 
 ```bash
 uv sync --extra call
@@ -98,10 +98,12 @@ make help
 
 ## Testing a Call Without a Microphone
 
-`vox call start --script` replays scripted turns from a JSONL file instead of using the microphone and ElevenLabs speech-to-text. A TTS provider is still needed to speak the replies.
+`vox call --script` streams recorded turns from a JSONL file to the
+ElevenLabs voice agent instead of using the microphone. See
+[Vox call](README.md#vox-call) for credentials and the script format.
 
 ```bash
-vox call start --context snapshot.md --script turns.jsonl
+vox call --script turns.jsonl
 ```
 
 ## Plugin Layout

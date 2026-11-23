@@ -38,11 +38,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["MicAudioSource"]
 
-# The chunk size :class:`~.turn_detector.TurnDetector` was designed and
-# tested against (its default ``silence_gap_s=0.2`` and the fixture chunks
-# in ``tests/conversation_mode/test_turn_detector.py`` both assume roughly
-# this granularity). Smaller would raise callback overhead for no detection
-# benefit; larger would coarsen the detector's silence-gap timing.
+# Match the voice call transport's 20 ms audio frames.
 _CHUNK_S = 0.02
 
 

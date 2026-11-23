@@ -14,24 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Vox call now has one implementation. The CLI and plugin both use
+  the daemon's ElevenLabs call and persistent workers. Retired the former
+  pi call, its context snapshot and summary handoff, and its prompt lock.
+
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
 
 ### Added
 
-- `vox doctor` reports Mode B call prerequisites: the local ElevenLabs key's
+- `vox doctor` reports call prerequisites: the local ElevenLabs key's
   `convai_write` scope, Claude login expiry, tmux, and echo cancellation.
-  Live Mode B calls require `--headset` or `--aec` (a system echo-cancelled
+  Live calls require `--headset` or `--aec` (a system echo-cancelled
   audio path); scripted calls have no live microphone. (PL-1397)
 
-- Bare `vox call` talks to voxd's Mode B call agent: it starts the call, shows
+- Bare `vox call` talks to voxd's voice agent: it starts the call, shows
   a live status line, and prints the transcript, worker tool calls and trace
   path when the call ends. `vox call --script greet.jsonl` feeds recorded PCM
   caller turns instead of the microphone, `vox call status` shows the call,
   and `vox call stop` or Ctrl-C (even while the call is still connecting)
-  hangs it up. `/call` in the plugin does the
-  same; `vox call start --context` and `/call start <topic>` keep the pi call.
+  hangs it up. `/call` in the plugin does the same.
   If the CLI loses voxd's status mid-call it hangs the call up and exits 1
   rather than leave it running unwatched, and a call that fails to connect
   still prints its error and trace.

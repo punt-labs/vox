@@ -1,4 +1,4 @@
-"""Compose workers, hook ingestion and Mode B calls around one context store."""
+"""Compose workers, hook ingestion and voice calls around one context store."""
 
 from __future__ import annotations
 

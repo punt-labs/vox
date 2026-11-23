@@ -1,4 +1,4 @@
-"""The seams a Mode B call depends on, so tools never reach a concrete provider."""
+"""The seams a voice call depends on, so tools never reach a concrete provider."""
 
 from __future__ import annotations
 

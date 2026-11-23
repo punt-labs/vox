@@ -1,4 +1,4 @@
-"""Tests for the Mode B start fields."""
+"""Tests for the voice call start fields."""
 
 from pathlib import Path
 

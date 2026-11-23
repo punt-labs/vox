@@ -1,4 +1,4 @@
-"""Lifecycle RPCs for the daemon's one Mode B call and its managed agent."""
+"""Lifecycle RPCs for the daemon's one voice call and its managed agent."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
-from punt_vox.paths import user_state_dir
+from punt_vox.paths import calls_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
@@ -59,7 +59,7 @@ class _ActiveCall:
 
 @final
 class CallHandlers:
-    """Start, stop and report the daemon's one Mode B call."""
+    """Start, stop and report the daemon's one voice call."""
 
     __slots__ = (
         "_active",
@@ -104,9 +104,7 @@ class CallHandlers:
         self._workers, self._projects = workers, projects
         self._progress = progress if progress is not None else ProgressEvents()
         self._playback, self._connector = playback, AgentOperations(connector)
-        self._trace_dir = (
-            trace_dir if trace_dir is not None else user_state_dir() / "calls"
-        )
+        self._trace_dir = trace_dir if trace_dir is not None else calls_dir()
         self._active = None
         self._lock = asyncio.Lock()
         self._opener = opener
