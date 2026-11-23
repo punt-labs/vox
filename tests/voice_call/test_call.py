@@ -833,7 +833,9 @@ async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
         opener=_LOOPBACK,
     )
     async with asyncio.timeout(5):
-        start = asyncio.create_task(_rpc(handlers, {"type": "call_start"}))
+        start = asyncio.create_task(
+            _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
+        )
         while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
             "state": "idle"
         }:
@@ -844,8 +846,10 @@ async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
     assert cast("dict[str, object]", stopped)["state"] == "ended"
 
 
+@pytest.mark.parametrize("echo_control", ["headset", "aec"])
 async def test_a_failed_provisioning_is_reported_to_the_caller(
     tmp_path: Path,
+    echo_control: str,
 ) -> None:
     connector = _SlowConnector()
     connector.release.set()
@@ -858,10 +862,35 @@ async def test_a_failed_provisioning_is_reported_to_the_caller(
         trace_dir=tmp_path,
         opener=_LOOPBACK,
     )
-    reply = await _rpc(handlers, {"type": "call_start"})
+    reply = await _rpc(handlers, {"type": "call_start", "echo_control": echo_control})
     assert "provisioning failed" in str(reply)
     status = (await _rpc(handlers, {"type": "call_status"}))["result"]
     assert cast("dict[str, object]", status)["state"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "declaration", [{}, {"echo_control": True}, {"echo_control": "speakers"}]
+)
+async def test_mic_call_without_echo_protection_does_not_dial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declaration: dict[str, object],
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    workers = FakeWorkers()
+    handlers = CallHandlers(
+        workers,
+        workers,
+        cast("PlaybackQueue", FakePlayback()),
+        trace_dir=tmp_path,
+    )
+    reply = await _rpc(handlers, {"type": "call_start", **declaration})
+    assert "Live calls require echo protection" in str(reply)
+    assert "vox call --headset" in str(reply)
+    assert (await _rpc(handlers, {"type": "call_status"}))["result"] == {
+        "state": "idle"
+    }
+    assert list(tmp_path.iterdir()) == []
 
 
 async def test_a_call_that_never_connects_times_out(
@@ -891,7 +920,7 @@ async def test_a_call_that_never_connects_times_out(
             "call_status",
             "call_teardown",
         }
-        reply = await _rpc(handlers, {"type": "call_start"})
+        reply = await _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
         hold.set()
     assert "did not connect" in str(reply)
 
@@ -992,7 +1021,9 @@ async def test_agent_teardown_waits_for_cancelled_call_provisioning(
         patch.object(connector, "teardown", side_effect=teardown),
     ):
         async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
-            tasks.create_task(_rpc(handlers, {"type": "call_start"}))
+            tasks.create_task(
+                _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
+            )
             try:
                 await started.wait()
                 assert "result" in await _rpc(handlers, {"type": "call_stop"})

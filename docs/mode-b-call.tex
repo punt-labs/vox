@@ -29,7 +29,7 @@ While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names nine properties:
+The model names ten properties:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -58,6 +58,10 @@ The model names nine properties:
   \item[C9] \emph{Managed agent teardown is idle-only}: teardown does not
     end a call or alter its state
     (\texttt{test\_agent\_teardown\_refuses\_a\_live\_call}).
+  \item[C10] \emph{Echo protection is declared before dialing}: microphone
+    calls without a headset or external AEC declaration are refused before
+    provisioning; scripted calls do not open the microphone
+    (\texttt{test\_mic\_call\_without\_echo\_protection\_does\_not\_dial}).
 \end{enumerate}
 
 \section{Types}
@@ -65,6 +69,7 @@ The model names nine properties:
 \begin{zed}
   [KEY] \\
   CALL ::= idle | connecting | live | ended | failed \\
+  INPUT ::= scripted | headset | externalAEC | openSpeakers \\
   ZBOOL ::= ztrue | zfalse
 \end{zed}
 
@@ -123,10 +128,12 @@ cleans the partial record first, under the same registration lock.
 
 \begin{schema}{Start}
   \Delta Call \\
-  \Xi ManagedAgent
+  \Xi ManagedAgent \\
+  input? : INPUT
 \where
   call \in \{ idle, ended, failed \} \\
   settled = ztrue \\
+  input? \neq openSpeakers \\
   call' = connecting \\
   settled' = zfalse \\
   holding' = zfalse \\

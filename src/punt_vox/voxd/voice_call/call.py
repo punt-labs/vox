@@ -84,7 +84,7 @@ class VoiceAgentCall:
         speaker: AgentSpeaker,
         *,
         trace: EventTrace,
-        opener: Opener = Conversation.open,
+        opener: Opener | None = None,
         progress: ProgressEvents | None = None,  # None creates an unconnected source.
     ) -> Self:
         """Bind the call's tools, caller audio, speaker and trace."""
@@ -93,7 +93,8 @@ class VoiceAgentCall:
         self._progress = CallProgress(
             progress if progress is not None else ProgressEvents()
         )
-        self._trace, self._opener = trace, opener
+        self._trace = trace
+        self._opener = opener if opener is not None else Conversation.open
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
         self._transcript = deque(maxlen=_HISTORY)
