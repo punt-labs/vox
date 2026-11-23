@@ -427,7 +427,7 @@
     "avg_lcom": 0.967
   },
   "src/punt_vox/doctor_call.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -441,6 +441,13 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/doctor_call_scope.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/doctor_call_workers.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
