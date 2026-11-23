@@ -2,19 +2,18 @@
 
 voxd owns the ElevenLabs conversation, the boss tools and the workers they
 start, so the call and its workers outlive this process. This client starts
-the call, shows one live status line until it ends, and stops it on Ctrl-C.
+the call and hands it to ``CallFollower`` to show until it ends.
 """
 
 from __future__ import annotations
 
 import asyncio
-import shutil
-import sys
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Self, final
 
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.commands.voice_call_follow import CallFollower
 from punt_vox.commands.voice_call_script import VoiceCallScript
 from punt_vox.commands.voice_call_status import CallStatusView
 from punt_vox.daemon_control import DaemonControl
@@ -50,19 +49,14 @@ class VoiceCall:
         """Start a call (mic, or *script*'s recorded turns) and follow it to its end.
 
         Raises:
-            typer.Exit: Exit 1 when voxd refuses or the call fails.
+            typer.Exit: Exit 1 when voxd refuses or the call fails; see
+                ``CallFollower.until_end`` for a lost status or an interrupt.
         """
         fields: dict[str, object] = {}
         if script is not None:
             fields["script"] = VoiceCallScript.read(script).wire()
-        try:
-            started = self._run(self._request("start", _START_TIMEOUT_S, **fields))
-            ended = cast(
-                "CallStatusView", self._run(self._follow(CallStatusView(started)))
-            )
-        except KeyboardInterrupt:
-            ended = CallStatusView(self._run(self._request("stop", _CONTROL_TIMEOUT_S)))
-        self._finish(ended)
+        follower = CallFollower(self._control, self._poll_s)
+        follower.finish(follower.until_end(self._begin(fields)))
 
     def stop(self) -> None:
         """Stop the running call; refuse when no call is running.
@@ -70,62 +64,53 @@ class VoiceCall:
         Raises:
             typer.BadParameter: When no Mode B call is running.
         """
-        status = CallStatusView(self._run(self._request("status", _CONTROL_TIMEOUT_S)))
+        status = CallStatusView(
+            self._run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
+        )
         if not status.running:
             raise typer.BadParameter("no call is active")
-        self._run(self._request("stop", _CONTROL_TIMEOUT_S))
+        self._run(self._control.request("stop", timeout=_CONTROL_TIMEOUT_S))
         typer.echo("Stopping the call.")
 
     def status(self) -> None:
         """Print the current call's status line and transcript so far."""
-        view = CallStatusView(self._run(self._request("status", _CONTROL_TIMEOUT_S)))
+        view = CallStatusView(
+            self._run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
+        )
         typer.echo(view.line())
         for line in view.report():
             typer.echo(line)
 
-    async def _request(
-        self, operation: str, timeout: float, **fields: object
-    ) -> object:
-        """Send one ``call_<operation>`` RPC."""
-        return await self._control.request(operation, timeout=timeout, **fields)
+    def _begin(self, fields: dict[str, object]) -> CallStatusView:
+        """Send ``call_start``; a call that failed to connect reports its trace."""
+        try:
+            return CallStatusView(
+                asyncio.run(
+                    self._control.request("start", timeout=_START_TIMEOUT_S, **fields)
+                )
+            )
+        except VoxdConnectionError as exc:
+            typer.echo(f"Call unavailable: {exc}", err=True)
+            raise typer.Exit(1) from None
+        except VoxdProtocolError as exc:
+            typer.echo(f"Call unavailable: {exc}", err=True)
+            self._report_failed_start()
+            raise typer.Exit(1) from None
 
-    async def _follow(self, view: CallStatusView) -> CallStatusView:
-        """Poll ``call_status``, echoing the status line each time it changes."""
-        shown = ""
-        while True:
-            line = view.line()
-            if line != shown:
-                self._show(line)
-                shown = line
-            if not view.running:
-                return view
-            await asyncio.sleep(self._poll_s)
-            view = CallStatusView(await self._request("status", _CONTROL_TIMEOUT_S))
+    def _report_failed_start(self) -> None:
+        """Print the report of a call voxd refused because it failed to connect.
 
-    @staticmethod
-    def _show(line: str) -> None:
-        """Rewrite the status line in place on a terminal, else print it.
-
-        On a terminal the line is clipped to its width: a wrapped line would
-        leave its first rows behind when the next one rewrites only the last.
+        The refusal is already on stderr, so a status that cannot be read adds
+        nothing and is left out.
         """
-        if sys.stdout.isatty():
-            width = shutil.get_terminal_size().columns - 1
-            if len(line) > width:
-                line = line[: max(width - 3, 0)] + "..."
-            typer.echo(f"\r\x1b[K{line}", nl=False)
-        else:
-            typer.echo(line)
-
-    @staticmethod
-    def _finish(view: CallStatusView) -> None:
-        """Print the end-of-call report; a failed call exits 1."""
-        if sys.stdout.isatty():
-            typer.echo("")
-        for line in view.report():
-            typer.echo(line)
-        if view.failed:
-            raise typer.Exit(1)
+        try:
+            status = CallStatusView(
+                asyncio.run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
+            )
+        except (VoxdConnectionError, VoxdProtocolError):
+            return
+        if status.failed:
+            CallFollower.finish(status)
 
     @staticmethod
     def _run(request: Coroutine[object, object, object]) -> object:

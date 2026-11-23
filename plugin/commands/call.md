@@ -44,7 +44,9 @@ the `vox call` CLI (there is no `mic:call` MCP tool yet):
    vox call
    ```
 
-   Append `--script <path>` verbatim when it was given. Do not write a context
+   Append `--script '<path>'` when it was given, the path in single quotes
+   so the shell passes it as one argument; if the path itself contains a single
+   quote, ask for another path instead of running the command. Do not write a context
    snapshot: voxd seeds its agent with the allowlisted repositories and the
    workers' progress itself.
 
@@ -94,7 +96,9 @@ Run `vox call status` and report the state and the last few turns.
    VOX_CONTEXT_<the same 8 hex digits>
    ```
 
-   Append `--script <path>` verbatim when it was given.
+   Append `--script '<path>'` when it was given, the path in single quotes
+   so the shell passes it as one argument; if the path itself contains a single
+   quote, ask for another path instead of running the command.
 
 3. Tell the human the call is starting, then end your turn. Do not poll.
 

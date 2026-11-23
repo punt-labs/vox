@@ -54,11 +54,12 @@ def idle_voxd() -> Iterator[object]:
         yield request
 
 
-def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
+def test_stop_writes_a_stop_request(tmp_path: Path, idle_voxd: AsyncMock) -> None:
     CallLock(tmp_path / "call.lock").acquire("conversation mode call active")
     with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(CallCli.build_app(), ["stop"])
     assert result.exit_code == 0
+    idle_voxd.assert_not_awaited()
     control = CallControl(tmp_path / "call.control")
     request = control.consume()
     assert request is not None

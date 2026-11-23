@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller turns instead of the microphone, `vox call status` shows the call,
   and `vox call stop` or Ctrl-C hangs it up. `/call` in the plugin does the
   same; `vox call start --context` and `/call start <topic>` keep the pi call.
+  If the CLI loses voxd's status mid-call it hangs the call up and exits 1
+  rather than leave it running unwatched, and a call that fails to connect
+  still prints its error and trace.
 
 - `vox worker steer WORKER_ID WORDS [--urgent]` sends literal input to ready
   workers with harness-defined paste settling. Replies acknowledge a later

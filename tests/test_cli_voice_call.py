@@ -14,13 +14,19 @@ from typer.testing import CliRunner
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands.call import CallCli
-from punt_vox.commands.voice_call import VoiceCall
+from punt_vox.commands.voice_call_follow import CallFollower
 from punt_vox.commands.voice_call_status import CallStatusView
 from punt_vox.daemon_control import DaemonControl
 
 runner = CliRunner(env={"COLUMNS": "200"})
+_FOLLOW = "punt_vox.commands.voice_call_follow"
 
-_LIVE: dict[str, object] = {"state": "live", "transcript": [], "tool_calls": []}
+_LIVE: dict[str, object] = {
+    "state": "live",
+    "transcript": [],
+    "tool_calls": [],
+    "trace": "/tmp/call-trace.jsonl",
+}
 _ENDED: dict[str, object] = {
     "state": "ended",
     "transcript": [
@@ -35,8 +41,8 @@ _ENDED: dict[str, object] = {
 class _Voxd:
     """A scripted voxd: each reply is the next of *statuses*; the last repeats."""
 
-    def __init__(self, *statuses: dict[str, object]) -> None:
-        self.statuses = list(statuses)
+    def __init__(self, *statuses: object) -> None:
+        self.statuses: list[object] = list(statuses)
         self.sent: list[tuple[str, dict[str, object]]] = []
 
     async def request(
@@ -57,7 +63,9 @@ class _NoPiCall:
 
 @pytest.fixture
 def no_poll_delay() -> Iterator[None]:
-    with patch("punt_vox.commands.voice_call.asyncio.sleep", new_callable=AsyncMock):
+    with patch(
+        "punt_vox.commands.voice_call_follow.asyncio.sleep", new_callable=AsyncMock
+    ):
         yield
 
 
@@ -122,10 +130,10 @@ def test_a_refusing_or_absent_voxd_exits_one(failure: Exception) -> None:
 def test_ctrl_c_while_following_stops_the_call() -> None:
     voxd = _Voxd(_LIVE)
 
-    async def follow(_self: VoiceCall, _view: CallStatusView) -> CallStatusView:
+    async def follow(_self: CallFollower, _view: CallStatusView) -> CallStatusView:
         raise KeyboardInterrupt
 
-    with _voxd(voxd), patch.object(VoiceCall, "_follow", follow):
+    with _voxd(voxd), patch.object(CallFollower, "_follow", follow):
         voxd.statuses = [{**_ENDED, "state": "ended"}]
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 0, result.output
@@ -212,9 +220,89 @@ def test_the_status_line_truncates_long_turns() -> None:
     assert len(line.split("agent: ", 1)[1]) == 72
 
 
-def test_a_non_dict_status_reads_as_idle() -> None:
-    view = CallStatusView(None)
-    assert (view.state, view.running, view.report()) == ("idle", False, [])
+@pytest.mark.parametrize("status", [None, {}, {"state": "stopping"}])
+def test_an_unreadable_status_is_a_protocol_error(status: object) -> None:
+    with pytest.raises(VoxdProtocolError):
+        CallStatusView(status)
+
+
+@pytest.mark.usefixtures("no_poll_delay")
+@pytest.mark.parametrize(
+    "lost", [VoxdConnectionError("voxd restarted"), {"state": "stopping"}]
+)
+def test_losing_the_status_mid_call_hangs_up_and_exits_one(lost: object) -> None:
+    voxd = _Voxd(_LIVE, lost, _ENDED)
+
+    async def request(operation: str, *, timeout: float, **fields: object) -> object:
+        reply = await voxd.request(operation, timeout=timeout, **fields)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    with patch.object(DaemonControl, "request", side_effect=request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert [op for op, _ in voxd.sent] == ["start", "status", "stop"]
+    assert "Lost the call's status, hanging up" in result.output
+    assert "agent: Started a worker on demo." in result.output
+
+
+def test_a_call_that_failed_to_connect_reports_its_trace() -> None:
+    failed = {"state": "failed", "error": "no agent", "trace": "/tmp/t.jsonl"}
+    request = AsyncMock(side_effect=[VoxdProtocolError("did not connect"), failed])
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert "Call unavailable: did not connect" in result.output
+    assert "error: no agent" in result.output
+    assert "trace: /tmp/t.jsonl" in result.output
+
+
+def test_a_start_refused_beside_a_live_call_reports_no_other_call() -> None:
+    request = AsyncMock(side_effect=[VoxdProtocolError("already running"), _ENDED])
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert "Started a worker" not in result.output
+
+
+@pytest.mark.usefixtures("no_poll_delay")
+def test_following_stops_when_voxd_reports_another_call() -> None:
+    first = {**_LIVE, "trace": "/tmp/first.jsonl"}
+    voxd = _Voxd(first, {**_LIVE, "trace": "/tmp/second.jsonl"})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 0, result.output
+    assert [op for op, _ in voxd.sent] == ["start", "status"]
+    assert "trace: /tmp/first.jsonl" in result.output
+    assert "second" not in result.output
+
+
+def test_ctrl_c_exits_one_when_voxd_still_reports_the_call_live() -> None:
+    voxd = _Voxd(_LIVE)
+
+    async def follow(_self: CallFollower, _view: CallStatusView) -> CallStatusView:
+        raise KeyboardInterrupt
+
+    with _voxd(voxd), patch.object(CallFollower, "_follow", follow):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert "voxd still reports the call live" in result.output
+
+
+def test_a_second_ctrl_c_while_hanging_up_exits_130() -> None:
+    request = AsyncMock(side_effect=[_LIVE, KeyboardInterrupt])
+
+    async def follow(_self: CallFollower, _view: CallStatusView) -> CallStatusView:
+        raise KeyboardInterrupt
+
+    with (
+        patch.object(DaemonControl, "request", request),
+        patch.object(CallFollower, "_follow", follow),
+    ):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 130
+    assert "the call may still be live" in result.output
 
 
 @pytest.mark.asyncio
@@ -239,13 +327,15 @@ def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
 ) -> None:
     """A wrapped line would strand rows the next in-place rewrite cannot reach."""
     with (
-        patch("punt_vox.commands.voice_call.sys.stdout.isatty", return_value=True),
         patch(
-            "punt_vox.commands.voice_call.shutil.get_terminal_size",
+            "punt_vox.commands.voice_call_follow.sys.stdout.isatty", return_value=True
+        ),
+        patch(
+            f"{_FOLLOW}.shutil.get_terminal_size",
             return_value=os.terminal_size((40, 24)),
         ),
     ):
-        VoiceCall._show("call live | 1 tool calls | agent: " + "word " * 20)
+        CallFollower._show("call live | 1 tool calls | agent: " + "word " * 20)
 
     written = capsys.readouterr().out
     assert written.startswith("\r\x1b[K")
