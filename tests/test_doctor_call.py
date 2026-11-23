@@ -49,7 +49,7 @@ def test_call_checks_includes_systemd_result(monkeypatch: pytest.MonkeyPatch) ->
         patch("shutil.which", return_value=None),
         patch(
             "punt_vox.doctor_call.CallWorkerChecks.run",
-            return_value=[worker_result],
+            side_effect=lambda: [worker_result],
         ),
     ):
         assert worker_result in CallChecks().run()
