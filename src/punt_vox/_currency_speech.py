@@ -16,7 +16,15 @@ _UNITS = {
     "₽": ("ruble", "rubles"),
 }
 _SIGNS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
-_SCALES = {"k": "thousand", "m": "million", "b": "billion"}
+_SCALES = {
+    "k": "thousand",
+    "m": "million",
+    "b": "billion",
+    "thousand": "thousand",
+    "million": "million",
+    "billion": "billion",
+    "trillion": "trillion",
+}
 _AMOUNT = (
     r"(?P<{p}sign_before>[-+\u2212])?"
     rf"(?P<{{p}}symbol>[{''.join(_UNITS)}])"
