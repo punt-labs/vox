@@ -58,19 +58,18 @@ class WorkerHooks:
 
     async def ingest(self, payload: dict[str, object], *, worker_only: bool) -> None:
         """Revalidate admission and checkpoint before returning a delivery receipt."""
+        if not worker_only:
+            self._store.ingest(payload)
+            return
         async with self._lock:
-            event = await asyncio.to_thread(
-                self._ingest, payload, worker_only=worker_only
-            )
+            event = await asyncio.to_thread(self._ingest, payload)
             if event is not None and self._events is not None:
                 self._events.publish(event)
 
-    def _ingest(
-        self, payload: dict[str, object], *, worker_only: bool
-    ) -> WorkerProgress | None:
+    def _ingest(self, payload: dict[str, object]) -> WorkerProgress | None:
         session, cwd = payload.get("session_id"), payload.get("cwd")
         admitted = self._registry.admits_hook(session, cwd)
-        if worker_only and not admitted:
+        if not admitted:
             return None
         sequence = payload.get("relay_seq")
         if (
@@ -79,10 +78,8 @@ class WorkerHooks:
             and self._registry.has_hook_receipt(str(session), sequence)
         ):
             return None
-        self._store.ingest(payload, worker_input=admitted)
+        self._store.ingest(payload, worker_input=True)
         self._registry.checkpoint_progress(session, cwd)
-        if not admitted:
-            return None
         snapshot = self._store.snapshot(str(session))
         return self._reports.observe(
             str(session),

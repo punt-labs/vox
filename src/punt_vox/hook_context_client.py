@@ -38,7 +38,7 @@ class HookContextClient:
         async with asyncio.timeout(5):
             for delay in (*cls._RETRY_DELAYS, None):
                 try:
-                    await cls._deliver(payload, worker_only=worker_only)
+                    await cls._deliver(payload, worker_only=True)
                 except (VoxdConnectionError, VoxdProtocolError) as exc:
                     if delay is None or not cls._retryable(exc):
                         raise

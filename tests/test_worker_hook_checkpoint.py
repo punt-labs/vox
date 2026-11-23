@@ -516,7 +516,9 @@ async def test_delivered_session_start_is_durable_without_list(tmp_path: Path) -
         socket = AsyncMock()
         await handlers["hook_event"](
             {
+                "type": "hook_event",
                 "id": "hook",
+                "worker_only": True,
                 "payload": {
                     "session_id": record.id,
                     "cwd": record.worktree,
@@ -558,15 +560,20 @@ async def test_unadmitted_worker_events_never_leave_the_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admitted_event_retains_server_side_revalidation() -> None:
+@pytest.mark.parametrize("worker_only", [True, False])
+async def test_admitted_event_retains_server_side_revalidation(
+    worker_only: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payload: dict[str, object] = {"session_id": "worker", "cwd": "/repo"}
+    if not worker_only:
+        monkeypatch.setenv("VOX_WORKER_SESSION_ID", "worker")
     with patch.object(
         HookContextClient,
         "_request",
         new_callable=AsyncMock,
         side_effect=[{"admitted": True}, {}],
     ) as request:
-        await HookContextClient.send_event(payload, worker_only=True)
+        await HookContextClient.send_event(payload, worker_only=worker_only)
     assert request.await_count == 2
     assert request.call_args.args[0] == {
         "type": "hook_event",
@@ -618,12 +625,13 @@ async def test_failed_checkpoint_is_not_acknowledged(tmp_path: Path) -> None:
     with patch.object(WorkerRecords, "save", side_effect=OSError("disk failed")):
         await routes["hook_event"](
             {
+                "worker_only": True,
                 "payload": {
                     "session_id": record.id,
                     "cwd": record.worktree,
                     "hook_event_name": "SessionStart",
                     "relay_seq": 1,
-                }
+                },
             },
             socket,
         )

@@ -61,10 +61,17 @@ class StartupHandlers:
         websocket: WebSocket,
     ) -> None:
         """Wait for durable worker state before dispatching."""
+        if msg.get("type") == "hook_event" and msg.get("worker_only") is not True:
+            await self._handler(msg, websocket)
+            return
         reply = WireReply(websocket, str(msg.get("id", "")))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _RECOVERY_TIMEOUT_S
         try:
-            async with asyncio.timeout(_RECOVERY_TIMEOUT_S):
+            async with asyncio.timeout_at(deadline):
                 ready = await asyncio.shield(asyncio.wrap_future(self._recovery))
+                if loop.time() >= deadline:
+                    raise TimeoutError
         except TimeoutError:
             await reply.send(
                 {

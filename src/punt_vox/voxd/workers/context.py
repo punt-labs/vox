@@ -29,10 +29,10 @@ class WorkerContext:
         policy = WorkerSubsystem.policy()
         actor, recover = WorkerSubsystem.prepare(store, policy)
         events = ProgressEvents()
-        return StartupHandlers.start(
-            recover,
-            {
-                **WorkerHandlers(actor).handlers(store, events),
-                **CallHandlers(actor, policy, playback, progress=events).handlers(),
-            },
-        )
+        workers = WorkerHandlers(actor).handlers(store, events)
+        snapshot = workers.pop("hook_context")
+        return {
+            **StartupHandlers.start(recover, workers),
+            "hook_context": snapshot,
+            **CallHandlers(actor, policy, playback, progress=events).handlers(),
+        }
