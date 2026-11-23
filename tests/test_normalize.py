@@ -292,6 +292,9 @@ class TestAcronymSpacing:
     def test_acronym_in_camel(self) -> None:
         assert normalize_for_speech("HTMLParser") == "H T M L parser"
 
+    def test_known_abbreviation_in_camel(self) -> None:
+        assert normalize_for_speech("parseSTDERR") == "parse standard error"
+
     def test_acronym_with_punctuation(self) -> None:
         assert normalize_for_speech("(CLI)") == "C L I"
 

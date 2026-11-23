@@ -18,6 +18,13 @@ def test_backticks_in_html_attributes_do_not_open_code() -> None:
     )
 
 
+def test_transform_code_in_image_alt_text() -> None:
+    text = "![use `$1`](plot.png) then `$2`"
+    assert InlineCode.rewrite_currency(text) == (
+        "![use `dollar sign 1`](plot.png) then `dollar sign 2`"
+    )
+
+
 def test_span_offsets_survive_leading_unicode_whitespace_lines() -> None:
     text = "\N{NO-BREAK SPACE}\nUse `code`"
     assert InlineCode.rewrite(text, str.upper) == "\N{NO-BREAK SPACE}\nUse `CODE`"
