@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 _LINE_END = re.compile(r"\r\n?|\n")
 _TICK = re.compile("`")
+_WORD = re.compile(r"\S+")
 _SOURCE_OFFSET = "vox_source_offset"
 VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 _VIBE_BEFORE_FENCE = re.compile(
@@ -37,33 +38,50 @@ class InlineCode:
     @classmethod
     def rewrite_currency(cls, text: str, *, vibed: bool = False) -> str:
         """Spell code currency signs literally, except in paths."""
-        return cls._rewrite(text, SpeechPunctuation.spell_code_currency, vibed=vibed)
+        return cls._rewrite(
+            text,
+            lambda body, in_path: SpeechPunctuation.spell_code_currency(
+                body, in_path=in_path
+            ),
+            vibed=vibed,
+        )
 
     @classmethod
     def _rewrite(
         cls,
         text: str,
-        transform: Callable[[str, str], str],
+        transform: Callable[[str, bool], str],
         *,
         vibed: bool = False,
     ) -> str:
-        """Pass each span's body and adjacent token prefix to *transform*."""
+        """Pass each span and whether it starts in an existing path to *transform*."""
         if "`" not in text:
             return text
         lines = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
         parts: list[str] = []
         cursor = 0
         markdown = _VIBE_BEFORE_FENCE.sub(r"\1", text) if vibed else text
-        for opening, start, end in cls._source_spans(text, lines, markdown):
-            prefix = opening
-            while prefix > 0 and not text[prefix - 1].isspace():
-                prefix -= 1
-            parts.extend(
-                (text[cursor:start], transform(text[start:end], text[prefix:opening]))
-            )
+        spans = cls._source_spans(text, lines, markdown)
+        for in_path, start, end in cls._with_path_context(text, spans):
+            parts.extend((text[cursor:start], transform(text[start:end], in_path)))
             cursor = end
         parts.append(text[cursor:])
         return "".join(parts)
+
+    @staticmethod
+    def _with_path_context(
+        text: str, spans: Iterator[tuple[int, int, int]]
+    ) -> Iterator[tuple[bool, int, int]]:
+        words = _WORD.finditer(text)
+        word = next(words)
+        in_path: bool | None = None
+        for opening, start, end in spans:
+            while word.end() <= opening:
+                word = next(words)
+                in_path = None
+            if in_path is None:
+                in_path = SpeechPunctuation.is_code_path(text[word.start() : opening])
+            yield in_path, start, end
 
     @classmethod
     def _source_spans(
