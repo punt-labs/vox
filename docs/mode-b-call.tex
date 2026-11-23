@@ -111,10 +111,27 @@ operation has run or is in flight; \texttt{ran} those that finished.
 \texttt{Start} is refused from \emph{connecting} or \emph{live} (C1), and a
 new call gets a fresh cache.
 
-\begin{schema}{Connect}
-  \Delta Call
+\begin{schema}{ManagedAgent}
+  registered : ZBOOL
+\end{schema}
+
+Registration can predate \texttt{InitCall}; a new daemon does not discard it.
+
+\begin{schema}{ProvisionAgent}
+  \Xi Call \\
+  \Delta ManagedAgent
 \where
   call = connecting \\
+  registered = zfalse \\
+  registered' = ztrue
+\end{schema}
+
+\begin{schema}{Connect}
+  \Delta Call \\
+  \Xi ManagedAgent
+\where
+  call = connecting \\
+  registered = ztrue \\
   call' = live \\
   holding' = holding \\
   replying' = replying \\
@@ -138,14 +155,6 @@ new call gets a fresh cache.
 \texttt{End} covers hang-up, stop, timeout and failure. Its precondition
 admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
 \emph{failed} except a new \texttt{Start}, which is C3.
-
-\begin{schema}{ManagedAgent}
-  registered : ZBOOL
-\end{schema}
-
-Registration can predate \texttt{InitCall}; a new daemon does not discard it.
-While connecting, provisioning or reusing the agent establishes
-$registered = ztrue$ before \texttt{Connect}.
 
 \begin{schema}{TeardownAgent}
   \Xi Call \\
