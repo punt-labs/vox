@@ -16,11 +16,10 @@ precondition for functioning.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
-import sys
 from collections.abc import Callable
+from itertools import takewhile
 from pathlib import Path
 from typing import Self, final
 
@@ -47,39 +46,13 @@ class PrivateState:
         """Create a private state."""
         self = super().__new__(cls)
         self._path = path
-        # None selects the default logging reporter; a caller that must never
-        # re-enter logging (the append sink) passes ``report_to_stderr`` instead.
         self._report = self._report_via_logging if on_failure is None else on_failure
         return self
-
-    @classmethod
-    def for_append_sink(cls, path: Path) -> Self:
-        """Return a guard that routes tighten failures to stderr, never logging.
-
-        The append log tightens on every write from within a ``logging`` emit, so
-        its guard must report failures out-of-band (``report_to_stderr``) to avoid
-        unbounded logging re-entry.
-        """
-        return cls(path, on_failure=cls.report_to_stderr)
 
     @staticmethod
     def _report_via_logging(message: str) -> None:
         """Default tighten-failure sink: a debug line for the ordinary caller."""
         logger.debug("%s", message)
-
-    @staticmethod
-    def report_to_stderr(message: str) -> None:
-        """Tighten-failure sink for callers that must never re-enter ``logging``.
-
-        The append log's per-write tightening runs *inside* a ``logging`` emit; a
-        ``logger.*`` call here would recurse straight back into that handler. Writing
-        to the real stderr keeps the failure observable without the loop.
-        """
-        err = sys.__stderr__
-        if err is None:
-            return
-        with contextlib.suppress(OSError, ValueError):
-            err.write(f"[private-state] {message}\n")
 
     @property
     def path(self) -> Path:
@@ -123,11 +96,11 @@ class PrivateState:
 
     def _missing_ancestors(self, parent: Path) -> list[Path]:
         """Return parent's not-yet-existing ancestors, outermost first."""
-        missing: list[Path] = []
-        for directory in (parent, *parent.parents):
-            if directory.exists():
-                break
-            missing.append(directory)
+        missing = list(
+            takewhile(
+                lambda directory: not directory.exists(), (parent, *parent.parents)
+            )
+        )
         missing.reverse()
         return missing
 

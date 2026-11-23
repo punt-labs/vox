@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The unused append-log factory and stderr reporter from `PrivateState`.
+  The shared observability package supplies the active append sink.
+
 ### Changed
 
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
