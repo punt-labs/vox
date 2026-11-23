@@ -42,7 +42,7 @@ class ConvAIKeyCheck:
             )
         except UnicodeError:
             return self._warning("invalid key: contains non-ASCII characters")
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, OSError) as exc:
             return self._warning(f"could not verify scope ({type(exc).__name__})")
         return self._status(response)
 

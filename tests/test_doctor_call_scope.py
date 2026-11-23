@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import httpx
 import pytest
 
 from punt_vox.doctor_call_scope import ConvAIKeyCheck
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _SCOPE_CHECK = "punt_vox.doctor_call_scope"
 
@@ -80,6 +84,29 @@ def test_elevenlabs_connection_failure_is_inconclusive(
         result = ConvAIKeyCheck().run()
     assert "could not verify scope (ConnectTimeout)" in result.message
     assert "secret detail" not in result.message
+
+
+@pytest.mark.parametrize("body", [b"<html>not found</html>", b"[]"])
+def test_elevenlabs_unstructured_reply_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    response = httpx.Response(404, content=body)
+    with patch(f"{_SCOPE_CHECK}.httpx.get", return_value=response):
+        result = ConvAIKeyCheck().run()
+    assert "could not verify scope (HTTP 404)" in result.message
+    assert result.status_kind == "warn"
+
+
+def test_elevenlabs_missing_tls_certificate_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "missing.pem"))
+    result = ConvAIKeyCheck().run()
+    assert "could not verify scope (FileNotFoundError)" in result.message
+    assert result.status_kind == "warn"
+    assert not result.required
 
 
 def test_elevenlabs_non_ascii_key_is_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
