@@ -45,7 +45,7 @@ class EventTrace:
     def _scrub(cls, value: object) -> object:
         if isinstance(value, Mapping):
             return {
-                key: "[redacted]" if cls._is_credential(key) else cls._scrub(child)
+                key: cls._field(key, child)
                 for key, child in cast("Mapping[str, object]", value).items()
             }
         if isinstance(value, list | tuple):
@@ -54,6 +54,20 @@ class EventTrace:
                 for child in cast("list[object] | tuple[object, ...]", value)
             ]
         return value
+
+    @classmethod
+    def _field(cls, key: str, value: object) -> object:
+        if cls._is_credential(key):
+            return "[redacted]"
+        if key == "choice":
+            return value if value in ("approve", "deny") else None
+        if key == "prompt_seq":
+            return (
+                value
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0
+                else None
+            )
+        return cls._scrub(value)
 
     @staticmethod
     def _is_credential(key: str) -> bool:

@@ -55,10 +55,30 @@ def test_relative_worker_project_is_resolved_in_the_callers_directory(
             "steer",
             {"worker_id": "worker-id", "words": "words", "urgent": False},
         ),
+        (
+            [
+                "worker",
+                "steer",
+                "worker-id",
+                "Yes",
+                "--choice",
+                "approve",
+                "--prompt-seq",
+                "3",
+            ],
+            "steer",
+            {
+                "worker_id": "worker-id",
+                "words": "Yes",
+                "urgent": False,
+                "choice": "approve",
+                "prompt_seq": 3,
+            },
+        ),
     ],
 )
 def test_hidden_worker_commands_delegate(
-    args: list[str], operation: str, fields: dict[str, str | bool]
+    args: list[str], operation: str, fields: dict[str, str | bool | int]
 ) -> None:
     """All commands are thin RPC adapters and print the daemon's result."""
     with patch(

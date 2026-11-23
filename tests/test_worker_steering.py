@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,14 +14,126 @@ from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.steering import WorkerSteering
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.worker_client import WorkerClient
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.workers.contracts import HarnessProfile
+    from punt_vox.voxd.workers.types import WorkerPayload
+
+
+@pytest.mark.parametrize(
+    "advance", ["none", "before_roster", "after_roster", "cleared"]
+)
+@pytest.mark.parametrize("choice", [None, "approve", "deny"])
+async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
+    tmp_path: Path,
+    advance: str,
+    choice: DecisionChoice | None,  # None tests an ordinary idle-text instruction.
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    profile = ClaudeProfile(store)
+    actor = WorkerActor(registry)
+    hooks = actor.hooks(store)
+    question: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "relay_seq": 3,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt"
+        if choice is not None
+        else "idle_prompt",
+    }
+    store.ingest(
+        {**question, "relay_seq": 1, "hook_event_name": "SessionStart"},
+        worker_input=True,
+    )
+    store.ingest(question, worker_input=True)
+    original = WorkerActor.workers
+
+    async def snapshot_then_next_prompt(self: WorkerActor) -> list[WorkerPayload]:
+        if advance in ("before_roster", "cleared"):
+            update = {**question, "relay_seq": 5}
+            if advance == "cleared":
+                update["hook_event_name"] = "PostToolUse"
+            await hooks.ingest(update, worker_only=True)
+        snapshot = await original(self)
+        if advance == "after_roster":
+            await hooks.ingest({**question, "relay_seq": 5}, worker_only=True)
+        return snapshot
+
+    def progress(worker_id: str, _harness: HarnessProfile) -> dict[str, object]:
+        return profile.progress(worker_id)
+
+    allowlist = MagicMock()
+    allowlist.repos.return_value = (str(tmp_path),)
+    with (
+        patch.object(FakeWorkerProvider, "progress", side_effect=progress),
+        patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),
+        patch.object(TrivialProfile, "inputs_since", side_effect=profile.inputs_since),
+        patch.object(FakeWorkerProvider, "decide") as decide,
+        patch.object(FakeWorkerProvider, "steer") as steer,
+        patch.object(WorkerActor, "workers", new=snapshot_then_next_prompt),
+        patch.object(WorkerSteering, "_receipt", return_value=None),
+    ):
+        result, error = await BossTools(actor, allowlist).answer(
+            "steer_worker",
+            {
+                "worker_id": worker.id,
+                "words": "Continue.",
+                "choice": choice,
+                **({"prompt_seq": 3} if choice is not None else {}),
+            },
+        )
+        rejected = advance == "after_roster" or (
+            choice is not None and advance in ("before_roster", "cleared")
+        )
+        assert error == rejected
+        if rejected:
+            assert (
+                "different prompt now" in result
+                if choice is not None
+                else "new prompt" in result
+            )
+            assert "ask the person again" in result
+            decide.assert_not_called()
+            steer.assert_not_called()
+        else:
+            assert decide.call_count == (choice is not None)
+            assert steer.call_count == (choice is None)
+    registry.stop(worker.id)
+
+
+@pytest.mark.parametrize("epoch", [True, [], {}, 1.0, "unknown"])
+async def test_invalid_observed_epoch_cannot_deliver(epoch: object) -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    with pytest.raises(ValueError):
+        await WorkerSteering(registry, asyncio.Lock()).handle(
+            {"worker_id": "w", "words": "Continue.", "prompt_epoch": epoch}
+        )
+    registry.steer.assert_not_called()
+
+
+@pytest.mark.parametrize("choice", ["maybe", "", 1, [], {}])
+async def test_invalid_choice_is_rejected_before_delivery(choice: object) -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    with pytest.raises(ValueError, match="choice must be approve or deny"):
+        await WorkerSteering(registry, asyncio.Lock()).handle(
+            {"worker_id": "w", "words": "answer", "choice": choice}
+        )
+    registry.steer.assert_not_called()
 
 
 @pytest.mark.subprocess
@@ -33,7 +146,7 @@ def test_receipt_types_import_without_worker_implementations() -> None:
                 "from punt_vox.voxd.workers.steering_types import SteerReceipt; "
                 "import sys; "
                 "assert SteerReceipt.__required_keys__ == "
-                "{'worker_id', 'heard', 'receipt_seq', 'urgent'}; "
+                "{'worker_id', 'heard', 'receipt_seq', 'urgent', 'choice'}; "
                 "assert 'punt_vox.voxd.workers.steering' not in sys.modules; "
                 "assert 'punt_vox.voxd.workers.registry' not in sys.modules"
             ),
@@ -247,7 +360,15 @@ async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> N
     sequences: dict[str, int] = {}
     release_first = False
 
-    def send(worker: str, words: str, *, urgent: bool) -> int:
+    def send(
+        worker: str,
+        words: str,
+        *,
+        urgent: bool,
+        choice: object = None,
+        prompt_epoch: object = None,  # None binds direct control to the live prompt.
+        prompt_seq: object = None,  # None is ordinary text, not a permission answer.
+    ) -> int:
         baseline = sequences.get(worker, 0)
         sequences[worker] = baseline + 1
         return baseline
@@ -310,11 +431,25 @@ async def test_queued_steer_times_out_without_delivery() -> None:
                 await asyncio.wait_for(
                     steering.handle({"worker_id": "one", "words": "queued"}), 1
                 )
-            registry.steer.assert_called_once_with("one", "first", urgent=False)
+            registry.steer.assert_called_once_with(
+                "one",
+                "first",
+                urgent=False,
+                choice=None,
+                prompt_epoch=None,
+                prompt_seq=None,
+            )
         finally:
             release.set()
             await asyncio.wait_for(first, 1)
-        registry.steer.assert_called_once_with("one", "first", urgent=False)
+        registry.steer.assert_called_once_with(
+            "one",
+            "first",
+            urgent=False,
+            choice=None,
+            prompt_epoch=None,
+            prompt_seq=None,
+        )
         response = await steering.handle({"worker_id": "one", "words": "after"})
         assert response["receipt_seq"] == 5
         assert [call.args[1] for call in registry.steer.call_args_list] == [
@@ -346,7 +481,36 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
         steering.handle({"worker_id": "one", "words": "fresh"}), 1
     )
     assert response["heard"] is True
-    registry.steer.assert_called_once_with("one", "fresh", urgent=False)
+    registry.steer.assert_called_once_with(
+        "one", "fresh", urgent=False, choice=None, prompt_epoch=None, prompt_seq=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_deadline_is_rechecked_after_the_actor_lock_is_acquired() -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    actor = asyncio.Lock()
+    steering = WorkerSteering(registry, actor)
+
+    async def acquire_late(lock: asyncio.Lock, deadline: float) -> None:
+        del deadline
+        await lock.acquire()
+
+    with (
+        patch.object(WorkerSteering, "_acquire", side_effect=acquire_late),
+        pytest.raises(ValueError, match="steering deadline expired before delivery"),
+    ):
+        await steering._deliver(
+            "worker",
+            "Continue.",
+            urgent=False,
+            deadline=0,
+            choice=None,
+            prompt_epoch=None,
+            prompt_seq=None,
+        )
+    registry.steer.assert_not_called()
+    assert not actor.locked()
 
 
 @pytest.mark.asyncio
@@ -434,6 +598,7 @@ async def test_receipt_wait_releases_hook_ingest_lock(heard: bool) -> None:
             "heard": heard,
             "receipt_seq": 5 if heard else None,
             "urgent": True,
+            "choice": None,
         }
     assert store.last_input("w") == (5, "words")
     assert hook_ws.send_json.call_args.args[0]["type"] == "hook_event_accepted"

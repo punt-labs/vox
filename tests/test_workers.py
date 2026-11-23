@@ -26,6 +26,7 @@ from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.trust import ClaudeTrust
 from punt_vox.worker_client import WorkerClient
@@ -37,6 +38,11 @@ class FakeWorkerProvider:
     alive = False
     ready = False
     fail = False
+
+    def decide(
+        self, handle: str, choice: DecisionChoice, *, profile: HarnessProfile
+    ) -> None:
+        pass
 
     def start(
         self,
@@ -78,6 +84,9 @@ class TrivialProfile:
 
     def matches_input(self, receipt: object, words: str) -> bool:
         return False
+
+    def decision_keys(self, choice: DecisionChoice) -> tuple[str, ...]:
+        return ("1",) if choice == "approve" else ("Escape",)
 
     def argv(self, worker_id: str, task: str) -> list[str]:
         return [

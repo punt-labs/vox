@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock, MagicMock
 
+from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
@@ -13,11 +17,12 @@ from punt_vox.voxd.voice_agent.events import (
     Ping,
     UserTranscript,
 )
+from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
-from .fakes import FakePlayback, FakeWorkers
+from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -25,7 +30,6 @@ if TYPE_CHECKING:
     import pytest
 
     from punt_vox.voxd.playback import PlaybackQueue
-    from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.call import Opener
 
 
@@ -80,6 +84,115 @@ def _call(peer: _Peer) -> VoiceAgentCall:
 
 async def _dial() -> tuple[str, SessionOptions]:
     return "ws://peer", SessionOptions("prompt", ())
+
+
+def _receipt_call() -> tuple[VoiceAgentCall, FakeWorkers, io.StringIO]:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    stream = io.StringIO()
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=EventTrace(stream),
+    )
+    return call, workers, stream
+
+
+async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
+    call, _, stream = _receipt_call()
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall(
+            "approval",
+            "steer_worker",
+            {
+                "worker_id": "abcd1234",
+                "words": "private spoken answer",
+                "choice": "approve",
+                "prompt_seq": 4,
+            },
+            expects_response=True,
+        ),
+    )
+    trace = json.loads(stream.getvalue())
+    assert trace["type"] == "worker_steer_receipt"
+    assert trace["detail"]["choice"] == "approve"
+    assert trace["detail"]["prompt_seq"] == 4
+    assert trace["detail"]["heard"] is True
+    assert "private spoken answer" not in stream.getvalue()
+
+
+async def test_ordinary_steer_rejects_a_prompt_sequence_without_a_receipt() -> None:
+    call, workers, stream = _receipt_call()
+    conv = AsyncMock(spec=Conversation)
+    await call._answer(
+        conv,
+        ClientToolCall(
+            "ordinary",
+            "steer_worker",
+            {
+                "worker_id": "abcd1234",
+                "words": "Continue.",
+                "prompt_seq": "private spoken answer",
+            },
+            expects_response=True,
+        ),
+    )
+    assert stream.getvalue() == ""
+    assert workers.steered == []
+    conv.send_tool_result.assert_awaited_once()
+    assert conv.send_tool_result.call_args.kwargs["is_error"] is True
+    assert "prompt_seq requires choice" in conv.send_tool_result.call_args.args[1]
+
+
+async def test_ordinary_receipt_trace_has_no_prompt_sequence() -> None:
+    call, _, stream = _receipt_call()
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall(
+            "ordinary",
+            "steer_worker",
+            {"worker_id": "abcd1234", "words": "Continue."},
+            expects_response=True,
+        ),
+    )
+    trace = json.loads(stream.getvalue())
+    assert trace["detail"]["choice"] is None
+    assert "prompt_seq" not in trace["detail"]
+    assert trace["detail"]["heard"] is True
+
+
+async def test_reissued_steer_ids_share_a_prompt_but_not_the_next_prompt() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=MagicMock(spec=EventTrace),
+    )
+    conv = AsyncMock(spec=Conversation)
+    words: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
+    for identity in ("interrupted", "reissued"):
+        await call._answer(
+            conv, ClientToolCall(identity, "steer_worker", words, expects_response=True)
+        )
+    assert workers.steered == [("abcd1234", "Continue.", False)]
+    workers.known = [payload("abcd1234", prompt_epoch=9)]
+    await call._answer(
+        conv,
+        ClientToolCall("next-prompt", "steer_worker", words, expects_response=True),
+    )
+    assert workers.steered == [
+        ("abcd1234", "Continue.", False),
+        ("abcd1234", "Continue.", False),
+    ]
+    assert [entry.args[0] for entry in conv.send_tool_result.await_args_list] == [
+        "interrupted",
+        "reissued",
+        "next-prompt",
+    ]
 
 
 async def test_the_transcript_keeps_both_sides_and_ignores_other_events() -> None:

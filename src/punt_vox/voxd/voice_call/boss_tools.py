@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
 from punt_vox.voxd.voice_call.result_cache import ToolResultCache
+from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
+from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from punt_vox.voxd.voice_call.contracts import ProjectAllowlist, WorkerControl
-    from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["BossTools"]
 
@@ -51,6 +52,24 @@ class BossTools:
                 {
                     "worker_id": _ID,
                     "words": {"type": "string", "description": "Words, verbatim"},
+                    "choice": {
+                        "type": "string",
+                        "enum": ["approve", "deny"],
+                        "description": (
+                            "Required for permission_prompt: approve=yes, deny=no. "
+                            "Also pass prompt_seq for the question you asked. "
+                            "Omit for ordinary input."
+                        ),
+                    },
+                    "prompt_seq": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Required with choice: seq of the permission prompt you "
+                            "asked the person about, from the voxd update or "
+                            "worker_status. Never substitute a newer prompt's seq."
+                        ),
+                    },
                     "urgent": {
                         "type": "boolean",
                         "description": "Interrupt the worker's current step first",
@@ -82,7 +101,8 @@ class BossTools:
         {"start_worker", "steer_worker", "stop_worker"}
     )
 
-    __slots__ = ("_cache", "_projects", "_workers")
+    __slots__ = ("_cache", "_directory", "_projects", "_workers")
+    _directory: WorkerDirectory
     _workers: WorkerControl
     _projects: ProjectAllowlist
     _cache: ToolResultCache
@@ -91,6 +111,7 @@ class BossTools:
         """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
+        self._directory = WorkerDirectory(workers)
         self._cache = ToolResultCache()
         return self
 
@@ -101,9 +122,10 @@ class BossTools:
 
     async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
         """Return the JSON result for the agent and whether it reports an error."""
+        steering = SteeringTool(self._workers, self._directory)
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
-            "steer_worker": self._steer,
+            "steer_worker": steering.send,
             "worker_status": self._status,
             "list_workers": self._list,
             "stop_worker": self._stop,
@@ -114,13 +136,20 @@ class BossTools:
             return json.dumps({"error": f"unknown tool {name}"}), True
 
         try:
-            resolved = self._with_defaults(name, arguments)
+            resolved = (
+                await steering.resolve(arguments)
+                if name == "steer_worker"
+                else self._with_defaults(name, arguments)
+            )
+            identity = (
+                steering.identity(resolved) if name == "steer_worker" else resolved
+            )
 
             async def execute() -> str:
                 return json.dumps(await operation(resolved), ensure_ascii=False)
 
             result = await self._cache.run(
-                ToolResultCache.key(name, resolved),
+                ToolResultCache.key(name, identity),
                 execute,
                 durable=name in self._DURABLE,
             )
@@ -137,11 +166,9 @@ class BossTools:
     def _with_defaults(
         self, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """Fill omitted defaults, so a re-ask that spells one out is the same ask."""
+        """Normalize launch defaults before deriving the result-cache identity."""
         defaults: dict[str, object] = {}
-        if name == "steer_worker":
-            defaults["urgent"] = False
-        elif name == "start_worker" and len(repos := self._projects.repos()) == 1:
+        if name == "start_worker" and len(repos := self._projects.repos()) == 1:
             defaults["project"] = repos[0]
         return {**defaults, **arguments}
 
@@ -155,40 +182,20 @@ class BossTools:
             raise ValueError("project must be a string")
         return WorkerBrief.summary(await self._workers.start(task, project))
 
-    async def _steer(self, arguments: dict[str, object]) -> object:
-        urgent = arguments.get("urgent", False)
-        if not isinstance(urgent, bool):
-            raise ValueError("urgent must be a boolean")
-        worker = await self._find(arguments)
-        words = self._text(arguments, "words")
-        return await self._workers.steer(worker["id"], words, urgent=urgent)
-
     async def _status(self, arguments: dict[str, object]) -> object:
-        return WorkerBrief.detail(await self._find(arguments))
+        worker = await self._directory.find(self._text(arguments, "worker_id"))
+        return WorkerBrief.detail(worker)
 
     async def _list(self, _arguments: dict[str, object]) -> object:
         return [WorkerBrief.summary(w) for w in await self._workers.workers()]
 
     async def _stop(self, arguments: dict[str, object]) -> object:
-        worker = await self._find(arguments)
+        worker = await self._directory.find(self._text(arguments, "worker_id"))
         return WorkerBrief.summary(await self._workers.stop(worker["id"]))
 
     @staticmethod
     async def _silent(_arguments: dict[str, object]) -> object:
         return {"silent": True}
-
-    async def _find(self, arguments: dict[str, object]) -> WorkerPayload:
-        """Resolve a full ID or a unique prefix, since IDs are spoken aloud."""
-        wanted = self._text(arguments, "worker_id")
-        workers = await self._workers.workers()
-        exact = [w for w in workers if w["id"] == wanted]
-        prefixed = [
-            w for w in workers if len(wanted) >= 4 and w["id"].startswith(wanted)
-        ]
-        matches = exact or prefixed
-        if len(matches) != 1:
-            raise ValueError(f"no single worker matches {wanted!r}")
-        return matches[0]
 
     @staticmethod
     def _text(arguments: dict[str, object], field: str) -> str:

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.hook_context_store import HookContextStore
     from punt_vox.voxd.types import MessageHandler
+    from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.workers.registry import WorkerRegistry
     from punt_vox.voxd.workers.types import WorkerPayload
 
@@ -46,6 +47,7 @@ class WorkerHandlers:
     def handlers(
         self,
         store: HookContextStore | None = None,  # PY-TS-14: absent omits hook RPCs.
+        events: ProgressEvents | None = None,  # None omits live report subscribers.
     ) -> dict[str, MessageHandler]:
         """Expose the worker RPCs, plus hook ingestion when a store exists."""
         result: dict[str, MessageHandler] = dict.fromkeys(
@@ -53,7 +55,7 @@ class WorkerHandlers:
             self.handle,
         )
         if store is not None:
-            hooks = self._actor.hooks(store)
+            hooks = self._actor.hooks(store, events)
             result.update(HookContextHandlers(store, hooks.ingest).handlers())
             result["worker_hook_admission"] = hooks.admit
         return result

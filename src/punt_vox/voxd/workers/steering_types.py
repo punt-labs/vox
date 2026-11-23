@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
+
+DecisionChoice = Literal["approve", "deny"]
 
 
 class SteerReceipt(TypedDict):
@@ -12,3 +14,4 @@ class SteerReceipt(TypedDict):
     heard: bool
     receipt_seq: int | None  # PY-TS-14: no sequence exists without a heard receipt.
     urgent: bool
+    choice: DecisionChoice | None  # None submits ordinary follow-up text.

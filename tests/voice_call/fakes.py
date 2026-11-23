@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -36,6 +36,7 @@ class FakeWorkers:
         self.allowed = projects
         self.started: list[tuple[str, str]] = []
         self.steered: list[tuple[str, str, bool]] = []
+        self.choices: list[DecisionChoice | None] = []  # None records ordinary text.
         self.stopped: list[str] = []
         self.known: list[WorkerPayload] = []
         self.gate = asyncio.Event()
@@ -59,13 +60,26 @@ class FakeWorkers:
     async def workers(self) -> list[WorkerPayload]:
         return list(self.known)
 
-    async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
+    async def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        prompt_epoch: int,
+        choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
+    ) -> SteerReceipt:
+        assert prompt_epoch >= 0
         self.steered.append((worker_id, words, urgent))
+        self.choices.append(choice)
         return {
             "worker_id": worker_id,
             "heard": True,
             "receipt_seq": 1,
             "urgent": urgent,
+            "choice": choice,
         }
 
 

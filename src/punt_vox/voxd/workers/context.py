@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_call.handlers import CallHandlers
+from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
@@ -26,7 +27,8 @@ class WorkerContext:
         store = HookContextStore()
         policy = WorkerSubsystem.policy()
         actor = WorkerSubsystem.actor(store, policy)
+        events = ProgressEvents()
         return {
-            **WorkerHandlers(actor).handlers(store),
-            **CallHandlers(actor, policy, playback).handlers(),
+            **WorkerHandlers(actor).handlers(store, events),
+            **CallHandlers(actor, policy, playback, progress=events).handlers(),
         }

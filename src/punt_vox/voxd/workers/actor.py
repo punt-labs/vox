@@ -11,8 +11,9 @@ from punt_vox.voxd.workers.steering import WorkerSteering
 
 if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
+    from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.workers.registry import WorkerRegistry
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -60,16 +61,36 @@ class WorkerActor:
             records = await asyncio.to_thread(self._registry.list)
         return [WorkerRecordCodec.encode(record) for record in records]
 
-    async def steer(self, worker_id: str, words: str, *, urgent: bool) -> SteerReceipt:
+    async def steer(
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        prompt_epoch: int
+        | None = None,  # None binds direct control to the live prompt.
+        choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
+    ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         return await self.steer_request(
-            {"worker_id": worker_id, "words": words, "urgent": urgent}
+            {
+                "worker_id": worker_id,
+                "words": words,
+                "urgent": urgent,
+                "choice": choice,
+                "prompt_epoch": prompt_epoch,
+                "prompt_seq": prompt_seq,
+            }
         )
 
     async def steer_request(self, msg: dict[str, object]) -> SteerReceipt:
         """Validate and deliver one wire steering request."""
         return await self._steering.handle(msg)
 
-    def hooks(self, store: HookContextStore) -> WorkerHooks:
+    def hooks(
+        self, store: HookContextStore, events: ProgressEvents | None = None
+    ) -> WorkerHooks:
         """Return hook ingestion that checkpoints under this actor's lock."""
-        return WorkerHooks(store, self._registry, self._lock)
+        return WorkerHooks(store, self._registry, self._lock, events)

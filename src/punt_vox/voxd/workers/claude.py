@@ -10,6 +10,7 @@ from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_projection import HookText
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.contracts import WorkerInput
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.trust import ClaudeTrust
 
 
@@ -57,20 +58,30 @@ class ClaudeProfile:
 
     # PY-TS-14: no receipt exists before the first UserPromptSubmit observation.
     def last_input(self, worker_id: str) -> WorkerInput | None:
-        """Use UserPromptSubmit only; Escape need not produce a Stop hook."""
+        """Use the current dialog event or the latest submitted input as baseline."""
         seq, text = self._store.last_input(worker_id)
+        if baseline := self._store.decision_baseline(worker_id):
+            return WorkerInput(baseline, "", decision=True)
         return WorkerInput(seq, text) if seq else None
 
     @staticmethod
     def matches_input(receipt: WorkerInput, words: str) -> bool:
         """Match an untruncated input receipt exactly."""
-        return receipt.text == words
+        return receipt.decision or receipt.text == words
+
+    @staticmethod
+    def decision_keys(choice: DecisionChoice) -> tuple[str, ...]:
+        """Select Yes by number or decline with Escape, independent of focus."""
+        return {"approve": ("1",), "deny": ("Escape",)}[choice]
 
     def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
         """Search retained submissions, not just the latest prompt at poll time."""
         return [
             WorkerInput(seq, text)
             for seq, text in self._store.inputs_since(worker_id, baseline)
+        ] + [
+            WorkerInput(seq, "", decision=True)
+            for seq in self._store.decision_receipts(worker_id, baseline)
         ]
 
     def cleanup(self, worktree: Path) -> None:

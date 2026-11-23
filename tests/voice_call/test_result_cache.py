@@ -91,3 +91,16 @@ def test_key_keeps_signs_that_change_the_instruction() -> None:
     negative = ToolResultCache.key("steer_worker", {"words": "set it to -5."})
     positive = ToolResultCache.key("steer_worker", {"words": "Set it to 5"})
     assert negative != positive
+
+
+@pytest.mark.parametrize("words", ["set X", "Set x", "Set X!", "Set  X"])
+def test_key_preserves_exact_steering_words(words: str) -> None:
+    assert ToolResultCache.key(
+        "steer_worker", {"words": "Set X"}
+    ) != ToolResultCache.key("steer_worker", {"words": words})
+
+
+def test_empty_steering_words_remain_distinct_from_missing_words() -> None:
+    assert ToolResultCache.key("steer_worker", {"words": ""}) != ToolResultCache.key(
+        "steer_worker", {}
+    )

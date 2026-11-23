@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, final
 
+from punt_vox.voxd.workers.steering_types import DecisionChoice
+
 __all__ = ["HarnessProfile", "WorkerLaunch", "WorkerProvider"]
 
 
@@ -27,6 +29,7 @@ class WorkerInput:
 
     seq: int
     text: str
+    decision: bool = False
 
 
 class HarnessProfile(Protocol):
@@ -59,6 +62,10 @@ class HarnessProfile(Protocol):
 
     def matches_input(self, receipt: WorkerInput, words: str) -> bool:
         """Compare input using the harness's bounded representation."""
+        ...
+
+    def decision_keys(self, choice: DecisionChoice) -> tuple[str, ...]:
+        """Select a permission choice explicitly, never submit arbitrary text."""
         ...
 
     def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
@@ -106,6 +113,12 @@ class WorkerProvider(Protocol):
 
     def status(self, handle: str) -> bool:
         """Return whether the worker process is alive."""
+        ...
+
+    def decide(
+        self, handle: str, choice: DecisionChoice, *, profile: HarnessProfile
+    ) -> None:
+        """Send only the harness's explicit permission-choice keys."""
         ...
 
     def stop(self, handle: str) -> None:

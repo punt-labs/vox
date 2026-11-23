@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, final
+from typing import TYPE_CHECKING, Final, cast, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
@@ -10,7 +10,12 @@ if TYPE_CHECKING:
 __all__ = ["WorkerBrief"]
 
 # The fields of a hook snapshot a person asks about; the rest is bookkeeping.
-_REPORT_FIELDS: Final = ("goal", "last_assistant_message", "open_failure")
+_REPORT_FIELDS: Final = (
+    "goal",
+    "last_assistant_message",
+    "open_failure",
+    "pending_decision",
+)
 _CLIP: Final = 400
 
 
@@ -28,6 +33,13 @@ class WorkerBrief:
             "task": WorkerBrief._clip(worker["task"]),
             "project": worker["project"],
             "state": worker["state"],
+            "decision_choices": ["approve", "deny"]
+            if isinstance(
+                pending := worker["last_report"].get("pending_decision"), dict
+            )
+            and cast("dict[str, object]", pending).get("notification_type")
+            == "permission_prompt"
+            else [],
         }
 
     @staticmethod

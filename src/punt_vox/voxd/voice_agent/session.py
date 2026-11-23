@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Self, final
 
@@ -16,6 +15,8 @@ from punt_vox.voxd.voice_agent.events import (
     Ping,
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.sender import ConversationSender
+from punt_vox.voxd.voice_agent.tool_calls import ToolCalls
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -23,7 +24,6 @@ if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
     from punt_vox.voxd.voice_agent.contracts import (
-        ClientMessage,
         OptionalTrace,
         SessionOptions,
         SessionStart,
@@ -43,11 +43,12 @@ class Conversation:
     The caller owns tool dispatch and reports its result against the given ID.
     """
 
-    __slots__ = ("_metadata", "_socket", "_tool_calls", "_trace")
+    __slots__ = ("_metadata", "_sender", "_socket", "_tool_calls", "_trace")
+    _tool_calls: ToolCalls
     _socket: ClientConnection
     _metadata: Metadata
     _trace: OptionalTrace
-    _tool_calls: dict[str, bool]
+    _sender: ConversationSender
 
     def __new__(
         cls, socket: ClientConnection, metadata: Metadata, trace: OptionalTrace
@@ -57,7 +58,8 @@ class Conversation:
         self._socket = socket
         self._metadata = metadata
         self._trace = trace
-        self._tool_calls = {}
+        self._sender = ConversationSender(socket, trace)
+        self._tool_calls = ToolCalls()
         return self
 
     @classmethod
@@ -93,53 +95,31 @@ class Conversation:
                 case Metadata():
                     msg = "ElevenLabs sent duplicate conversation metadata"
                     raise ConvAIError(msg)
-                case ClientToolCall() if event.tool_call_id in self._tool_calls:
+                case ClientToolCall() if not self._tool_calls.admit(event):
                     continue
                 case ClientToolCall():
-                    self._tool_calls[event.tool_call_id] = event.expects_response
                     return event
                 case _:
                     return event
 
     async def send_text(self, text: str) -> None:
         """Send one user message to the active conversation."""
-        await self._send({"type": "user_message", "text": text}, "user_message")
+        await self._sender.send_text(text)
+
+    async def send_context(self, text: str) -> None:
+        """Send hidden background information without requesting a turn."""
+        await self._sender.send_context(text)
 
     async def send_audio(self, pcm: bytes) -> None:
         """Send one chunk in the negotiated input audio format."""
-        await self._send(
-            {"user_audio_chunk": base64.b64encode(pcm).decode("ascii")},
-            "user_audio_chunk",
-        )
+        await self._sender.send_audio(pcm)
 
     async def send_tool_result(
         self, tool_call_id: str, result: str, *, is_error: bool = False
     ) -> None:
-        """Send a single result for a pending client tool call ID."""
-        if not self._tool_calls.get(tool_call_id):
-            msg = "No pending ElevenLabs client tool call expects that result"
-            raise ValueError(msg)
-        self._tool_calls[tool_call_id] = False
-        await self._send(
-            {
-                "type": "client_tool_result",
-                "tool_call_id": tool_call_id,
-                "result": result,
-                "is_error": is_error,
-            },
-            "client_tool_result",
-            {"tool_call_id": tool_call_id, "is_error": is_error},
-        )
-
-    async def _send(
-        self,
-        payload: ClientMessage,
-        kind: str,
-        detail: dict[str, object] | None = None,  # Trace fields vary by event.
-    ) -> None:
-        await Socket.send(self._socket, payload)
-        if self._trace is not None:
-            self._trace.record("send", kind, {} if detail is None else detail)
+        """Answer one pending client tool call at most once."""
+        self._tool_calls.claim(tool_call_id)
+        await self._sender.send_tool_result(tool_call_id, result, is_error=is_error)
 
     @staticmethod
     async def _start(
@@ -220,6 +200,14 @@ class Conversation:
                 return {
                     "tool_call_id": event.tool_call_id,
                     "tool_name": event.tool_name,
+                    **(
+                        {
+                            field: event.parameters.get(field)
+                            for field in ("choice", "prompt_seq")
+                        }
+                        if event.tool_name == "steer_worker"
+                        else {}
+                    ),
                 }
             case AgentToolResponse():
                 return {"tool_call_id": event.tool_call_id, "is_error": event.is_error}

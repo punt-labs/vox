@@ -145,6 +145,11 @@ class UserMessage(TypedDict):
     text: str
 
 
+class ContextualUpdate(TypedDict):
+    type: Literal["contextual_update"]
+    text: str
+
+
 class UserAudio(TypedDict):
     user_audio_chunk: str
 
@@ -161,6 +166,8 @@ class Pong(TypedDict):
     event_id: int
 
 
-type ClientMessage = SessionStart | UserMessage | UserAudio | ToolResult | Pong
+type ClientMessage = (
+    SessionStart | UserMessage | ContextualUpdate | UserAudio | ToolResult | Pong
+)
 type CreateConfig = CreateAgentConfig | CreateToolConfig
 type OptionalTrace = EventTrace | None  # None disables the opt-in trace sink.

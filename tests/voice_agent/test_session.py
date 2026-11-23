@@ -33,6 +33,31 @@ if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
 
 _OPTIONS = SessionOptions("private prompt", ("tool_clock",), text_only=True)
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [{}, {"choice": "approve", "prompt_seq": 4}, {"choice": "deny", "prompt_seq": 9}],
+)
+def test_steering_trace_keeps_the_choice_and_question_but_not_words(
+    parameters: dict[str, object],
+) -> None:
+    event = ClientToolCall(
+        "call",
+        "steer_worker",
+        {"words": "private spoken answer", **parameters},
+        expects_response=True,
+    )
+    fields = Conversation._trace_fields(event)
+    assert fields == {
+        "tool_call_id": "call",
+        "tool_name": "steer_worker",
+        "choice": parameters.get("choice"),
+        "prompt_seq": parameters.get("prompt_seq"),
+    }
+    assert "private spoken answer" not in json.dumps(fields)
+
+
 _METADATA = {
     "type": "conversation_initiation_metadata",
     "conversation_initiation_metadata_event": {

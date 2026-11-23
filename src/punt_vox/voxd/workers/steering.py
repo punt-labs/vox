@@ -6,11 +6,11 @@ import asyncio
 from typing import TYPE_CHECKING, Self, final
 from weakref import WeakValueDictionary
 
-from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd._parse import parse_optional_int, parse_required_str
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.workers.steering_types import SteerReceipt
+    from punt_vox.voxd.workers.steering_types import DecisionChoice, SteerReceipt
 
 
 @final
@@ -38,12 +38,21 @@ class WorkerSteering:
         urgent = msg.get("urgent", False)
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a bool")
+        choice = msg.get("choice")
+        if choice is not None and choice not in ("approve", "deny"):
+            raise ValueError("choice must be approve or deny")
         deadline = asyncio.get_running_loop().time() + self.TIMEOUT
         worker_lock = self._workers.setdefault(worker_id, asyncio.Lock())
         await self._acquire(worker_lock, deadline)
         try:
             return await self._deliver(
-                worker_id, words, urgent=urgent, deadline=deadline
+                worker_id,
+                words,
+                urgent=urgent,
+                deadline=deadline,
+                choice=choice,
+                prompt_epoch=parse_optional_int(msg, "prompt_epoch"),
+                prompt_seq=parse_optional_int(msg, "prompt_seq"),
             )
         finally:
             worker_lock.release()
@@ -59,14 +68,28 @@ class WorkerSteering:
             ) from exc
 
     async def _deliver(
-        self, worker_id: str, words: str, *, urgent: bool, deadline: float
+        self,
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool,
+        deadline: float,
+        choice: DecisionChoice | None,  # None submits ordinary follow-up text.
+        prompt_epoch: int | None,  # None binds direct control to the live prompt.
+        prompt_seq: int | None,  # None is ordinary text, not a permission answer.
     ) -> SteerReceipt:
         await self._acquire(self._lock, deadline)
         try:
             if asyncio.get_running_loop().time() >= deadline:
                 raise ValueError("steering deadline expired before delivery")
             baseline = await asyncio.to_thread(
-                self._registry.steer, worker_id, words, urgent=urgent
+                self._registry.steer,
+                worker_id,
+                words,
+                urgent=urgent,
+                choice=choice,
+                prompt_epoch=prompt_epoch,
+                prompt_seq=prompt_seq,
             )
         finally:
             self._lock.release()
@@ -76,6 +99,7 @@ class WorkerSteering:
             "heard": receipt is not None,
             "receipt_seq": receipt,
             "urgent": urgent,
+            "choice": choice,
         }
 
     # PY-TS-14: timeout without a matching input has no receipt sequence.

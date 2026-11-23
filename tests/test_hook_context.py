@@ -33,6 +33,26 @@ def _event(event: str, sequence: int, **fields: object) -> dict[str, object]:
     }
 
 
+def test_worker_sequence_excludes_unadmitted_context_and_is_monotonic() -> None:
+    store = HookContextStore()
+    assert store.worker_sequence("session-a") == 0
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot("session-a")
+    store.ingest(_event("PostToolUse", 10))
+    assert store.worker_sequence("session-a") == 0
+    store.ingest(_event("Stop", 6), worker_input=True)
+    store.ingest(_event("PostToolUse", 5), worker_input=True)
+    assert store.worker_sequence("session-a") == 6
+    assert store.snapshot("session-a")["gaps"]["highest_seen"] == 10
+    store.ingest(_event("PostToolUse", 12))
+    assert store.worker_sequence("session-a") == 6
+    with pytest.raises(ValueError, match="relay_seq"):
+        store.ingest(_event("Stop", 0), worker_input=True)
+    assert store.worker_sequence("session-a") == 6
+    store.ingest(_event("Stop", 11), worker_input=True)
+    assert store.worker_sequence("session-a") == 11
+
+
 def test_counter_serializes_concurrent_independent_opens(tmp_path: Path) -> None:
     """Every sender gets a unique sequence in its own session."""
     counter = HookSequence(tmp_path, "session/a")

@@ -20,7 +20,7 @@ class WorkerCli:
     __slots__ = ()
 
     @staticmethod
-    def _run(operation: str, **fields: str | bool) -> None:
+    def _run(operation: str, **fields: str | bool | int) -> None:
         try:
             result = asyncio.run(WorkerClient.request(operation, **fields))
         except (VoxdConnectionError, VoxdProtocolError) as exc:
@@ -55,9 +55,26 @@ class WorkerCli:
         WorkerCli._run("stop", worker_id=worker_id)
 
     @staticmethod
-    def steer(worker_id: str, words: str, *, urgent: bool = False) -> None:
+    def steer(
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool = False,
+        choice: str | None = None,  # None submits ordinary follow-up text.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
+    ) -> None:
         """Send literal input and await acknowledgement, optionally interrupting."""
-        WorkerCli._run("steer", worker_id=worker_id, words=words, urgent=urgent)
+        fields: dict[str, str | bool | int] = {
+            "worker_id": worker_id,
+            "words": words,
+            "urgent": urgent,
+        }
+        if choice is not None:
+            fields["choice"] = choice
+        if prompt_seq is not None:
+            fields["prompt_seq"] = prompt_seq
+        WorkerCli._run("steer", **fields)
 
     @staticmethod
     def build_app() -> typer.Typer:
