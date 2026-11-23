@@ -13,7 +13,7 @@ async def test_worker_session_identity_requires_server_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("VOX_WORKER_SESSION_ID", "worker")
-    payload = {
+    payload: dict[str, object] = {
         "session_id": "worker",
         "cwd": "/repo",
         "hook_event_name": "Stop",
