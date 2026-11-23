@@ -57,7 +57,7 @@ class _FakeService:
         self.played: list[AlbumId] = []
         self.stops = 0
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
         return self._status
 
     def set_status(self, status: ProgramStatus) -> None:
@@ -95,7 +95,7 @@ class _FlakyService:
         self._albums = albums
         self._calls = 0
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
         return self._status
 
     def catalog_albums(self) -> tuple[Album, ...]:

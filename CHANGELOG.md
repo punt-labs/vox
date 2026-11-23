@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox call stop` and foreground hangup no longer stop a replacement call
   that started after the original call ended. (PL-1380)
 
+- Pause the vox music player during a call and resume after it ends, without
+  starting music that was already paused or stopped. (PL-1374)
+
 - Hooks no longer hang when given a relative working directory outside a Git
   worktree. (PL-820)
 
