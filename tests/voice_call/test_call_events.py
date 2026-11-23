@@ -86,7 +86,7 @@ async def _dial() -> tuple[str, SessionOptions]:
     return "ws://peer", SessionOptions("prompt", ())
 
 
-async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
+def _receipt_call() -> tuple[VoiceAgentCall, FakeWorkers, io.StringIO]:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", prompt_epoch=4)]
     stream = io.StringIO()
@@ -96,6 +96,11 @@ async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
         AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=EventTrace(stream),
     )
+    return call, workers, stream
+
+
+async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
+    call, _, stream = _receipt_call()
     await call._answer(
         AsyncMock(spec=Conversation),
         ClientToolCall(
@@ -119,15 +124,7 @@ async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
 
 
 async def test_ordinary_steer_rejects_a_prompt_sequence_without_a_receipt() -> None:
-    workers = FakeWorkers()
-    workers.known = [payload("abcd1234", prompt_epoch=4)]
-    stream = io.StringIO()
-    call = VoiceAgentCall(
-        BossTools(workers, workers),
-        _Silent(),
-        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
-        trace=EventTrace(stream),
-    )
+    call, workers, stream = _receipt_call()
     conv = AsyncMock(spec=Conversation)
     await call._answer(
         conv,
@@ -150,15 +147,7 @@ async def test_ordinary_steer_rejects_a_prompt_sequence_without_a_receipt() -> N
 
 
 async def test_ordinary_receipt_trace_has_no_prompt_sequence() -> None:
-    workers = FakeWorkers()
-    workers.known = [payload("abcd1234", prompt_epoch=4)]
-    stream = io.StringIO()
-    call = VoiceAgentCall(
-        BossTools(workers, workers),
-        _Silent(),
-        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
-        trace=EventTrace(stream),
-    )
+    call, _, stream = _receipt_call()
     await call._answer(
         AsyncMock(spec=Conversation),
         ClientToolCall(
