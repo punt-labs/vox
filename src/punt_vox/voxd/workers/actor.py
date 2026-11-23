@@ -11,6 +11,7 @@ from punt_vox.voxd.workers.steering import WorkerSteering
 
 if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
+    from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.workers.registry import WorkerRegistry
     from punt_vox.voxd.workers.steering_types import SteerReceipt
     from punt_vox.voxd.workers.types import WorkerPayload
@@ -70,6 +71,8 @@ class WorkerActor:
         """Validate and deliver one wire steering request."""
         return await self._steering.handle(msg)
 
-    def hooks(self, store: HookContextStore) -> WorkerHooks:
+    def hooks(
+        self, store: HookContextStore, events: ProgressEvents | None = None
+    ) -> WorkerHooks:
         """Return hook ingestion that checkpoints under this actor's lock."""
-        return WorkerHooks(store, self._registry, self._lock)
+        return WorkerHooks(store, self._registry, self._lock, events)

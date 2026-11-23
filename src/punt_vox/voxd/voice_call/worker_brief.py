@@ -10,7 +10,12 @@ if TYPE_CHECKING:
 __all__ = ["WorkerBrief"]
 
 # The fields of a hook snapshot a person asks about; the rest is bookkeeping.
-_REPORT_FIELDS: Final = ("goal", "last_assistant_message", "open_failure")
+_REPORT_FIELDS: Final = (
+    "goal",
+    "last_assistant_message",
+    "open_failure",
+    "pending_decision",
+)
 _CLIP: Final = 400
 
 

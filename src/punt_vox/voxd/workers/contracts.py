@@ -27,6 +27,7 @@ class WorkerInput:
 
     seq: int
     text: str
+    decision: bool = False
 
 
 class HarnessProfile(Protocol):

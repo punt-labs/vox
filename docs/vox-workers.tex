@@ -156,7 +156,9 @@ may be attached to the opaque report without changing process phase.
 
 \section{Steering state and invariants}
 
-Steering observes input, not turn completion. Time is monotonic milliseconds;
+Steering observes input or a pending dialog's next hook, not turn completion.
+For dialogs, receiptText records the delivered words, not a fabricated prompt
+event or evidence of approval. Time is monotonic milliseconds;
 the pre-delivery budget is 10,000 ms across both lock waits, not a fresh budget
 per lock. Delivery is the atomic admission of provider input under the actor
 lock, after its final deadline and readiness checks. Provider I/O and paste
@@ -295,12 +297,124 @@ only the per-worker lock; waiting for the actor cannot renew deadline.
 \end{schema}
 
 cursor? is the latest harness input sequence sampled before sending, or zero
-when no input has been observed. ReceiptHeard uses the worker's own later
+when no input has been observed. When a decision is pending, cursor? instead
+uses the newest admitted hook sequence. ReceiptHeard uses the worker's own later
 input event. Stale or differently worded input cannot take this transition.
 The profile exposes inputs since a cursor, backed by the newest 32 input
 sequences per session. A later unrelated prompt does not erase a retained
 matching receipt. Eviction can still cause an unheard timeout; retention
 does not promise unbounded delivery history.
+
+\section{Pending decisions and live reports}
+
+Only admitted worker events update decision state. Notification kinds
+permission\_prompt and idle\_prompt retain their clipped message and sender
+sequence; the next newer non-Notification event clears the question. Older
+events cannot resurrect or clear a newer question.
+
+\begin{schema}{WorkerDecisions}
+  pendingDecision : WORKER \pfun (\nat \cross WORDS \cross WORDS) \\
+  decisionHigh : WORKER \fun \nat \\
+  decisionReceipts : WORKER \fun \power (\nat \cross \nat)
+\where
+  \forall w : WORKER @ \# (decisionReceipts~w) \leq 64
+\end{schema}
+
+\begin{schema}{InitWorkerDecisions}
+  WorkerDecisions
+\where
+  pendingDecision = \emptyset \\
+  \forall w : WORKER @ decisionHigh~w = 0 \land decisionReceipts~w = \emptyset
+\end{schema}
+
+\begin{schema}{DecisionNotification}
+  \Delta WorkerDecisions \\
+  worker? : WORKER \\
+  sequence? : \nat \\
+  kind?, message? : WORDS
+\where
+  sequence? > decisionHigh~worker? \\
+  pendingDecision' = pendingDecision \oplus
+    \{worker? \mapsto (sequence?, kind?, message?)\} \\
+  decisionHigh' = decisionHigh \oplus \{worker? \mapsto sequence?\} \\
+  decisionReceipts' = decisionReceipts
+\end{schema}
+
+DecisionNotification admits only permission\_prompt and idle\_prompt kinds.
+
+\begin{schema}{DecisionHookReceipt}
+  \Delta WorkerDecisions \\
+  worker? : WORKER \\
+  sequence? : \nat \\
+  question? : \nat \\
+  kind?, message? : WORDS \\
+  retained : \power (\nat \cross \nat)
+\where
+  pendingDecision~worker? = (question?, kind?, message?) \\
+  sequence? > decisionHigh~worker? \\
+  pendingDecision' = pendingDecision \\
+  decisionHigh' = decisionHigh \\
+  retained \subseteq (decisionReceipts~worker?) \cup \{question? \mapsto sequence?\} \\
+  question? \mapsto sequence? \in retained \\
+  \# retained \leq 64 \\
+  decisionReceipts' = decisionReceipts \oplus \{worker? \mapsto retained\}
+\end{schema}
+
+DecisionHookReceipt runs before folding any newer hook while a question is
+pending, including another Notification. DecisionNotification then replaces
+the question for qualifying kinds; other Notifications retain the question
+while advancing decisionHigh. Non-Notification events use DecisionProgress.
+
+\begin{schema}{DecisionProgress}
+  \Delta WorkerDecisions \\
+  worker? : WORKER \\
+  sequence? : \nat
+\where
+  sequence? > decisionHigh~worker? \\
+  pendingDecision' = \{worker?\} \ndres pendingDecision \\
+  decisionHigh' = decisionHigh \oplus \{worker? \mapsto sequence?\} \\
+  decisionReceipts' = decisionReceipts
+\end{schema}
+
+DecisionProgress applies only to non-Notification events. For a steer sent
+while a decision is pending, a retained pair (question, sequence) acknowledges
+hearing iff question is at most its sampled baseline and sequence is strictly
+greater. It does not assert that a permission was granted or work succeeded.
+Ordinary steering still requires matching UserPromptSubmit text. No synthetic
+UserPromptSubmit or Stop is introduced for dialog answers.
+
+\begin{schema}{DecisionReceiptHeard}
+  \Delta Steering \\
+  \Xi WorkerDecisions \\
+  request? : STEER \\
+  question?, sequence? : \nat
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? = sent \\
+  question? \mapsto sequence? \in decisionReceipts~(target~request?) \\
+  question? \leq baseline~request? < sequence? \\
+  \forall q, s : \nat | (q, s) \in decisionReceipts~(target~request?) \land
+    q \leq baseline~request? < s @ sequence? \leq s \\
+  now < receiptDeadline~request? \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto acknowledged\} \\
+  inFlight' = \{target~request?\} \ndres inFlight \\
+  receiptSeq' = receiptSeq \cup \{request? \mapsto sequence?\} \\
+  receiptText' = receiptText \cup \{request? \mapsto words~request?\} \\
+  accepted' = accepted \cup \{request?\} \\
+  (now', target', words', deadline', baseline', sentAt', receiptDeadline', admittedPhase', endedByReceipt') = \\
+  \t1 (now, target, words, deadline, baseline, sentAt, receiptDeadline, admittedPhase, endedByReceipt)
+\end{schema}
+
+After checkpointing, admitted Stop and decision notifications publish one
+provider-neutral live report per sender sequence. A separate bounded sequence
+window records successful checkpoints, so a failed checkpoint can be retried
+and a delayed event filling a tracked gap still publishes once. Each subscriber retains at
+most 32 reports, dropping the oldest on overflow; absent subscribers lose
+reports. The registry remains the durable status source. A live call sends
+hidden contextual\_update immediately, then a marked voxd user\_message to
+request speech: decisions immediately, finished results after two seconds
+without user transcript or agent audio. Ending a call removes its subscriber
+without changing workers or their pending decisions.
 
 \begin{schema}{InputHistory}
   recent : WORKER \fun (\nat \pfun WORDS)

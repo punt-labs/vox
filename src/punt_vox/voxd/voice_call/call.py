@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from typing import TYPE_CHECKING, Final, Literal, Self, final
@@ -17,6 +18,7 @@ from punt_vox.voxd.voice_agent.events import (
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
+from punt_vox.voxd.voice_call.progress import CallProgress, ProgressEvents
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -53,6 +55,7 @@ class VoiceAgentCall:
         "_conversation_id",
         "_error",
         "_opener",
+        "_progress",
         "_speaker",
         "_state",
         "_tool_calls",
@@ -61,6 +64,7 @@ class VoiceAgentCall:
         "_transcript",
     )
     _tools: BossTools
+    _progress: CallProgress
     _audio: CallInput
     _speaker: AgentSpeaker
     _trace: EventTrace
@@ -80,10 +84,14 @@ class VoiceAgentCall:
         *,
         trace: EventTrace,
         opener: Opener = Conversation.open,
+        progress: ProgressEvents | None = None,  # None creates an unconnected source.
     ) -> Self:
         """Bind the call's tools, caller audio, speaker and trace."""
         self = super().__new__(cls)
         self._tools, self._audio, self._speaker = tools, audio, speaker
+        self._progress = CallProgress(
+            progress if progress is not None else ProgressEvents()
+        )
         self._trace, self._opener = trace, opener
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
@@ -102,6 +110,7 @@ class VoiceAgentCall:
                 self._connected.set()
                 async with asyncio.TaskGroup() as group:
                     group.create_task(self._pump(conv))
+                    group.create_task(self._progress.run(conv))
                     group.create_task(self._listen(conv, group))
         except* EOFError:
             self._state = "ended"
@@ -145,12 +154,14 @@ class VoiceAgentCall:
         while True:
             match await conv.receive():
                 case Audio() as audio:
+                    self._progress.activity()
                     await self._speaker.play(audio)
                 case Interruption(event_id=event_id):
                     await self._speaker.interrupt(event_id)
                 case ClientToolCall() as call:
                     group.create_task(self._answer(conv, call))
                 case UserTranscript(text=text):
+                    self._progress.activity()
                     self._transcript.append((None, {"role": "user", "text": text}))
                 case AgentResponse(text=text, response_id=response_id):
                     self._transcript.append(
@@ -170,6 +181,9 @@ class VoiceAgentCall:
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
+        if call.tool_name == "steer_worker" and not is_error:
+            receipt: dict[str, object] = json.loads(result)
+            self._trace.record("note", "worker_steer_receipt", receipt)
         self._tool_calls.append(
             {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}
         )
