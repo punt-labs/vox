@@ -73,16 +73,20 @@ class ProcessManager:
         when its content does not parse: voxd publishes it by atomic rename,
         so an empty or partial file is a leftover from something else -- a
         stale hint, warned about and ignored. A read error other than
-        not-found raises ``PortProbeError``.
+        not-found, and bytes that are not UTF-8, raise ``PortProbeError``
+        without quoting the file's content.
 
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
         port_file = self._run_dir() / "serve.port"
         try:
-            text = port_file.read_text()
+            text = port_file.read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
+        except UnicodeDecodeError:
+            msg = f"cannot read {port_file}: invalid UTF-8"
+            raise PortProbeError(msg) from None
         except OSError as exc:
             msg = f"cannot read {port_file}: {exc}"
             raise PortProbeError(msg) from exc
@@ -200,11 +204,8 @@ class ProcessManager:
         An emptiness check, not a text match: any stderr at all means the
         tool failed, whatever its locale said.
         """
-        return (
-            result.returncode == 1
-            and not result.stdout.strip()
-            and not result.stderr.strip()
-        )
+        silence = (result.returncode, result.stdout.strip(), result.stderr.strip())
+        return silence == (1, "", "")
 
     def _probe(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
         """Run one probe command; raise ``PortProbeError`` if it cannot run.
