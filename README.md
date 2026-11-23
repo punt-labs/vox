@@ -594,7 +594,8 @@ ask Vox what the workers did while you were away.
 The daemon needs an ElevenLabs API key with Agents Write (`convai_write`).
 For coding workers, install Git, tmux and Claude Code on the daemon host
 and sign in to Claude Code as the daemon user. Install the `call` extra for
-live microphone input:
+audio playback and live microphone input. Scripted calls still play replies,
+so they also need the extra:
 
 ```bash
 uv tool install --force "punt-vox[call]"
