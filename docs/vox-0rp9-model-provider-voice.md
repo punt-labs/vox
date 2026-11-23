@@ -764,7 +764,8 @@ their usage — the only two verbs it should ever have owned.
   finding one must strike it. Deposited-guide upgrades happen wholesale
   via the existing `VoxGuidance` re-deposit path (tool-enable-disable.md
   §2.3), not through a version-detect shim.
-- **`make check` on every commit.** The commit boundary in §5 sets
+- **Commit-hook checks on every commit; full `make check` at handoff or
+  before opening a PR.** The commit boundary in §5 sets
   the granularity — the guide rewrite ships with the code that
   matches it, the tests ship with the code they test, no commit is
   green-on-code-broken-on-docs or vice versa.

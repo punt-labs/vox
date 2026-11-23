@@ -682,7 +682,8 @@ live provider and agent checks run in the shared nightly workflow.
 
 ## Quality Gates
 
-Tests are one of the gates in `make check`, which must pass before every commit:
+Each commit must pass the commit hook's checks. Tests are also one of the
+gates in full `make check`, which must pass at handoff or before opening a PR:
 
 ```bash
 make check

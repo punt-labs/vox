@@ -52,6 +52,16 @@ There is no human review gate. The operator reads code in the IDE, but that
 inspection is separate, feeds design discussion only, and nothing in these
 loops waits on it.
 
+## Quality-check stages (DES-085)
+
+Edits get advisory Ruff and shellcheck feedback. Each commit must pass the
+commit hook: the existing `.githooks/pre-commit` gates (staged Ruff, mypy,
+pyright and changed-module tests), chained to the Ethos commit-stage checks
+in `.punt-labs/ethos/checks/vox-python.yaml` (staged Ruff check/format-check
+and shellcheck, plus the OO, coupling and suppression ratchets when their
+file scopes match). Full `make check` runs at handoff or before opening a PR,
+not before every commit.
+
 ## Level 1 — The backlog loop
 
 The backlog loop keeps the Linear backlog true and decides what to work on
@@ -219,7 +229,7 @@ function pr_loop(unit):
         # stateful-audio work is model-checked before implementation
 
     # B. FULL-DIFF VERIFICATION (local, before any PR exists)
-    make check                            # full gate on the accumulated diff
+    make check                            # full gate before PR, not per commit
     if local_review(full diff) is blocked: stop the unit until the
         operator rules                    # local_review: after close_out
 
@@ -458,7 +468,8 @@ function poll_tick(pr):
         record the ruling in a ledger comment   # closes the escalation,
                                                 #   not the finding
         a "dismiss" ruling answers the finding (a Qodo id: `dismiss`)
-    if fixes were made: delegate them to a bare agent; make check; commit
+    if fixes were made: delegate them to a bare agent; commit  # commit hook
+        make check                        # full gate at fix handoff
         if local_review(the fix diff) is blocked:
             post an escalation comment naming the blocked fix commit and
                 what blocked it, and one on each fix-ruled finding in the
@@ -576,8 +587,9 @@ function local_review(diff):
             (mark-implemented or dismiss, with its local_review_id) —
             an unclosed one comes back as still_open in every later run
         if no finding was fixed:
+            make check                   # full gate at review handoff
             return clean                 # nothing found, or all dismissed
-        make check; commit
+        commit                           # commit hook checks this fix
         diff = this round's fix diff     # every change is reviewed,
                                          #   Low fixes included
     # at most four fix rounds, plus a fifth review that only verifies the
@@ -718,7 +730,8 @@ function mission_loop(mission):
         worker designs / codes / tests   # tests lead; TDD for bug fixes;
                                          # stateful-audio work is model-checked
                                          # BEFORE implementation
-        worker commits locally           # each commit passes make check
+        worker commits locally           # each commit passes the commit hook
+        make check                       # full gate at worker handoff
         result   = worker submits
         findings = evaluator review      # a DISTINCT specialist
                  + leader verification   # make install; vox daemon restart;
@@ -744,7 +757,8 @@ EnterMission ≙ [ LoopState; m : MISSION |
 ExitMission ≙ [ Δ LoopState; m : MISSION |
   verdict(m) = accept                     -- from an evaluator ≠ worker
   ∧ findings(m) = ∅                       -- the do-while ran dry
-  ∧ (∀ c : commitsOf(m) • checkGreen(c))  -- every commit passed make check
+  ∧ (∀ c : commitsOf(m) • commitChecksGreen(c))  -- commit hook passed
+  ∧ fullGateGreen(m)                      -- make check passed at handoff
   ∧ testCount′ ≥ testCount                -- coverage never decreases
   ∧ ooRatchetHeld(m)                      -- no metric regressed; ≥ 1 improved
   ∧ missionClosed(m) ]
@@ -793,7 +807,7 @@ itself.
 
 1. **Contract.** The leader writes the mission contract: the problem, the
    invariants, the quality bar, and the commit discipline — one commit per
-   logical step, each passing `make check`, never more than thirty minutes of
+   logical step, each passing the commit hook, never more than thirty minutes of
    work uncommitted. A design mission's contract never prescribes a write-set;
    the specialist decides what to create, split, or extract. For protocol or
    data work the contract cites the OO rules (`../.claude/rules/python-*.md`)
@@ -807,7 +821,8 @@ itself.
    that reproduces the defect, and the fix is done when it passes; a feature
    ships its tests with the code; the test count never goes down. Stateful-
    audio work gets its model-check before implementation. Every commit passes
-   `make check` — zero exceptions, zero unauthorized suppressions.
+   the commit hook; full `make check` passes at handoff — zero exceptions,
+   zero unauthorized suppressions.
 4. **The leader monitors by the filesystem, never by git activity.** A worker
    editing files is working, even with zero commits — analysis and reading are
    invisible. Progress is judged by whether the working tree is changing and
