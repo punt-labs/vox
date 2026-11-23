@@ -2404,7 +2404,7 @@ class TestGlobalFlags:
         data = json.loads(result.output)
         assert "version" in data
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
         # Status reads provider from local vox.md, not daemon health. This runner has no
         # provider configured, so the JSON field is unknown.
@@ -2414,6 +2414,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data
+        assert data["daemon"] == "running"
 
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
