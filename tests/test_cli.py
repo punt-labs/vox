@@ -92,6 +92,7 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected_provider", "expected_model"),
         [
@@ -108,16 +109,9 @@ class TestSayCommand:
         provider_args: list[str],
         expected_provider: str,
         expected_model: str | None,
-        hermetic_config: Path,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from punt_vox.client import SynthesizeResult
 
-        (hermetic_config / "vox.md").write_text(
-            "---\nprovider: elevenlabs\nmodel: eleven_v3\n---\n"
-        )
-        monkeypatch.setenv("TTS_PROVIDER", "openai")
-        monkeypatch.setenv("TTS_MODEL", "tts-1")
         synthesize = mock_client_cls.return_value.synthesize
         synthesize.return_value = SynthesizeResult(request_id="abc123")
 
@@ -1234,6 +1228,7 @@ class TestVoiceCommand:
         assert result.exit_code == 0
         assert "roger (current)" in result.output
 
+    @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
         [([], "elevenlabs"), (["--provider", "polly"], "polly")],
@@ -1245,9 +1240,7 @@ class TestVoiceCommand:
         mock_client_cls: MagicMock,
         provider_args: list[str],
         expected: str,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("TTS_PROVIDER", "openai")
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
         runner = CliRunner()

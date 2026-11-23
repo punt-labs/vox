@@ -135,6 +135,18 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     return config_dir
 
 
+@pytest.fixture
+def conflicting_provider_environment(
+    hermetic_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Configure ElevenLabs in the repo and conflicting legacy env defaults."""
+    (hermetic_config / "vox.md").write_text(
+        "---\nprovider: elevenlabs\nmodel: eleven_v3\n---\n"
+    )
+    monkeypatch.setenv("TTS_PROVIDER", "openai")
+    monkeypatch.setenv("TTS_MODEL", "tts-1")
+
+
 @pytest.fixture(autouse=True)
 def hermetic_vibe_trace(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch

@@ -172,6 +172,7 @@ def test_new_uses_configured_provider_from_state(
     assert sent_spec.voice == "matilda"
 
 
+@pytest.mark.usefixtures("conflicting_provider_environment")
 @pytest.mark.parametrize(
     ("provider_args", "expected_provider", "expected_model"),
     [
@@ -187,14 +188,7 @@ def test_rec_new_provider_ignores_environment(
     provider_args: list[str],
     expected_provider: str,
     expected_model: str | None,
-    hermetic_config: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (hermetic_config / "vox.md").write_text(
-        "---\nprovider: elevenlabs\nmodel: eleven_v3\n---\n"
-    )
-    monkeypatch.setenv("TTS_PROVIDER", "openai")
-    monkeypatch.setenv("TTS_MODEL", "tts-1")
     record = mock_client_cls.return_value.record
     record.return_value = RecordResult(
         id="x.mp3", name="x.mp3", store_path=Path("x.mp3"), byte_count=3
