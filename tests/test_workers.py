@@ -289,7 +289,7 @@ async def test_worker_client_roundtrip_and_error() -> None:
         return {"type": "worker_result", "id": request["id"], "result": []}
 
     transport.send_and_recv.side_effect = reply
-    with patch("punt_vox.worker_client.VoxdTransport", return_value=transport):
+    with patch("punt_vox.daemon_control.VoxdTransport", return_value=transport):
         assert await WorkerClient.request("list") == []
         transport.close.assert_awaited_once()
         transport.send_and_recv.side_effect = None
