@@ -57,7 +57,7 @@ class SpeechPunctuation:
     @staticmethod
     def is_code_path(text: str) -> bool:
         """Recognize paths inside or directly adjacent to an inline span."""
-        return _CODE_PATH_RE.match(_LEADING_NON_SPEECH_RE.sub("", text)) is not None
+        return _CODE_PATH_RE.match(text.lstrip("`'\"([{<")) is not None
 
     @staticmethod
     def is_path(core: str) -> bool:

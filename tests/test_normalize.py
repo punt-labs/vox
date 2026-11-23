@@ -392,6 +392,10 @@ class TestSymbolStripping:
             ("Use `./price reports/$5`", "Use ./price reports/$5"),
             ("Use `./price $5`", "Use ./price dollar sign 5"),
             (
+                "Use `echo $((total/$2))` then pay $5",
+                "Use echo total/dollar sign 2 then pay 5 dollars",
+            ),
+            (
                 "Use ` here\nTitle\n=====\nPay -$5 there `",
                 "Use here Title Pay minus 5 dollars there",
             ),
