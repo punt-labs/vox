@@ -91,7 +91,11 @@ async def test_pending_speech_drops_oldest_result_at_capacity() -> None:
         queue.put_nowait(WorkerProgress(f"w{index}", index + 1, "finished", "done"))
     conv = AsyncMock(spec=Conversation)
     spoken = asyncio.Event()
-    conv.send_text.side_effect = lambda _text: spoken.set()
+
+    def after_speech(_text: str) -> None:
+        spoken.set()
+
+    conv.send_text.side_effect = after_speech
 
     with patch.object(CallProgress, "LULL", 0.05):
         task = asyncio.create_task(progress.run(cast("Conversation", conv), queue))
