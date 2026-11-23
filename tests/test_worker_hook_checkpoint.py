@@ -379,7 +379,7 @@ async def test_listing_unpins_exited_worker_without_trust_cleanup(
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
@@ -391,17 +391,35 @@ async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
     )
     checkpoint = store.checkpoint(worker.id)
     assert checkpoint is not None
-    record = replace(
-        worker, last_report={**checkpoint, "gaps": {"highest_seen": "broken"}}
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            last_report={
+                **checkpoint,
+                "gaps": {
+                    "highest_seen": 4,
+                    "untracked_through": 0,
+                    "missing_ranges": [(2, 5)],
+                    "missing_count": 4,
+                },
+            },
+        )
     )
-    with patch.object(FakeWorkerProvider, "progress", return_value=record.last_report):
-        registry.list()
 
     restarted = HookContextStore()
-    await (
-        WorkerActor(registry)
-        .hooks(restarted)
-        .ingest(
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        actor, recover = WorkerSubsystem.prepare(restarted, WorkerSubsystem.policy())
+        recover()
+        assert restarted.checkpoint(worker.id) is None
+        assert "hook checkpoint unavailable (ValueError)" in caplog.text
+        await actor.hooks(restarted).ingest(
             {
                 "session_id": worker.id,
                 "cwd": worker.worktree,
@@ -411,7 +429,6 @@ async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
             },
             worker_only=True,
         )
-    )
     assert restarted.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
 
 
