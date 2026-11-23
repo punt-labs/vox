@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
 
+### Fixed
+
+- `vox daemon status` reports `unknown` with "invalid UTF-8" when
+  `serve.port` holds bytes that are not UTF-8, instead of a traceback;
+  install and uninstall fail with the same message. (PL-1189)
+
 ### Added
 
 - `vox doctor` reports call prerequisites: the local ElevenLabs key's
