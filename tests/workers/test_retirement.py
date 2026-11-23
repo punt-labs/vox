@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from punt_vox.voxd.workers.model import WorkerRecord
 
 
+def test_successful_stop_forgets_finished_cleanup_job(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    record = registry.start("work", str(tmp_path), provider="fake", harness="test")
+
+    def check_durable_intent(_path: Path) -> None:
+        [saved] = WorkerRecords(tmp_path / "workers").load()
+        assert saved.state == "stopped"
+        assert saved.last_report["cleanup_pending"] is True
+
+    with patch.object(TrivialProfile, "cleanup", side_effect=check_durable_intent):
+        stopped = registry.stop(record.id)
+
+    assert stopped.state == "stopped"
+    assert "cleanup_pending" not in stopped.last_report
+    assert not registry._retirement._jobs
+    registry.shutdown()
+
+
 def test_terminal_cleanup_does_not_block_status_or_replace_late_report(
     tmp_path: Path,
 ) -> None:
@@ -42,6 +60,7 @@ def test_terminal_cleanup_does_not_block_status_or_replace_late_report(
     late = replace(record, last_report={"cleanup_pending": True, "worker_seq": 8})
     outcomes = []
     inventory = Mock(spec=WorkerInventory)
+    inventory.get.return_value = record
 
     def publish(_worker_id: str, merge: Callable[[WorkerRecord], WorkerRecord]) -> None:
         outcomes.append(merge(late).last_report)
@@ -49,7 +68,7 @@ def test_terminal_cleanup_does_not_block_status_or_replace_late_report(
 
     inventory.update.side_effect = publish
     retirement = WorkerRetirement({"test": profile}, inventory)
-    retirement.schedule(record)
+    retirement.schedule(record.id)
     try:
         assert started.wait(1)
         inventory.update.assert_not_called()

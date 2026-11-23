@@ -72,7 +72,7 @@ class WorkerRegistry:
         """Install reconciled checkpoints before admitting callers."""
         self._inventory.restore(records, unconfirmed=unconfirmed)
         for record in records:
-            self._retirement.schedule(record)
+            self._retirement.schedule(record.id)
 
     def shutdown(self) -> None:
         """Bound the final wait for worker retirement cleanup."""
@@ -134,7 +134,7 @@ class WorkerRegistry:
             raise
         observed, _ = self._lifecycle.observe(record)
         self._inventory.save(observed)
-        self._retirement.schedule(observed)
+        self._retirement.schedule(observed.id)
         return observed
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
@@ -182,7 +182,7 @@ class WorkerRegistry:
     def request_stop(self, worker_id: str) -> tuple[WorkerRecord, Future[None] | None]:
         """Persist termination and start cleanup without waiting for its lease."""
         record = self._inventory.update(worker_id, self._lifecycle.terminate)
-        return record, self._retirement.schedule(record)
+        return record, self._retirement.schedule(worker_id)
 
     def steer(
         self,
