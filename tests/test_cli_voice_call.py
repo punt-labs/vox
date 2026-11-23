@@ -303,7 +303,7 @@ def test_display_status_still_refuses_a_malformed_id() -> None:
         result = runner.invoke(CallCli.build_app(), ["status"])
 
     assert result.exit_code == 1, result.output
-    assert "invalid call ID" in result.output
+    assert "Invalid call ID" in result.output
 
 
 def test_script_before_a_subcommand_is_a_usage_error(tmp_path: Path) -> None:
@@ -363,11 +363,11 @@ def test_the_status_line_truncates_long_turns() -> None:
 
 @pytest.mark.parametrize(
     "status",
-    [None, {}, {"state": "stopping"}, {"state": "live"}, {**_LIVE, "call_id": 1}],
+    [None, {}, {"state": "stopping"}, {**_LIVE, "call_id": 1}],
 )
 def test_an_unreadable_status_is_a_protocol_error(status: object) -> None:
     with pytest.raises(VoxdProtocolError):
-        CallStatusView.for_control(status)
+        CallStatusView(status)
 
 
 @pytest.mark.usefixtures("no_poll_delay")

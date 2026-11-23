@@ -49,7 +49,12 @@ class CallControl:
             raise VoxdProtocolError(
                 "voxd does not support this call operation; upgrade or restart voxd"
             ) from exc
-        return CallStatusView.for_control(result)
+        view = CallStatusView(result)
+        if view.state != "idle" and not view.call_id:
+            raise VoxdProtocolError(
+                "Missing call ID in voxd status; upgrade or restart voxd"
+            )
+        return view
 
     async def display_status(self) -> CallStatusView:
         """Read the status for display without requiring an identity."""

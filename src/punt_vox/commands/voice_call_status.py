@@ -10,7 +10,6 @@ __all__ = ["CallStatusView"]
 
 _TEXT_WIDTH = 72
 _STATES = frozenset({"idle", "connecting", "live", "ended", "failed"})
-_ID_ERROR = "Missing or invalid call ID in voxd status; upgrade or restart voxd"
 
 
 class _CallStatus(TypedDict, total=False):
@@ -44,18 +43,10 @@ class CallStatusView:
         if "call_id" in fields and (
             not isinstance(call_id, str) or not call_id.strip()
         ):
-            raise VoxdProtocolError(_ID_ERROR)
+            raise VoxdProtocolError("Invalid call ID in voxd status")
         self = super().__new__(cls)
         self._status = cast("_CallStatus", fields)
         return self
-
-    @classmethod
-    def for_control(cls, status: object) -> Self:
-        """Require a call ID in non-idle replies used to control a call."""
-        view = cls(status)
-        if view.state != "idle" and not view.call_id:
-            raise VoxdProtocolError(_ID_ERROR)
-        return view
 
     @property
     def state(self) -> str:
