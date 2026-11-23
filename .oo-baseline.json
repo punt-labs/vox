@@ -1003,10 +1003,10 @@
   "src/punt_vox/hook_context_client.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.75,
+    "avg_params": 1.6,
     "max_complexity": 8.0,
-    "avg_complexity": 4.0,
-    "module_size": 82.0,
+    "avg_complexity": 3.6,
+    "module_size": 85.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

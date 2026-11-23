@@ -38,14 +38,18 @@ class HookContextClient:
             for delay in (*cls._RETRY_DELAYS, None):
                 try:
                     await cls._deliver(payload, worker_only=worker_only)
-                except VoxdHandshakeRejectedError:
-                    raise
-                except VoxdConnectionError:
-                    if delay is None:
+                except (VoxdConnectionError, VoxdProtocolError) as exc:
+                    if delay is None or not cls._retryable(exc):
                         raise
                     await asyncio.sleep(delay)
                 else:
                     return
+
+    @staticmethod
+    def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
+        if isinstance(exc, VoxdProtocolError):
+            return isinstance(exc.__cause__, TimeoutError)
+        return not isinstance(exc, VoxdHandshakeRejectedError)
 
     @classmethod
     async def _deliver(cls, payload: dict[str, object], *, worker_only: bool) -> None:

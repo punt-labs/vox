@@ -12,7 +12,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
-from punt_vox.client_errors import VoxdHandshakeRejectedError, VoxdRefusedError
+from punt_vox.client_errors import (
+    VoxdHandshakeRejectedError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextRelay, main
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
@@ -65,10 +69,10 @@ async def test_worker_delivery_retries_same_sequence_across_short_restart() -> N
 
 @pytest.mark.parametrize(
     ("failure", "attempts"),
-    [(VoxdHandshakeRejectedError, 1), (VoxdRefusedError, 8)],
+    [(VoxdHandshakeRejectedError, 1), (VoxdRefusedError, 8), (VoxdProtocolError, 1)],
 )
 async def test_worker_retry_stops_at_auth_rejection_or_backoff_limit(
-    failure: type[VoxdHandshakeRejectedError] | type[VoxdRefusedError], attempts: int
+    failure: type[Exception], attempts: int
 ) -> None:
     request = AsyncMock(side_effect=failure("not available"))
     with (
@@ -79,6 +83,25 @@ async def test_worker_retry_stops_at_auth_rejection_or_backoff_limit(
         await HookContextClient.send_event({"session_id": "worker"}, worker_only=True)
     assert request.await_count == attempts
     assert delay.await_count == attempts - 1
+
+
+async def test_worker_delivery_retries_a_daemon_response_timeout() -> None:
+    payload: dict[str, object] = {"session_id": "worker", "relay_seq": 19}
+    timeout = VoxdProtocolError("Timeout waiting for response to 'hook_event'")
+    timeout.__cause__ = TimeoutError()
+    request = AsyncMock(
+        side_effect=[{"admitted": True}, timeout, {"admitted": True}, {}]
+    )
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await HookContextClient.send_event(payload, worker_only=True)
+
+    assert [call.args[0]["payload"] for call in request.await_args_list[1::2]] == [
+        payload,
+        payload,
+    ]
 
 
 def test_checkpoint_writer_matches_recovery_schema() -> None:
