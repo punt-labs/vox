@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 from punt_vox.voxd.voice_agent.contracts import ClientTool
 from punt_vox.voxd.voice_call.result_cache import ToolResultCache
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
+from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from punt_vox.voxd.voice_call.contracts import ProjectAllowlist, WorkerControl
-    from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["BossTools"]
 
@@ -82,7 +82,8 @@ class BossTools:
         {"start_worker", "steer_worker", "stop_worker"}
     )
 
-    __slots__ = ("_cache", "_projects", "_workers")
+    __slots__ = ("_cache", "_directory", "_projects", "_workers")
+    _directory: WorkerDirectory
     _workers: WorkerControl
     _projects: ProjectAllowlist
     _cache: ToolResultCache
@@ -91,6 +92,7 @@ class BossTools:
         """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
+        self._directory = WorkerDirectory(workers)
         self._cache = ToolResultCache()
         return self
 
@@ -166,36 +168,24 @@ class BossTools:
         urgent = arguments.get("urgent", False)
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a boolean")
-        worker = await self._find(arguments)
+        worker = await self._directory.find(self._text(arguments, "worker_id"))
         words = self._text(arguments, "words")
         return await self._workers.steer(worker["id"], words, urgent=urgent)
 
     async def _status(self, arguments: dict[str, object]) -> object:
-        return WorkerBrief.detail(await self._find(arguments))
+        worker = await self._directory.find(self._text(arguments, "worker_id"))
+        return WorkerBrief.detail(worker)
 
     async def _list(self, _arguments: dict[str, object]) -> object:
         return [WorkerBrief.summary(w) for w in await self._workers.workers()]
 
     async def _stop(self, arguments: dict[str, object]) -> object:
-        worker = await self._find(arguments)
+        worker = await self._directory.find(self._text(arguments, "worker_id"))
         return WorkerBrief.summary(await self._workers.stop(worker["id"]))
 
     @staticmethod
     async def _silent(_arguments: dict[str, object]) -> object:
         return {"silent": True}
-
-    async def _find(self, arguments: dict[str, object]) -> WorkerPayload:
-        """Resolve a full ID or a unique prefix, since IDs are spoken aloud."""
-        wanted = self._text(arguments, "worker_id")
-        workers = await self._workers.workers()
-        exact = [w for w in workers if w["id"] == wanted]
-        prefixed = [
-            w for w in workers if len(wanted) >= 4 and w["id"].startswith(wanted)
-        ]
-        matches = exact or prefixed
-        if len(matches) != 1:
-            raise ValueError(f"no single worker matches {wanted!r}")
-        return matches[0]
 
     @staticmethod
     def _text(arguments: dict[str, object], field: str) -> str:
