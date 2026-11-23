@@ -350,6 +350,8 @@ class TestSymbolStripping:
             ("-$5off", "minus 5 dollars off"),
             ("$5/repo", "5 dollars per repository"),
             ("$5/month", "5 dollars per month"),
+            ("-₹5/घंटा", "minus 5 rupees per घंटा"),
+            ("€5/cafe\u0301", "5 euros per cafe\u0301"),
             ("$10k", "10 thousand dollars"),
             ("$1thousand", "1 thousand dollars"),
             ("$1million", "1 million dollars"),

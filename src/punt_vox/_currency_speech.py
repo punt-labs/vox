@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from decimal import Decimal
 from typing import final
 
@@ -32,23 +33,36 @@ _AMOUNT = (
     r"(?P<{p}amount>(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?|\.\d+)"
 )
 _CODE_AMOUNT = re.compile(_AMOUNT.format(p=""))
-_WORD = r"[^\W\d_]+"
+_LETTER = r"[^\W\d_]"
 
 
 @final
 class CurrencySpeech:
     """Use the same amount grammar in prose and inline code."""
 
-    PROSE_PATTERN = re.compile(
-        rf"{_CODE_AMOUNT.pattern}(?P<word>{_WORD})?"
-        rf"(?:[-\u2013]{_AMOUNT.format(p='end_')}(?P<end_word>{_WORD})?)?"
-        rf"(?:/(?P<rate>{_WORD}))?"
-    )
+    @staticmethod
+    def prose_pattern(text: str) -> re.Pattern[str]:
+        """Build the prose grammar with any combining marks present in *text*."""
+        marks = (
+            {char for char in text if unicodedata.category(char).startswith("M")}
+            if not text.isascii()
+            else set()
+        )
+        word = (
+            rf"{_LETTER}(?:{_LETTER}|[{re.escape(''.join(sorted(marks)))}])*"
+            if marks
+            else rf"{_LETTER}+"
+        )
+        return re.compile(
+            rf"{_CODE_AMOUNT.pattern}(?P<word>{word})?"
+            rf"(?:[-\u2013]{_AMOUNT.format(p='end_')}(?P<end_word>{word})?)?"
+            rf"(?:/(?P<rate>{word}))?"
+        )
 
     @classmethod
     def speak_prose(cls, core: str) -> str:
         """Render an amount with an optional range, rate, scale, or attached word."""
-        match = cls.PROSE_PATTERN.fullmatch(core.lstrip("_"))
+        match = cls.prose_pattern(core).fullmatch(core.lstrip("_"))
         if match is None:
             return core
         spoken = cls._speak_amount(match)

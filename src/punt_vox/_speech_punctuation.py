@@ -7,10 +7,6 @@ import unicodedata
 
 from punt_vox._currency_speech import CurrencySpeech
 
-_LEADING_NON_SPEECH_RE = re.compile(
-    rf"^(?:[-\u2212]{{2,}}|(?!(?:{CurrencySpeech.PROSE_PATTERN.pattern}[\W_]*$|[-\u2212]\.?\d))"
-    r"[^\w~/.])+"
-)
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
@@ -29,7 +25,11 @@ class SpeechPunctuation:
         (``~/._``), a numeric minus, and signed or unsigned currency amounts.
         Trailing non-prosody symbols are discarded to avoid synthesis artifacts.
         """
-        core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
+        currency = CurrencySpeech.prose_pattern(token).pattern
+        leading = (
+            rf"^(?:[-\u2212]{{2,}}|(?!(?:{currency}[\W_]*$|[-\u2212]\.?\d))[^\w~/.])+"
+        )
+        core, raw_suffix = cls._split_trailing(re.sub(leading, "", token))
         suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
         return CurrencySpeech.speak_prose(core), suffix
 
