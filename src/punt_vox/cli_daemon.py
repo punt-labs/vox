@@ -22,12 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self, final
 
 import typer
 
-from punt_vox.client_errors import (
-    VoxdConnectionError,
-    VoxdProtocolError,
-    VoxdRefusedError,
-    VoxError,
-)
+from punt_vox.client_errors import VoxdRefusedError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service import (
     DaemonLifecycle,
@@ -223,16 +218,15 @@ class DaemonCli:
         if reading.exit_code:
             raise typer.Exit(code=reading.exit_code)
 
-    @staticmethod
-    def probe_status(client: VoxClientSync) -> str:
-        """Read and record the top-level CLI's liveness-only daemon status."""
-        state = DaemonState.NOT_RUNNING
-        try:
-            client.health()
-            state = DaemonState.RUNNING
-        except (VoxdConnectionError, VoxdProtocolError):
-            pass
-        DaemonCli._log_status("vox status", state)
+    @classmethod
+    def probe_status(cls) -> str:
+        """Read and record the top-level CLI's liveness-only daemon status.
+
+        It classifies a failure as ``vox daemon status`` does for a configured
+        daemon, so the two never disagree on ``not running``.
+        """
+        state = cls._client_status().state
+        cls._log_status("vox status", state)
         return state.value.replace("_", " ")
 
     @staticmethod
@@ -261,7 +255,7 @@ class DaemonCli:
 
     @staticmethod
     def _client_status() -> DaemonStatus:
-        """Return the configured daemon's reading.
+        """Return the reading of the daemon the client reaches.
 
         Only a refused connection is ``not_running``: nothing listens there.
         A rejection, a malformed reply, a timeout or any other failure means

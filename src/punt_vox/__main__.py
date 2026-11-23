@@ -644,7 +644,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
     # Probe liveness only; provider selection comes from repo state.
-    daemon_status = DaemonCli.probe_status(VoxClientSync())
+    daemon_status = DaemonCli.probe_status()
 
     provider_name = cfg.provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import socket
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +12,7 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.client_errors import VoxdProtocolError, VoxdRefusedError
+from punt_vox.paths import run_dir
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.types_health import HealthStatus
 
@@ -32,10 +35,9 @@ def test_status_outcome(
         if outcome == "not_running"
         else VoxdProtocolError("PRIVATE_EXCEPTION")
     )
-    target = "punt_vox.cli_daemon" if command[0] == "daemon" else "punt_vox.__main__"
     with (
         patch("punt_vox.cli_io.configure_client_logging"),
-        patch(f"{target}.VoxClientSync") as client,
+        patch("punt_vox.cli_daemon.VoxClientSync") as client,
         caplog.at_level(logging.INFO),
     ):
         client.return_value.health.return_value = health
@@ -44,7 +46,7 @@ def test_status_outcome(
         result = CliRunner().invoke(app, [*command, *flags])
     daemon = command[0] == "daemon"
     assert result.exit_code == (1 if daemon and outcome != "running" else 0)
-    expected = outcome if daemon or outcome == "running" else "not_running"
+    expected = outcome
     reason = {
         "running": "reachable",
         "not_running": "unreachable",
@@ -79,3 +81,43 @@ def test_local_unresponsive_status(caplog: pytest.LogCaptureFixture) -> None:
     ] == ["vox daemon status: outcome=unresponsive reason=unresponsive"]
     assert "PRIVATE" not in caplog.text
     assert "54321" not in caplog.text
+
+
+def _closed_port() -> int:
+    """Return a localhost port that nothing listens on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+@pytest.mark.parametrize(
+    ("voxd_port", "serve_port", "expected"),
+    [
+        pytest.param(None, None, "not running", id="unpublished-serve-port"),
+        pytest.param("closed", None, "not running", id="refused"),
+        pytest.param("abc", None, "unknown", id="malformed-VOXD_PORT"),
+        pytest.param(None, b"garbage", "unknown", id="non-numeric-serve-port"),
+        pytest.param(None, b"\xff\xfe", "unknown", id="non-utf8-serve-port"),
+    ],
+)
+def test_overview_reports_only_refusal_as_not_running(
+    voxd_port: str | None,
+    serve_port: bytes | None,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("VOXD_HOST", "VOXD_PORT", "VOXD_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    if voxd_port is not None:
+        port = str(_closed_port()) if voxd_port == "closed" else voxd_port
+        monkeypatch.setenv("VOXD_PORT", port)
+    if serve_port is not None:
+        run_dir().mkdir(parents=True)
+        (run_dir() / "serve.port").write_bytes(serve_port)
+    with patch("punt_vox.cli_io.configure_client_logging"):
+        text = CliRunner().invoke(app, ["status"])
+        payload = CliRunner().invoke(app, ["status", "--json"])
+    assert text.exit_code == 0
+    assert f"Daemon:    {expected}\n" in text.output
+    assert json.loads(payload.output)["daemon"] == expected
