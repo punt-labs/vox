@@ -208,22 +208,28 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
         first = handlers()
         assert "result" in await _rpc(first, start)
         assert "result" in await _rpc(first, {"type": "call_stop"})
-        workers.known[1] = payload(
-            "running",
-            "Write the greeting",
-            last_assistant_message="Wrote hello.py.",
-            result_seq=3,
-        )
+        workers.known[1] = {
+            **payload(
+                "running",
+                "Run the exact Bash command python3 /private/scripts/gate.py",
+                last_assistant_message="Wrote hello.py.",
+                result_seq=3,
+            ),
+            "project": "/private/projects/greeting",
+        }
         workers.known.append(
-            payload(
-                "blocked",
-                "Run tests",
-                pending_decision={
-                    "notification_type": "idle_prompt",
-                    "message": "Which suite?",
-                    "seq": 2,
-                },
-            )
+            {
+                **payload(
+                    "blocked",
+                    "Run tests from /private/commands",
+                    pending_decision={
+                        "notification_type": "idle_prompt",
+                        "message": "Which suite?",
+                        "seq": 2,
+                    },
+                ),
+                "project": "/private/projects/quality",
+            }
         )
         for index in range(4, 7):
             workers.known.append(
@@ -246,6 +252,12 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
     assert opening[1] is not None
     assert "Wrote hello.py." in opening[1]
     assert "Which suite?" in opening[1]
+    assert opening[1].startswith("While you were away, the worker in ")
+    assert "worker in greeting finished: Wrote hello.py." in opening[1]
+    assert "worker in quality needs your input: Which suite?" in opening[1]
+    assert "Run the exact Bash command" not in opening[1]
+    assert "Run tests" not in opening[1]
+    assert "/private/" not in opening[1]
     assert "Already reviewed." not in opening[1]
     assert all(f"Result {index}." in opening[1] for index in range(4, 7))
     assert opening[2] is None

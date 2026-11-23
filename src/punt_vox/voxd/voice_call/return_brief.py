@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.atomic_file import AtomicFile
@@ -10,8 +11,6 @@ from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_call.seed import CallSeed
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -59,7 +58,12 @@ class ReturnBrief:
             if update := self._update(worker, cursor.get(worker["id"], 0)):
                 updates.append(update)
             self._covered[worker["id"]] = self._sequence(worker, "worker_seq")
-        return " ".join(updates) or None
+        opening = " ".join(updates)
+        return (
+            f"While you were away, {opening[:1].lower()}{opening[1:]}"
+            if opening
+            else None
+        )
 
     def depart(self, workers: list[WorkerPayload]) -> None:
         """Save the report boundary without writing tasks or results again."""
@@ -68,24 +72,32 @@ class ReturnBrief:
 
     @classmethod
     def _update(cls, worker: WorkerPayload, prior: int) -> str:
-        report = worker["last_report"]
+        project = Path(worker["project"]).name or "the project"
+        label = f"The worker in {project}"
         snippets: list[str] = []
-        result = report.get("last_assistant_message")
+        result = worker["last_report"].get("last_assistant_message")
         if cls._sequence(worker, "result_seq") > prior and isinstance(result, str):
-            snippets.append(f"Result: {cls._speech(result)}")
-        pending = report.get("pending_decision")
-        if worker["state"] in ("starting", "ready") and isinstance(pending, dict):
-            message = cast("dict[str, object]", pending).get("message")
-            if isinstance(message, str) and message:
-                snippets.append(f"Waiting on: {cls._speech(message)}")
-        if not snippets:
+            snippets.append(f"{label} finished: {cls._speech(result)}")
+        if question := cls._pending_question(worker):
+            snippets.append(f"{label} needs your input: {cls._speech(question)}")
+        return " ".join(snippets)
+
+    @staticmethod
+    def _pending_question(worker: WorkerPayload) -> str:
+        pending = worker["last_report"].get("pending_decision")
+        if worker["state"] not in ("starting", "ready") or not isinstance(
+            pending, dict
+        ):
             return ""
-        return f"For {cls._speech(worker['task'])}: " + " ".join(snippets)
+        message = cast("dict[str, object]", pending).get("message")
+        return message if isinstance(message, str) else ""
 
     @staticmethod
     def _speech(text: str) -> str:
         spoken = " ".join(text.split())
-        return spoken if len(spoken) <= 160 else spoken[:159] + "…"
+        if len(spoken) > 160:
+            return spoken[:159] + "…"
+        return spoken if spoken.endswith((".", "?", "!", "…")) else spoken + "."
 
     @staticmethod
     def _sequence(worker: WorkerPayload, field: str) -> int:
