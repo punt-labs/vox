@@ -16,7 +16,7 @@ import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Self, final
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
@@ -172,6 +172,36 @@ def test_new_uses_configured_provider_from_state(
     assert sent_spec.voice == "matilda"
 
 
+@pytest.mark.usefixtures("conflicting_provider_environment")
+@pytest.mark.parametrize(
+    ("provider_args", "expected_provider", "expected_model"),
+    [
+        ([], "elevenlabs", "eleven_v3"),
+        (["--provider", "polly"], "polly", None),
+        (["--provider", "openai", "--model", "tts-1-hd"], "openai", "tts-1-hd"),
+    ],
+    ids=["repo-default", "explicit-provider", "explicit-model"],
+)
+@patch("punt_vox.cli_rec.VoxClientSync")
+def test_rec_new_provider_ignores_environment(
+    mock_client_cls: MagicMock,
+    provider_args: list[str],
+    expected_provider: str,
+    expected_model: str | None,
+) -> None:
+    record = mock_client_cls.return_value.record
+    record.return_value = RecordResult(
+        id="x.mp3", name="x.mp3", store_path=Path("x.mp3"), byte_count=3
+    )
+
+    result = CliRunner().invoke(app, ["rec", "new", "hi", *provider_args])
+
+    assert result.exit_code == 0, result.output
+    record.assert_called_once()
+    spec = record.call_args.args[1]
+    assert (spec.provider, spec.model) == (expected_provider, expected_model)
+
+
 def test_new_fills_provider_through_session_spec_for_repo(
     hermetic_config: Path,
 ) -> None:
@@ -181,8 +211,6 @@ def test_new_fills_provider_through_session_spec_for_repo(
     ``ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()`` that
     would silently drift from ``vox say``/``vox call``'s.
     """
-    from unittest.mock import patch
-
     from punt_vox.session_spec import SessionSpec
 
     hermetic_config.joinpath("vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')

@@ -139,11 +139,9 @@ _NameOpt = Annotated[
 ]
 _ProviderOpt = Annotated[
     str | None,
-    typer.Option("--provider", envvar="TTS_PROVIDER", help="TTS provider."),
+    typer.Option("--provider", help="TTS provider."),
 ]
-_ModelOpt = Annotated[
-    str | None, typer.Option("--model", envvar="TTS_MODEL", help="Model name.")
-]
+_ModelOpt = Annotated[str | None, typer.Option("--model", help="Model name.")]
 _StabilityOpt = Annotated[
     float | None, typer.Option("--stability", help="ElevenLabs stability (0.0-1.0).")
 ]
