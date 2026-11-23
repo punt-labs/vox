@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Pause the vox music player during a call and resume after it ends, without
-  starting music that was already paused or stopped. (PL-1374)
-
 ### Removed
 
 - The unused append-log factory and stderr reporter from `PrivateState`.
@@ -28,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- Pause the vox music player during a call and resume after it ends, without
+  starting music that was already paused or stopped. (PL-1374)
 
 - A `serve.port` holding bytes that are not UTF-8 no longer crashes vox
   with a traceback where it reads the file: `vox daemon status` (with no
