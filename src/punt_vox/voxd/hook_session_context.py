@@ -27,6 +27,7 @@ class HookContextSnapshot(TypedDict):
     last_assistant_message: str | None  # None until a nonempty Stop message arrives.
     gaps: HookGapReport
     pending_decision: PendingDecision | None  # None when no question is outstanding.
+    prompt_epoch: int
 
 
 @final
@@ -126,4 +127,5 @@ class SessionContext:
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
             "pending_decision": self._decisions.pending(),
+            "prompt_epoch": self._decisions.prompt_epoch,
         }

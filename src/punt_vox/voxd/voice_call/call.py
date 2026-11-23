@@ -180,9 +180,7 @@ class VoiceAgentCall:
                 return
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
-        result, is_error = await self._tools.answer(
-            call.tool_name, call.parameters, tool_call_id=call.tool_call_id
-        )
+        result, is_error = await self._tools.answer(call.tool_name, call.parameters)
         if call.tool_name == "steer_worker" and not is_error:
             receipt: dict[str, object] = json.loads(result)
             self._trace.record("note", "worker_steer_receipt", receipt)

@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock, MagicMock
 
+from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
@@ -13,11 +15,12 @@ from punt_vox.voxd.voice_agent.events import (
     Ping,
     UserTranscript,
 )
+from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
-from .fakes import FakePlayback, FakeWorkers
+from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -25,7 +28,6 @@ if TYPE_CHECKING:
     import pytest
 
     from punt_vox.voxd.playback import PlaybackQueue
-    from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.call import Opener
 
 
@@ -80,6 +82,38 @@ def _call(peer: _Peer) -> VoiceAgentCall:
 
 async def _dial() -> tuple[str, SessionOptions]:
     return "ws://peer", SessionOptions("prompt", ())
+
+
+async def test_reissued_steer_ids_share_a_prompt_but_not_the_next_prompt() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=MagicMock(spec=EventTrace),
+    )
+    conv = AsyncMock(spec=Conversation)
+    words: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
+    for identity in ("interrupted", "reissued"):
+        await call._answer(
+            conv, ClientToolCall(identity, "steer_worker", words, expects_response=True)
+        )
+    assert workers.steered == [("abcd1234", "Continue.", False)]
+    workers.known = [payload("abcd1234", prompt_epoch=9)]
+    await call._answer(
+        conv,
+        ClientToolCall("next-prompt", "steer_worker", words, expects_response=True),
+    )
+    assert workers.steered == [
+        ("abcd1234", "Continue.", False),
+        ("abcd1234", "Continue.", False),
+    ]
+    assert [entry.args[0] for entry in conv.send_tool_result.await_args_list] == [
+        "interrupted",
+        "reissued",
+        "next-prompt",
+    ]
 
 
 async def test_the_transcript_keeps_both_sides_and_ignores_other_events() -> None:

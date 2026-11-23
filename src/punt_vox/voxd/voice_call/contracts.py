@@ -25,7 +25,7 @@ class WorkerControl(Protocol):
         ...
 
     async def workers(self) -> list[WorkerPayload]:
-        """Return every known worker, reconciled with its live session."""
+        """Return workers with last_report.prompt_epoch identifying their prompt."""
         ...
 
     async def steer(

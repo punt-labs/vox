@@ -10,9 +10,28 @@ def test_empty_state_and_irrelevant_notification() -> None:
     assert state.pending() is None
     assert state.baseline() == 0
     assert state.latest == 0
+    assert state.prompt_epoch == 0
     assert state.receipts(0) == []
     state.ingest(1, "Notification", {"notification_type": "other"})
     assert state.pending() is None
+    assert state.prompt_epoch == 0
+
+
+def test_prompt_epoch_survives_input_acknowledgement_and_ignores_stale_hooks() -> None:
+    state = HookDecisions()
+    state.ingest(2, "Notification", {"notification_type": "idle_prompt"})
+    assert state.prompt_epoch == 2
+    state.ingest(3, "UserPromptSubmit", {"prompt": "Continue."})
+    assert state.pending() is None
+    assert state.prompt_epoch == 2
+    state.ingest(4, "PostToolUse", {})
+    state.ingest(5, "Notification", {"notification_type": "other"})
+    state.ingest(3, "Stop", {})
+    assert state.prompt_epoch == 2
+    state.ingest(6, "Stop", {})
+    assert state.prompt_epoch == 6
+    state.ingest(8, "Notification", {"notification_type": "permission_prompt"})
+    assert state.prompt_epoch == 8
 
 
 def test_pending_snapshot_is_detached_and_next_hook_acknowledges_it() -> None:

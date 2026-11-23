@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 
 from .fakes import FakeWorkers, payload
@@ -21,18 +23,18 @@ def test_catalog_names_the_six_boss_tools() -> None:
 
 async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> None:
     workers = FakeWorkers()
-    workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
+    workers.known = [payload("abcd1234", pending_decision={"seq": 4}, prompt_epoch=4)]
     tools = _tools(workers)
     answer: dict[str, object] = {
         "worker_id": "abcd1234",
         "words": "Yes, allow it.",
         "choice": "approve",
     }
-    first = await tools.answer("steer_worker", answer, tool_call_id="first")
+    first = await tools.answer("steer_worker", answer)
     assert not first[1]
-    assert await tools.answer("steer_worker", answer, tool_call_id="first") == first
-    workers.known = [payload("abcd1234", pending_decision={"seq": 9})]
-    assert not (await tools.answer("steer_worker", answer, tool_call_id="second"))[1]
+    assert await tools.answer("steer_worker", answer) == first
+    workers.known = [payload("abcd1234", pending_decision={"seq": 9}, prompt_epoch=9)]
+    assert not (await tools.answer("steer_worker", answer))[1]
     assert workers.steered == [
         ("abcd1234", "Yes, allow it.", False),
         ("abcd1234", "Yes, allow it.", False),
@@ -45,35 +47,68 @@ async def test_ordinary_steer_retry_with_the_same_tool_id_replays_the_receipt() 
     workers.known = [payload("abcd1234")]
     tools = _tools(workers)
     arguments: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
-    first = await tools.answer("steer_worker", arguments, tool_call_id="retry")
+    first = await tools.answer("steer_worker", arguments)
     assert not first[1]
-    assert await tools.answer("steer_worker", arguments, tool_call_id="retry") == first
+    assert await tools.answer("steer_worker", arguments) == first
     assert workers.steered == [("abcd1234", "Continue.", False)]
     assert tools.replayed == 1
+
+
+@pytest.mark.parametrize("choice", [None, "approve", "deny"])
+async def test_reissued_steer_in_one_epoch_replays_even_after_pending_clears(
+    choice: str | None,  # None exercises ordinary idle text instead of permission keys.
+) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", pending_decision={"seq": 4}, prompt_epoch=4)]
+    tools = _tools(workers)
+    arguments: dict[str, object] = {"worker_id": "abcd", "words": "Continue."}
+    if choice is not None:
+        arguments["choice"] = choice
+    first = await tools.answer("steer_worker", arguments)
+    assert not first[1]
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    reissued = {**arguments, "worker_id": "abcd1234", "urgent": False}
+    assert await tools.answer("steer_worker", reissued) == first
+    assert workers.steered == [("abcd1234", "Continue.", False)]
+    assert tools.replayed == 1
+
+
+@pytest.mark.parametrize("epoch", [None, True, -1, "4"])
+async def test_invalid_worker_prompt_epoch_cannot_deliver_a_steer(
+    epoch: object,
+) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=epoch)]
+    result, error = await _tools(workers).answer(
+        "steer_worker",
+        {"worker_id": "abcd1234", "words": "Continue."},
+    )
+    assert error and "worker prompt epoch" in result
+    assert workers.steered == []
 
 
 async def test_identical_answers_to_two_idle_prompts_both_reach_the_worker() -> None:
     workers = FakeWorkers()
     workers.known = [
         payload(
-            "abcd1234", pending_decision={"seq": 4, "notification_type": "idle_prompt"}
+            "abcd1234",
+            pending_decision={"seq": 4, "notification_type": "idle_prompt"},
+            prompt_epoch=4,
         )
     ]
     tools = _tools(workers)
     answer: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
-    first = await tools.answer("steer_worker", answer, tool_call_id="first-idle")
+    first = await tools.answer("steer_worker", answer)
     assert not first[1]
-    assert (
-        await tools.answer("steer_worker", answer, tool_call_id="first-idle") == first
-    )
+    assert await tools.answer("steer_worker", answer) == first
     workers.known = [
         payload(
-            "abcd1234", pending_decision={"seq": 9, "notification_type": "idle_prompt"}
+            "abcd1234",
+            pending_decision={"seq": 9, "notification_type": "idle_prompt"},
+            prompt_epoch=9,
         )
     ]
-    assert not (await tools.answer("steer_worker", answer, tool_call_id="second-idle"))[
-        1
-    ]
+    assert not (await tools.answer("steer_worker", answer))[1]
     assert workers.steered == [
         ("abcd1234", "Continue.", False),
         ("abcd1234", "Continue.", False),
@@ -87,7 +122,6 @@ async def test_explicit_denial_and_receipt_reach_the_worker_boundary() -> None:
     result, error = await _tools(workers).answer(
         "steer_worker",
         {"worker_id": "abcd1234", "words": "No, don't run that", "choice": "deny"},
-        tool_call_id="denial",
     )
     assert not error
     assert json.loads(result)["choice"] == "deny"
@@ -100,7 +134,6 @@ async def test_invalid_choice_never_reaches_worker() -> None:
     result, error = await _tools(workers).answer(
         "steer_worker",
         {"worker_id": "abcd1234", "words": "maybe", "choice": "maybe"},
-        tool_call_id="ambiguous",
     )
     assert error and "choice must be approve or deny" in result
     assert workers.steered == []
@@ -115,15 +148,11 @@ async def test_status_advertises_choices_only_with_a_pending_decision() -> None:
         )
     ]
     tools = _tools(workers)
-    result, error = await tools.answer(
-        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="pending"
-    )
+    result, error = await tools.answer("worker_status", {"worker_id": "abcd1234"})
     assert not error
     assert json.loads(result)["decision_choices"] == ["approve", "deny"]
     workers.known = [payload("abcd1234")]
-    result, error = await tools.answer(
-        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="clear"
-    )
+    result, error = await tools.answer("worker_status", {"worker_id": "abcd1234"})
     assert not error
     assert json.loads(result)["decision_choices"] == []
     workers.known = [
@@ -131,9 +160,7 @@ async def test_status_advertises_choices_only_with_a_pending_decision() -> None:
             "abcd1234", pending_decision={"seq": 5, "notification_type": "idle_prompt"}
         )
     ]
-    result, error = await tools.answer(
-        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="idle"
-    )
+    result, error = await tools.answer("worker_status", {"worker_id": "abcd1234"})
     assert not error
     assert json.loads(result)["decision_choices"] == []
 
@@ -144,9 +171,7 @@ def _tools(workers: FakeWorkers) -> BossTools:
 
 async def test_start_defaults_to_the_only_allowlisted_repo() -> None:
     workers = FakeWorkers()
-    result, error = await _tools(workers).answer(
-        "start_worker", {"task": "fix x"}, tool_call_id="test-call"
-    )
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
     assert not error
     assert json.loads(result)["state"] == "ready"
     assert workers.started == [("fix x", "/repo")]
@@ -154,9 +179,7 @@ async def test_start_defaults_to_the_only_allowlisted_repo() -> None:
 
 async def test_start_without_project_needs_one_repo() -> None:
     tools = _tools(FakeWorkers(("/a", "/b")))
-    result, error = await tools.answer(
-        "start_worker", {"task": "fix x"}, tool_call_id="test-call"
-    )
+    result, error = await tools.answer("start_worker", {"task": "fix x"})
     assert error
     assert "/a" in json.loads(result)["error"]
 
@@ -165,21 +188,14 @@ async def test_reask_during_a_slow_start_starts_one_worker() -> None:
     workers = FakeWorkers()
     workers.gate.clear()
     tools = _tools(workers)
-    first = asyncio.create_task(
-        tools.answer("start_worker", {"task": "fix x"}, tool_call_id="test-call")
-    )
+    first = asyncio.create_task(tools.answer("start_worker", {"task": "fix x"}))
     await asyncio.sleep(0)
     first.cancel()  # barge-in: the agent abandons the pending call
-    reask = asyncio.create_task(
-        tools.answer("start_worker", {"task": "fix x"}, tool_call_id="test-call")
-    )
+    reask = asyncio.create_task(tools.answer("start_worker", {"task": "fix x"}))
     await asyncio.sleep(0)
     workers.gate.set()
     assert (await reask)[1] is False
-    assert (
-        await tools.answer("start_worker", {"task": "fix x"}, tool_call_id="test-call")
-        == await reask
-    )
+    assert await tools.answer("start_worker", {"task": "fix x"}) == await reask
     assert workers.started == [("fix x", "/repo")]
     assert tools.replayed == 2
 
@@ -188,18 +204,12 @@ async def test_reask_spelling_out_defaults_replays_the_first_answer() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234")]
     tools = _tools(workers)
-    first = await tools.answer(
-        "start_worker", {"task": "fix x"}, tool_call_id="test-call"
-    )
+    first = await tools.answer("start_worker", {"task": "fix x"})
     spelled: dict[str, object] = {"task": "fix x", "project": "/repo"}
-    assert (
-        await tools.answer("start_worker", spelled, tool_call_id="test-call") == first
-    )
+    assert await tools.answer("start_worker", spelled) == first
     steer: dict[str, object] = {"worker_id": "abcd", "words": "go"}
-    await tools.answer("steer_worker", steer, tool_call_id="test-call")
-    await tools.answer(
-        "steer_worker", {**steer, "urgent": False}, tool_call_id="test-call"
-    )
+    await tools.answer("steer_worker", steer)
+    await tools.answer("steer_worker", {**steer, "urgent": False})
     assert workers.started == [("fix x", "/repo")]
     assert workers.steered == [("abcd1234", "go", False)]
 
@@ -210,7 +220,6 @@ async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> Non
     result, error = await _tools(workers).answer(
         "steer_worker",
         {"worker_id": "abcd", "words": "use tabs;", "urgent": True},
-        tool_call_id="test-call",
     )
     assert not error
     assert json.loads(result)["heard"] is True
@@ -222,9 +231,7 @@ async def test_ambiguous_or_short_ids_are_refused() -> None:
     workers.known = [payload("abcd1234"), payload("abcd9999")]
     tools = _tools(workers)
     for wanted in ("abcd", "a"):
-        _, error = await tools.answer(
-            "stop_worker", {"worker_id": wanted}, tool_call_id="test-call"
-        )
+        _, error = await tools.answer("stop_worker", {"worker_id": wanted})
         assert error
     assert workers.stopped == []
 
@@ -232,9 +239,7 @@ async def test_ambiguous_or_short_ids_are_refused() -> None:
 async def test_status_reports_curated_progress_only() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", goal="ship it", gaps={"x": 1})]
-    result, _ = await _tools(workers).answer(
-        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="test-call"
-    )
+    result, _ = await _tools(workers).answer("worker_status", {"worker_id": "abcd1234"})
     assert json.loads(result)["progress"] == {"goal": "ship it"}
 
 
@@ -242,13 +247,11 @@ async def test_list_stop_and_silence() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234")]
     tools = _tools(workers)
-    listed, _ = await tools.answer("list_workers", {}, tool_call_id="test-call")
+    listed, _ = await tools.answer("list_workers", {})
     assert [w["worker_id"] for w in json.loads(listed)] == ["abcd1234"]
-    stopped, _ = await tools.answer(
-        "stop_worker", {"worker_id": "abcd1234"}, tool_call_id="test-call"
-    )
+    stopped, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
     assert json.loads(stopped)["state"] == "stopped"
-    assert await tools.answer("remain_silent", {}, tool_call_id="test-call") == (
+    assert await tools.answer("remain_silent", {}) == (
         '{"silent": true}',
         False,
     )
@@ -256,15 +259,9 @@ async def test_list_stop_and_silence() -> None:
 
 async def test_unknown_tool_and_bad_arguments_are_errors() -> None:
     tools = _tools(FakeWorkers())
-    assert (await tools.answer("rm_rf", {}, tool_call_id="test-call"))[1]
-    assert (
-        await tools.answer("start_worker", {"task": " "}, tool_call_id="test-call")
-    )[1]
-    assert (
-        await tools.answer(
-            "steer_worker", {"worker_id": "x", "urgent": 1}, tool_call_id="test-call"
-        )
-    )[1]
+    assert (await tools.answer("rm_rf", {}))[1]
+    assert (await tools.answer("start_worker", {"task": " "}))[1]
+    assert (await tools.answer("steer_worker", {"worker_id": "x", "urgent": 1}))[1]
 
 
 async def test_bad_repository_settings_fail_the_tool_not_the_call() -> None:
@@ -273,16 +270,14 @@ async def test_bad_repository_settings_fail_the_tool_not_the_call() -> None:
             raise ValueError("worker_repos is not a list")
 
     workers = Unreadable()
-    result, error = await _tools(workers).answer(
-        "start_worker", {"task": "fix x"}, tool_call_id="test-call"
-    )
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
     assert error
     assert "not a list" in json.loads(result)["error"]
 
 
 async def test_start_refuses_a_project_that_is_not_a_path() -> None:
     result, error = await _tools(FakeWorkers()).answer(
-        "start_worker", {"task": "fix x", "project": 3}, tool_call_id="test-call"
+        "start_worker", {"task": "fix x", "project": 3}
     )
     assert error
     assert "string" in json.loads(result)["error"]

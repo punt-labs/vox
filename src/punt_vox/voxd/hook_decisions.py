@@ -13,7 +13,8 @@ from punt_vox.voxd.hook_decision_types import PendingDecision
 class HookDecisions:
     """Ignore stale events when tracking a worker's outstanding question."""
 
-    __slots__ = ("_high", "_pending", "_receipts")
+    __slots__ = ("_epoch", "_high", "_pending", "_receipts")
+    _epoch: int
     _high: int
     _pending: PendingDecision | None  # None when no decision is outstanding.
     _receipts: deque[tuple[int, int]]
@@ -21,6 +22,7 @@ class HookDecisions:
     def __new__(cls) -> Self:
         """Create an empty question and acknowledgement window."""
         self = super().__new__(cls)
+        self._epoch = 0
         self._high = 0
         self._pending = None
         self._receipts = deque(maxlen=64)
@@ -38,7 +40,10 @@ class HookDecisions:
             self._receipts.append((self._pending["seq"], seq))
         if event != "Notification":
             self._pending = None
+            if event == "Stop":
+                self._epoch = seq
         elif payload.get("notification_type") in {"permission_prompt", "idle_prompt"}:
+            self._epoch = seq
             self._pending = {
                 "notification_type": str(payload["notification_type"]),
                 "message": HookText.clip(payload.get("message")),
@@ -53,6 +58,11 @@ class HookDecisions:
     def latest(self) -> int:
         """Return the newest admitted worker hook, even without a pending question."""
         return self._high
+
+    @property
+    def prompt_epoch(self) -> int:
+        """Keep one identity until the next admitted result or decision prompt."""
+        return self._epoch
 
     def baseline(self) -> int:
         """Return the newest event only while waiting for a permission choice."""

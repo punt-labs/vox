@@ -109,9 +109,7 @@ class BossTools:
         """Return how many tool calls were answered from an earlier execution."""
         return self._cache.hits
 
-    async def answer(
-        self, name: str, arguments: dict[str, object], *, tool_call_id: str
-    ) -> tuple[str, bool]:
+    async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
         """Return the JSON result for the agent and whether it reports an error."""
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
@@ -126,18 +124,13 @@ class BossTools:
             return json.dumps({"error": f"unknown tool {name}"}), True
 
         try:
-            resolved = self._with_defaults(name, arguments)
-            cache_arguments = (
-                {**resolved, "tool_call_id": tool_call_id}
-                if name == "steer_worker"
-                else resolved
-            )
+            resolved = await self._with_defaults(name, arguments)
 
             async def execute() -> str:
                 return json.dumps(await operation(resolved), ensure_ascii=False)
 
             result = await self._cache.run(
-                ToolResultCache.key(name, cache_arguments),
+                ToolResultCache.key(name, resolved),
                 execute,
                 durable=name in self._DURABLE,
             )
@@ -151,14 +144,23 @@ class BossTools:
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
         return result, False
 
-    def _with_defaults(
+    async def _with_defaults(
         self, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """Fill omitted defaults, so a re-ask that spells one out is the same ask."""
+        """Resolve steering against its current prompt, and normalize tool defaults."""
         defaults: dict[str, object] = {}
         if name == "steer_worker":
-            defaults["urgent"] = False
-        elif name == "start_worker" and len(repos := self._projects.repos()) == 1:
+            worker = await self._directory.find(self._text(arguments, "worker_id"))
+            epoch = worker["last_report"].get("prompt_epoch", 0)
+            if type(epoch) is not int or epoch < 0:
+                raise ValueError("worker prompt epoch must be a non-negative integer")
+            return {
+                "urgent": False,
+                **arguments,
+                "worker_id": worker["id"],
+                "prompt_epoch": epoch,
+            }
+        if name == "start_worker" and len(repos := self._projects.repos()) == 1:
             defaults["project"] = repos[0]
         return {**defaults, **arguments}
 

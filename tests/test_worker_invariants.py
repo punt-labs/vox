@@ -84,6 +84,23 @@ def test_decision_progress_invariant_old_hooks_cannot_clear_or_resurrect() -> No
     assert state.pending() is None
 
 
+def test_worker_decisions_prompt_epoch_never_exceeds_admitted_high_water() -> None:
+    """WorkerDecisions keeps promptEpoch monotonic and at most decisionHigh."""
+    state = HookDecisions()
+    previous = 0
+    for seq, event in [
+        (2, "Stop"),
+        (1, "Stop"),
+        (3, "PostToolUse"),
+        (5, "Notification"),
+        (4, "Stop"),
+    ]:
+        state.ingest(seq, event, {"notification_type": "idle_prompt"})
+        assert previous <= state.prompt_epoch <= state.latest
+        previous = state.prompt_epoch
+    assert state.prompt_epoch == 5
+
+
 def test_decision_receipt_heard_invariant_requires_question_at_delivery() -> None:
     """DecisionReceiptHeard selects the earliest hook after an existing question."""
     store = HookContextStore()

@@ -309,6 +309,8 @@ does not promise unbounded delivery history.
 
 \begin{zed}
   DecisionChoice ::= approve | deny
+  \\
+  HookBoundary ::= resultBoundary | otherBoundary
 \end{zed}
 
 \begin{axdef}
@@ -323,9 +325,11 @@ events cannot resurrect or clear a newer question.
 \begin{schema}{WorkerDecisions}
   pendingDecision : WORKER \pfun (\nat \cross WORDS \cross WORDS) \\
   decisionHigh : WORKER \fun \nat \\
+  promptEpoch : WORKER \fun \nat \\
   decisionReceipts : WORKER \fun \power (\nat \cross \nat)
 \where
-  \forall w : WORKER @ \# (decisionReceipts~w) \leq 64
+  \forall w : WORKER @ \# (decisionReceipts~w) \leq 64 \land
+    promptEpoch~w \leq decisionHigh~w
 \end{schema}
 
 \begin{schema}{DecisionDelivery}
@@ -358,7 +362,8 @@ a matching UserPromptSubmit receipt; choices are refused for idle prompts.
   WorkerDecisions
 \where
   pendingDecision = \emptyset \\
-  \forall w : WORKER @ decisionHigh~w = 0 \land decisionReceipts~w = \emptyset
+  \forall w : WORKER @ decisionHigh~w = 0 \land promptEpoch~w = 0 \land
+    decisionReceipts~w = \emptyset
 \end{schema}
 
 \begin{schema}{DecisionNotification}
@@ -371,6 +376,7 @@ a matching UserPromptSubmit receipt; choices are refused for idle prompts.
   pendingDecision' = pendingDecision \oplus
     \{worker? \mapsto (sequence?, kind?, message?)\} \\
   decisionHigh' = decisionHigh \oplus \{worker? \mapsto sequence?\} \\
+  promptEpoch' = promptEpoch \oplus \{worker? \mapsto sequence?\} \\
   decisionReceipts' = decisionReceipts
 \end{schema}
 
@@ -388,6 +394,7 @@ DecisionNotification admits only permission\_prompt and idle\_prompt kinds.
   sequence? > decisionHigh~worker? \\
   pendingDecision' = pendingDecision \\
   decisionHigh' = decisionHigh \\
+  promptEpoch' = promptEpoch \\
   retained \subseteq (decisionReceipts~worker?) \cup \{question? \mapsto sequence?\} \\
   question? \mapsto sequence? \in retained \\
   \# retained \leq 64 \\
@@ -397,20 +404,36 @@ DecisionNotification admits only permission\_prompt and idle\_prompt kinds.
 DecisionHookReceipt runs before folding any newer hook while a permission question is
 pending, including another Notification. DecisionNotification then replaces
 the question for qualifying kinds; other Notifications retain the question
-while advancing decisionHigh. Non-Notification events use DecisionProgress.
+while advancing decisionHigh but not promptEpoch. Non-Notification events use
+DecisionProgress.
 
 \begin{schema}{DecisionProgress}
   \Delta WorkerDecisions \\
   worker? : WORKER \\
-  sequence? : \nat
+  sequence? : \nat \\
+  boundary? : HookBoundary
 \where
   sequence? > decisionHigh~worker? \\
   pendingDecision' = \{worker?\} \ndres pendingDecision \\
   decisionHigh' = decisionHigh \oplus \{worker? \mapsto sequence?\} \\
+  boundary? = resultBoundary \implies
+    promptEpoch' = promptEpoch \oplus \{worker? \mapsto sequence?\} \\
+  boundary? = otherBoundary \implies promptEpoch' = promptEpoch \\
   decisionReceipts' = decisionReceipts
 \end{schema}
 
-DecisionProgress applies only to non-Notification events. For a steer sent
+DecisionProgress applies only to non-Notification events.
+Stop selects resultBoundary; all other events select otherBoundary. A worker's
+promptEpoch is the newest admitted Stop, permission\_prompt or idle\_prompt
+sequence, exposed as prompt\_epoch through WorkerControl's live reports. Input
+acknowledgements clear a question but do not change its epoch. Unadmitted or
+stale hooks cannot advance it. The per-call steering cache uses the canonical
+worker identity, normalized words, choice, urgency and prompt epoch, not the
+provider tool-call ID. An interrupted request reissued with a new ID in the
+same epoch replays its receipt; identical words in a newer epoch are delivered
+again, for both idle text and permission choices.
+
+For a steer sent
 while a decision is pending, a retained pair (question, sequence) acknowledges
 hearing iff question is at most its sampled baseline and sequence is strictly
 greater. It does not assert that a permission was granted or work succeeded.
