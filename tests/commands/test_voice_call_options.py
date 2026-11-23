@@ -3,8 +3,14 @@
 from pathlib import Path
 
 import pytest
+import typer
 
 from punt_vox.commands.voice_call_options import VoiceCallOptions
+
+
+def test_options_cannot_combine_script_and_echo_control(tmp_path: Path) -> None:
+    with pytest.raises(typer.BadParameter, match="apply only to live calls"):
+        VoiceCallOptions(tmp_path / "call.jsonl", "headset")
 
 
 @pytest.mark.parametrize(
