@@ -27,6 +27,7 @@ class WorkerRegistry:
     """Resolve providers and harnesses by name, never by special-case branches."""
 
     __slots__ = (
+        "_closed_hooks",
         "_lifecycle",
         "_policy",
         "_profiles",
@@ -34,6 +35,7 @@ class WorkerRegistry:
         "_records",
         "_workers",
     )
+    _closed_hooks: set[str]
     _lifecycle: WorkerLifecycle
     _policy: WorkerRepoPolicy
     _profiles: dict[str, HarnessProfile]
@@ -53,6 +55,7 @@ class WorkerRegistry:
         self._policy, self._records = policy, records
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
+        self._closed_hooks = set()
         self._workers = {}
         return self
 
@@ -131,7 +134,7 @@ class WorkerRegistry:
         try:
             observed = self._lifecycle.observe(record)
             if observed.state == "exited":
-                return self._checkpoint(observed)
+                self._closed_hooks.add(record.id)
             return observed
         except (
             KeyError,
@@ -160,6 +163,7 @@ class WorkerRegistry:
         record = self._workers.get(worker_id)
         return (
             record is not None
+            and worker_id not in self._closed_hooks
             and record.state in ("starting", "ready")
             and "launch_error" not in record.last_report
             and Path(cwd).is_absolute()

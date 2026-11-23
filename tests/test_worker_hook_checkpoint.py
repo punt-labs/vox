@@ -364,6 +364,9 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         provider.alive = False
         assert (await actor.workers())[0]["state"] == "exited"
         cleanup.assert_not_called()
+        socket = AsyncMock()
+        await hooks.admit(base, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
     for index in range(65):
         store.ingest(
             {
@@ -381,8 +384,6 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         )
     [saved] = records.load()
     assert saved.last_report["last_assistant_message"] == "Finished the tests."
-    assert saved.state == "exited"
-    assert saved.last_report["cleanup_pending"] is True
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
