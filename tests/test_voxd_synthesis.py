@@ -1112,10 +1112,14 @@ class TestSynthesizeCacheObservability:
 
         assert outcomes[0].cached is False
         assert outcomes[1].cached is True
-        # The hit is served from the cache dir, not re-synthesized: the miss
-        # returns its temp file, the hit returns the copied-in cache entry.
-        assert outcomes[1].path.parent == tmp_path
-        assert synth_calls == ["hello"]
+        try:
+            assert outcomes[1].path.parent != tmp_path
+            assert outcomes[1].path != outcomes[0].path
+            assert outcomes[1].path.read_bytes() == outcomes[0].path.read_bytes()
+            assert synth_calls == ["hello"]
+        finally:
+            for outcome in outcomes:
+                outcome.discard()
 
     def test_different_voice_is_a_miss(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

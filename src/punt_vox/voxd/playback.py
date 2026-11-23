@@ -9,7 +9,7 @@ import contextlib
 import logging
 import math
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
@@ -49,6 +49,18 @@ class PlaybackItem:
     request_id: str
     notify: asyncio.Event
     outcome: asyncio.Future[PlaybackResult] | None = None
+    discard: Callable[[], None] | None = None
+
+    def resolve(self, result: PlaybackResult | str) -> None:
+        """Complete a waiting client with a result or an interruption reason."""
+        future = self.outcome
+        if future is None or future.done():
+            return
+        if isinstance(result, str):
+            result = PlaybackResult(
+                path=self.path, rc=-1, elapsed_s=0.0, stderr=result, ts=time.time()
+            )
+        future.set_result(result)
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +271,14 @@ class PlaybackQueue:
             _, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            # Stop the player before queue cleanup releases its source file.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             elapsed = _monotonic() - start
             logger.error(
                 "Playback FAILED: timed out after %.1fs for %s audio_env=%s",
@@ -267,13 +286,6 @@ class PlaybackQueue:
                 path.name,
                 env_snapshot,
             )
-            # The player can exit between the timeout firing and the kill, so a
-            # ProcessLookupError here is benign -- suppress it to keep
-            # play_audio's never-raise contract.
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            with contextlib.suppress(Exception):
-                await proc.wait()
             self.record_result(
                 path=path,
                 rc=-1,
@@ -294,66 +306,36 @@ class PlaybackQueue:
         direct-play path can't produce overlapping audio from another
         coroutine.
         """
-        while True:
-            item = await self._queue.get()
-            logger.debug("Playback start: %s", item.path.name)
-            # One bad item must never leave the outcome future or notify unset:
-            # that would hang the awaiting play client for its full deadline and,
-            # because this consumer is an unsupervised task, kill it -- wedging
-            # every later play AND synthesize while the daemon still looks up.
-            # play_audio is written never to raise; the try/finally is the
-            # backstop for the case it ever does.
-            try:
-                async with self._mutex:
-                    await self.play_audio(item.path)
-                logger.debug("Playback done: %s", item.path.name)
-                # Resolve the outcome from the result play_audio just recorded,
-                # here -- synchronously, before the next item is dequeued -- so
-                # an awaiting play handler sees its own item's result, never a
-                # later item's (the queue is single-consumer and serialized).
-                self._resolve_outcome(item)
-            except Exception:
-                logger.exception("Playback consumer error for %s", item.path.name)
-                self._fail_outcome(item, "playback failed unexpectedly")
-            finally:
-                # Catch-all in the finally so cancellation (daemon shutdown) or
-                # any non-Exception BaseException still resolves the outcome --
-                # PlayHandler awaits that future with no timeout, so a pending
-                # future would hang the request forever and leak the task. A
-                # no-op when the success/error path already resolved it (guards
-                # done()).
-                self._fail_outcome(item, "playback interrupted (daemon shutting down)")
-                item.notify.set()
-                self._queue.task_done()
+        try:
+            while True:
+                await self._play_item(await self._queue.get())
+        finally:
+            while not self._queue.empty():
+                self._finish_item(self._queue.get_nowait())
 
-    def _resolve_outcome(self, item: PlaybackItem) -> None:
-        """Complete *item*'s outcome future, if any, with the recorded result.
+    async def _play_item(self, item: PlaybackItem) -> None:
+        """Resolve this item's outcome before dequeuing the next one."""
+        logger.debug("Playback start: %s", item.path.name)
+        try:
+            async with self._mutex:
+                await self.play_audio(item.path)
+            logger.debug("Playback done: %s", item.path.name)
+            item.resolve(self._last_result or "no playback result recorded")
+        except Exception:
+            logger.exception("Playback consumer error for %s", item.path.name)
+            item.resolve("playback failed unexpectedly")
+        finally:
+            self._finish_item(item)
 
-        ``play_audio`` always records a result (success, spawn failure, timeout,
-        or bad file), so ``_last_result`` is set here; the ``None`` guard is
-        defensive so a missing result surfaces as a failure rather than a hang.
-        """
-        future = item.outcome
-        if future is None or future.done():
-            return
-        result = self._last_result
-        if result is None:
-            result = self._failure_result(item.path, "no playback result recorded")
-        future.set_result(result)
-
-    def _fail_outcome(self, item: PlaybackItem, reason: str) -> None:
-        """Resolve *item*'s outcome with a failure result after a consumer crash."""
-        future = item.outcome
-        if future is None or future.done():
-            return
-        future.set_result(self._failure_result(item.path, reason))
-
-    @staticmethod
-    def _failure_result(path: Path, reason: str) -> PlaybackResult:
-        """Build a failing :class:`PlaybackResult` (rc=-1) carrying *reason*."""
-        return PlaybackResult(
-            path=path, rc=-1, elapsed_s=0.0, stderr=reason, ts=time.time()
-        )
+    def _finish_item(self, item: PlaybackItem) -> None:
+        """Settle and release an item even if playback did not finish."""
+        item.resolve("playback interrupted (daemon shutting down)")
+        try:
+            if item.discard is not None:
+                item.discard()
+        finally:
+            item.notify.set()
+            self._queue.task_done()
 
     def record_result(
         self,

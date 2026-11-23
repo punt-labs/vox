@@ -192,13 +192,13 @@ class SynthesisPipeline:
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
         lookup = SynthesisCache.for_request(normalized, spec, len(text))
-        if (cached := lookup.outcome()) is not None:
+        if (cached := await lookup.outcome()) is not None:
             with usage.span("daemon", provider_name, text=text, cached=True):
                 return cached
 
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
-            cached = lookup.outcome()
+            cached = await lookup.outcome()
             with usage.span(
                 "daemon", provider_name, text=text, cached=cached is not None
             ):
