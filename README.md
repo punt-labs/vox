@@ -638,9 +638,10 @@ example. First check your setup:
 vox doctor
 ```
 
-This checks the local ElevenLabs key's Agents Write scope, Claude login,
-tmux and audio setup. A separately configured daemon may use different
-credentials. Put on a headset and run:
+The call checks report the local ElevenLabs key's Agents Write scope,
+Claude login and tmux availability. Doctor shows an echo-cancellation
+advisory; it does not test microphone capture. A separately configured
+daemon may use different credentials. Put on a headset and run:
 
 ```bash
 vox call --headset
