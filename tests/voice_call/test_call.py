@@ -344,10 +344,8 @@ def test_return_opener_numbers_case_equivalent_projects_together(
     brief = ReturnBrief(tmp_path / "departure.json")
     brief.depart({})
     first = payload("first", last_assistant_message="First result.", result_seq=1)
-    second = {
-        **payload("second", last_assistant_message="Second result.", result_seq=1),
-        "project": "/elsewhere/Repo",
-    }
+    second = payload("second", last_assistant_message="Second result.", result_seq=1)
+    second["project"] = "/elsewhere/Repo"
     options = brief.options([first, second], (), ())
 
     assert options.first_message == (
