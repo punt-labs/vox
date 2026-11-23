@@ -6,7 +6,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from starlette.testclient import TestClient
 from test_workers import FakeWorkerProvider, _registry
 
@@ -22,6 +21,7 @@ from punt_vox.voxd.workers.wiring import WorkerSubsystem
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
     from starlette.applications import Starlette
 
 
