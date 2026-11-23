@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Hooks no longer hang when given a relative working directory outside a Git
+  worktree. (PL-820)
+
 ### Removed
 
 - The unused append-log factory and stderr reporter from `PrivateState`.
