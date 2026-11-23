@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `vox doctor` warns when an older systemd cannot launch call workers
+  from the Vox service. These workers require systemd 254 or newer. (PL-1332)
+
 ### Removed
 
 - The unused append-log factory and stderr reporter from `PrivateState`.

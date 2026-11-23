@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import shutil
 from typing import Self, final
 
 from punt_vox.doctor_call_claude import ClaudeLoginCheck
 from punt_vox.doctor_call_scope import ConvAIKeyCheck
-from punt_vox.doctor_result import OK, OPTIONAL, WARN, CheckResult
+from punt_vox.doctor_call_workers import CallWorkerChecks
+from punt_vox.doctor_result import OPTIONAL, CheckResult
 
 
 @final
@@ -25,7 +25,7 @@ class CallChecks:
         return [
             ConvAIKeyCheck().run(),
             ClaudeLoginCheck().run(),
-            self._tmux(),
+            *CallWorkerChecks().run(),
             CheckResult.of(
                 OPTIONAL,
                 "Echo cancellation: not built in; use 'vox call --headset'"
@@ -33,11 +33,3 @@ class CallChecks:
                 required=False,
             ),
         ]
-
-    @staticmethod
-    def _tmux() -> CheckResult:
-        if shutil.which("tmux"):
-            return CheckResult.of(OK, "tmux: present", required=False)
-        return CheckResult.of(
-            WARN, "tmux: not found — install it to launch call workers", required=False
-        )
