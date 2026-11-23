@@ -58,6 +58,10 @@ class WorkerRetirement:
             return None
         return self._executor.submit(worker_id, lambda: self._cleanup(worker_id))
 
+    def cleanup_idle(self) -> bool:
+        """Check whether all scheduled cleanup has settled."""
+        return self._executor.is_idle()
+
     def shutdown(self) -> None:
         """Stop accepting cleanup and discard work that has not started."""
         self._executor.shutdown()

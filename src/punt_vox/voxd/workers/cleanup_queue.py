@@ -36,6 +36,11 @@ class WorkerCleanupQueue:
         self._thread = None
         return self
 
+    def is_idle(self) -> bool:
+        """Check whether no cleanup job is queued or running."""
+        with self._lock:
+            return not self._active
+
     def submit(
         self, worker_id: str, operation: Callable[[], None]
     ) -> Future[None] | None:  # PY-TS-14: duplicate or closed queues decline work.

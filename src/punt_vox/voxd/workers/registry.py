@@ -74,6 +74,10 @@ class WorkerRegistry:
         for record in records:
             self._retirement.schedule(record.id)
 
+    def cleanup_idle(self) -> bool:
+        """Check whether any worker cleanup remains in flight."""
+        return self._retirement.cleanup_idle()
+
     def shutdown(self) -> None:
         """Bound the final wait for worker retirement cleanup."""
         self._retirement.shutdown()

@@ -35,7 +35,7 @@ def test_successful_stop_forgets_finished_cleanup_job(tmp_path: Path) -> None:
 
     assert stopped.state == "stopped"
     assert "cleanup_pending" not in stopped.last_report
-    assert not registry._retirement._executor._active
+    assert registry.cleanup_idle()
     registry.shutdown()
 
 
