@@ -17,7 +17,7 @@ class CallStatus(TypedDict, total=False):
 
     state: Required[str]
     trace: str
-    error: str | None
+    error: str | None  # None unless the call failed.
     transcript: list[object]
     tool_calls: list[object]
 
