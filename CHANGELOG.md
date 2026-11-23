@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The unused Vox-local append-log adapter. The shared observability package
-  supplies the active append sink.
+- The unused append-log factory and stderr reporter from `PrivateState`.
+  The shared observability package supplies the active append sink.
 
 ### Changed
 
