@@ -38,8 +38,10 @@ Named invariants checked by implementation tests are:
 \textbf{retryable cleanup} (terminal does not imply cleanup succeeded), and
 \textbf{unknown identity refusal} (controls require an existing worker).
 Unavailability is not evidence of death. Every omitted state component is framed
-explicitly below. Provider termination and harness cleanup are attempted before
-the termination result is checkpointed; failure is represented by pending.
+explicitly below. Explicit stop attempts provider termination, then checkpoints
+the terminal phase with pending cleanup before scheduling harness cleanup.
+If the daemon stops before cleanup runs, the durable pending marker lets
+recovery retry it rather than leaving the trust entry behind.
 Hook delivery receipts follow the curated report checkpoint; receipt is never
 issued for an uncommitted readiness transition.
 
@@ -149,6 +151,7 @@ visible in shared hook context under ordinary retention.
 Confirmed provider death selects exited; explicit stop and successful launch
 rollback select stopped. If rollback cannot confirm termination, starting is
 retained with a durable launch error and explicit stop can retry termination.
+After the termination checkpoint, \textit{RetryCleanup} records the outcome.
 Cleanup success removes the pending marker. On failure it remains, and an error
 may be attached to the opaque report without changing process phase. The model
 does not distinguish an exited pane from its remaining tmux session. Explicit
