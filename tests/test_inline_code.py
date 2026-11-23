@@ -1,5 +1,7 @@
 """Inline span boundaries before speech tokenization."""
 
+from typing import SupportsIndex
+
 from punt_vox._inline_code import InlineCode
 
 
@@ -25,7 +27,7 @@ def test_adjacent_spans_do_not_rescan_the_same_token() -> None:
     class CountedText(str):
         read = 0
 
-        def __getitem__(self, key: int | slice) -> str:
+        def __getitem__(self, key: SupportsIndex | slice) -> str:
             piece = super().__getitem__(key)
             self.read += len(piece)
             return piece
