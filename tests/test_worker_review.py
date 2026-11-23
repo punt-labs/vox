@@ -119,6 +119,19 @@ def test_tmux_session_disappearing_during_control(operation: str) -> None:
             finish.assert_called_once_with(456)
 
 
+def test_tmux_no_current_target_checks_exact_session_absence() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "no current target\n"),
+            subprocess.CompletedProcess([], 0, "worker-other\n", ""),
+        ],
+    ) as run:
+        assert TmuxWorkerProvider().status("worker") is False
+    run.assert_called_with("list-sessions", "-F", "#{session_name}", check=False)
+
+
 def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)

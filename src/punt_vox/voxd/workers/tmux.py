@@ -93,12 +93,23 @@ class TmuxWorkerProvider:
     def status(self, handle: str) -> bool:
         """Report whether the session is still alive."""
         session = self._run("has-session", "-t", f"={handle}", check=False)
-        if TmuxProbe.missing(session):
+        if self._session_missing(handle, session):
             return False
         pane = self._run(
             "display-message", "-p", "-t", f"={handle}:", "#{pane_dead}", check=False
         )
         return TmuxProbe.pane_alive(pane)
+
+    def _session_missing(
+        self, handle: str, result: subprocess.CompletedProcess[str]
+    ) -> bool:
+        if result.returncode != 0 and result.stderr.strip() == "no current target":
+            sessions = self._run("list-sessions", "-F", "#{session_name}", check=False)
+            return (
+                TmuxProbe.missing(sessions)
+                or handle not in sessions.stdout.splitlines()
+            )
+        return TmuxProbe.missing(result)
 
     def stop(self, handle: str) -> None:
         """Kill the session and its pane process group."""
