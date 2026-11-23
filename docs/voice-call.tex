@@ -257,7 +257,7 @@ admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
 can be visible before the call task has finished its cleanup, including
 draining the final reply after a remote hang-up.
 
-\begin{schema}{StopNamed}
+\begin{schema}{EndNamed}
   End \\
   id? : CALLID
 \where
@@ -300,6 +300,10 @@ draining the final reply after a remote hang-up.
   issued' = issued
 \end{schema}
 
+\begin{zed}
+  StopNamed \defs (EndNamed \hide (failure?, draining?)) \semi SettleCall
+\end{zed}
+
 \begin{schema}{StopNamedDuringCleanup}
   SettleCall \\
   id? : CALLID
@@ -308,12 +312,15 @@ draining the final reply after a remote hang-up.
 \end{schema}
 
 A named stop checks identity before cancellation, under the same lock as
-\texttt{Start}. A mismatch leaves the call unchanged (C11). A matching
-stop ends a connecting or live call and waits for it to settle. If the call
-has already ended or failed but its task is still cleaning up, a matching
-stop cancels the remaining work and waits for settlement without changing
-the terminal status. Before the first call or after the matching call has
-settled, stopping is a no-op. A stop without an ID targets the current call.
+\texttt{Start}. A mismatch leaves the call unchanged (C11).
+\texttt{StopNamed} ends a connecting or live call and settles it before
+the stop replies. If the call has already ended or failed but its task is
+still cleaning up, a matching stop cancels the remaining work and waits
+for settlement without changing the terminal status. Before the first
+call or after the matching call has settled, stopping is a no-op. A stop
+without an ID targets the current call.
+The stop schemas describe the state when the reply is sent, not the
+internal task cancellation and wait.
 
 \begin{schema}{TeardownAgent}
   \Xi Call \\
