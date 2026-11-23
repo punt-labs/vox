@@ -46,7 +46,7 @@ class SpeechPunctuation:
 
     @staticmethod
     def _spell_currency(core: str) -> str:
-        match = _CURRENCY_AMOUNT.fullmatch(core)
+        match = _CURRENCY_AMOUNT.fullmatch(core.lstrip("_"))
         if match is None:
             return core
         symbol, amount = match.group("symbol", "amount")
@@ -68,6 +68,4 @@ class SpeechPunctuation:
             category = unicodedata.category(ch)
             if category not in ("Mn", "Mc") or _VARIATION_SELECTOR_RE.match(ch):
                 suffix_start = index
-                if ch == "_":
-                    break
-        return core_candidate[:suffix_start].rstrip("_"), core_candidate[suffix_start:]
+        return core_candidate[:suffix_start], core_candidate[suffix_start:]
