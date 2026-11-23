@@ -9,10 +9,9 @@ from punt_vox.paths import user_state_dir
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
-from punt_vox.voxd.workers.reaper import WorkerReaper
 from punt_vox.voxd.workers.records import WorkerRecords
-from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.startup import WorkerStartup
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 if TYPE_CHECKING:
@@ -35,8 +34,7 @@ class WorkerSubsystem:
         """Rehydrate the registry at daemon startup behind one serialized actor."""
         records = WorkerRecords(user_state_dir() / "workers")
         provider = TmuxWorkerProvider()
-        WorkerRecovery.restore(records, store)
-        WorkerReaper.run(records, provider)
+        WorkerStartup.run(records, store, provider)
         return WorkerActor(
             WorkerRegistry(
                 policy,

@@ -279,6 +279,47 @@ async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> 
         assert after.snapshot(worker.id)["open_failure"] is None
 
 
+async def test_startup_reconciles_dead_worker_before_hook_admission(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    before = HookContextStore()
+    before.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            state="ready",
+            provider="tmux",
+            harness="claude",
+            last_report=dict(checkpoint),
+        )
+    )
+    provider.alive = False
+    after = HookContextStore()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup") as cleanup,
+    ):
+        actor = WorkerSubsystem.actor(after, WorkerSubsystem.policy())
+    ws = AsyncMock()
+    await actor.hooks(after).admit(
+        {"session_id": worker.id, "cwd": worker.worktree}, ws
+    )
+    assert ws.send_json.call_args.args[0]["admitted"] is False
+    assert records.load()[0].state == "exited"
+    assert after.checkpoint(worker.id) is None
+    cleanup.assert_not_called()
+
+
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
     tmp_path: Path,
 ) -> None:
