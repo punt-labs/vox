@@ -3993,7 +3993,7 @@
   "src/punt_vox/voxd/music_player/ports.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.5,
+    "avg_params": 0.75,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
     "module_size": 19.0,

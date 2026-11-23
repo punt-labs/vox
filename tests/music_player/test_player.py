@@ -61,7 +61,8 @@ class _FakeService:
         self._status = status
         self._albums = albums
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
+        assert user_pause_only
         return self._status
 
     def catalog_albums(self) -> tuple[Album, ...]:
