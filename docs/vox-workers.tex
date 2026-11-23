@@ -428,7 +428,7 @@ promptEpoch is the newest admitted Stop, permission\_prompt or idle\_prompt
 sequence, exposed as prompt\_epoch through WorkerControl's live reports. Input
 acknowledgements clear a question but do not change its epoch. Unadmitted or
 stale hooks cannot advance it. The per-call steering cache uses the canonical
-worker identity, normalized words, choice, urgency and prompt epoch, not the
+worker identity, exact words, choice, urgency and prompt epoch, not the
 provider tool-call ID. An interrupted request reissued with a new ID in the
 same epoch replays its receipt; identical words in a newer epoch are delivered
 again, for both idle text and permission choices.

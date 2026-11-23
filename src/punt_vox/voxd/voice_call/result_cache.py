@@ -14,8 +14,8 @@ __all__ = ["ToolResultCache"]
 
 # Sentence punctuation a transcript may put around a word; signs stay in.
 _EDGES: Final = ".,!?;:'\"()\u201c\u201d\u2018\u2019"
-# Free text the agent transcribes afresh on each ask; IDs and paths stay exact.
-_SPOKEN: Final = frozenset({"task", "words"})
+# Launch tasks may be transcribed afresh; steering words stay exact.
+_SPOKEN: Final = frozenset({"task"})
 
 
 @final

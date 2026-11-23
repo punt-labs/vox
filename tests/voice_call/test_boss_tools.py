@@ -87,6 +87,22 @@ async def test_invalid_worker_prompt_epoch_cannot_deliver_a_steer(
     assert workers.steered == []
 
 
+async def test_case_sensitive_instructions_in_one_epoch_both_reach_the_worker() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    tools = _tools(workers)
+    for words in ("Create README.md", "Create readme.md"):
+        assert not (
+            await tools.answer(
+                "steer_worker", {"worker_id": "abcd1234", "words": words}
+            )
+        )[1]
+    assert workers.steered == [
+        ("abcd1234", "Create README.md", False),
+        ("abcd1234", "Create readme.md", False),
+    ]
+
+
 async def test_identical_answers_to_two_idle_prompts_both_reach_the_worker() -> None:
     workers = FakeWorkers()
     workers.known = [
