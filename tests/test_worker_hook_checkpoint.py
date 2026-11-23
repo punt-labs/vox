@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -171,6 +172,43 @@ async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> 
         assert after.snapshot(worker.id)["open_failure"] is None
 
 
+async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    record = replace(
+        worker, last_report={**checkpoint, "gaps": {"highest_seen": "broken"}}
+    )
+    with patch.object(FakeWorkerProvider, "progress", return_value=record.last_report):
+        registry.list()
+
+    restarted = HookContextStore()
+    await (
+        WorkerActor(registry)
+        .hooks(restarted)
+        .ingest(
+            {
+                "session_id": worker.id,
+                "cwd": worker.worktree,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Fresh result",
+            },
+            worker_only=True,
+        )
+    )
+    assert restarted.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
+
+
 def test_restore_keeps_managed_sessions_outside_ordinary_cache() -> None:
     previous = HookContextStore()
     previous.ingest(
@@ -186,6 +224,30 @@ def test_restore_keeps_managed_sessions_outside_ordinary_cache() -> None:
         restarted.restore(f"worker-{index}", checkpoint)
 
     assert restarted.snapshot("original")["session_started"]
+
+
+def test_failed_trust_cleanup_still_releases_terminal_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude.json").write_text("not valid JSON")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": "original", "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    with pytest.raises(ValueError):
+        ClaudeProfile(store).cleanup(tmp_path / "original" / "worktree")
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot("original")
 
 
 def test_hook_sender_does_not_open_the_worker_registry(tmp_path: Path) -> None:
