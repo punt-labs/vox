@@ -27,6 +27,7 @@ from punt_vox.dirs import (
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
 )
+from punt_vox.doctor_call import CallChecks
 from punt_vox.doctor_desktop import DesktopCheck
 from punt_vox.doctor_guide import GuideCheck
 from punt_vox.doctor_mpv import MpvCheck
@@ -95,6 +96,7 @@ class DoctorCheck:
         results.extend(self.check_claude_desktop())
         results.extend(self.check_output_dir())
         results.extend(self.check_deposited_guide())
+        results.extend(CallChecks().run())
         return results
 
     # -- individual checks -------------------------------------------------

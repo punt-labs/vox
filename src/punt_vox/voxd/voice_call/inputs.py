@@ -39,6 +39,17 @@ class MicInput:
         self._source = source if source is not None else MicAudioSource()
         return self
 
+    @classmethod
+    def with_echo_control(cls, declaration: object) -> Self:
+        """Create live input only after the caller declares echo protection."""
+        if declaration not in ("headset", "aec"):
+            raise ValueError(
+                "Live calls require echo protection: wear a headset and use "
+                "'vox call --headset', or configure system echo cancellation "
+                "and use 'vox call --aec'"
+            )
+        return cls()
+
     async def chunks(self) -> AsyncIterator[bytes]:
         """Yield each captured block's PCM."""
         async for chunk in self._source.chunks():

@@ -8,6 +8,7 @@ from typing import Annotated, Self, final
 import typer
 
 from punt_vox.commands.voice_call import VoiceCall
+from punt_vox.commands.voice_call_options import VoiceCallOptions
 
 __all__ = ["VoiceCallCli"]
 
@@ -22,6 +23,13 @@ _ScriptOpt = Annotated[
             "paces to the agent instead of the microphone."
         ),
     ),
+]
+_HeadsetOpt = Annotated[
+    bool, typer.Option("--headset", help="Declare that you are wearing a headset.")
+]
+_AecOpt = Annotated[
+    bool,
+    typer.Option("--aec", help="Declare a system echo-cancelled audio path."),
 ]
 
 
@@ -43,14 +51,34 @@ class VoiceCallCli:
         app.command("status")(cli.status)
         app.command("teardown")(cli.teardown)
 
-    def call(self, ctx: typer.Context, script: _ScriptOpt = None) -> None:
+    def call(
+        self,
+        ctx: typer.Context,
+        *,
+        script: _ScriptOpt = None,
+        headset: _HeadsetOpt = False,
+        aec: _AecOpt = False,
+    ) -> None:
         """Start voxd's call (mic, or --script audio) and follow it to its end."""
         if ctx.invoked_subcommand is None:
-            VoiceCall().start(script)
-        elif script is not None:
+            VoiceCall().start(
+                VoiceCallOptions.from_flags(script, headset=headset, aec=aec)
+            )
+        elif option := next(
+            (
+                flag
+                for flag, used in (
+                    ("--script", script is not None),
+                    ("--headset", headset),
+                    ("--aec", aec),
+                )
+                if used
+            ),
+            None,
+        ):
             raise typer.BadParameter(
-                "--script before a subcommand applies only to bare `vox call`",
-                param_hint="--script",
+                f"{option} before a subcommand applies only to bare `vox call`",
+                param_hint=option,
             )
 
     def status(self) -> None:

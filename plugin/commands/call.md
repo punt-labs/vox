@@ -1,6 +1,6 @@
 ---
 description: "Talk to voxd's call agent, which delegates coding to workers; or start the read-only pi call"
-argument-hint: "[--script <path>] | status | stop | start <topic> [--script <path>]"
+argument-hint: "--headset | --aec | --script <path> | status | stop | start <topic> [--script <path>]"
 allowed-tools: ["Bash(vox call:*)", "Read", "mcp__quarry__find", "mcp__plugin_quarry_quarry__find"]
 ---
 
@@ -10,7 +10,7 @@ Conversation Mode: a live voice call between the human and a call agent,
 mediated by `voxd`. There are two call agents, and every verb shells out to
 the `vox call` CLI (there is no `mic:call` MCP tool yet):
 
-- **voxd's call agent** (bare `/call`): an ElevenLabs agent that `voxd` owns.
+- **voxd's call agent** (`/call --headset`): an ElevenLabs agent that `voxd` owns.
   It starts, steers, checks and stops persistent coding workers for the human,
   and the workers keep running after the call ends.
 - **The pi call agent** (`/call start <topic>`): a separate, read-only process.
@@ -20,7 +20,9 @@ the `vox call` CLI (there is no `mic:call` MCP tool yet):
 
 ## Usage
 
-- `/call` -- talk to voxd's call agent: real microphone capture.
+- `/call --headset` -- talk to voxd's call agent while wearing a headset.
+- `/call --aec` -- use a system echo-cancelled microphone and speaker path
+  you have already configured. Vox does not set up echo cancellation.
 - `/call --script <path>` -- dev/test path: scripted turns from a JSON Lines
   file of recorded speech (`{"pcm_path": ..., "pause_s": ...}` per line: 16 kHz
   mono S16LE PCM, a relative path read from the script's directory) instead of
@@ -35,16 +37,19 @@ the `vox call` CLI (there is no `mic:call` MCP tool yet):
 
 ## Implementation
 
-### call (no verb, or only `--script <path>`)
+### call (no verb)
 
-1. Run this Bash command with `run_in_background: true` -- `vox call` runs for
-   the whole call:
+1. If there is no `--headset`, `--aec` or `--script`, ask the human to wear
+   a headset and rerun `/call --headset` (or use `/call --aec` if their system
+   audio path already cancels echo). Do not silently add a declaration.
+   Otherwise run the corresponding command with `run_in_background: true`;
+   `vox call` runs for the whole call:
 
    ```bash
-   vox call
+   vox call --headset
    ```
 
-   Append `--script '<path>'` when it was given, the path in single quotes
+   Use `vox call --aec` or `vox call --script '<path>'` when requested, the path in single quotes
    so the shell passes it as one argument; if the path itself contains a single
    quote, ask for another path instead of running the command. Do not write a context
    snapshot: voxd seeds its agent with the allowlisted repositories and the

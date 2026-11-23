@@ -84,7 +84,7 @@ class VoiceAgentCall:
         speaker: AgentSpeaker,
         *,
         trace: EventTrace,
-        opener: Opener = Conversation.open,
+        opener: Opener | None = None,
         progress: ProgressEvents | None = None,  # None creates an unconnected source.
     ) -> Self:
         """Bind the call's tools, caller audio, speaker and trace."""
@@ -93,7 +93,8 @@ class VoiceAgentCall:
         self._progress = CallProgress(
             progress if progress is not None else ProgressEvents()
         )
-        self._trace, self._opener = trace, opener
+        self._trace = trace
+        self._opener = opener if opener is not None else Conversation.open
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
         self._transcript = deque(maxlen=_HISTORY)
@@ -120,8 +121,7 @@ class VoiceAgentCall:
             failure = failures.exceptions[0]
             if not isinstance(failure, _EXPECTED):
                 logger.exception("Mode B call failed", exc_info=failure)
-            self._state = "failed"
-            self._error = str(failure) or type(failure).__name__
+            self.mark_failed(str(failure) or type(failure).__name__)
         finally:
             if self._state in {"connecting", "live"}:
                 self._state = "ended"
@@ -156,6 +156,10 @@ class VoiceAgentCall:
     async def connected(self) -> None:
         """Return once the conversation is live or has already ended."""
         await self._connected.wait()
+
+    def mark_failed(self, error: str) -> None:
+        """Keep the terminal failure reason in subsequent call status replies."""
+        self._state, self._error = "failed", error
 
     def status(self) -> dict[str, object]:
         """Return the call's state and its recent exchange."""

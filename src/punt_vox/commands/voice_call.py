@@ -20,7 +20,8 @@ from punt_vox.daemon_control import DaemonControl
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
-    from pathlib import Path
+
+    from punt_vox.commands.voice_call_options import VoiceCallOptions
 
 __all__ = ["VoiceCall"]
 
@@ -45,8 +46,8 @@ class VoiceCall:
         self._poll_s = poll_s
         return self
 
-    def start(self, script: Path | None) -> None:
-        """Start a call (mic, or *script*'s recorded turns) and follow it to its end.
+    def start(self, options: VoiceCallOptions) -> None:
+        """Start a call (mic or recorded turns) and follow it to its end.
 
         Raises:
             typer.Exit: Exit 1 when voxd refuses or the call fails; see
@@ -54,7 +55,7 @@ class VoiceCall:
                 and ``CallFollower.hang_up`` for Ctrl-C while the call starts.
         """
         follower = CallFollower(self._control, self._poll_s)
-        CallStartup(self._control, follower).start(script)
+        CallStartup(self._control, follower).start(options.wire())
 
     def stop(self) -> None:
         """Stop the running call; refuse when no call is running.

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vox doctor` reports Mode B call prerequisites: the local ElevenLabs key's
+  `convai_write` scope, Claude login expiry, tmux, and echo cancellation.
+  Live Mode B calls require `--headset` or `--aec` (a system echo-cancelled
+  audio path); scripted calls have no live microphone. (PL-1397)
+
 - Bare `vox call` talks to voxd's Mode B call agent: it starts the call, shows
   a live status line, and prints the transcript, worker tool calls and trace
   path when the call ends. `vox call --script greet.jsonl` feeds recorded PCM
