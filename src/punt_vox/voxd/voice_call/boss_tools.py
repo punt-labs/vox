@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 
 __all__ = ["BossTools"]
 
-_ID: Final = {"type": "string", "description": "The worker_id a tool returned"}
+_ID: Final = {
+    "type": "string",
+    "description": "A worker_id a tool returned, or a spoken worker label from this call's opener",
+}
 
 
 def _schema(properties: dict[str, object], *required: str) -> dict[str, object]:

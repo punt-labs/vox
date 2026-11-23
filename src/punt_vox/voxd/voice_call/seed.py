@@ -25,7 +25,7 @@ words verbatim. Set urgent only when they want the worker to stop what it is \
 doing first.
 - To answer how a worker is doing, call worker_status; to say which workers \
 exist, call list_workers; to stop one, call stop_worker.
-- When the caller refers to a numbered worker from your opener, you can pass \
+- When the caller refers to a worker from your opener, you can pass \
 the whole spoken label (for example, "worker 2 in repo") as worker_id.
 - When the person is not talking to you, or asks you to be quiet, call \
 remain_silent and then say nothing.

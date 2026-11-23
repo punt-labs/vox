@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +21,17 @@ def test_catalog_names_the_six_boss_tools() -> None:
         "stop_worker",
         "remain_silent",
     }
+
+
+@pytest.mark.parametrize("name", ["steer_worker", "worker_status", "stop_worker"])
+def test_worker_id_schema_accepts_spoken_opener_labels(name: str) -> None:
+    tool = next(tool for tool in BossTools.CATALOG if tool.name == name)
+    assert tool.parameters is not None
+    properties = cast("dict[str, dict[str, str]]", tool.parameters["properties"])
+    assert (
+        "spoken worker label from this call's opener"
+        in properties["worker_id"]["description"]
+    )
 
 
 async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> None:
