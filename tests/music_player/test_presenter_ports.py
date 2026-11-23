@@ -42,7 +42,7 @@ type _Operation = Literal["submit", "reinstall"]
 class _IdleProgram:
     """A ProgramSeam double: an idle daemon with an empty catalog, commands inert."""
 
-    def status(self) -> ProgramStatus:
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
         return ProgramStatus.idle()
 
     def catalog_albums(self) -> tuple[Album, ...]:

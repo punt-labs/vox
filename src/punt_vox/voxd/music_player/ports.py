@@ -24,8 +24,8 @@ __all__ = ["PlayerService", "ScenePublisher"]
 class PlayerService(Protocol):
     """The read-only daemon seam the player projects onto a scene."""
 
-    def status(self) -> ProgramStatus:
-        """Return the daemon's authoritative status, read fresh per call."""
+    def status(self, *, user_pause_only: bool) -> ProgramStatus:
+        """Read fresh status, optionally projecting only the user pause."""
         ...
 
     def catalog_albums(self) -> tuple[Album, ...]:
