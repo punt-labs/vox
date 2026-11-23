@@ -45,6 +45,7 @@ def test_startup_reaps_only_its_private_broker() -> None:
 
         def signal_owner(pid: int, signal_number: int) -> None:
             assert signal_number == 0
+            assert pid > 0
             if pid == 894321:
                 raise ProcessLookupError
 
