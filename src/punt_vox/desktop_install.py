@@ -70,12 +70,11 @@ class DesktopInstaller:
           because the operator cannot conclude anything about the
           registration from a file the CLI cannot parse.
         """
-        config_path = cls.config_path()
-        if not config_path.exists():
-            return "no config"
         try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(cls.config_path().read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return "no config"
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return "config unreadable"
         if not isinstance(data, dict):
             return "not registered"

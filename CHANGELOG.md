@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox status --json` reports `config unreadable` instead of crashing when the
+  Claude Desktop config contains invalid UTF-8. (PL-1420)
+
 - `vox call stop` and foreground hangup no longer stop a replacement call
   that started after the original call ended. (PL-1380)
 

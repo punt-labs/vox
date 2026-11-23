@@ -2415,6 +2415,22 @@ class TestGlobalFlags:
         data = json.loads(result.output)
         assert "provider" in data
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_json_reports_non_utf8_desktop_config(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        config_path = tmp_path / "claude_desktop_config.json"
+        config_path.write_bytes(b"\xff")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
+        ):
+            result = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.exception
+        assert json.loads(result.stdout)["desktop"] == "config unreadable"
+
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
         result = runner.invoke(app, ["version", "--quiet"])
