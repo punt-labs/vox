@@ -1334,7 +1334,7 @@ class TestVersionCommand:
 
 
 class TestStatusCommand:
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_status_daemon_running(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
@@ -1351,26 +1351,25 @@ class TestStatusCommand:
         result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        assert "Daemon" in result.output
-        assert "running" in result.output
+        assert "Daemon:    running\n" in result.output
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_status_daemon_not_running(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         import punt_vox.config as cfg
-        from punt_vox.client_errors import VoxdConnectionError
+        from punt_vox.client_errors import VoxdRefusedError
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         mock_instance = mock_client_cls.return_value
-        mock_instance.health.side_effect = VoxdConnectionError("not running")
+        mock_instance.health.side_effect = VoxdRefusedError("refused")
 
         runner = CliRunner()
         result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        assert "not running" in result.output
+        assert "Daemon:    not running\n" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -2365,7 +2364,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_quiet_suppresses_status(self, mock_client_cls: MagicMock) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
@@ -2377,7 +2376,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_json_still_emits_with_quiet(self, mock_client_cls: MagicMock) -> None:
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = HealthStatus.from_wire(
@@ -2389,6 +2388,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data
+        assert data["daemon"] == "running"
 
     def test_verbose_quiet_mutual_exclusion(self) -> None:
         runner = CliRunner()
