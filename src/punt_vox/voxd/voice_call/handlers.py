@@ -69,7 +69,9 @@ class CallHandlers:
     _opener: Opener | None
     ROUTES: ClassVar[tuple[str, ...]] = (
         "call_start",
+        "call_start_scoped",
         "call_stop",
+        "call_stop_scoped",
         "call_status",
         "call_teardown",
     )
@@ -104,7 +106,7 @@ class CallHandlers:
         """Answer one lifecycle RPC with the call's status."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            match msg.get("type"):
+            match str(msg.get("type")).removesuffix("_scoped"):
                 case "call_start":
                     status = await self._start(msg)
                 case "call_stop":

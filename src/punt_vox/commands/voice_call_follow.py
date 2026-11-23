@@ -86,7 +86,7 @@ class CallFollower:
     def hang_up(self, call_id: str) -> CallStatusView:
         """Stop the named call and return its ended status."""
         try:
-            ended = asyncio.run(self._control.request("stop", call_id=call_id))
+            ended = asyncio.run(self._control.request("stop_scoped", call_id=call_id))
         except KeyboardInterrupt:
             typer.echo(
                 "\nInterrupted while hanging up; the call may still be live:"
@@ -99,7 +99,7 @@ class CallFollower:
             raise typer.Exit(1) from None
         if ended.running:
             typer.echo(
-                f"voxd still reports the call {ended.state}; run `vox call stop`.",
+                f"voxd still reports the call {ended.state}; run `vox call status`.",
                 err=True,
             )
             raise typer.Exit(1)

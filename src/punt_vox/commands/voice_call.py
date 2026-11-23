@@ -63,7 +63,7 @@ class VoiceCall:
         status = self._run(self._control.request("status"))
         if not status.running:
             raise typer.BadParameter("no call is active")
-        self._run(self._control.request("stop", call_id=status.call_id))
+        self._run(self._control.request("stop_scoped", call_id=status.call_id))
         typer.echo("Stopping the call.")
 
     def status(self) -> None:

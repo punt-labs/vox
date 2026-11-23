@@ -818,9 +818,13 @@ async def test_stale_stop_does_not_hang_up_the_replacement_call(tmp_path: Path) 
             assert cast("dict[str, object]", first["result"])["call_id"] == first_id
             malformed = await _rpc(handlers, {"type": "call_stop", "call_id": None})
             assert malformed["type"] == "error"
+            missing = await _rpc(handlers, {"type": "call_stop_scoped"})
+            assert missing["message"] == "call_id is required for a scoped request"
             assert await _rpc(handlers, {"type": "call_status"}) == second
             call_id = cast("dict[str, object]", second["result"])["call_id"]
-            ended = await _rpc(handlers, {"type": "call_stop", "call_id": call_id})
+            ended = await _rpc(
+                handlers, {"type": "call_stop_scoped", "call_id": call_id}
+            )
             assert cast("dict[str, object]", ended["result"])["state"] == "ended"
             duplicate = await _rpc(handlers, {**start, "call_id": first_id})
             assert duplicate["message"] == "call_id has already been used"
@@ -851,15 +855,18 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
         script = [{"pcm_path": str(pcm)}]
         call_id = uuid4().hex
         start = asyncio.create_task(
-            _rpc(handlers, {"type": "call_start", "script": script, "call_id": call_id})
+            _rpc(
+                handlers,
+                {"type": "call_start_scoped", "script": script, "call_id": call_id},
+            )
         )
         while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
             "state": "idle"
         }:
             await asyncio.sleep(0.01)
-        stopped = (await _rpc(handlers, {"type": "call_stop", "call_id": call_id}))[
-            "result"
-        ]
+        stopped = (
+            await _rpc(handlers, {"type": "call_stop_scoped", "call_id": call_id})
+        )["result"]
         started = (await start)["result"]
         hold.set()
     assert cast("dict[str, object]", stopped)["state"] == "ended"
@@ -974,7 +981,9 @@ async def test_a_call_that_never_connects_times_out(
         )
         assert set(handlers.handlers()) == {
             "call_start",
+            "call_start_scoped",
             "call_stop",
+            "call_stop_scoped",
             "call_status",
             "call_teardown",
         }

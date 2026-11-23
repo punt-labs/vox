@@ -4,24 +4,29 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal, Self, final
 
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.commands.voice_call_status import CallStatusView
 from punt_vox.daemon_control import DaemonControl
 
 __all__ = ["CallControl"]
 
-type _CallOperation = Literal["start", "status", "stop", "teardown"]
+type _CallOperation = Literal["start_scoped", "status", "stop_scoped", "teardown"]
 
 
 @final
 class CallControl:
-    """Frame call requests and validate the status replies."""
+    """Frame call requests and validate the status replies.
+
+    Distinct scoped start and stop routes make an older daemon refuse the
+    operation instead of silently ignoring the call ID.
+    """
 
     __slots__ = ("_rpc",)
     _rpc: DaemonControl
     _TIMEOUTS: ClassVar[dict[_CallOperation, float]] = {
-        "start": 60.0,
+        "start_scoped": 60.0,
         "status": 30.0,
-        "stop": 30.0,
+        "stop_scoped": 30.0,
         # Seven serial provider deletes at 10 seconds each, plus locking and I/O.
         "teardown": 90.0,
     }
@@ -36,8 +41,14 @@ class CallControl:
         self, operation: _CallOperation, **fields: object
     ) -> CallStatusView:
         """Send a call operation within its time budget and validate the reply."""
-        return CallStatusView(
-            await self._rpc.request(
+        try:
+            result = await self._rpc.request(
                 operation, timeout=self._TIMEOUTS[operation], **fields
             )
-        )
+        except VoxdProtocolError as exc:
+            if str(exc) != f"unknown message type: call_{operation}":
+                raise
+            raise VoxdProtocolError(
+                "voxd does not support this call operation; upgrade or restart voxd"
+            ) from exc
+        return CallStatusView(result)

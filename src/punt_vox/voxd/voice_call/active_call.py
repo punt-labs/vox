@@ -97,6 +97,8 @@ class ActiveCall:
     def requested_id(msg: dict[str, object]) -> UUID | None:
         """Read the optional call ID without treating malformed IDs as absent."""
         if "call_id" not in msg:
+            if msg.get("type") in ("call_start_scoped", "call_stop_scoped"):
+                raise ValueError("call_id is required for a scoped request")
             return None
         value = msg["call_id"]
         if not isinstance(value, str):

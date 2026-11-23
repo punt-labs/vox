@@ -23,6 +23,6 @@ def test_failed_start_reports_its_returned_status_without_polling() -> None:
     with pytest.raises(typer.Exit) as raised:
         CallStartup(control, follower).start({})
     assert raised.value.exit_code == 1
-    control.request.assert_awaited_once_with("start", call_id=ANY)
+    control.request.assert_awaited_once_with("start_scoped", call_id=ANY)
     follower.until_end.assert_not_called()
     assert follower.finish.call_args.args[0].state == "failed"

@@ -51,7 +51,7 @@ class CallStartup:
     def _begin(self, fields: dict[str, object]) -> CallStatusView:
         """Send the start request and surface a refusal without polling."""
         try:
-            return asyncio.run(self._control.request("start", **fields))
+            return asyncio.run(self._control.request("start_scoped", **fields))
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             typer.echo(f"Call unavailable: {exc}", err=True)
             raise typer.Exit(1) from None
