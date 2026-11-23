@@ -1,29 +1,69 @@
 ---
-description: "Start or stop a Conversation Mode call with a read-only call agent"
-argument-hint: "start <topic> [--script <path>] | stop"
+description: "Talk to voxd's call agent, which delegates coding to workers; or start the read-only pi call"
+argument-hint: "[--script <path>] | status | stop | start <topic> [--script <path>]"
 allowed-tools: ["Bash(vox call:*)", "Read", "mcp__quarry__find", "mcp__plugin_quarry_quarry__find"]
 ---
 
 # /call command
 
 Conversation Mode: a live voice call between the human and a call agent,
-mediated by `voxd`. The call agent is a separate, read-only process. It cannot
-see this session, so you hand it a context snapshot when the call starts, and
-it hands you a written summary when the call ends. There is no `mic:call` MCP
-tool yet -- every verb shells out to the `vox call` CLI.
+mediated by `voxd`. There are two call agents, and every verb shells out to
+the `vox call` CLI (there is no `mic:call` MCP tool yet):
+
+- **voxd's call agent** (bare `/call`): an ElevenLabs agent that `voxd` owns.
+  It starts, steers, checks and stops persistent coding workers for the human,
+  and the workers keep running after the call ends.
+- **The pi call agent** (`/call start <topic>`): a separate, read-only process.
+  It cannot see this session, so you hand it a context snapshot when the call
+  starts, and it hands you a written summary when the call ends. Mode B
+  replaces it in a later release.
 
 ## Usage
 
-- `/call start <topic>` -- start a real call about `<topic>`: real microphone
-  capture, transcribed by ElevenLabs.
-- `/call start <topic> --script <path>` -- dev/test path: scripted turns from
-  a JSON Lines file (`{"text": ..., "confidence": ...}` per line) instead of
+- `/call` -- talk to voxd's call agent: real microphone capture.
+- `/call --script <path>` -- dev/test path: scripted turns from a JSON Lines
+  file of recorded speech (`{"pcm_path": ..., "pause_s": ...}` per line: 16 kHz
+  mono S16LE PCM, a relative path read from the script's directory) instead of
   the microphone. For demos and CI.
+- `/call status` -- show voxd's call: its state, transcript and tool calls.
+- `/call start <topic>` -- start a pi call about `<topic>`: real microphone
+  capture, transcribed by ElevenLabs.
+- `/call start <topic> --script <path>` -- dev/test path for the pi call:
+  scripted turns from a JSON Lines file (`{"text": ..., "confidence": ...}`
+  per line) instead of the microphone.
 - `/call stop` -- ask the running call to hang up.
 
 ## Implementation
 
-### start
+### call (no verb, or only `--script <path>`)
+
+1. Run this Bash command with `run_in_background: true` -- `vox call` runs for
+   the whole call:
+
+   ```bash
+   vox call
+   ```
+
+   Append `--script '<path>'` when it was given, the path in single quotes
+   so the shell passes it as one argument; if the path itself contains a single
+   quote, ask for another path instead of running the command. Do not write a context
+   snapshot: voxd seeds its agent with the allowlisted repositories and the
+   workers' progress itself.
+
+2. Tell the human the call is starting, then end your turn. Do not poll.
+
+3. **When the background command exits**, its output ends with the call's
+   transcript (`user:` / `agent:` lines), one `tool:` line per worker tool the
+   agent called, and a `trace:` path. Report what the agent did -- which
+   workers it started, steered or stopped, and on what -- in two or three
+   sentences. If the command exited with an error instead (`Call unavailable`,
+   `error:`), report the error from its output.
+
+### status
+
+Run `vox call status` and report the state and the last few turns.
+
+### start (the pi call)
 
 1. **Write the context snapshot yourself.** You are the primary session; the
    call agent starts with nothing but what you give it. In plain prose, cover:
@@ -56,7 +96,9 @@ tool yet -- every verb shells out to the `vox call` CLI.
    VOX_CONTEXT_<the same 8 hex digits>
    ```
 
-   Append `--script <path>` verbatim when it was given.
+   Append `--script '<path>'` when it was given, the path in single quotes
+   so the shell passes it as one argument; if the path itself contains a single
+   quote, ask for another path instead of running the command.
 
 3. Tell the human the call is starting, then end your turn. Do not poll.
 
@@ -71,12 +113,14 @@ tool yet -- every verb shells out to the `vox call` CLI.
 
 ### stop
 
-Run `vox call stop`. It is a fire-and-forget signal to the running
-`vox call start`, through the cross-process control file
+Run `vox call stop`. With a pi call live, it is a fire-and-forget signal to
+the running `vox call start`, through the cross-process control file
 (`src/punt_vox/voxd/conversation_mode/call_control.py`); the call then ends
-cleanly and writes its summary.
+cleanly and writes its summary. Otherwise it asks `voxd` to hang up its call;
+the background `vox call` then exits with the transcript. Workers the call
+started keep running.
 
-## What the call agent is
+## What the pi call agent is
 
 One `pi --mode rpc` process, spawned when the call starts and held until it
 ends, so each turn reuses the warm context of the last. It runs read-only for
@@ -104,6 +148,6 @@ ever ran anyway, the call ends before a word of the reply is spoken.
 Summaries are written to `~/.punt-labs/vox/calls/<call-id>-summary.md`; the
 newest 50 are kept.
 
-While a call is active, `plugin/hooks/call-lock.sh` blocks the human's own
+While a pi call is active, `plugin/hooks/call-lock.sh` blocks the human's own
 interactive prompts, self-clearing if the holding process has died.
 `/call stop` passes the lock unconditionally.

@@ -15,6 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bare `vox call` talks to voxd's Mode B call agent: it starts the call, shows
+  a live status line, and prints the transcript, worker tool calls and trace
+  path when the call ends. `vox call --script greet.jsonl` feeds recorded PCM
+  caller turns instead of the microphone, `vox call status` shows the call,
+  and `vox call stop` or Ctrl-C (even while the call is still connecting)
+  hangs it up. `/call` in the plugin does the
+  same; `vox call start --context` and `/call start <topic>` keep the pi call.
+  If the CLI loses voxd's status mid-call it hangs the call up and exits 1
+  rather than leave it running unwatched, and a call that fails to connect
+  still prints its error and trace.
+
+- `vox worker steer WORKER_ID WORDS [--urgent]` sends literal input to ready
+  workers with harness-defined paste settling. Replies acknowledge a later
+  matching input receipt, or report `heard: false` after a bounded wait;
+  interruption and receipt never imply that a worker turn has ended.
+
 - Gate TestPyPI publication on the nightly suite against the exact release
   wheel, including Polly via OIDC, and smoke-test speech from published PyPI.
   PyPI publication retains plain `release` environment approval.

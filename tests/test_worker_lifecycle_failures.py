@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
+from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.records import WorkerRecords
 
@@ -25,7 +26,7 @@ def test_corrupt_worker_record_does_not_block_healthy_workers(tmp_path: Path) ->
     assert restored.list() == [healthy]
     assert bad.read_text() == "broken JSON"
     with patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path):
-        routes = WorkerContext.handlers()
+        routes = WorkerContext.handlers(PlaybackQueue())
     assert "worker_list" in routes
     assert "hook_event" in routes
 

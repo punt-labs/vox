@@ -20,7 +20,7 @@ class WorkerCli:
     __slots__ = ()
 
     @staticmethod
-    def _run(operation: str, **fields: str) -> None:
+    def _run(operation: str, **fields: str | bool) -> None:
         try:
             result = asyncio.run(WorkerClient.request(operation, **fields))
         except (VoxdConnectionError, VoxdProtocolError) as exc:
@@ -55,10 +55,16 @@ class WorkerCli:
         WorkerCli._run("stop", worker_id=worker_id)
 
     @staticmethod
+    def steer(worker_id: str, words: str, *, urgent: bool = False) -> None:
+        """Send literal input and await acknowledgement, optionally interrupting."""
+        WorkerCli._run("steer", worker_id=worker_id, words=words, urgent=urgent)
+
+    @staticmethod
     def build_app() -> typer.Typer:
         """Register the hidden control group."""
         app = typer.Typer(help="Control background coding workers.")
         app.command("start")(WorkerCli.start)
         app.command("list")(WorkerCli.list_workers)
         app.command("stop")(WorkerCli.stop)
+        app.command("steer")(WorkerCli.steer)
         return app

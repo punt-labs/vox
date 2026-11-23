@@ -18,9 +18,10 @@ from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
-from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -66,6 +67,17 @@ class TrivialProfile:
 
     submit_key = "Enter"
     interrupt_key = "Escape"
+    settle_delay = 0.05
+    input_limit = 1000
+
+    def last_input(self, worker_id: str) -> None:
+        return None
+
+    def inputs_since(self, worker_id: str, baseline: int) -> list[WorkerInput]:
+        return []
+
+    def matches_input(self, receipt: object, words: str) -> bool:
+        return False
 
     def argv(self, worker_id: str, task: str) -> list[str]:
         return [
@@ -168,7 +180,7 @@ async def test_call_side_refuses_unallowlisted_project(tmp_path: Path) -> None:
         {"test": TrivialProfile()},
     )
     ws = AsyncMock(spec=WebSocket)
-    await WorkerHandlers(registry).handle(
+    await WorkerHandlers(WorkerActor(registry)).handle(
         {
             "id": "bad",
             "type": "worker_start",
@@ -242,13 +254,19 @@ def test_trust_exact_path_preserves_settings(
 def test_tmux_urgent_keys_and_safe_launch_error(tmp_path: Path) -> None:
     """Interrupt before literal submission, and never echo launch credentials."""
     provider = TmuxWorkerProvider()
-    with patch.object(TmuxWorkerProvider, "_run") as run:
+    with (
+        patch.object(TmuxWorkerProvider, "_run") as run,
+        patch("punt_vox.voxd.workers.tmux.uuid4", return_value="input"),
+    ):
         provider.steer("worker", "words", urgent=True, profile=TrivialProfile())
     assert [c.args for c in run.call_args_list] == [
         ("send-keys", "-t", "=worker:", "Escape"),
-        ("send-keys", "-t", "=worker:", "-l", "--", "words"),
+        ("load-buffer", "-b", "vox-steer-input", "-"),
+        ("paste-buffer", "-b", "vox-steer-input", "-t", "=worker:"),
+        ("delete-buffer", "-b", "vox-steer-input"),
         ("send-keys", "-t", "=worker:", "Enter"),
     ]
+    assert run.call_args_list[1].kwargs == {"input_text": "words"}
     with (
         patch.object(WorkerCommand, "_scoped", return_value=False),
         patch(
@@ -271,7 +289,7 @@ async def test_worker_client_roundtrip_and_error() -> None:
         return {"type": "worker_result", "id": request["id"], "result": []}
 
     transport.send_and_recv.side_effect = reply
-    with patch("punt_vox.worker_client.VoxdTransport", return_value=transport):
+    with patch("punt_vox.daemon_control.VoxdTransport", return_value=transport):
         assert await WorkerClient.request("list") == []
         transport.close.assert_awaited_once()
         transport.send_and_recv.side_effect = None

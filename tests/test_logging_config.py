@@ -157,7 +157,7 @@ def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
 def test_call_proceeds_when_turn_timer_sink_fails(
     tmp_path: Path, echo: bool, error: OSError, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from punt_vox.commands.call import CallCli
+    from punt_vox.commands.pi_call_cli import PiCallCli
 
     logging_config.configure_client_logging(role="cli")
     logging_config.configure_turn_timer_logging(echo_to_console=True)
@@ -165,9 +165,9 @@ def test_call_proceeds_when_turn_timer_sink_fails(
     context.write_text("Call context")
     with (
         patch.object(logging_config, "PrivateFileHandler", side_effect=error),
-        patch("punt_vox.commands.call.asyncio.run") as run,
+        patch("punt_vox.commands.pi_call_cli.asyncio.run") as run,
     ):
-        CallCli().start(context, trace_turns=echo)
+        PiCallCli().start(context, trace_turns=echo)
     coroutine = run.call_args.args[0]
     coroutine.close()
     run.assert_called_once()

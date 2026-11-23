@@ -203,6 +203,8 @@ There are two chimes: one for task completion and one for a permission prompt. T
 | `/music list` | List saved albums |
 | `/music status` | Show the current music state (same as `/music`) |
 | `/music stop` | Stop background music |
+| `/call` | Talk to voxd's call agent, which delegates coding to persistent workers |
+| `/call status` | Show voxd's call: state, tool calls, transcript so far |
 | `/call start <topic>` | Start a voice call with a read-only call agent about `<topic>` |
 | `/call stop` | Hang up |
 
@@ -265,6 +267,9 @@ vox also works as a standalone TTS tool, without Claude Code.
 
 | Command | What it does |
 |---------|--------------|
+| `vox call` | Talk to voxd's call agent; prints a live status line, then the transcript |
+| `vox call --script greet.jsonl` | Feed recorded caller turns (`{"pcm_path": ..., "pause_s": ...}` per line) instead of the microphone |
+| `vox call status` | Show voxd's call: state, tool calls, transcript so far |
 | `vox call start --context snapshot.md` | Start a voice call; the call agent opens with the snapshot file |
 | `vox call start --context - < snapshot.md` | Read the snapshot from stdin |
 | `vox call start --context snapshot.md --trace-turns` | Also print a turn-by-turn latency trace |
@@ -580,6 +585,8 @@ When [lux](https://github.com/punt-labs/lux) is running on the same machine, `vo
 When vox is enabled in a repository and lux is running, each Claude Code session adds a `Vox` entry to the lux menu. It opens a settings panel for chimes versus voice, the notification level (off, normal, continuous), and the voice, with a preview button. The panel changes the same settings as the CLI and slash commands, so they always agree. If a change cannot be saved or `voxd` is unreachable, the panel says so in a status line.
 
 ## Conversation Mode
+
+`vox call` talks to the call agent `voxd` runs: an ElevenLabs voice agent that starts, steers, inspects and stops persistent coding workers in your allowlisted repositories. The call and its workers live in `voxd`, so the workers keep going after the call ends, and the CLI only starts the call, shows one live status line, and prints the transcript when it ends. `vox call stop` (or Ctrl-C) hangs up. `--script` replaces the microphone with recorded 16 kHz mono PCM turns for demos and CI.
 
 `vox call start` starts a voice call with a read-only call agent. vox listens through the microphone, transcribes each turn with ElevenLabs, sends it to the agent, and speaks the reply. The agent is a `pi --mode rpc` process that runs for the whole call. It does not see your Claude Code session: it starts from a context snapshot your session writes, and it can only read and search files in the repository.
 

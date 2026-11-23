@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, cast, final
@@ -164,12 +165,36 @@ class WorkerRegistry:
         """Terminate a worker but preserve its branch and worktree."""
         return self._checkpoint(self._lifecycle.stop(self._get(worker_id)))
 
-    def steer(self, worker_id: str, words: str, *, urgent: bool = False) -> None:
+    def steer(self, worker_id: str, words: str, *, urgent: bool = False) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
-        record = self._get(worker_id)
+        if not words.strip():
+            raise ValueError("Worker words must not be empty or whitespace")
+        if any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in words):
+            raise ValueError(
+                "Worker words must not contain control characters or newlines"
+            )
+        record = self._checkpoint(self._lifecycle.observe(self._get(worker_id)))
+        if record.state != "ready":
+            raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
+        profile = self._profiles[record.harness]
+        if len(words) > profile.input_limit:
+            raise ValueError(
+                f"Words exceed receipt limit of {profile.input_limit} characters"
+            )
+        previous = profile.last_input(worker_id)
         self._providers[record.provider].steer(
             record.session,
             words,
             urgent=urgent,
-            profile=self._profiles[record.harness],
+            profile=profile,
         )
+        return previous.seq if previous is not None else 0
+
+    # PY-TS-14: absence means no later input matches this steering request yet.
+    def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
+        """Recognize a later matching input without inferring turn completion."""
+        profile = self._profiles[self._get(worker_id).harness]
+        for receipt in profile.inputs_since(worker_id, baseline):
+            if receipt.seq > baseline and profile.matches_input(receipt, words):
+                return receipt.seq
+        return None

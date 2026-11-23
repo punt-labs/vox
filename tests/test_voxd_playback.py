@@ -244,35 +244,35 @@ class TestPlayAudioObservability:
 
 
 class TestProbeDuration:
-    """``_probe_duration`` extracts audio duration via ffprobe."""
+    """``AudioFile.duration`` extracts audio duration via ffprobe."""
 
     def test_returns_duration_for_valid_audio(self, tmp_path: Path) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         audio = tmp_path / "silence.mp3"
         audio.write_bytes(_get_valid_mp3_bytes())
-        duration = asyncio.run(_probe_duration(audio))
+        duration = asyncio.run(AudioFile.duration(audio))
         assert duration is not None
         assert duration > 0.0
 
     def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         missing = tmp_path / "nonexistent.mp3"
-        duration = asyncio.run(_probe_duration(missing))
+        duration = asyncio.run(AudioFile.duration(missing))
         assert duration is None
 
     def test_returns_none_for_bad_format(self, tmp_path: Path) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         bad = tmp_path / "garbage.mp3"
         bad.write_bytes(b"not audio data at all")
-        duration = asyncio.run(_probe_duration(bad))
+        duration = asyncio.run(AudioFile.duration(bad))
         # ffprobe may return None or an error; either way, no crash
         assert duration is None or isinstance(duration, float)
 
     def test_returns_none_when_ffprobe_missing(self, tmp_path: Path) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         audio = tmp_path / "silence.mp3"
         audio.write_bytes(_get_valid_mp3_bytes())
@@ -280,11 +280,11 @@ class TestProbeDuration:
             "punt_vox.voxd.playback.asyncio.create_subprocess_exec",
             AsyncMock(side_effect=FileNotFoundError("ffprobe")),
         ):
-            duration = asyncio.run(_probe_duration(audio))
+            duration = asyncio.run(AudioFile.duration(audio))
         assert duration is None
 
     def test_returns_none_on_timeout(self, tmp_path: Path) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         audio = tmp_path / "silence.mp3"
         audio.write_bytes(_get_valid_mp3_bytes())
@@ -294,18 +294,18 @@ class TestProbeDuration:
             "punt_vox.voxd.playback.asyncio.create_subprocess_exec",
             AsyncMock(return_value=proc),
         ):
-            duration = asyncio.run(_probe_duration(audio))
+            duration = asyncio.run(AudioFile.duration(audio))
         assert duration is None
 
     def test_logs_duration_at_debug(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from punt_vox.voxd.playback import _probe_duration
+        from punt_vox.voxd.audio_context import AudioFile
 
         audio = tmp_path / "silence.mp3"
         audio.write_bytes(_get_valid_mp3_bytes())
         with caplog.at_level(logging.DEBUG, logger="punt_vox.voxd"):
-            duration = asyncio.run(_probe_duration(audio))
+            duration = asyncio.run(AudioFile.duration(audio))
         if duration is not None:
             assert "Probed duration" in caplog.text
 
@@ -330,7 +330,7 @@ class TestPlayAudioProportionalTimeout:
 
         with (
             patch(
-                "punt_vox.voxd.playback._probe_duration",
+                "punt_vox.voxd.audio_context.AudioFile.duration",
                 AsyncMock(return_value=150.0),
             ),
             patch(
@@ -367,7 +367,7 @@ class TestPlayAudioProportionalTimeout:
 
         with (
             patch(
-                "punt_vox.voxd.playback._probe_duration",
+                "punt_vox.voxd.audio_context.AudioFile.duration",
                 AsyncMock(return_value=None),
             ),
             patch(
@@ -405,7 +405,7 @@ class TestPlayAudioProportionalTimeout:
 
         with (
             patch(
-                "punt_vox.voxd.playback._probe_duration",
+                "punt_vox.voxd.audio_context.AudioFile.duration",
                 AsyncMock(return_value=5.0),
             ),
             patch(
@@ -433,18 +433,18 @@ class TestPlayerCommandVolume:
     two-tier static rebalance."""
 
     def test_afplay_carries_the_voice_volume_flag(self) -> None:
-        from punt_vox.voxd.playback import _player_command
+        from punt_vox.voxd.audio_context import AudioFile
 
-        with patch("punt_vox.voxd.playback._is_darwin", return_value=True):
-            cmd = _player_command(Path("/tmp/clip.mp3"))
+        with patch("punt_vox.voxd.audio_context._is_darwin", return_value=True):
+            cmd = AudioFile.player_command(Path("/tmp/clip.mp3"))
 
         assert cmd == ["afplay", "-v", "0.8", "/tmp/clip.mp3"]
 
     def test_ffplay_carries_the_voice_volume_flag(self) -> None:
-        from punt_vox.voxd.playback import _player_command
+        from punt_vox.voxd.audio_context import AudioFile
 
-        with patch("punt_vox.voxd.playback._is_darwin", return_value=False):
-            cmd = _player_command(Path("/tmp/clip.mp3"))
+        with patch("punt_vox.voxd.audio_context._is_darwin", return_value=False):
+            cmd = AudioFile.player_command(Path("/tmp/clip.mp3"))
 
         assert cmd == [
             "ffplay",
@@ -470,9 +470,9 @@ class TestAudioContext:
     def test_macos_snapshot_records_session_facts(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
-        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        monkeypatch.setattr("punt_vox.voxd.audio_context._is_darwin", lambda: True)
         # Reset the per-process manager cache so a stubbed managername runs.
         monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
         monkeypatch.setattr(
@@ -492,9 +492,9 @@ class TestAudioContext:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A Background/System manager is the operator-visible failure signal."""
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
-        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        monkeypatch.setattr("punt_vox.voxd.audio_context._is_darwin", lambda: True)
         monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
         monkeypatch.setattr(
             AudioContext,
@@ -513,9 +513,9 @@ class TestAudioContext:
         macOS diagnostics omit Linux-only XDG_RUNTIME_DIR, PULSE_SERVER, and
         DBUS_SESSION_BUS_ADDRESS keys to keep the log relevant.
         """
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
-        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        monkeypatch.setattr("punt_vox.voxd.audio_context._is_darwin", lambda: True)
         monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
         monkeypatch.setattr(
             AudioContext,
@@ -537,9 +537,9 @@ class TestAudioContext:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Linux keeps the audio-socket env vars ffplay needs."""
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
-        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: False)
+        monkeypatch.setattr("punt_vox.voxd.audio_context._is_darwin", lambda: False)
         monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
         monkeypatch.setenv("PULSE_SERVER", "unix:/run/user/1000/pulse/native")
         monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
@@ -556,7 +556,7 @@ class TestAudioContext:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The manager cannot change without re-bootstrap; probe once, cache."""
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
         monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
         calls: list[int] = []
@@ -585,7 +585,7 @@ class TestAudioContext:
         signal-that-stops-reporting failure mode this diagnostic exists to
         catch.  A subsequent probe that succeeds must supersede the failure.
         """
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
         monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
         results = iter(["unknown", "Aqua"])
@@ -612,7 +612,7 @@ class TestAudioContext:
         """A missing launchctl must never raise from the diagnostic path."""
         import subprocess
 
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
         def _raise_oserror(*_args: object, **_kwargs: object) -> object:
             raise FileNotFoundError("no launchctl")
@@ -626,7 +626,7 @@ class TestAudioContext:
         """An empty stdout stripped to nothing surfaces as ``unknown``."""
         import subprocess
 
-        from punt_vox.voxd.playback import AudioContext
+        from punt_vox.voxd.audio_context import AudioContext
 
         class _Result:
             stdout = "\n"

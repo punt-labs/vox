@@ -10,15 +10,12 @@ from punt_vox.voxd.hook_context_projection import (
     HOOK_TOOL_EVENTS,
     HookText,
     HookToolResult,
-    ToolUpdate,
 )
-from punt_vox.voxd.hook_failures import HookFailures
 from punt_vox.voxd.hook_gaps import HookGapReport, HookGaps
+from punt_vox.voxd.hook_input_history import HookInputHistory
+from punt_vox.voxd.hook_tool_history import HookToolHistory
 
 _MAX_SESSIONS = 64
-_MAX_TOOL_EVENTS = 48
-_MAX_FILES = 8
-_MAX_RESULTS = 5
 
 
 class HookContextSnapshot(TypedDict):
@@ -46,8 +43,8 @@ class HookContextStore:
         self._sessions = OrderedDict()
         return self
 
-    def ingest(self, payload: dict[str, object]) -> None:
-        """Validate a live sender-stamped event and fold it into its session."""
+    def ingest(self, payload: dict[str, object], *, worker_input: bool = False) -> None:
+        """Fold context, reserving receipts for server-admitted worker hooks."""
         identity = HookIdentity.parse(payload)
         sequence = payload.get("relay_seq")
         if type(sequence) is not int or not 1 <= sequence <= MAX_SEQUENCE:
@@ -58,7 +55,7 @@ class HookContextStore:
         if context is None:
             context = SessionContext()
             self._sessions[identity.session] = context
-        context.ingest(sequence, identity.event, sanitized)
+        context.ingest(sequence, identity.event, sanitized, worker_input=worker_input)
         self._sessions.move_to_end(identity.session)
         if len(self._sessions) > _MAX_SESSIONS:
             self._sessions.popitem(last=False)
@@ -71,32 +68,51 @@ class HookContextStore:
             raise ValueError(msg)
         return context.snapshot()
 
+    def last_input(self, session: str) -> tuple[int, str]:
+        """Return the newest submitted prompt without changing the snapshot schema."""
+        context = self._sessions.get(session)
+        return context.last_input() if context is not None else (0, "")
+
+    def inputs_since(self, session: str, baseline: int) -> list[tuple[int, str]]:
+        """Return bounded recent inputs without changing the snapshot schema."""
+        context = self._sessions.get(session)
+        return context.inputs_since(baseline) if context is not None else []
+
 
 @final
 class SessionContext:
     """Bounded per-session view, ordered by sender sequence rather than arrival."""
 
-    __slots__ = ("_assistant", "_failures", "_gaps", "_goal", "_started", "_tools")
+    __slots__ = ("_assistant", "_gaps", "_goal", "_input", "_started", "_tools")
+    _input: HookInputHistory
     _assistant: tuple[int, str]
-    _failures: HookFailures
     _gaps: HookGaps
     _goal: tuple[int, str]
     _started: bool
-    _tools: dict[int, ToolUpdate]
+    _tools: HookToolHistory
 
     def __new__(cls) -> Self:
         """Create a new view for a session with at least one live event."""
         self = super().__new__(cls)
         self._assistant = (0, "")
-        self._failures = HookFailures()
         self._gaps = HookGaps()
         self._goal = (0, "")
+        self._input = HookInputHistory()
         self._started = False
-        self._tools = {}
+        self._tools = HookToolHistory()
         return self
 
-    def ingest(self, sequence: int, event: str, payload: dict[str, object]) -> None:
+    def ingest(
+        self,
+        sequence: int,
+        event: str,
+        payload: dict[str, object],
+        *,
+        worker_input: bool = False,
+    ) -> None:
         """Fold a fresh event; duplicates must not change the projection."""
+        if worker_input and event == "UserPromptSubmit":
+            self._input.ingest(sequence, payload.get("prompt"))
         if not self._gaps.observe(sequence):
             return
         match event:
@@ -110,11 +126,7 @@ class SessionContext:
                 text = HookText.clip(payload.get("last_assistant_message"))
                 self._assistant = self._newest(self._assistant, sequence, text)
             case _ if event in HOOK_TOOL_EVENTS:
-                update = ToolUpdate.from_payload(payload, event)
-                self._failures.observe(sequence, update)
-                self._tools[sequence] = update
-                if len(self._tools) > _MAX_TOOL_EVENTS:
-                    del self._tools[min(self._tools)]
+                self._tools.ingest(sequence, event, payload)
             case _:
                 pass
 
@@ -122,24 +134,23 @@ class SessionContext:
     def _newest(previous: tuple[int, str], sequence: int, text: str) -> tuple[int, str]:
         return (sequence, text) if sequence > previous[0] and text else previous
 
+    def last_input(self) -> tuple[int, str]:
+        """Input acknowledgement is independent of Stop and turn completion."""
+        return self._input.last()
+
+    def inputs_since(self, baseline: int) -> list[tuple[int, str]]:
+        """Retain intermediate receipts even when a newer input arrives."""
+        return self._input.since(baseline)
+
     def snapshot(self) -> HookContextSnapshot:
         """Project the newest goals, files, results, and still-open failure."""
-        files: dict[str, None] = {}
-        results: list[HookToolResult] = []
-        for sequence, update in sorted(self._tools.items()):
-            if update.file:
-                files.pop(update.file, None)
-                files[update.file] = None
-            if not update.completed:
-                continue
-            if update.result:
-                results.append(update.as_result(sequence))
+        files, results = self._tools.files_and_results()
         return {
             "session_started": self._started,
             "goal": self._goal[1] or None,
-            "active_files": list(files)[-_MAX_FILES:],
-            "last_results": results[-_MAX_RESULTS:],
-            "open_failure": self._failures.latest(),
+            "active_files": files,
+            "last_results": results,
+            "open_failure": self._tools.open_failure(),
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
         }

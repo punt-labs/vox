@@ -154,4 +154,283 @@ may be attached to the opaque report without changing process phase.
   worker? \notin pending
 \end{schema}
 
+\section{Steering state and invariants}
+
+Steering observes input, not turn completion. Time is monotonic milliseconds;
+the pre-delivery budget is 10,000 ms across both lock waits, not a fresh budget
+per lock. Delivery is the atomic admission of provider input under the actor
+lock, after its final deadline and readiness checks. Provider I/O and paste
+settling are abstracted by this admission; this model does not bound arbitrary
+backend execution time. Receipt polling has a separate 10,000 ms budget.
+
+\begin{zed}
+  [STEER, WORDS, DIRECTORY] \\
+  SteerPhase ::= queued | locked | sent | acknowledged | unheard | refused
+\end{zed}
+
+\begin{schema}{Steering}
+  now : \nat \\
+  steerPhase : STEER \pfun SteerPhase \\
+  target : STEER \pfun WORKER \\
+  words : STEER \pfun WORDS \\
+  deadline : STEER \pfun \nat \\
+  inFlight : WORKER \pinj STEER \\
+  baseline, sentAt, receiptDeadline : STEER \pfun \nat \\
+  admittedPhase : STEER \pfun Phase \\
+  receiptSeq : STEER \pfun \nat \\
+  receiptText : STEER \pfun WORDS \\
+  accepted, endedByReceipt : \power STEER
+\where
+  \dom steerPhase = \dom target \\
+  \dom target = \dom words \\
+  \dom words = \dom deadline \\
+  \ran inFlight = \{ r : \dom steerPhase | steerPhase~r \in \{locked, sent\} \} \\
+  \forall w : \dom inFlight @ target~(inFlight~w) = w \\
+  \dom baseline = \{ r : \dom steerPhase | steerPhase~r \in \{sent, acknowledged, unheard\} \} \\
+  \dom sentAt = \dom baseline \\
+  \dom receiptDeadline = \dom baseline \\
+  \dom admittedPhase = \dom baseline \\
+  \forall r : \dom baseline @ admittedPhase~r = ready \land sentAt~r < deadline~r \\
+  accepted = \{ r : \dom steerPhase | steerPhase~r = acknowledged \} \\
+  \dom receiptSeq = accepted \\
+  \dom receiptText = accepted \\
+  \forall r : accepted @ receiptSeq~r > baseline~r \land receiptText~r = words~r \\
+  endedByReceipt = \emptyset
+\end{schema}
+
+Named properties: \textbf{only ready workers steered} is the admitted-phase
+invariant and the current-phase precondition of Steer. \textbf{At most one
+steer in flight per worker} follows from the partial injection inFlight;
+queued requests do not own it. \textbf{Receipt freshness and exact text}
+require a sequence strictly above the captured baseline and the original
+words. \textbf{No delivery after deadline} is sentAt less than deadline.
+\textbf{Heard never implies turn ended}: endedByReceipt is a proof-only set of
+turn-end claims justified by receipts, invariantly empty, not an idle-state
+tracker. Steering operations preserve Workers; neither Escape nor receipt
+requires or fabricates a Stop event. A worker may be stopped independently
+while awaiting its receipt; admittedPhase records readiness at delivery, not
+a promise that lifecycle remains ready afterward.
+
+\begin{schema}{InitSteering}
+  Steering
+\where
+  now = 0 \\
+  steerPhase = \emptyset \\
+  target = \emptyset \\
+  words = \emptyset \\
+  deadline = \emptyset \\
+  inFlight = \emptyset \\
+  baseline = \emptyset \\
+  sentAt = \emptyset \\
+  receiptDeadline = \emptyset \\
+  admittedPhase = \emptyset \\
+  receiptSeq = \emptyset \\
+  receiptText = \emptyset \\
+  accepted = \emptyset \\
+  endedByReceipt = \emptyset
+\end{schema}
+
+\section{Steering transitions}
+
+QueueSteer accepts an RPC identity and starts its single pre-delivery clock.
+WORDS denotes admissible literal input under the harness receipt limit.
+Invalid input is refused before provider delivery. AcquireSteering models
+only the per-worker lock; waiting for the actor cannot renew deadline.
+
+\begin{schema}{QueueSteer}
+  \Delta Steering \\
+  \Xi Workers \\
+  request? : STEER \\
+  worker? : WORKER \\
+  words? : WORDS
+\where
+  request? \notin \dom steerPhase \\
+  steerPhase' = steerPhase \cup \{request? \mapsto queued\} \\
+  target' = target \cup \{request? \mapsto worker?\} \\
+  words' = words \cup \{request? \mapsto words?\} \\
+  deadline' = deadline \cup \{request? \mapsto now + 10000\} \\
+  (now', inFlight', baseline', sentAt', receiptDeadline') =
+    (now, inFlight, baseline, sentAt, receiptDeadline) \\
+  (admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
+    (admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
+\begin{schema}{AcquireSteering}
+  \Delta Steering \\
+  \Xi Workers \\
+  request? : STEER
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? = queued \\
+  target~request? \notin \dom inFlight \\
+  now < deadline~request? \\
+  inFlight' = inFlight \cup \{target~request? \mapsto request?\} \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto locked\} \\
+  (now', target', words', deadline', baseline', sentAt') =
+    (now, target, words, deadline, baseline, sentAt) \\
+  (receiptDeadline', admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
+    (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
+\begin{schema}{Steer}
+  \Delta Steering \\
+  \Xi Workers \\
+  request? : STEER \\
+  cursor? : \nat
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? = locked \\
+  target~request? \in \dom phase \\
+  phase~(target~request?) = ready \\
+  now < deadline~request? \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto sent\} \\
+  baseline' = baseline \cup \{request? \mapsto cursor?\} \\
+  sentAt' = sentAt \cup \{request? \mapsto now\} \\
+  admittedPhase' = admittedPhase \cup \{request? \mapsto ready\} \\
+  receiptDeadline' = receiptDeadline \cup \{request? \mapsto now + 10000\} \\
+  (now', target', words', deadline', inFlight') =
+    (now, target, words, deadline, inFlight) \\
+  (receiptSeq', receiptText', accepted', endedByReceipt') =
+    (receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
+cursor? is the latest harness input sequence sampled before sending, or zero
+when no input has been observed. ReceiptHeard uses the worker's own later
+input event. Stale or differently worded input cannot take this transition.
+The profile exposes inputs since a cursor, backed by the newest 32 input
+sequences per session. A later unrelated prompt does not erase a retained
+matching receipt. Eviction can still cause an unheard timeout; retention
+does not promise unbounded delivery history.
+
+\begin{schema}{InputHistory}
+  recent : WORKER \fun (\nat \pfun WORDS)
+\where
+  \forall w : WORKER @ \# (\dom (recent~w)) \leq 32
+\end{schema}
+
+\begin{schema}{InitInputHistory}
+  InputHistory
+\where
+  \forall w : WORKER @ recent~w = \emptyset
+\end{schema}
+
+Admission is a server-side registry decision: the session must name an active
+registered worker and cwd must equal its canonical worktree. The advisory
+worker-only wire flag never establishes provenance. This is the existing
+metadata admission boundary, not cryptographic authentication of a hook
+process. Unmanaged context events cannot populate receipt history, even if
+they reuse a worker session or sequence. Receipt retention deduplicates its
+own admitted inputs independently of general context deduplication.
+
+\begin{schema}{WorkerAdmission}
+  Workers \\
+  worktree : WORKER \pfun DIRECTORY \\
+  launchFailed : \power WORKER
+\where
+  \dom worktree = \dom phase \\
+  launchFailed \subseteq \dom phase
+\end{schema}
+
+\begin{schema}{UnmanagedInput}
+  \Xi InputHistory
+\end{schema}
+
+\begin{schema}{ObserveInput}
+  \Delta InputHistory \\
+  \Xi WorkerAdmission \\
+  worker? : WORKER \\
+  cwd? : DIRECTORY \\
+  sequence? : \nat \\
+  text? : WORDS \\
+  entries, retained! : \nat \pfun WORDS
+\where
+  worker? \in (\dom phase) \setminus launchFailed \\
+  phase~worker? \in \{starting, ready\} \\
+  cwd? = worktree~worker? \\
+  sequence? > 0 \\
+  sequence? \notin \dom (recent~worker?) \\
+  entries = (recent~worker?) \cup \{sequence? \mapsto text?\} \\
+  retained! \subseteq entries \\
+  \# (\dom entries) \leq 32 \implies retained! = entries \\
+  \# (\dom entries) > 32 \implies \# (\dom retained!) = 32 \\
+  \forall old : (\dom entries) \setminus (\dom retained!); newer : \dom retained! @ old < newer \\
+  recent' = recent \oplus \{worker? \mapsto retained!\}
+\end{schema}
+
+\begin{schema}{ReceiptHeard}
+  \Delta Steering \\
+  \Xi Workers \\
+  \Xi InputHistory \\
+  request? : STEER \\
+  worker? : WORKER \\
+  sequence? : \nat \\
+  text? : WORDS
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? = sent \\
+  worker? = target~request? \\
+  sequence? \in \dom (recent~worker?) \\
+  (recent~worker?)~sequence? = text? \\
+  now < receiptDeadline~request? \\
+  sequence? > baseline~request? \\
+  text? = words~request? \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto acknowledged\} \\
+  inFlight' = \{target~request?\} \ndres inFlight \\
+  receiptSeq' = receiptSeq \cup \{request? \mapsto sequence?\} \\
+  receiptText' = receiptText \cup \{request? \mapsto text?\} \\
+  accepted' = accepted \cup \{request?\} \\
+  (now', target', words', deadline', baseline', sentAt') =
+    (now, target, words, deadline, baseline, sentAt) \\
+  (receiptDeadline', admittedPhase', endedByReceipt') =
+    (receiptDeadline, admittedPhase, endedByReceipt)
+\end{schema}
+
+Timeout is a successful unheard result with no sequence, not a refusal.
+Refuse is a pre-delivery error: it never adds to baseline or sentAt, and a
+queued request must not release another request's per-worker lock.
+
+\begin{schema}{Timeout}
+  \Delta Steering \\
+  \Xi Workers \\
+  request? : STEER
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? = sent \\
+  now \geq receiptDeadline~request? \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto unheard\} \\
+  inFlight' = \{target~request?\} \ndres inFlight \\
+  (now', target', words', deadline', baseline', sentAt') =
+    (now, target, words, deadline, baseline, sentAt) \\
+  (receiptDeadline', admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
+    (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
+\begin{schema}{Refuse}
+  \Delta Steering \\
+  \Xi Workers \\
+  request? : STEER
+\where
+  request? \in \dom steerPhase \\
+  steerPhase~request? \in \{queued, locked\} \\
+  now \geq deadline~request? \lor target~request? \notin \dom phase \lor
+    (target~request? \in \dom phase \land phase~(target~request?) \neq ready) \\
+  steerPhase' = steerPhase \oplus \{request? \mapsto refused\} \\
+  inFlight' = inFlight \nrres \{request?\} \\
+  (now', target', words', deadline', baseline', sentAt') =
+    (now, target, words, deadline, baseline, sentAt) \\
+  (receiptDeadline', admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
+    (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
+\begin{schema}{AdvanceSteeringClock}
+  \Delta Steering \\
+  \Xi Workers
+\where
+  now' \geq now \\
+  (steerPhase', target', words', deadline', inFlight', baseline', sentAt') =
+    (steerPhase, target, words, deadline, inFlight, baseline, sentAt) \\
+  (receiptDeadline', admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
+    (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
+\end{schema}
+
 \end{document}
