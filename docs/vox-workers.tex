@@ -668,6 +668,7 @@ to five seconds; delivery across longer outages is not guaranteed.
   protected?, retired? : \power WORKER
 \where
   retired? \subseteq active \\
+  retired? \cap \ran (live \dres panes) = \emptyset \\
   active \setminus retired? \subseteq protected? \\
   retired? \cap protected? = \emptyset \\
   saved' = saved \\
@@ -680,8 +681,9 @@ to five seconds; delivery across longer outages is not guaranteed.
 
 \emph{Startup retires dead workers before hook admission}:
 \textit{retired?} names the workers confirmed dead and checkpointed as
-\textit{exited}, not a new worker state. Their work products are retained,
-and startup does not invoke harness cleanup.
+\textit{exited}, not a new worker state. Their work products are retained.
+Startup records cleanup as pending; the ordinary stop operation can then
+remove the worktree's temporary trust entry.
 
 \emph{Startup only reaps marked orphans}: the reaper removes only a pane
 marked as owned by this registry and not protected by a live or unreadable
