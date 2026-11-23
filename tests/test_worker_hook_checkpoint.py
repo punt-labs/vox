@@ -642,7 +642,10 @@ async def test_explicit_stop_cleanup_does_not_block_another_workers_completion(
     def report(worker_id: str, _profile: HarnessProfile) -> dict[str, object]:
         return dict(store.checkpoint(worker_id) or {})
 
-    payload = {
+    def status(session: str) -> bool:
+        return session == live.session or provider.alive
+
+    payload: dict[str, object] = {
         "session_id": live.id,
         "cwd": live.worktree,
         "hook_event_name": "Stop",
@@ -653,11 +656,7 @@ async def test_explicit_stop_cleanup_does_not_block_another_workers_completion(
     with (
         patch.object(TrivialProfile, "cleanup", side_effect=hold_cleanup),
         patch.object(FakeWorkerProvider, "progress", side_effect=report),
-        patch.object(
-            FakeWorkerProvider,
-            "status",
-            side_effect=lambda s: s == live.session or provider.alive,
-        ),
+        patch.object(FakeWorkerProvider, "status", side_effect=status),
     ):
         stopping = asyncio.create_task(actor.stop(stopped.id))
         try:
