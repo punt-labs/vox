@@ -1,0 +1,71 @@
+"""Preserve amount semantics and prosody while stripping other symbols."""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from decimal import Decimal
+
+_CURRENCY_UNITS = {
+    "$": ("dollar", "dollars"),
+    "€": ("euro", "euros"),
+    "£": ("pound", "pounds"),
+    "¥": ("yen", "yen"),
+    "₹": ("rupee", "rupees"),
+    "₩": ("won", "won"),
+    "₽": ("ruble", "rubles"),
+}
+_SIGN_WORDS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
+_CURRENCY_AMOUNT = re.compile(
+    rf"(?P<sign_before>[-+\u2212])?(?P<symbol>[{''.join(_CURRENCY_UNITS)}])"
+    r"(?(sign_before)|(?P<sign_after>[-+\u2212])?)"
+    r"(?P<amount>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
+)
+_LEADING_NON_SPEECH_RE = re.compile(
+    rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
+    r"[^\w~/.])+"
+)
+_VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
+_PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
+
+
+class SpeechPunctuation:
+    """Separate spoken semantics from punctuation in a speech token."""
+
+    @classmethod
+    def split(cls, token: str) -> tuple[str, str]:
+        """Return spoken core and prosody suffix for a whitespace-delimited token.
+
+        Leading punctuation is discarded except file path and identifier prefixes
+        (``~/._``), a numeric minus, and signed or unsigned currency amounts.
+        Trailing non-prosody symbols are discarded to avoid synthesis artifacts.
+        """
+        core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
+        suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
+        return cls._spell_currency(core), suffix
+
+    @staticmethod
+    def _spell_currency(core: str) -> str:
+        match = _CURRENCY_AMOUNT.fullmatch(core.lstrip("_"))
+        if match is None:
+            return core
+        symbol, amount = match.group("symbol", "amount")
+        sign = "".join(filter(None, match.group("sign_before", "sign_after")))
+        singular, plural = _CURRENCY_UNITS[symbol]
+        is_one = "." not in amount and Decimal(amount.replace(",", "")) == 1
+        unit = singular if is_one else plural
+        number = "0" + amount if amount.startswith(".") else amount
+        return f"{_SIGN_WORDS[sign]}{number} {unit}"
+
+    @staticmethod
+    def _split_trailing(core_candidate: str) -> tuple[str, str]:
+        """Split off trailing symbols, keeping attached marks that affect speech."""
+        suffix_start = len(core_candidate)
+        for index in range(suffix_start - 1, -1, -1):
+            ch = core_candidate[index]
+            if ch.isalnum():
+                break
+            category = unicodedata.category(ch)
+            if category not in ("Mn", "Mc") or _VARIATION_SELECTOR_RE.match(ch):
+                suffix_start = index
+        return core_candidate[:suffix_start], core_candidate[suffix_start:]

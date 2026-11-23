@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from punt_vox._speech_punctuation import SpeechPunctuation
+
 # ---------------------------------------------------------------------------
 # Abbreviation dictionary — whole-word expansions
 # ---------------------------------------------------------------------------
@@ -513,8 +515,6 @@ _CAMEL_BOUNDARY = re.compile(
 
 # Tokens that look like file paths — leave these alone.
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
-_LEADING_NON_SPEECH_RE = re.compile(r"^(?:[-\u2212]{2,}|(?![-\u2212]\.?\d)[^\w~/.])+")
-_VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 
 
 # ---------------------------------------------------------------------------
@@ -561,11 +561,12 @@ def normalize_for_speech(text: str) -> str:
 
     Transforms applied per token (whitespace-delimited):
 
-    1. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
-    2. **snake_case** — underscores replaced with spaces, parts processed
+    1. **Currency amounts** — spoken with their sign and currency unit.
+    2. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
+    3. **snake_case** — underscores replaced with spaces, parts processed
        individually for abbreviation expansion.
-    3. **camelCase / PascalCase** — split on case boundaries.
-    4. **Known abbreviations** — expanded (case-insensitive whole-word).
+    4. **camelCase / PascalCase** — split on case boundaries.
+    5. **Known abbreviations** — expanded (case-insensitive whole-word).
 
     Idempotent: running twice produces the same result.
     """
@@ -574,8 +575,7 @@ def normalize_for_speech(text: str) -> str:
 
 def _normalize_token(token: str) -> str:
     """Normalize a single whitespace-delimited token."""
-    # Strip non-speech symbols; only prosody punctuation survives in suffix
-    core, suffix = _strip_punctuation(token)
+    core, suffix = SpeechPunctuation.split(token)
 
     # File paths: keep core as-is but still strip non-speech wrapping
     if not core or _FILE_PATH_RE.match(core):
@@ -629,40 +629,3 @@ def _space_acronym(part: str) -> str:
     if 2 <= len(letters) <= 5 and letters.isalpha() and part[0].isalpha():
         return re.sub(r"(?<=.)(?=\w)", " ", part)
     return part
-
-
-def _strip_punctuation(token: str) -> tuple[str, str]:
-    """Strip leading/trailing punctuation, returning (core, suffix).
-
-    Leading punctuation is discarded except for file path / identifier
-    prefixes (``~/._``) and a minus sign before digits or a decimal fraction.
-    Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
-    ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
-    symbols (parentheses, brackets, slashes, etc.) are discarded since
-    TTS engines either mispronounce them or produce artifacts.
-    Trailing underscores are discarded -- they are separators, not speech.
-    """
-    core, raw_suffix = _split_trailing_symbols(_LEADING_NON_SPEECH_RE.sub("", token))
-    # Only keep prosody-affecting suffix characters; drop the rest
-    suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-    return core, suffix
-
-
-def _split_trailing_symbols(core_candidate: str) -> tuple[str, str]:
-    """Split off trailing symbols, keeping attached marks that affect speech."""
-    suffix_start = len(core_candidate)
-    for index in range(suffix_start - 1, -1, -1):
-        ch = core_candidate[index]
-        if ch.isalnum():
-            break
-        category = unicodedata.category(ch)
-        if category not in ("Mn", "Mc") or _VARIATION_SELECTOR_RE.match(ch):
-            suffix_start = index
-            if ch == "_":
-                break
-    return core_candidate[:suffix_start].rstrip("_"), core_candidate[suffix_start:]
-
-
-# Punctuation that affects TTS prosody (pauses, intonation) — keep these.
-# Everything else (parens, brackets, slashes, etc.) is dropped.
-_PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
