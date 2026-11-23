@@ -869,3 +869,49 @@ async def test_agent_teardown_resolves_the_cold_connector_off_loop(
 
     assert reply["result"] == {"state": "idle"}
     assert connector.teardowns == 1
+
+
+async def test_agent_teardown_waits_for_cancelled_call_provisioning(
+    tmp_path: Path,
+) -> None:
+    started = asyncio.Event()
+    release = threading.Event()
+    order: list[str] = []
+    loop = asyncio.get_running_loop()
+    connector = _Connector("ws://unused")
+
+    def connection(_tools: object) -> tuple[str, tuple[str, ...]]:
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        order.append("provisioned")
+        return "ws://unused", ("tool_a",)
+
+    def teardown() -> None:
+        order.append("deleted")
+
+    workers = FakeWorkers()
+    handlers = CallHandlers(
+        workers,
+        workers,
+        cast("PlaybackQueue", FakePlayback()),
+        connector=connector,
+        trace_dir=tmp_path,
+        opener=_LOOPBACK,
+    )
+    with (
+        patch.object(connector, "connection", side_effect=connection),
+        patch.object(connector, "teardown", side_effect=teardown),
+    ):
+        async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            tasks.create_task(_rpc(handlers, {"type": "call_start"}))
+            try:
+                await started.wait()
+                assert "result" in await _rpc(handlers, {"type": "call_stop"})
+                deletion = tasks.create_task(_rpc(handlers, {"type": "call_teardown"}))
+                done, _ = await asyncio.wait({deletion}, timeout=0.25)
+                assert not done
+            finally:
+                release.set()
+
+    assert "result" in deletion.result()
+    assert order == ["provisioned", "deleted"]

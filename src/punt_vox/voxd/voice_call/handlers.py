@@ -15,9 +15,9 @@ from punt_vox.paths import user_state_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_agent.trace import EventTrace
+from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
-from punt_vox.voxd.voice_call.connector import CallConnector
 from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
@@ -76,7 +76,7 @@ class CallHandlers:
     _progress: ProgressEvents
     _projects: ProjectAllowlist
     _playback: PlaybackQueue
-    _connector: CallConnector
+    _connector: AgentOperations
     _trace_dir: Path
     _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
@@ -97,7 +97,7 @@ class CallHandlers:
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
         self._progress = progress if progress is not None else ProgressEvents()
-        self._playback, self._connector = playback, CallConnector(connector)
+        self._playback, self._connector = playback, AgentOperations(connector)
         self._trace_dir = (
             trace_dir if trace_dir is not None else user_state_dir() / "calls"
         )
@@ -141,7 +141,7 @@ class CallHandlers:
     async def _teardown(self) -> dict[str, object]:
         async with self._lock:
             self._require_idle()
-            await asyncio.to_thread(lambda: self._connector.agent().teardown())
+            await self._connector.teardown()
             return self._status()
 
     async def _start(self, msg: dict[str, object]) -> dict[str, object]:
@@ -160,7 +160,7 @@ class CallHandlers:
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
         self._require_idle()
-        agent = self._connector.agent()
+        await self._connector.prepare()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
             if "script" in msg
@@ -183,7 +183,7 @@ class CallHandlers:
         )
 
         async def dial() -> tuple[str, SessionOptions]:
-            url, tool_ids = await asyncio.to_thread(agent.connection, BossTools.CATALOG)
+            url, tool_ids = await self._connector.connection(BossTools.CATALOG)
             workers = await self._workers.workers()
             options = await asyncio.to_thread(
                 returning.options,
