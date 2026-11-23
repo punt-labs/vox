@@ -24,6 +24,7 @@ from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.seed import CallSeed
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
+from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
@@ -294,7 +295,12 @@ def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> Non
     assert brief.covered == {"worker": 5}
 
 
-async def test_return_call_opens_with_recovered_worker_result(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "exits_before_call", [False, True], ids=["live", "cleanup-pending"]
+)
+async def test_return_call_opens_with_recovered_worker_result(
+    tmp_path: Path, *, exits_before_call: bool
+) -> None:
     worker = _registry(tmp_path, FakeWorkerProvider()).start(
         "work", str(tmp_path), provider="fake", harness="test"
     )
@@ -310,13 +316,19 @@ async def test_return_call_opens_with_recovered_worker_result(tmp_path: Path) ->
     )
     checkpoint = before.checkpoint(worker.id)
     assert checkpoint is not None
-    WorkerRecords(tmp_path / "workers").save(
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
         replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
     )
     (tmp_path / "departure.json").write_text(json.dumps({worker.id: 1}))
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
     opening: list[str] = []
+    cleaning, release = threading.Event(), threading.Event()
+
+    def hold_cleanup(_path: Path) -> None:
+        cleaning.set()
+        assert release.wait(5)
 
     async def peer(socket: ServerConnection) -> None:
         init = json.loads(await socket.recv())
@@ -327,24 +339,37 @@ async def test_return_call_opens_with_recovered_worker_result(tmp_path: Path) ->
     policy = WorkerSubsystem.policy()
     with (
         patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
-        patch.object(TmuxWorkerProvider, "status", return_value=True),
+        patch.object(TmuxWorkerProvider, "status", return_value=True) as status,
+        patch.object(ClaudeProfile, "cleanup", side_effect=hold_cleanup),
     ):
         actor = WorkerSubsystem.recover(HookContextStore(), policy)
-        async with serve(peer, "127.0.0.1", 0) as server:
-            handlers = CallHandlers(
-                actor,
-                policy,
-                cast("PlaybackQueue", FakePlayback()),
-                connector=_Connector(
-                    f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
-                ),
-                trace_dir=tmp_path,
-                opener=_LOOPBACK,
-            )
-            assert "result" in await _rpc(
-                handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]}
-            )
-            assert "result" in await _rpc(handlers, {"type": "call_stop"})
+        status.return_value = not exits_before_call
+        try:
+            async with serve(peer, "127.0.0.1", 0) as server:
+                handlers = CallHandlers(
+                    actor,
+                    policy,
+                    cast("PlaybackQueue", FakePlayback()),
+                    connector=_Connector(
+                        f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+                    ),
+                    trace_dir=tmp_path,
+                    opener=_LOOPBACK,
+                )
+                async with asyncio.timeout(2):
+                    assert "result" in await _rpc(
+                        handlers,
+                        {"type": "call_start", "script": [{"pcm_path": str(pcm)}]},
+                    )
+                if exits_before_call:
+                    assert await asyncio.to_thread(cleaning.wait, 1)
+                    [saved] = records.load()
+                    assert saved.state == "exited"
+                    assert saved.last_report["cleanup_pending"] is True
+                assert "result" in await _rpc(handlers, {"type": "call_stop"})
+        finally:
+            release.set()
+            actor.shutdown()
     expected = (
         f"While you were away, the worker in {tmp_path.name} finished: "
         "Finished the tests."
