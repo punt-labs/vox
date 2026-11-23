@@ -555,44 +555,36 @@ class SpeechText:
         parts.append(cls._words(text[cursor:]))
         return parts
 
+    @classmethod
+    def _words(cls, text: str) -> str:
+        return " ".join(filter(None, map(cls._token, text.split())))
+
+    @classmethod
+    def _token(cls, token: str) -> str:
+        core, suffix = SpeechPunctuation.split(token)
+        return " ".join(map(cls._identifier, core.split())) + suffix
+
     @staticmethod
-    def _words(text: str) -> str:
-        return " ".join(filter(None, map(_normalize_token, text.split())))
-
-
-def _normalize_token(token: str) -> str:
-    """Normalize a single whitespace-delimited token."""
-    core, suffix = SpeechPunctuation.split(token)
-
-    # File paths: keep core as-is but still strip non-speech wrapping
-    if not core or SpeechPunctuation.is_path(core):
-        return core + suffix
-
-    if "_" in core:
-        return " ".join(map(_expand_snake_part, filter(None, core.split("_")))) + suffix
-
-    parts = _CAMEL_BOUNDARY.split(core)
-    if len(parts) > 1:
-        return _expand_parts(parts) + suffix
-    return (SpeechAbbreviations.expand(core) or _space_acronym(core)) + suffix
+    def _identifier(core: str) -> str:
+        if SpeechPunctuation.is_path(core):
+            return core
+        if "_" in core:
+            return " ".join(map(_expand_snake_part, filter(None, core.split("_"))))
+        if len(parts := _CAMEL_BOUNDARY.split(core)) > 1:
+            return " ".join(map(_expand_part, parts))
+        return SpeechAbbreviations.expand(core) or _space_acronym(core)
 
 
 def _expand_snake_part(part: str) -> str:
     """Look up the whole snake_case part before splitting it further."""
-    return SpeechAbbreviations.expand(part) or _expand_parts(
-        _CAMEL_BOUNDARY.split(part)
+    return SpeechAbbreviations.expand(part) or " ".join(
+        map(_expand_part, _CAMEL_BOUNDARY.split(part))
     )
-
-
-def _expand_parts(parts: list[str]) -> str:
-    """Expand and rejoin identifier pieces."""
-    return " ".join(map(_expand_part, parts))
 
 
 def _expand_part(part: str) -> str:
     """Expand a single sub-token after identifier splitting."""
-    expanded = SpeechAbbreviations.expand(part)
-    if expanded:
+    if expanded := SpeechAbbreviations.expand(part):
         return expanded
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
     # unless the word is pronounceable (real word or known acronym).

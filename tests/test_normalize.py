@@ -346,6 +346,32 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("$5off", "5 dollars off"),
+            ("-$5off", "minus 5 dollars off"),
+            ("$5/repo", "5 dollars per repository"),
+            ("$5/month", "5 dollars per month"),
+            ("$10k", "10 thousand dollars"),
+            ("$5-$10", "5 dollars to 10 dollars"),
+            ("$10k/month", "10 thousand dollars per month"),
+            ("$5-$10/month", "5 dollars to 10 dollars per month"),
+            ("$5k-$10k", "5 thousand dollars to 10 thousand dollars"),
+            ("(+€1/day),", "plus 1 euro per day,"),
+            ("\u2212£1.5K", "minus 1.5 thousand pounds"),
+            ("-$10\u2013-$5", "minus 10 dollars to minus 5 dollars"),
+            (
+                "Use `$5off` then pay $5off.",
+                "Use dollar sign 5 off then pay 5 dollars off.",
+            ),
+            ("Use /tmp/$5off", "Use /tmp/$5off"),
+        ],
+    )
+    def test_attached_and_compound_currency(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
             (
                 "Use `$1suffix prefix$2` then pay $5",
