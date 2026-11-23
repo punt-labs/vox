@@ -8,9 +8,6 @@ else
   _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//') || _cwd=""
 fi
 [[ -n "$_cwd" ]] || _cwd="$PWD"
-# The parent walk below terminates on "/", which a relative path never reaches:
-# `dirname .` is `.`, so a relative cwd spins there forever -- a hang `set -e`
-# cannot catch.
 _cwd=$(cd "$_cwd" 2>/dev/null && pwd) || _cwd="$PWD"
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -222,14 +219,9 @@ fi
 # for one session -- /resume and /clear both fire it again against the same
 # process -- and the applet refuses a second start itself under its own
 # session-pid lock, so the guard below only saves the pointless respawn.
-_repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
-if [ -z "$_repo_root" ]; then
-  _dir="$_cwd"
-  while [ ! -f "$_dir/.punt-labs/vox/enabled" ] && [ "$_dir" != "/" ]; do
-    _dir=$(dirname "$_dir")
-  done
-  _repo_root="$_dir"
-fi
+# shellcheck source=plugin/hooks/repo-root.sh
+source "$(dirname "${BASH_SOURCE[0]}")/repo-root.sh"
+_repo_root=$(vox_hook_repo_root "$_cwd")
 if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   # The genuinely persistent `claude` process is the wrapper's *parent*, i.e.
   # $PPID's grandparent from here. Resolve it, but verify its command name is
