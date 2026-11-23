@@ -310,14 +310,19 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         patch.object(ClaudeProfile, "cleanup") as cleanup,
     ):
         actor = WorkerSubsystem.actor(after, WorkerSubsystem.policy())
-    ws = AsyncMock()
-    await actor.hooks(after).admit(
-        {"session_id": worker.id, "cwd": worker.worktree}, ws
-    )
-    assert ws.send_json.call_args.args[0]["admitted"] is False
-    assert records.load()[0].state == "exited"
-    assert after.checkpoint(worker.id) is None
-    cleanup.assert_not_called()
+        ws = AsyncMock()
+        await actor.hooks(after).admit(
+            {"session_id": worker.id, "cwd": worker.worktree}, ws
+        )
+        assert ws.send_json.call_args.args[0]["admitted"] is False
+        assert records.load()[0].state == "exited"
+        assert after.checkpoint(worker.id) is None
+        cleanup.assert_not_called()
+        await actor.stop(worker.id)
+        cleanup.assert_called_once_with(Path(worker.worktree))
+        assert records.load()[0].state == "exited"
+        await actor.stop(worker.id)
+        cleanup.assert_called_once_with(Path(worker.worktree))
 
 
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(

@@ -95,7 +95,9 @@ class WorkerLifecycle:
         return replace(
             record,
             last_report={
-                k: v for k, v in record.last_report.items() if k != "cleanup_error"
+                k: v
+                for k, v in record.last_report.items()
+                if k not in ("cleanup_error", "cleanup_pending")
             },
         )
 
@@ -104,7 +106,7 @@ class WorkerLifecycle:
         if record.state in ("stopped", "exited"):
             return (
                 self._cleanup(record)
-                if "cleanup_error" in record.last_report
+                if {"cleanup_error", "cleanup_pending"} & record.last_report.keys()
                 else record
             )
         self._providers[record.provider].stop(record.session)

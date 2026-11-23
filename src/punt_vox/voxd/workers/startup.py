@@ -43,7 +43,13 @@ class WorkerStartup:
                 continue
             try:
                 if not provider.status(record.session):
-                    records.save(replace(record, state="exited"))
+                    records.save(
+                        replace(
+                            record,
+                            state="exited",
+                            last_report={**record.last_report, "cleanup_pending": True},
+                        )
+                    )
             except (
                 OSError,
                 ValueError,
