@@ -15,7 +15,9 @@ from punt_vox.voxd.workers.model import WorkerRecord
 logger = logging.getLogger(__name__)
 
 
-class _Liveness(Enum):
+class WorkerLiveness(Enum):
+    """Distinguish provider uncertainty from a confirmed exit."""
+
     ALIVE = auto()
     EXITED = auto()
     UNKNOWN = auto()
@@ -37,28 +39,32 @@ class WorkerLifecycle:
         self._providers, self._profiles = providers, profiles
         return self
 
-    def observe(self, record: WorkerRecord) -> WorkerRecord:
-        """Reconcile liveness without inventing readiness or suppressing new reports."""
+    def observe(self, record: WorkerRecord) -> tuple[WorkerRecord, bool]:
+        """Return the snapshot and whether the provider confirmed a live pane."""
         if (
             record.state in ("stopped", "exited")
             or "launch_error" in record.last_report
         ):
-            return record
-        match self._liveness(record):
-            case _Liveness.ALIVE:
-                return self.report(record)
-            case _Liveness.EXITED:
-                return record.retire()
-            case _Liveness.UNKNOWN:
-                return record
+            return record, False
+        match self.probe(record, self._providers[record.provider]):
+            case WorkerLiveness.ALIVE:
+                return self.report(record), True
+            case WorkerLiveness.EXITED:
+                return record.retire(), False
+            case WorkerLiveness.UNKNOWN:
+                return record, False
 
-    def _liveness(self, record: WorkerRecord) -> _Liveness:
+    @staticmethod
+    def probe(record: WorkerRecord, provider: WorkerProvider) -> WorkerLiveness:
+        """Use one liveness classification for both boot and worker control."""
         try:
-            alive = self._providers[record.provider].status(record.session)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-            logger.warning("Worker provider unavailable (%s)", type(exc).__name__)
-            return _Liveness.UNKNOWN
-        return _Liveness.ALIVE if alive else _Liveness.EXITED
+            alive = provider.status(record.session)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            logger.warning(
+                "Worker %s provider unavailable (%s)", record.id, type(exc).__name__
+            )
+            return WorkerLiveness.UNKNOWN
+        return WorkerLiveness.ALIVE if alive else WorkerLiveness.EXITED
 
     def report(self, record: WorkerRecord) -> WorkerRecord:
         """Replace a fresh snapshot without regressing a previously ready phase."""
@@ -99,7 +105,8 @@ class WorkerLifecycle:
             )
         dead = (
             "launch_error" not in record.last_report
-            and self._liveness(record) is _Liveness.EXITED
+            and self.probe(record, self._providers[record.provider])
+            is WorkerLiveness.EXITED
         )
         self._providers[record.provider].stop(record.session)
         return WorkerCleanup.run(

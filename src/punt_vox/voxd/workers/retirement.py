@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class WorkerRetirement:
     """Run terminal cleanup once per worker until the record can be updated."""
 
-    __slots__ = ("_jobs", "_executor", "_profiles")
+    __slots__ = ("_executor", "_jobs", "_profiles")
     _jobs: dict[str, Future[WorkerRecord]]
     _executor: ThreadPoolExecutor
     _profiles: dict[str, HarnessProfile]
@@ -42,11 +42,14 @@ class WorkerRetirement:
 
     def schedule(self, record: WorkerRecord) -> None:
         """Queue a confirmed exit without waiting for a config file lease."""
-        if record.state == "exited" and WorkerCleanup.pending(record):
-            if record.id not in self._jobs:
-                self._jobs[record.id] = self._executor.submit(
-                    WorkerCleanup.run, record, self._profiles
-                )
+        if (
+            record.state == "exited"
+            and WorkerCleanup.pending(record)
+            and record.id not in self._jobs
+        ):
+            self._jobs[record.id] = self._executor.submit(
+                WorkerCleanup.run, record, self._profiles
+            )
 
     def observe(
         self,
@@ -56,7 +59,7 @@ class WorkerRetirement:
     ) -> WorkerRecord:
         """Checkpoint confirmed death and enqueue cleanup without awaiting it."""
         try:
-            observed = lifecycle.observe(self.status(record))
+            observed, alive = lifecycle.observe(self.status(record))
         except (
             KeyError,
             OSError,
@@ -70,7 +73,9 @@ class WorkerRetirement:
                 type(exc).__name__,
             )
             return record
-        if observed.state == "exited":
+        if alive:
+            inventory.confirm(record.id)
+        elif observed.state == "exited":
             inventory.close(record.id)
             try:
                 inventory.save(observed)

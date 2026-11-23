@@ -16,9 +16,10 @@ if TYPE_CHECKING:
 class WorkerInventory:
     """Own the in-process inventory, persistence and hook identity."""
 
-    __slots__ = ("_exited", "_records", "_workers")
+    __slots__ = ("_exited", "_records", "_unconfirmed", "_workers")
     _exited: set[str]
     _records: WorkerRecords
+    _unconfirmed: set[str]
     _workers: dict[str, WorkerRecord]
 
     def __new__(cls, records: WorkerRecords) -> Self:
@@ -27,6 +28,7 @@ class WorkerInventory:
         self._records = records
         self._workers = {}
         self._exited = set()
+        self._unconfirmed = set()
         return self
 
     @property
@@ -38,9 +40,16 @@ class WorkerInventory:
         """Locate a worker's work product."""
         return self._records.worktree(worker_id)
 
-    def restore(self, records: list[WorkerRecord]) -> None:
+    def restore(
+        self, records: list[WorkerRecord], *, unconfirmed: set[str] | None = None
+    ) -> None:
         """Install the inventory before any RPC is accepted."""
         self._workers = {record.id: record for record in records}
+        self._unconfirmed = set(unconfirmed or ())
+
+    def confirm(self, worker_id: str) -> None:
+        """Admit active hooks after a positive provider observation."""
+        self._unconfirmed.discard(worker_id)
 
     def registered(self) -> list[WorkerRecord]:
         """Return a snapshot of the registered workers."""
@@ -89,7 +98,9 @@ class WorkerInventory:
     def _accepts(self, record: WorkerRecord, event: object) -> bool:
         if "launch_error" in record.last_report or record.state == "stopped":
             return False
-        return event in ("Stop", "SessionEnd") or not self.exited(record)
+        if self.exited(record):
+            return event in ("Stop", "SessionEnd")
+        return record.id not in self._unconfirmed
 
     @staticmethod
     def received(record: WorkerRecord, sequence: int) -> bool:

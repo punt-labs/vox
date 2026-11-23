@@ -358,6 +358,49 @@ async def test_natural_exit_removes_only_worker_trust(
                 await asyncio.sleep(0.01)
 
 
+@pytest.mark.parametrize("observed_exit", [False, True])
+async def test_inconclusive_restart_does_not_reopen_active_hook_admission(
+    tmp_path: Path, observed_exit: bool
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "SessionStart",
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup"),
+    ):
+        if observed_exit:
+            actor = WorkerSubsystem.recover(
+                HookContextStore(), WorkerSubsystem.policy()
+            )
+            provider.alive = False
+            assert (await actor.workers())[0]["state"] == "exited"
+        store = HookContextStore()
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            restarted = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+            hook = restarted.hooks(store)
+            socket = AsyncMock()
+            await hook.admit(request, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is False
+            await hook.ingest({**request, "relay_seq": 1}, worker_only=True)
+            assert store.checkpoint(worker.id) is None
+        assert records.protects_session(worker.id) is not observed_exit
+
+        if not observed_exit:
+            assert (await restarted.workers())[0]["state"] != "exited"
+            await hook.admit(request, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is True
+
+
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     tmp_path: Path,
 ) -> None:

@@ -14,10 +14,10 @@ from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
 from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
-from punt_vox.voxd.workers.retirement import WorkerRetirement
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.retirement import WorkerRetirement
 from punt_vox.voxd.workers.steer_delivery import SteerDelivery
 from punt_vox.voxd.workers.steering_types import DecisionChoice
 
@@ -59,9 +59,11 @@ class WorkerRegistry:
         self._retirement = WorkerRetirement(profiles)
         return self
 
-    def restore(self, records: list[WorkerRecord]) -> None:
+    def restore(
+        self, records: list[WorkerRecord], *, unconfirmed: set[str] | None = None
+    ) -> None:
         """Install reconciled checkpoints before admitting callers."""
-        self._inventory.restore(records)
+        self._inventory.restore(records, unconfirmed=unconfirmed)
         for record in records:
             self._retirement.schedule(record)
 
@@ -115,7 +117,8 @@ class WorkerRegistry:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._rollback(record, exc)
             raise
-        observed = self._inventory.save(self._lifecycle.observe(record))
+        observed, _ = self._lifecycle.observe(record)
+        self._inventory.save(observed)
         self._retirement.schedule(observed)
         return observed
 

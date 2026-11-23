@@ -41,5 +41,6 @@ class WorkerSubsystem:
             {"claude": ClaudeProfile(store)},
         )
 
-        registry.restore(WorkerStartup.run(records, store, provider))
+        recovered, unconfirmed = WorkerStartup.run(records, store, provider)
+        registry.restore(recovered, unconfirmed=unconfirmed)
         return WorkerActor(registry, store)
