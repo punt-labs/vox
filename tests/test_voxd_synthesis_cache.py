@@ -27,7 +27,9 @@ async def test_cancelled_cache_copy_is_released(
     loop = asyncio.get_running_loop()
     started: asyncio.Future[Path] = loop.create_future()
     resume = threading.Event()
-    collected = asyncio.Event()
+    collected: asyncio.Future[asyncio.Future[SynthesisOutcome | None]] = (
+        loop.create_future()
+    )
     copy = shutil.copyfileobj
     copy_cached = SynthesisOutcome._copy_cached  # pyright: ignore[reportPrivateUsage]
     collect = SynthesisOutcome._discard_unclaimed  # pyright: ignore[reportPrivateUsage]
@@ -50,7 +52,7 @@ async def test_cancelled_cache_copy_is_released(
 
     def collect_outcome(work: asyncio.Future[SynthesisOutcome | None]) -> None:
         collect(work)
-        collected.set()
+        collected.set_result(work)
 
     with (
         patch("punt_vox.voxd.synthesis_result.shutil.copyfileobj", delayed_copy),
@@ -59,22 +61,29 @@ async def test_cancelled_cache_copy_is_released(
     ):
         request = asyncio.create_task(SynthesisOutcome.from_cache(cached))
         try:
-            snapshot = await asyncio.wait_for(started, timeout=2)
+            in_progress = await asyncio.wait_for(started, timeout=2)
             request.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await request
-            assert snapshot.exists()
+            assert in_progress.exists()
             if result == "evicted":
                 cached.unlink()
         finally:
             resume.set()
-        await asyncio.wait_for(collected.wait(), timeout=2)
+        completed = await asyncio.wait_for(collected, timeout=2)
 
-    assert not snapshot.exists()
-    if result != "evicted":
+    if result == "evicted":
+        assert completed.result() is None
+    else:
+        assert not in_progress.exists()
         assert cached.read_bytes() == b"audio"
-    assert ("Abandoned cache copy failed: cache copy denied" in caplog.text) == (
-        result == "error"
+    warnings = [
+        message
+        for message in caplog.messages
+        if message.startswith("Abandoned cache copy failed:")
+    ]
+    assert warnings == (
+        ["Abandoned cache copy failed: cache copy denied"] if result == "error" else []
     )
 
 
