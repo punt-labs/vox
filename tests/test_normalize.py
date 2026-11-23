@@ -323,6 +323,20 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("-$5 off", "minus 5 dollars off"),
+            ("-€20", "minus 20 euros"),
+            ("-$5.50", "minus 5.50 dollars"),
+            ("$5", "5 dollars"),
+            ("$5off", "5 off"),
+        ],
+    )
+    def test_currency_amounts_survive(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             ("-5", "-5"),
             ("temperature (-2.5 C)", "temperature -2.5 C"),
             ("delta [\u22123.5],", "delta \u22123.5,"),

@@ -38,6 +38,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/_speech_punctuation.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 6.0,
+    "avg_complexity": 4.0,
+    "module_size": 54.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/api_key_file.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -1369,8 +1382,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.0,
     "max_complexity": 8.0,
-    "avg_complexity": 3.33,
-    "module_size": 544.0,
+    "avg_complexity": 3.29,
+    "module_size": 526.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
     "init_violations": 0.0,
