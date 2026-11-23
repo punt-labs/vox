@@ -89,13 +89,25 @@ class ConvAIControl:
             raise ConvAIError(f"{exc}{_UNKNOWN_CREATE}") from None
 
     @classmethod
-    def registration_fingerprint(cls, tools: tuple[ClientTool, ...]) -> str:
+    def registration_fingerprint(
+        cls, tools: tuple[ClientTool, ...], *, legacy: bool = False
+    ) -> str:
         """Identify the provisioned settings and ordered tool catalog."""
         names = {tool.name for tool in tools}
         if "" in names or len(names) != len(tools):
             msg = "ElevenLabs client-tool names must be nonempty and unique"
             raise ValueError(msg)
-        settings = (cls._agent_config(()), [cls._tool_config(tool) for tool in tools])
+        config = cls._agent_config(())
+        if legacy:
+            agent = config["platform_settings"]["overrides"][
+                "conversation_config_override"
+            ]["agent"]
+            legacy_permissions = agent.copy()
+            legacy_permissions.pop("first_message", None)
+            config["platform_settings"]["overrides"]["conversation_config_override"][
+                "agent"
+            ] = legacy_permissions
+        settings = (config, [cls._tool_config(tool) for tool in tools])
         return hashlib.sha256(
             json.dumps(settings, sort_keys=True, allow_nan=False).encode()
         ).hexdigest()

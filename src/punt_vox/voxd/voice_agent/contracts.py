@@ -95,7 +95,7 @@ class _PromptPermissions(TypedDict):
 
 class AgentPermissions(TypedDict):
     prompt: _PromptPermissions
-    first_message: bool
+    first_message: NotRequired[bool]
 
 
 class _TextOnly(TypedDict):

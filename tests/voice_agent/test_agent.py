@@ -181,6 +181,36 @@ def test_changed_agent_settings_require_teardown(
         agent.teardown()
 
 
+def test_registration_without_first_message_permission_is_reprovisioned(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        with monkeypatch.context() as legacy:
+            legacy.setattr(
+                "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
+                {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}},
+            )
+            agent.connection((_CLOCK,))
+        wire.calls.clear()
+
+        assert VoiceAgent(control, path=config).connection((_CLOCK,)) == (
+            _SIGNED_URL,
+            ("tool_clock",),
+        )
+        assert [method for method, _, _ in wire.calls] == [
+            "DELETE",
+            "DELETE",
+            "POST",
+            "POST",
+            "GET",
+        ]
+        wire.calls.clear()
+        agent.connection((_CLOCK,))
+        assert [method for method, _, _ in wire.calls] == ["GET"]
+
+
 def test_teardown_first_keeps_new_config_tree_private(tmp_path: Path) -> None:
     state_dir = tmp_path / "state" / "config"
     with ConvAIControl(_API_KEY) as control:
