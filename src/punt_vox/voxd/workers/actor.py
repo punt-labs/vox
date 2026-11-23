@@ -36,6 +36,8 @@ class WorkerActor:
         self = super().__new__(cls)
         self._registry = registry
         self._store = store
+        if store is not None:
+            registry.release_with(store.release_worker)
         self._lock = asyncio.Lock()
         self._steering = WorkerSteering(registry, self._lock)
         return self
@@ -71,10 +73,6 @@ class WorkerActor:
         """Reconcile and return every known worker."""
         async with self._lock:
             records = await asyncio.to_thread(self._registry.list)
-            if self._store is not None:
-                for record in records:
-                    if record.state == "exited":
-                        self._store.release_worker(record.id)
         return [WorkerRecordCodec.public(record) for record in records]
 
     async def steer(

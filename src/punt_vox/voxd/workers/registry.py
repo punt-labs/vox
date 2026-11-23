@@ -7,7 +7,7 @@ import subprocess
 import unicodedata
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 from uuid import uuid4
 
 from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
@@ -20,6 +20,9 @@ from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.retirement import WorkerRetirement
 from punt_vox.voxd.workers.steer_delivery import SteerDelivery
 from punt_vox.voxd.workers.steering_types import DecisionChoice
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,10 @@ class WorkerRegistry:
     def shutdown(self) -> None:
         """Bound the final wait for worker retirement cleanup."""
         self._retirement.shutdown()
+
+    def release_with(self, release: Callable[[str], None]) -> None:
+        """Release a confirmed exit's retained context on either control path."""
+        self._retirement.release_with(release)
 
     @property
     def hook_records(self) -> WorkerInventory:

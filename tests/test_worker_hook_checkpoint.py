@@ -635,6 +635,49 @@ async def test_listing_unpins_exited_worker_without_losing_checkpoint(
         store.snapshot(worker.id)
 
 
+async def test_steer_exit_releases_pinned_worker_context(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    records.save(
+        replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
+    )
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup"),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        try:
+            provider.alive = False
+            for _ in range(2):
+                with pytest.raises(ValueError, match="not ready \\(exited\\)"):
+                    await actor.steer(worker.id, "continue", urgent=False)
+            assert records.load()[0].state == "exited"
+        finally:
+            actor.shutdown()
+    assert store.snapshot(worker.id)["session_started"]
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+
+
 async def test_retirement_does_not_evict_context_during_late_session_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

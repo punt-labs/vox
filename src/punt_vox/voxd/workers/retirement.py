@@ -11,6 +11,7 @@ from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from concurrent.futures import Future
 
     from punt_vox.voxd.workers.contracts import HarnessProfile
@@ -25,11 +26,12 @@ logger = logging.getLogger(__name__)
 class WorkerRetirement:
     """Run terminal cleanup once per worker and checkpoint its outcome."""
 
-    __slots__ = ("_executor", "_inventory", "_jobs", "_profiles")
+    __slots__ = ("_executor", "_inventory", "_jobs", "_profiles", "_release")
     _jobs: dict[str, Future[None]]
     _executor: WorkerCleanupQueue
     _inventory: WorkerInventory
     _profiles: dict[str, HarnessProfile]
+    _release: Callable[[str], None]
 
     def __new__(
         cls, profiles: dict[str, HarnessProfile], inventory: WorkerInventory
@@ -40,7 +42,12 @@ class WorkerRetirement:
         self._inventory = inventory
         self._jobs = {}
         self._executor = WorkerCleanupQueue()
+        self._release = lambda _worker: None
         return self
+
+    def release_with(self, release: Callable[[str], None]) -> None:
+        """Bind the actor-owned retention transition, not a cleanup job."""
+        self._release = release
 
     def schedule(self, record: WorkerRecord) -> None:
         """Queue a confirmed exit without waiting for a config file lease."""
@@ -85,6 +92,7 @@ class WorkerRetirement:
             except (OSError, ValueError) as exc:
                 logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
             else:
+                self._release(record.id)
                 self.schedule(observed)
         return observed
 
