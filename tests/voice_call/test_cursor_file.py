@@ -27,18 +27,24 @@ def test_cursor_file_creates_and_replaces_private_utf8_file(tmp_path: Path) -> N
 
 
 def test_cursor_syncs_directory_after_renaming(tmp_path: Path) -> None:
-    path = tmp_path / "departure.json"
-    syncs: list[tuple[bool, bool]] = []
+    directory = tmp_path / "calls"
+    directory.mkdir()
+    path = directory / "departure.json"
+    syncs: list[tuple[int, bool]] = []
     fsync = os.fsync
 
     def observe(fd: int) -> None:
-        syncs.append((stat.S_ISDIR(os.fstat(fd).st_mode), path.exists()))
+        syncs.append((os.fstat(fd).st_ino, path.exists()))
         fsync(fd)
 
     with patch("punt_vox.voxd.voice_call.cursor_file.os.fsync", side_effect=observe):
         CursorFile(path).replace("{}")
 
-    assert syncs == [(False, False), (True, True)]
+    assert syncs == [
+        (tmp_path.stat().st_ino, False),
+        (path.stat().st_ino, False),
+        (directory.stat().st_ino, True),
+    ]
 
 
 def test_first_cursor_syncs_each_new_directories_parent(tmp_path: Path) -> None:

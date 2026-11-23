@@ -16,7 +16,7 @@ class CursorCommit:
 
     @classmethod
     def prepare(cls, directory: Path) -> None:
-        """Create missing directories and sync each new entry in its parent."""
+        """Create missing directories and sync their entries in their parents."""
         try:
             directory.mkdir(mode=0o700)
         except FileNotFoundError:
@@ -26,7 +26,6 @@ class CursorCommit:
         except FileExistsError:
             if not directory.is_dir():
                 raise
-            return
         cls._sync_directory(directory.parent)
 
     @classmethod
