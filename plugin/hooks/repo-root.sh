@@ -25,9 +25,9 @@ vox_hook_repo_root() {
 
   # A relative path can get stuck at "." instead of reaching "/".
   if [[ "$dir" != /* ]]; then
-    local absolute="$PWD/$dir"
+    local absolute="$PWD/$dir" logical
     dir="$absolute"
-    while ! root=$(cd -- "$dir" 2>/dev/null && pwd); do
+    while ! root=$(cd -P -- "$dir" 2>/dev/null && pwd -P); do
       [[ "$dir" != / ]] || return 1
       dir=${dir%/*}
       dir=${dir:-/}
@@ -35,14 +35,11 @@ vox_hook_repo_root() {
     if [[ "$dir" != "$absolute" ]] && vox_hook_git_root "$root"; then
       return
     fi
-    # Honor the logical ancestors first, then try the symlink target.
-    if vox_hook_marker_root "$root"; then
+    if logical=$(cd -- "$dir" 2>/dev/null && pwd) &&
+      [[ "$logical" != "$root" ]] && vox_hook_marker_root "$logical"; then
       return
     fi
-    if ! dir=$(cd -P -- "$dir" 2>/dev/null && pwd -P) || [[ "$dir" == "$root" ]]; then
-      printf '/\n'
-      return
-    fi
+    dir="$root"
   fi
   vox_hook_marker_root "$dir" || printf '/\n'
 }
