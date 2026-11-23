@@ -34,18 +34,23 @@ class HookDeliveryRetry:
     async def run(cls, deliver: Callable[[], Awaitable[HookDeliveryResult]]) -> None:
         """Keep the event intact across attempts."""
         async with asyncio.timeout(5):
-            for delay in (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0, None):
-                try:
-                    result = await deliver()
-                except (VoxdConnectionError, VoxdProtocolError) as exc:
-                    if delay is None or not cls._retryable(exc):
-                        raise
-                else:
-                    if result is not HookDeliveryResult.PENDING:
-                        return
-                    if delay is None:
-                        raise TimeoutError("Worker hook admission pending liveness")
+            for delay in (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0):
+                if await cls._complete(deliver):
+                    return
                 await asyncio.sleep(delay)
+            if await deliver() is HookDeliveryResult.PENDING:
+                raise TimeoutError("Worker hook admission pending liveness")
+
+    @classmethod
+    async def _complete(
+        cls, deliver: Callable[[], Awaitable[HookDeliveryResult]]
+    ) -> bool:
+        try:
+            return await deliver() is not HookDeliveryResult.PENDING
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            if cls._retryable(exc):
+                return False
+            raise
 
     @staticmethod
     def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
