@@ -14,7 +14,7 @@ import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands.voice_call_follow import CallFollower
-from punt_vox.commands.voice_call_script import VoiceCallScript
+from punt_vox.commands.voice_call_startup import CallStartup
 from punt_vox.commands.voice_call_status import CallStatusView
 from punt_vox.daemon_control import DaemonControl
 
@@ -24,8 +24,6 @@ if TYPE_CHECKING:
 
 __all__ = ["VoiceCall"]
 
-# call_start waits for the provider to connect and the script to load in voxd.
-_START_TIMEOUT_S = 60.0
 _CONTROL_TIMEOUT_S = 30.0
 # Seven serial provider deletes at 10 seconds each, plus locking and I/O.
 _TEARDOWN_TIMEOUT_S = 90.0
@@ -55,17 +53,8 @@ class VoiceCall:
                 ``CallFollower.until_end`` for a lost status or an interrupt,
                 and ``CallFollower.hang_up`` for Ctrl-C while the call starts.
         """
-        fields: dict[str, object] = {}
-        if script is not None:
-            fields["script"] = VoiceCallScript.read(script).wire()
         follower = CallFollower(self._control, self._poll_s)
-        try:
-            started = self._begin(fields)
-        except KeyboardInterrupt:
-            # voxd may already be dialing the call this request asked for.
-            follower.finish(follower.hang_up())
-            return
-        follower.finish(follower.until_end(started))
+        CallStartup(self._control, follower).start(script)
 
     def stop(self) -> None:
         """Stop the running call; refuse when no call is running.
@@ -94,37 +83,6 @@ class VoiceCall:
         """Remove only the managed agent and tools, not calls or workers."""
         self._run(self._control.request("teardown", timeout=_TEARDOWN_TIMEOUT_S))
         typer.echo("The next vox call will provision a new agent.")
-
-    def _begin(self, fields: dict[str, object]) -> CallStatusView:
-        """Send ``call_start``; a call that failed to connect reports its trace."""
-        try:
-            return CallStatusView(
-                asyncio.run(
-                    self._control.request("start", timeout=_START_TIMEOUT_S, **fields)
-                )
-            )
-        except VoxdConnectionError as exc:
-            typer.echo(f"Call unavailable: {exc}", err=True)
-            raise typer.Exit(1) from None
-        except VoxdProtocolError as exc:
-            typer.echo(f"Call unavailable: {exc}", err=True)
-            self._report_failed_start()
-            raise typer.Exit(1) from None
-
-    def _report_failed_start(self) -> None:
-        """Print the report of a call voxd refused because it failed to connect.
-
-        The refusal is already on stderr, so a status that cannot be read adds
-        nothing and is left out.
-        """
-        try:
-            status = CallStatusView(
-                asyncio.run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
-            )
-        except (VoxdConnectionError, VoxdProtocolError):
-            return
-        if status.failed:
-            CallFollower.finish(status)
 
     @staticmethod
     def _run(request: Coroutine[object, object, object]) -> object:
