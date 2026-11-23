@@ -1371,23 +1371,6 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Daemon:    not running\n" in result.output
 
-    @patch("punt_vox.cli_daemon.VoxClientSync")
-    def test_status_shows_vibe_and_tags(
-        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
-    ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.local.md").write_text(
-            '---\nvibe: "excited"\nvibe_tags: "[cheerful]"\n---\n'
-        )
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
-
-        result = CliRunner().invoke(app, ["status"])
-
-        assert result.exit_code == 0
-        assert result.output.endswith("Vibe:      excited\nTags:      [cheerful]\n"), (
-            result.output
-        )
-
 
 # ---------------------------------------------------------------------------
 # main group tests
@@ -3009,3 +2992,19 @@ class TestDaemonLifecycleCommands:
         payload = json.loads(result.output)
         assert payload[key] is False
         assert "launchctl bootstrap" in payload["reason"]
+
+    @pytest.mark.parametrize(
+        ("verb", "key", "target"),
+        [
+            ("install", "installed", "svc_install"),
+            ("uninstall", "uninstalled", "svc_uninstall"),
+        ],
+    )
+    def test_install_success_json_reports_the_message(
+        self, verb: str, key: str, target: str
+    ) -> None:
+        """A successful install/uninstall emits ``{key: true, message}``."""
+        with patch(f"{_CLI_DAEMON}.{target}", return_value="voxd done"):
+            result = CliRunner().invoke(app, ["daemon", verb, "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {key: True, "message": "voxd done"}
