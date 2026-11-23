@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import logging
 import multiprocessing
+import os
 import time
 from multiprocessing.synchronize import Event
 from pathlib import Path
@@ -33,8 +34,10 @@ def _concurrent_writer(
             attempted.set()
         original_flock(fd, operation)
 
-    def paused_read(self: Path, *args: object, **kwargs: object) -> str:
-        text = original(self, encoding="utf-8")
+    def paused_read(
+        self: Path, *, encoding: str | None = None, newline: str | None = None
+    ) -> str:
+        text = original(self, encoding=encoding, newline=newline)
         if self == path:
             read.set()
             assert release.wait(30), "writer was not released"
@@ -257,6 +260,10 @@ class TestWrite:
         fm = Frontmatter(tmp_path / "vox.md")
         fm.write_field("voice", "fin")
         assert fm.read_field("voice") == "fin"
+        assert (
+            fm.path.read_bytes()
+            == os.linesep.join(("---", 'voice: "fin"', "---", "")).encode()
+        )
 
     @pytest.mark.parametrize("key", ["sample-rate", "sample.rate"])
     def test_custom_field_round_trips(self, tmp_path: Path, key: str) -> None:
@@ -276,16 +283,38 @@ class TestWrite:
         fm.write_field("voice", "charlie")
         assert path.read_text(encoding="utf-8") == 'voice: "charlie"' + tail
 
-    def test_crlf_file_reads_and_edits_only_its_header(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("newline", ["\r\n", "\r"], ids=["crlf", "cr"])
+    def test_file_reads_and_edits_only_its_header(
+        self, tmp_path: Path, newline: str
+    ) -> None:
         path = tmp_path / "vox.md"
         body = '# Notes\nvoice: "body"\n'
         text = '---\nvoice: "fin"\n---\n' + body
-        path.write_bytes(text.replace("\n", "\r\n").encode())
+        path.write_bytes(text.replace("\n", newline).encode())
         fm = Frontmatter(path)
         assert fm.read_field("voice") == "fin"
         assert fm.read_fields() == {"voice": "fin"}
         fm.write_field("voice", "charlie")
         assert path.read_text(encoding="utf-8") == '---\nvoice: "charlie"\n---\n' + body
+        assert path.read_bytes() == (
+            ('---\nvoice: "charlie"\n---\n' + body).replace("\n", newline).encode()
+        )
+
+    @pytest.mark.parametrize(
+        "newline", [b"\n", b"\r\n", b"\r"], ids=["lf", "crlf", "cr"]
+    )
+    def test_insert_field_preserves_file_bytes(
+        self, tmp_path: Path, newline: bytes
+    ) -> None:
+        path = tmp_path / "vox.md"
+        header = newline.join((b"---", b'voice: "fin"', b""))
+        # The body may use a different newline style and need not end in one.
+        tail = b"---" + newline + "# Notes\nRésumé".encode()
+        path.write_bytes(header + tail)
+
+        Frontmatter(path).write_field("notify", "y")
+
+        assert path.read_bytes() == header + b'notify: "y"' + newline + tail
 
     @pytest.mark.parametrize("fenced", [False, True])
     @pytest.mark.parametrize(

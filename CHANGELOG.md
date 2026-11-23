@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Updating settings preserves existing CRLF line endings and the Markdown
+  body. (PL-1142)
+
 - `vox status --json` reports `config unreadable` instead of crashing when the
   Claude Desktop config contains invalid UTF-8. (PL-1420)
 

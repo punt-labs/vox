@@ -12,22 +12,26 @@ if TYPE_CHECKING:
 
 __all__ = ["FrontmatterBlock"]
 
-_LINE_END = r"(?=\r?$)"
+_LINE_START = r"(?:^|(?<=\r)(?!\n))"
+_LINE_END = r"(?=[\r\n]|\Z)"
+_NEWLINE = r"(?:\r\n|\r(?!\n)|\n)"
 _INLINE_SPACE = r"[^\S\r\n]*"
 # Only an indented line can continue a legacy value; its grammar stays the same.
-_VALUE_CONTINUATION = rf"(?:\r?\n{_INLINE_SPACE})*\r?\n[ \t]{_INLINE_SPACE}(?=\S)"
+_VALUE_CONTINUATION = (
+    rf"(?:{_NEWLINE}{_INLINE_SPACE})*{_NEWLINE}[ \t]{_INLINE_SPACE}(?=\S)"
+)
 _FIELD_VALUE = (
     rf":{_INLINE_SPACE}(?:{_VALUE_CONTINUATION})?"
     rf'"?([^"\r\n]*)"?{_INLINE_SPACE}{_LINE_END}'
 )
-_FIELD_RE = re.compile(rf"^([\w.-]+){_FIELD_VALUE}", re.MULTILINE)
+_FIELD_RE = re.compile(rf"{_LINE_START}([\w.-]+){_FIELD_VALUE}", re.MULTILINE)
 # A fence is a `---` line; it only opens a block on the file's very first line,
 # and only then does a later one close it. Without the opening anchor a
 # markdown horizontal rule buried in prose reads as a closing fence, and an
 # inserted field lands above that rule instead of in the frontmatter.
 _FENCED_HEADER_RE = re.compile(
-    r"\A---[ \t]*(?=\r?\n).*?(?P<separator>\r?\n)---[ \t]*(?=\r?$)",
-    re.MULTILINE | re.DOTALL,
+    rf"\A---[ \t]*(?={_NEWLINE}).*?(?P<separator>{_NEWLINE})---[ \t]*{_LINE_END}",
+    re.DOTALL,
 )
 # Each character that ends a quoted value early, and how a rejection names it.
 _UNQUOTABLE = (("\n", "newlines"), ("\r", "newlines"), ('"', "double-quotes"))
@@ -128,15 +132,8 @@ class FrontmatterBlock:
             template = line.replace("\\", r"\\")
             header, replaced = self._field_re(key).subn(template, header)
             if not replaced:
-                header += self._insertion(line)
+                header += tail[: tail.index("---")] + line
         return type(self)(header + tail)
-
-    def _insertion(self, line: str) -> str:
-        _, tail = self._parts
-        if not tail:
-            msg = f"no closing fence to insert {line!r} above"
-            raise ValueError(msg)
-        return tail[: tail.index("\n") + 1] + line
 
     @staticmethod
     def _parse(header: str, pattern: re.Pattern[str] = _FIELD_RE) -> dict[str, str]:
@@ -149,4 +146,6 @@ class FrontmatterBlock:
     @staticmethod
     def _field_re(key: str) -> re.Pattern[str]:
         """Return the pattern matching *key*'s whole line, quoted or bare."""
-        return re.compile(rf"^({re.escape(key)}){_FIELD_VALUE}", re.MULTILINE)
+        return re.compile(
+            rf"{_LINE_START}({re.escape(key)}){_FIELD_VALUE}", re.MULTILINE
+        )
