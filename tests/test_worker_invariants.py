@@ -6,7 +6,7 @@ import inspect
 from dataclasses import FrozenInstanceError, is_dataclass, replace
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from test_workers import FakeWorkerProvider, _registry
@@ -99,6 +99,26 @@ def test_worker_decisions_prompt_epoch_never_exceeds_admitted_high_water() -> No
         assert previous <= state.prompt_epoch <= state.latest
         previous = state.prompt_epoch
     assert state.prompt_epoch == 5
+
+
+@pytest.mark.parametrize("observed", [0, 1])
+def test_prompt_epoch_delivery_invariant_requires_current_prompt(
+    tmp_path: Path, observed: int
+) -> None:
+    """PromptEpochDelivery admits only the observed epoch, including initial zero."""
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    with patch.object(FakeWorkerProvider, "steer") as send:
+        if observed == 0:
+            assert registry.steer(worker.id, "Continue.", prompt_epoch=observed) == 0
+            send.assert_called_once()
+        else:
+            with pytest.raises(ValueError, match="new prompt"):
+                registry.steer(worker.id, "Continue.", prompt_epoch=observed)
+            send.assert_not_called()
+    registry.stop(worker.id)
 
 
 def test_decision_receipt_heard_invariant_requires_question_at_delivery() -> None:

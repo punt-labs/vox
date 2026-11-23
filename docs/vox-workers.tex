@@ -432,6 +432,19 @@ worker identity, exact words, choice, urgency and prompt epoch, not the
 provider tool-call ID. An interrupted request reissued with a new ID in the
 same epoch replays its receipt; identical words in a newer epoch are delivered
 again, for both idle text and permission choices.
+The observed epoch also accompanies delivery through WorkerControl. Under the
+same actor lock used to ingest hooks, delivery reconciles the current epoch
+and refuses a stale request before sending any keys. The error tells the agent
+to read the new prompt and ask the person again. Direct control without a
+sampled epoch targets the live prompt instead.
+
+\begin{schema}{PromptEpochDelivery}
+  \Xi WorkerDecisions \\
+  worker? : WORKER \\
+  observedEpoch? : \nat
+\where
+  observedEpoch? = promptEpoch~worker?
+\end{schema}
 
 For a steer sent
 while a decision is pending, a retained pair (question, sequence) acknowledges

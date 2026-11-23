@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING, ClassVar, Final, Self, final
+from typing import TYPE_CHECKING, ClassVar, Final, Self, cast, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
 from punt_vox.voxd.voice_call.result_cache import ToolResultCache
@@ -186,6 +186,7 @@ class BossTools:
             self._text(arguments, "worker_id"),
             words,
             urgent=urgent,
+            prompt_epoch=cast("int", arguments["prompt_epoch"]),
             choice=choice,
         )
 

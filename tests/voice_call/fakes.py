@@ -66,8 +66,10 @@ class FakeWorkers:
         words: str,
         *,
         urgent: bool,
+        prompt_epoch: int,
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
     ) -> SteerReceipt:
+        assert prompt_epoch >= 0
         self.steered.append((worker_id, words, urgent))
         self.choices.append(choice)
         return {

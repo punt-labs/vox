@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Self, final
 from weakref import WeakValueDictionary
 
-from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd._parse import parse_optional_int, parse_required_str
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
@@ -51,6 +51,7 @@ class WorkerSteering:
                 urgent=urgent,
                 deadline=deadline,
                 choice=choice,
+                prompt_epoch=parse_optional_int(msg, "prompt_epoch"),
             )
         finally:
             worker_lock.release()
@@ -73,13 +74,19 @@ class WorkerSteering:
         urgent: bool,
         deadline: float,
         choice: DecisionChoice | None,  # None submits ordinary follow-up text.
+        prompt_epoch: int | None,  # None binds direct control to the live prompt.
     ) -> SteerReceipt:
         await self._acquire(self._lock, deadline)
         try:
             if asyncio.get_running_loop().time() >= deadline:
                 raise ValueError("steering deadline expired before delivery")
             baseline = await asyncio.to_thread(
-                self._registry.steer, worker_id, words, urgent=urgent, choice=choice
+                self._registry.steer,
+                worker_id,
+                words,
+                urgent=urgent,
+                choice=choice,
+                prompt_epoch=prompt_epoch,
             )
         finally:
             self._lock.release()

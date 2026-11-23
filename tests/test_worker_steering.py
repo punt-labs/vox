@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,14 +14,96 @@ from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.steering import WorkerSteering
+from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.worker_client import WorkerClient
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.workers.contracts import HarnessProfile
+    from punt_vox.voxd.workers.types import WorkerPayload
+
+
+@pytest.mark.parametrize("advance", [False, True])
+@pytest.mark.parametrize("choice", [None, "approve", "deny"])
+async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
+    tmp_path: Path,
+    advance: bool,
+    choice: DecisionChoice | None,  # None tests an ordinary idle-text instruction.
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    profile = ClaudeProfile(store)
+    actor = WorkerActor(registry)
+    hooks = actor.hooks(store)
+    question: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "relay_seq": 3,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt"
+        if choice is not None
+        else "idle_prompt",
+    }
+    store.ingest(
+        {**question, "relay_seq": 1, "hook_event_name": "SessionStart"},
+        worker_input=True,
+    )
+    store.ingest(question, worker_input=True)
+    original = WorkerActor.workers
+
+    async def snapshot_then_next_prompt(self: WorkerActor) -> list[WorkerPayload]:
+        snapshot = await original(self)
+        if advance:
+            await hooks.ingest({**question, "relay_seq": 5}, worker_only=True)
+        return snapshot
+
+    def progress(worker_id: str, _harness: HarnessProfile) -> dict[str, object]:
+        return profile.progress(worker_id)
+
+    allowlist = MagicMock()
+    allowlist.repos.return_value = (str(tmp_path),)
+    with (
+        patch.object(FakeWorkerProvider, "progress", side_effect=progress),
+        patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),
+        patch.object(TrivialProfile, "inputs_since", side_effect=profile.inputs_since),
+        patch.object(FakeWorkerProvider, "decide") as decide,
+        patch.object(FakeWorkerProvider, "steer") as steer,
+        patch.object(WorkerActor, "workers", new=snapshot_then_next_prompt),
+        patch.object(WorkerSteering, "_receipt", return_value=None),
+    ):
+        result, error = await BossTools(actor, allowlist).answer(
+            "steer_worker",
+            {"worker_id": worker.id, "words": "Continue.", "choice": choice},
+        )
+        assert error == advance
+        if advance:
+            assert "new prompt" in result and "ask the person again" in result
+            decide.assert_not_called()
+            steer.assert_not_called()
+        else:
+            assert decide.call_count == (choice is not None)
+            assert steer.call_count == (choice is None)
+    registry.stop(worker.id)
+
+
+@pytest.mark.parametrize("epoch", [True, [], {}, 1.0, "unknown"])
+async def test_invalid_observed_epoch_cannot_deliver(epoch: object) -> None:
+    registry = MagicMock(spec=WorkerRegistry)
+    with pytest.raises(ValueError):
+        await WorkerSteering(registry, asyncio.Lock()).handle(
+            {"worker_id": "w", "words": "Continue.", "prompt_epoch": epoch}
+        )
+    registry.steer.assert_not_called()
 
 
 @pytest.mark.parametrize("choice", ["maybe", "", 1, [], {}])
@@ -257,7 +340,14 @@ async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> N
     sequences: dict[str, int] = {}
     release_first = False
 
-    def send(worker: str, words: str, *, urgent: bool, choice: object = None) -> int:
+    def send(
+        worker: str,
+        words: str,
+        *,
+        urgent: bool,
+        choice: object = None,
+        prompt_epoch: object = None,  # None binds direct control to the live prompt.
+    ) -> int:
         baseline = sequences.get(worker, 0)
         sequences[worker] = baseline + 1
         return baseline
@@ -321,13 +411,13 @@ async def test_queued_steer_times_out_without_delivery() -> None:
                     steering.handle({"worker_id": "one", "words": "queued"}), 1
                 )
             registry.steer.assert_called_once_with(
-                "one", "first", urgent=False, choice=None
+                "one", "first", urgent=False, choice=None, prompt_epoch=None
             )
         finally:
             release.set()
             await asyncio.wait_for(first, 1)
         registry.steer.assert_called_once_with(
-            "one", "first", urgent=False, choice=None
+            "one", "first", urgent=False, choice=None, prompt_epoch=None
         )
         response = await steering.handle({"worker_id": "one", "words": "after"})
         assert response["receipt_seq"] == 5
@@ -360,7 +450,9 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
         steering.handle({"worker_id": "one", "words": "fresh"}), 1
     )
     assert response["heard"] is True
-    registry.steer.assert_called_once_with("one", "fresh", urgent=False, choice=None)
+    registry.steer.assert_called_once_with(
+        "one", "fresh", urgent=False, choice=None, prompt_epoch=None
+    )
 
 
 @pytest.mark.asyncio

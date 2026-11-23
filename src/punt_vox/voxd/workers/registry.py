@@ -174,6 +174,8 @@ class WorkerRegistry:
         *,
         urgent: bool = False,
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
+        prompt_epoch: int
+        | None = None,  # None binds direct control to the live prompt.
     ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
         if not words.strip():
@@ -185,6 +187,13 @@ class WorkerRegistry:
         record = self._checkpoint(self._lifecycle.observe(self._get(worker_id)))
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
+        if prompt_epoch is not None and prompt_epoch != record.last_report.get(
+            "prompt_epoch", 0
+        ):
+            raise ValueError(
+                "Worker has a new prompt; read worker_status and ask the person "
+                "again before steering"
+            )
         profile = self._profiles[record.harness]
         if len(words) > profile.input_limit:
             raise ValueError(

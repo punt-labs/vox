@@ -67,11 +67,19 @@ class WorkerActor:
         words: str,
         *,
         urgent: bool,
+        prompt_epoch: int
+        | None = None,  # None binds direct control to the live prompt.
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
     ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         return await self.steer_request(
-            {"worker_id": worker_id, "words": words, "urgent": urgent, "choice": choice}
+            {
+                "worker_id": worker_id,
+                "words": words,
+                "urgent": urgent,
+                "choice": choice,
+                "prompt_epoch": prompt_epoch,
+            }
         )
 
     async def steer_request(self, msg: dict[str, object]) -> SteerReceipt:
