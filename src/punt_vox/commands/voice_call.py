@@ -27,6 +27,8 @@ __all__ = ["VoiceCall"]
 # call_start waits for the provider to connect and the script to load in voxd.
 _START_TIMEOUT_S = 60.0
 _CONTROL_TIMEOUT_S = 30.0
+# Seven serial provider deletes at 10 seconds each, plus locking and I/O.
+_TEARDOWN_TIMEOUT_S = 90.0
 _POLL_INTERVAL_S = 0.5
 
 
@@ -90,7 +92,7 @@ class VoiceCall:
 
     def teardown(self) -> None:
         """Remove only the managed agent and tools, not calls or workers."""
-        self._run(self._control.request("teardown", timeout=_CONTROL_TIMEOUT_S))
+        self._run(self._control.request("teardown", timeout=_TEARDOWN_TIMEOUT_S))
         typer.echo("The next vox call will provision a new agent.")
 
     def _begin(self, fields: dict[str, object]) -> CallStatusView:
