@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
@@ -25,6 +26,9 @@ from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.playback import PlaybackQueue
@@ -64,6 +68,7 @@ class CallHandlers:
     __slots__ = (
         "_active",
         "_connector",
+        "_hold_music",
         "_lock",
         "_opener",
         "_playback",
@@ -77,6 +82,7 @@ class CallHandlers:
     _projects: ProjectAllowlist
     _playback: PlaybackQueue
     _connector: AgentOperations
+    _hold_music: Callable[[], AbstractContextManager[None]]
     _trace_dir: Path
     _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
@@ -98,12 +104,14 @@ class CallHandlers:
         trace_dir: Path | None = None,  # None: the user state directory.
         opener: Opener | None = None,
         progress: ProgressEvents | None = None,  # None creates an unconnected source.
+        hold_music: Callable[[], AbstractContextManager[None]] = nullcontext,
     ) -> Self:
         """Bind the workers, their allowlist, the playback queue and the agent."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
         self._progress = progress if progress is not None else ProgressEvents()
         self._playback, self._connector = playback, AgentOperations(connector)
+        self._hold_music = hold_music
         self._trace_dir = trace_dir if trace_dir is not None else calls_dir()
         self._active = None
         self._lock = asyncio.Lock()
@@ -199,7 +207,7 @@ class CallHandlers:
                 logger.warning("Call departure not saved (%s)", type(exc).__name__)
 
         async def run() -> None:
-            with stream:
+            with stream, self._hold_music():
                 await call.run(dial, returning.covered, depart=depart)
 
         task = asyncio.create_task(run())

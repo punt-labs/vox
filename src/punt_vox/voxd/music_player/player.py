@@ -165,7 +165,9 @@ class MusicPlayer:
         as well as the lux listener's event loop.
         """
         roster = AlbumRoster.from_cache(albums, self._cache)
-        view = PlayerView.from_status(self._service.status(), roster.albums)
+        view = PlayerView.from_status(
+            self._service.status(user_pause_only=True), roster.albums
+        )
         return AlbumListScene(roster, view, notice).render_request()
 
     def _schedule_track_count_refresh(self) -> None:

@@ -24,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Queued speech and recordings keep their audio even if the original entry
-  is evicted from the speech cache. (PL-1191)
+- Pause the vox music player during a call and resume after it ends, without
+  starting music that was already paused or stopped. (PL-1374)
 
 - Hooks no longer hang when given a relative working directory outside a Git
   worktree. (PL-820)
@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   voxd on the service port) reports `unknown` with "invalid UTF-8", and
   `vox daemon install`, or `uninstall` when it stopped no voxd, fails with
   that message. (PL-1189)
+
+- Queued speech and recordings keep their audio even if the original entry
+  is evicted from the speech cache. (PL-1191)
 
 ### Added
 
