@@ -140,6 +140,83 @@ async def test_admitted_publication_deduplicated(tmp_path: Path) -> None:
         assert queue.empty()
 
 
+@pytest.mark.parametrize(
+    "prior_sequence,worker_only", [(8, True), (4, False), (8, False)]
+)
+@pytest.mark.parametrize(
+    "hook,kind", [("Stop", "finished"), ("Notification", "needs_decision")]
+)
+async def test_unadmitted_context_cannot_suppress_worker_progress(
+    tmp_path: Path, prior_sequence: int, worker_only: bool, hook: str, kind: str
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    events = ProgressEvents()
+    store = HookContextStore()
+    hooks = WorkerHooks(store, registry, asyncio.Lock(), events)
+    unadmitted: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": str(tmp_path / "not-the-worktree"),
+        "relay_seq": prior_sequence,
+        "hook_event_name": "PostToolUse",
+    }
+    admitted = {
+        **unadmitted,
+        "cwd": worker.worktree,
+        "relay_seq": 6,
+        "hook_event_name": hook,
+        "last_assistant_message": "valid result",
+        "notification_type": "idle_prompt",
+        "message": "Follow-up?",
+    }
+    assert not registry.admits_hook(unadmitted["session_id"], unadmitted["cwd"])
+    assert registry.admits_hook(admitted["session_id"], admitted["cwd"])
+    async with events.subscribe() as queue:
+        await hooks.ingest(unadmitted, worker_only=worker_only)
+        assert queue.empty()
+        await hooks.ingest(admitted, worker_only=True)
+        report = queue.get_nowait()
+        assert (report.seq, report.kind) == (6, kind)
+        assert store.worker_sequence(worker.id) == 6
+        await hooks.ingest(admitted, worker_only=True)
+        assert queue.empty()
+
+
+async def test_failed_checkpoint_keeps_admitted_freshness_separate_from_delivery(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    events = ProgressEvents()
+    store = HookContextStore()
+    hooks = WorkerHooks(store, registry, asyncio.Lock(), events)
+    payload: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "relay_seq": 8,
+        "hook_event_name": "PostToolUse",
+    }
+    async with events.subscribe() as queue:
+        with (
+            patch.object(
+                type(registry),
+                "checkpoint_progress",
+                side_effect=OSError("disk failed"),
+            ),
+            pytest.raises(OSError, match="disk failed"),
+        ):
+            await hooks.ingest(payload, worker_only=True)
+        assert store.worker_sequence(worker.id) == 8
+        await hooks.ingest(
+            {**payload, "relay_seq": 6, "hook_event_name": "Stop"}, worker_only=True
+        )
+        assert queue.empty()
+
+
 @pytest.mark.parametrize("choice", ["approve", "deny"])
 def test_registry_hears_pending_dialog_without_user_prompt(
     tmp_path: Path, choice: DecisionChoice

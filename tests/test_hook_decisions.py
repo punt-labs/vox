@@ -9,6 +9,7 @@ def test_empty_state_and_irrelevant_notification() -> None:
     state = HookDecisions()
     assert state.pending() is None
     assert state.baseline() == 0
+    assert state.latest == 0
     assert state.receipts(0) == []
     state.ingest(1, "Notification", {"notification_type": "other"})
     assert state.pending() is None
@@ -34,6 +35,8 @@ def test_pending_snapshot_is_detached_and_next_hook_acknowledges_it() -> None:
     assert state.baseline() == 3
     state.ingest(4, "PostToolUse", {})
     assert state.pending() is None
+    assert state.latest == 4
+    assert state.baseline() == 0
     assert state.receipts(3) == [4]
     assert state.receipts(2) == []
 

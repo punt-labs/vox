@@ -64,6 +64,11 @@ class HookContextStore:
         context = self._sessions.get(session)
         return context.decisions.baseline() if context is not None else 0
 
+    def worker_sequence(self, session: str) -> int:
+        """Return the newest admitted worker hook, excluding shared context hooks."""
+        context = self._sessions.get(session)
+        return context.decisions.latest if context is not None else 0
+
     def decision_receipts(self, session: str, baseline: int) -> list[int]:
         """Return progress acknowledging a question present at the baseline."""
         context = self._sessions.get(session)

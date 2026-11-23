@@ -81,5 +81,5 @@ class WorkerHooks:
             str(session),
             payload,
             snapshot["pending_decision"],
-            latest=snapshot["gaps"]["highest_seen"],
+            latest=self._store.worker_sequence(str(session)),
         )

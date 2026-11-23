@@ -49,6 +49,11 @@ class HookDecisions:
         """Return a detached view, or None when the worker can proceed."""
         return self._pending.copy() if self._pending is not None else None
 
+    @property
+    def latest(self) -> int:
+        """Return the newest admitted worker hook, even without a pending question."""
+        return self._high
+
     def baseline(self) -> int:
         """Return the newest event only while waiting for a permission choice."""
         return (
