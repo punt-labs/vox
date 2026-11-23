@@ -6,7 +6,7 @@ import json
 import os
 import platform
 from pathlib import Path
-from typing import ClassVar, Self, cast, final
+from typing import ClassVar, Self, final
 
 from punt_vox.keys import parse_keys_env
 from punt_vox.paths import keys_env_file
@@ -70,18 +70,18 @@ class DesktopInstaller:
           because the operator cannot conclude anything about the
           registration from a file the CLI cannot parse.
         """
-        try:
-            data = json.loads(cls.config_path().read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        config_path = cls.config_path()
+        if not config_path.exists():
             return "no config"
+        try:
+            data: object = json.loads(config_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return "config unreadable"
-        if not isinstance(data, dict):
-            return "not registered"
-        servers = cast("dict[str, object]", data).get("mcpServers")
-        if isinstance(servers, dict) and "vox" in servers:
-            return "registered"
-        return "not registered"
+        match data:
+            case {"mcpServers": {"vox": object()}}:
+                return "registered"
+            case _:
+                return "not registered"
 
     @classmethod
     def config_path(cls) -> Path:
