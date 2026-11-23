@@ -363,6 +363,19 @@ class TestSymbolStripping:
                 "```sh\necho\n\n```\nPay -$5 here\n```sh\necho\n\n```",
                 "sh echo Pay minus 5 dollars here sh echo",
             ),
+            (
+                "- Use ` here\n- Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            (
+                "> Use ` here\n>\n> Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            (
+                "Use ` here\nTitle\n=====\nPay -$5 there `",
+                "Use here Title Pay minus 5 dollars there",
+            ),
+            ("```\nx\n```\t\nUse `$5` now", "x Use dollar sign 5 now"),
         ],
     )
     def test_currency_bypassed_only_inside_code_spans(

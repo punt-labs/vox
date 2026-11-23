@@ -8,7 +8,8 @@ from typing import final
 
 from punt_vox.markdown_fence import Fence
 
-_ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
+_BLOCK_LINE = re.compile(r"^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:>[ \t]*)+)[ \t]*$)")
+_LIST_ITEM = re.compile(r"^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]")
 _BACKTICKS = re.compile(r"`+")
 
 
@@ -31,17 +32,25 @@ class InlineCode:
         paragraph: list[str] = []
         fence: Fence | None = None
         for line in text.splitlines(keepends=True):
-            delimiter = Fence.parse(line)
+            content = line.rstrip("\r\n")
+            delimiter = Fence.parse(content.rstrip(" \t"))
             if fence is not None:
                 yield line, False
                 if delimiter is not None and delimiter.closes(fence):
                     fence = None
-            elif delimiter is not None or not line.strip() or _ATX_HEADING.match(line):
+            elif (
+                delimiter is not None
+                or not content.strip()
+                or _BLOCK_LINE.match(content)
+            ):
                 yield "".join(paragraph), True
                 paragraph.clear()
                 yield line, delimiter is None
                 fence = delimiter
             else:
+                if _LIST_ITEM.match(content):
+                    yield "".join(paragraph), True
+                    paragraph.clear()
                 paragraph.append(line)
         yield "".join(paragraph), True
 
