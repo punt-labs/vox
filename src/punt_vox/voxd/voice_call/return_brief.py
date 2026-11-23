@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final
@@ -13,6 +14,8 @@ from punt_vox.voxd.voice_call.seed import CallSeed
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -68,11 +71,11 @@ class ReturnBrief:
         self, workers: list[WorkerPayload]
     ) -> tuple[str | None, dict[str, str]]:
         """Name the most recent away results and the current worker questions."""
-        saved = self._file.read()
-        if not saved:
+        cursor = self._read_cursor()
+        if cursor is None:
             self._known = {w["id"]: self._sequence(w, "result_seq") for w in workers}
             return None, {}
-        self._known = cast("dict[str, int]", json.loads(saved))
+        self._known = cursor
         updates: list[tuple[str, str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
             worker_id = worker["id"]
@@ -83,6 +86,22 @@ class ReturnBrief:
             if result:
                 self._known[worker_id] = result
         return self._labelled_updates(updates)
+
+    def _read_cursor(self) -> dict[str, int] | None:
+        try:
+            saved = self._file.read()
+            if not saved and not self._file.path.is_file():
+                return None
+            cursor: object = json.loads(saved)
+            if isinstance(cursor, dict) and all(
+                type(seq) is int and seq >= 0
+                for seq in cast("dict[str, object]", cursor).values()
+            ):
+                return cast("dict[str, int]", cursor)
+        except (OSError, ValueError, RecursionError):
+            pass
+        logger.warning("Ignoring invalid call departure cursor")
+        return None
 
     @staticmethod
     def _labelled_updates(

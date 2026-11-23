@@ -357,7 +357,8 @@ come from the current projection, never from that cursor. The snapshot
 and cut come from the same worker view, after subscription and before
 the provider can speak. The provider gets one first-message override
 only when the selected reports are nonempty.
-The first established call seeds the result cursor at dial. Subsequent
+Without a valid departure cursor, the call seeds the result cursor at dial
+without an opener and saves the new cursor on departure. Subsequent
 calls advance it for results in the opener or successfully submitted for
 live speech, not for hidden context or fresh registry writes at hang-up.
 Submission is not a receipt that the caller heard the playback.
@@ -403,11 +404,11 @@ its bounded queue; the cut filters duplicates among events that remain queued.
   subscribed' = subscribed \\
   departed' = departed \\
   cursor' = cursor \\
+  cut' = newest? \\
   departed = zfalse \implies
-    cut' = \emptyset \land known' = result? \land
+    known' = result? \land
     newResults! = \emptyset \land openQuestions! = \emptyset \\
-  departed = ztrue \implies
-    cut' = newest? \land openQuestions! = questions? \\
+  departed = ztrue \implies openQuestions! = questions? \\
   departed = ztrue \implies newResults! =
     \{ w : \dom result? | w \notin \dom cursor \lor result?~w > cursor~w \} \\
   departed = ztrue \implies known' = cursor \oplus (newResults! \dres result?)

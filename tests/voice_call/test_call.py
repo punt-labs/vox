@@ -288,6 +288,54 @@ def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> Non
     assert brief.covered == {"worker": 5}
 
 
+@pytest.mark.parametrize(
+    "corrupt",
+    [b"", b"{", b"[]", b'{"worker":"3"}', b'{"worker":true}', b"\xff"],
+)
+async def test_corrupt_departure_cursor_dials_and_is_replaced_on_hangup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, corrupt: bytes
+) -> None:
+    cursor = tmp_path / "departure.json"
+    cursor.write_bytes(corrupt)
+    workers = FakeWorkers()
+    workers.known = [
+        payload("worker", last_assistant_message="Already done.", result_seq=3)
+    ]
+    openers: list[str | None] = []
+
+    async def peer(socket: ServerConnection) -> None:
+        init = json.loads(await socket.recv())
+        openers.append(
+            init["conversation_config_override"]["agent"].get("first_message")
+        )
+        await socket.send(json.dumps(_METADATA))
+        await socket.wait_closed()
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=_Connector(
+                f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+            ),
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        reply = await _rpc(
+            handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]}
+        )
+        assert "result" in reply, reply
+        assert cursor.read_bytes() == corrupt
+        assert "result" in await _rpc(handlers, {"type": "call_stop"})
+
+    assert openers == [None]
+    assert json.loads(cursor.read_bytes()) == {"worker": 3}
+    assert "Ignoring invalid call departure cursor" in caplog.text
+
+
 def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
     brief = ReturnBrief(tmp_path / "departure.json")
     brief.depart({"worker": 0})
