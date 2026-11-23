@@ -186,7 +186,14 @@ class VoiceAgentCall:
             self._trace.record(
                 "note",
                 "worker_steer_receipt",
-                {**receipt, "prompt_seq": call.parameters.get("prompt_seq")},
+                {
+                    **receipt,
+                    **(
+                        {"prompt_seq": call.parameters.get("prompt_seq")}
+                        if receipt.get("choice") in ("approve", "deny")
+                        else {}
+                    ),
+                },
             )
         self._tool_calls.append(
             {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}

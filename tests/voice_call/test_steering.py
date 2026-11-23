@@ -44,6 +44,24 @@ async def test_empty_answer_is_rejected_before_caching() -> None:
         )
 
 
+@pytest.mark.parametrize("seq", [None, 4, True, 0, "private spoken answer", {}])
+@pytest.mark.parametrize("explicit_none", [False, True])
+async def test_prompt_sequence_requires_a_choice(
+    seq: object, explicit_none: bool
+) -> None:
+    workers = FakeWorkers()
+    arguments: dict[str, object] = {
+        "worker_id": "abcd",
+        "words": "Continue.",
+        "prompt_seq": seq,
+    }
+    if explicit_none:
+        arguments["choice"] = None
+    with pytest.raises(ValueError, match="prompt_seq requires choice"):
+        await SteeringTool(workers, WorkerDirectory(workers)).resolve(arguments)
+    assert workers.steered == []
+
+
 async def test_ordinary_text_keeps_exact_words_and_current_epoch() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", prompt_epoch=9)]

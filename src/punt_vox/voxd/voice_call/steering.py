@@ -33,6 +33,8 @@ class SteeringTool:
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a boolean")
         choice = arguments.get("choice")
+        if choice is None and "prompt_seq" in arguments:
+            raise ValueError("prompt_seq requires choice=approve or choice=deny")
         if choice is not None and choice not in ("approve", "deny"):
             raise ValueError("choice must be approve or deny")
         if choice is not None and urgent:

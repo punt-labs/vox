@@ -94,7 +94,7 @@ async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
                 "worker_id": worker.id,
                 "words": "Continue.",
                 "choice": choice,
-                "prompt_seq": 3 if choice is not None else None,
+                **({"prompt_seq": 3} if choice is not None else {}),
             },
         )
         rejected = advance == "after_roster" or (

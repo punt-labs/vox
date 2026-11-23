@@ -118,7 +118,38 @@ async def test_permission_receipt_trace_keeps_prompt_but_not_words() -> None:
     assert "private spoken answer" not in stream.getvalue()
 
 
-async def test_ordinary_receipt_trace_drops_an_unvalidated_prompt_sequence() -> None:
+async def test_ordinary_steer_rejects_a_prompt_sequence_without_a_receipt() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    stream = io.StringIO()
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=EventTrace(stream),
+    )
+    conv = AsyncMock(spec=Conversation)
+    await call._answer(
+        conv,
+        ClientToolCall(
+            "ordinary",
+            "steer_worker",
+            {
+                "worker_id": "abcd1234",
+                "words": "Continue.",
+                "prompt_seq": "private spoken answer",
+            },
+            expects_response=True,
+        ),
+    )
+    assert stream.getvalue() == ""
+    assert workers.steered == []
+    conv.send_tool_result.assert_awaited_once()
+    assert conv.send_tool_result.call_args.kwargs["is_error"] is True
+    assert "prompt_seq requires choice" in conv.send_tool_result.call_args.args[1]
+
+
+async def test_ordinary_receipt_trace_has_no_prompt_sequence() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", prompt_epoch=4)]
     stream = io.StringIO()
@@ -133,18 +164,14 @@ async def test_ordinary_receipt_trace_drops_an_unvalidated_prompt_sequence() -> 
         ClientToolCall(
             "ordinary",
             "steer_worker",
-            {
-                "worker_id": "abcd1234",
-                "words": "Continue.",
-                "prompt_seq": "private spoken answer",
-            },
+            {"worker_id": "abcd1234", "words": "Continue."},
             expects_response=True,
         ),
     )
     trace = json.loads(stream.getvalue())
-    assert trace["detail"]["prompt_seq"] is None
+    assert trace["detail"]["choice"] is None
+    assert "prompt_seq" not in trace["detail"]
     assert trace["detail"]["heard"] is True
-    assert "private spoken answer" not in stream.getvalue()
 
 
 async def test_reissued_steer_ids_share_a_prompt_but_not_the_next_prompt() -> None:
