@@ -58,7 +58,7 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
         assert record.last_report["cleanup_pending"] is True
         assert published.wait(1)
         deadline = time.monotonic() + 1
-        while restored._retirement.queued(record.id):
+        while record.id in restored._retirement._jobs:
             assert time.monotonic() < deadline
             time.sleep(0.01)
         assert restored.stop(record.id).last_report["cleanup_error"] == "ValueError"
