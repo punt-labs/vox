@@ -59,7 +59,9 @@ class WorkerRetirement:
         """Bind the actor-owned retention transition, not a cleanup job."""
         self._release = release
 
-    def schedule(self, worker_id: str) -> Future[None] | None:
+    def schedule(
+        self, worker_id: str
+    ) -> Future[None] | None:  # PY-TS-14: no future without a newly queued job.
         """Queue terminal cleanup without waiting for a config file lease."""
         with self._job_lock:
             record = self._inventory.get(worker_id)

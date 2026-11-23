@@ -179,7 +179,9 @@ class WorkerRegistry:
         cleanup.result()
         return self._inventory.get(worker_id)
 
-    def request_stop(self, worker_id: str) -> tuple[WorkerRecord, Future[None] | None]:
+    def request_stop(
+        self, worker_id: str
+    ) -> tuple[WorkerRecord, Future[None] | None]:  # PY-TS-14: only wait on a new job.
         """Persist termination and start cleanup without waiting for its lease."""
         record = self._inventory.update(worker_id, self._lifecycle.terminate)
         return record, self._retirement.schedule(worker_id)
