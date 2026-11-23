@@ -10,7 +10,7 @@ from punt_vox.daemon_control import DaemonControl
 
 __all__ = ["CallControl"]
 
-type _CallOperation = Literal["start_scoped", "status", "stop_scoped", "teardown"]
+type _CallOperation = Literal["start_scoped", "status", "stop_scoped"]
 
 
 @final
@@ -27,8 +27,6 @@ class CallControl:
         "start_scoped": 60.0,
         "status": 30.0,
         "stop_scoped": 30.0,
-        # Seven serial provider deletes at 10 seconds each, plus locking and I/O.
-        "teardown": 90.0,
     }
 
     def __new__(cls) -> Self:
@@ -51,4 +49,14 @@ class CallControl:
             raise VoxdProtocolError(
                 "voxd does not support this call operation; upgrade or restart voxd"
             ) from exc
+        return CallStatusView.for_control(result)
+
+    async def display_status(self) -> CallStatusView:
+        """Read the status for display without requiring an identity."""
+        result = await self._rpc.request("status", timeout=self._TIMEOUTS["status"])
         return CallStatusView(result)
+
+    async def teardown(self) -> None:
+        """Remove the managed agent without interpreting the unused call status."""
+        # Seven serial provider deletes at 10 seconds each, plus locking and I/O.
+        await self._rpc.request("teardown", timeout=90.0)

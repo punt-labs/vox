@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from punt_vox.commands.voice_call_options import VoiceCallOptions
-    from punt_vox.commands.voice_call_status import CallStatusView
 
 __all__ = ["VoiceCall"]
 
@@ -68,20 +67,18 @@ class VoiceCall:
 
     def status(self) -> None:
         """Print the current call's status line and transcript so far."""
-        view = self._run(self._control.request("status"))
+        view = self._run(self._control.display_status())
         typer.echo(view.line())
         for line in view.report():
             typer.echo(line)
 
     def teardown(self) -> None:
         """Remove only the managed agent and tools, not calls or workers."""
-        self._run(self._control.request("teardown"))
+        self._run(self._control.teardown())
         typer.echo("The next vox call will provision a new agent.")
 
     @staticmethod
-    def _run(
-        request: Coroutine[object, object, CallStatusView],
-    ) -> CallStatusView:
+    def _run[T](request: Coroutine[object, object, T]) -> T:
         """Run one coroutine, turning an unreachable or refusing daemon into exit 1."""
         try:
             return asyncio.run(request)

@@ -10,6 +10,7 @@ __all__ = ["CallStatusView"]
 
 _TEXT_WIDTH = 72
 _STATES = frozenset({"idle", "connecting", "live", "ended", "failed"})
+_ID_ERROR = "Missing or invalid call ID in voxd status; upgrade or restart voxd"
 
 
 class _CallStatus(TypedDict, total=False):
@@ -34,20 +35,27 @@ class CallStatusView:
         """Wrap a ``call_status`` result.
 
         Raises:
-            VoxdProtocolError: If the reply lacks a known state or a call ID
-                for a non-idle state.
+            VoxdProtocolError: If the state or a supplied call ID is invalid.
         """
         fields = cast("dict[str, object]", status) if isinstance(status, dict) else {}
         if fields.get("state") not in _STATES:
             raise VoxdProtocolError(f"Unexpected call status: {status!r}")
         call_id = fields.get("call_id")
-        if fields["state"] != "idle" and (
+        if "call_id" in fields and (
             not isinstance(call_id, str) or not call_id.strip()
         ):
-            raise VoxdProtocolError("Missing or invalid call ID in voxd status")
+            raise VoxdProtocolError(_ID_ERROR)
         self = super().__new__(cls)
         self._status = cast("_CallStatus", fields)
         return self
+
+    @classmethod
+    def for_control(cls, status: object) -> Self:
+        """Require a call ID in non-idle replies used to control a call."""
+        view = cls(status)
+        if view.state != "idle" and not view.call_id:
+            raise VoxdProtocolError(_ID_ERROR)
+        return view
 
     @property
     def state(self) -> str:
@@ -66,7 +74,7 @@ class CallStatusView:
 
     @property
     def call_id(self) -> str:
-        """Return the call's identifier; empty when idle."""
+        """Return the call's identifier, or empty when not provided."""
         return self._status.get("call_id", "")
 
     @property

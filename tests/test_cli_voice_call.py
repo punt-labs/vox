@@ -85,8 +85,9 @@ def test_call_start_no_longer_routes_to_the_pi_agent() -> None:
     rpc.assert_not_awaited()
 
 
-def test_call_teardown_requests_explicit_agent_deletion() -> None:
-    voxd = _Voxd({"state": "idle"})
+@pytest.mark.parametrize("state", ["idle", "ended"])
+def test_call_teardown_requests_explicit_agent_deletion(state: str) -> None:
+    voxd = _Voxd({"state": state})
     with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), ["teardown"])
 
@@ -235,6 +236,16 @@ def test_stop_does_not_send_hangup_when_no_call_is_active() -> None:
     assert voxd.sent == [("status", {})]
 
 
+def test_stop_refuses_a_live_call_without_an_id() -> None:
+    voxd = _Voxd({"state": "live"})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), ["stop"])
+
+    assert result.exit_code == 1, result.output
+    assert "upgrade or restart voxd" in result.output
+    assert voxd.sent == [("status", {})]
+
+
 def test_stop_does_not_retry_when_the_call_was_replaced() -> None:
     request = AsyncMock(
         side_effect=[
@@ -274,6 +285,25 @@ def test_status_prints_the_line_and_transcript() -> None:
         "call ended | 1 tool calls | agent: Started a worker on demo."
     )
     assert "user: Add a greeting to the demo repo." in result.output
+
+
+@pytest.mark.parametrize("state", ["idle", "live"])
+def test_status_displays_a_reply_without_a_call_id(state: str) -> None:
+    voxd = _Voxd({"state": state})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == f"call {state} | 0 tool calls"
+    assert voxd.sent == [("status", {})]
+
+
+def test_display_status_still_refuses_a_malformed_id() -> None:
+    with _voxd(_Voxd({**_LIVE, "call_id": " "})):
+        result = runner.invoke(CallCli.build_app(), ["status"])
+
+    assert result.exit_code == 1, result.output
+    assert "invalid call ID" in result.output
 
 
 def test_script_before_a_subcommand_is_a_usage_error(tmp_path: Path) -> None:
@@ -337,7 +367,7 @@ def test_the_status_line_truncates_long_turns() -> None:
 )
 def test_an_unreadable_status_is_a_protocol_error(status: object) -> None:
     with pytest.raises(VoxdProtocolError):
-        CallStatusView(status)
+        CallStatusView.for_control(status)
 
 
 @pytest.mark.usefixtures("no_poll_delay")
