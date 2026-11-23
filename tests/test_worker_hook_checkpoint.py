@@ -481,6 +481,61 @@ async def test_unknown_startup_liveness_accepts_terminal_hooks_only(
     )
 
 
+async def test_quarantined_worker_delivers_permission_notification(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    store = HookContextStore()
+    payload: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt",
+        "message": "Allow the next task?",
+        "relay_seq": 1,
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        socket = AsyncMock()
+
+        async def dispatch(
+            request: dict[str, object], *, expected: str
+        ) -> dict[str, object]:
+            if expected == "worker_hook_admission":
+                await hooks.admit(request, socket)
+                return dict(socket.send_json.call_args.args[0])
+            assert expected == "hook_event_accepted"
+            await hooks.ingest(payload, worker_only=True)
+            return {"type": expected}
+
+        with patch.object(HookContextClient, "_request", side_effect=dispatch):
+            await HookContextClient.send_event(payload, worker_only=True)
+        [saved] = records.load()
+        assert saved.last_report.get("pending_decision") == {
+            "notification_type": "permission_prompt",
+            "message": "Allow the next task?",
+            "seq": 1,
+        }
+        await hooks.admit({**payload, "hook_event_name": "SessionStart"}, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+        [snapshot] = await actor.workers()
+        assert (
+            snapshot["last_report"]["pending_decision"]
+            == saved.last_report["pending_decision"]
+        )
+
+
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
     tmp_path: Path,
 ) -> None:

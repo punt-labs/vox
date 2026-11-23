@@ -110,9 +110,13 @@ class WorkerInventory:
     def _accepts(self, record: WorkerRecord, event: object) -> bool:
         if "launch_error" in record.last_report or record.state == "stopped":
             return False
-        if self.exited(record) or record.id in self._unconfirmed:
+        if self.exited(record):
             return event in ("Stop", "SessionEnd")
-        return True
+        return record.id not in self._unconfirmed or event in (
+            "Notification",
+            "Stop",
+            "SessionEnd",
+        )
 
     @staticmethod
     def received(record: WorkerRecord, sequence: int) -> bool:
