@@ -592,10 +592,13 @@ ask Vox what the workers did while you were away.
 ### Call setup
 
 The daemon needs an ElevenLabs API key with Agents Write (`convai_write`).
-For coding workers, install Git, tmux and Claude Code on the daemon host
-and sign in to Claude Code as the daemon user. Install the `call` extra for
-audio playback and live microphone input. Scripted calls still play replies,
-so they also need the extra:
+For coding workers, install Git, tmux and Claude Code on the daemon host.
+As the daemon user, sign in to Claude Code and install and enable the
+[Vox plugin](#quick-start) in the Claude Code configuration workers use.
+Its hooks report when a worker is ready and send progress back to the call.
+
+Install the `call` extra for audio playback and live microphone input.
+Scripted calls still play replies, so they also need the extra:
 
 ```bash
 uv tool install --force "punt-vox[call]"
