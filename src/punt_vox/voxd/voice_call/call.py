@@ -127,13 +127,15 @@ class VoiceAgentCall:
                 self._state = "ended"
             self._connected.set()
             try:
-                if depart is not None and self._conversation_id is not None:
-                    await depart()
-            finally:
-                if hung_up:
-                    await self._speaker.finish()
-                else:
+                if not hung_up:
                     await self._speaker.close()
+            finally:
+                try:
+                    if depart is not None and self._conversation_id is not None:
+                        await depart()
+                finally:
+                    if hung_up:
+                        await self._speaker.finish()
 
     async def _converse(
         self,

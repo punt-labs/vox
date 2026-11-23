@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
 
     from punt_vox.voxd.playback import PlaybackQueue
+    from punt_vox.voxd.workers.types import WorkerPayload
 
 _METADATA = {
     "type": "conversation_initiation_metadata",
@@ -356,6 +357,47 @@ async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None
         None,
         "While you were away, the worker in repo finished: Finished during playback.",
     ]
+
+
+async def test_local_hangup_releases_playback_before_saving_departure(
+    tmp_path: Path,
+) -> None:
+    workers, playback = FakeWorkers(), FakePlayback()
+    released_at_departure: list[int] = []
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(_audio(b"\x01\x00" * 8, 1))
+        await socket.wait_closed()
+
+    def depart(_brief: ReturnBrief, _workers: list[WorkerPayload]) -> None:
+        released_at_departure.append(playback.released)
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", playback),
+            connector=_Connector(
+                f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
+            ),
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        with patch.object(ReturnBrief, "depart", depart):
+            assert "result" in await _rpc(
+                handlers,
+                {"type": "call_start", "script": [{"pcm_path": str(pcm)}]},
+            )
+            while not playback.sinks or not playback.sinks[0].fed:
+                await asyncio.sleep(0.01)
+            await _rpc(handlers, {"type": "call_stop"})
+
+    assert released_at_departure == [1]
+    assert not playback.sinks[0].finished
 
 
 async def test_start_without_a_key_is_refused(
