@@ -13,6 +13,7 @@ from test_workers import FakeWorkerProvider, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.hook_decisions import HookDecisions
+from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerProvider
@@ -119,6 +120,20 @@ def test_prompt_epoch_delivery_invariant_requires_current_prompt(
                 registry.steer(worker.id, "Continue.", prompt_epoch=observed)
             send.assert_not_called()
     registry.stop(worker.id)
+
+
+def test_decision_retry_identity_invariant_uses_worker_choice_and_question() -> None:
+    """DecisionRetryIdentity excludes words and separates choices and questions."""
+    answer: dict[str, object] = {
+        "worker_id": "worker",
+        "choice": "approve",
+        "prompt_seq": 3,
+        "words": "Yes.",
+    }
+    identity = SteeringTool.identity(answer)
+    assert identity == SteeringTool.identity({**answer, "words": "YES! Allow it."})
+    for changed in ({"worker_id": "other"}, {"choice": "deny"}, {"prompt_seq": 5}):
+        assert identity != SteeringTool.identity({**answer, **changed})
 
 
 def test_decision_receipt_heard_invariant_requires_question_at_delivery() -> None:

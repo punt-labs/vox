@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING, ClassVar, Final, Self, cast, final
+from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
 from punt_vox.voxd.voice_call.result_cache import ToolResultCache
+from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
@@ -55,8 +56,18 @@ class BossTools:
                         "type": "string",
                         "enum": ["approve", "deny"],
                         "description": (
-                            "Required for a pending decision: approve=yes, deny=no. "
+                            "Required for permission_prompt: approve=yes, deny=no. "
+                            "Also pass prompt_seq for the question you asked. "
                             "Omit for ordinary input."
+                        ),
+                    },
+                    "prompt_seq": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Required with choice: seq of the permission prompt you "
+                            "asked the person about, from the voxd update or "
+                            "worker_status. Never substitute a newer prompt's seq."
                         ),
                     },
                     "urgent": {
@@ -111,9 +122,10 @@ class BossTools:
 
     async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
         """Return the JSON result for the agent and whether it reports an error."""
+        steering = SteeringTool(self._workers, self._directory)
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
-            "steer_worker": self._steer,
+            "steer_worker": steering.send,
             "worker_status": self._status,
             "list_workers": self._list,
             "stop_worker": self._stop,
@@ -124,13 +136,20 @@ class BossTools:
             return json.dumps({"error": f"unknown tool {name}"}), True
 
         try:
-            resolved = await self._with_defaults(name, arguments)
+            resolved = (
+                await steering.resolve(arguments)
+                if name == "steer_worker"
+                else self._with_defaults(name, arguments)
+            )
+            identity = (
+                steering.identity(resolved) if name == "steer_worker" else resolved
+            )
 
             async def execute() -> str:
                 return json.dumps(await operation(resolved), ensure_ascii=False)
 
             result = await self._cache.run(
-                ToolResultCache.key(name, resolved),
+                ToolResultCache.key(name, identity),
                 execute,
                 durable=name in self._DURABLE,
             )
@@ -144,22 +163,11 @@ class BossTools:
             return json.dumps({"error": str(exc)}, ensure_ascii=False), True
         return result, False
 
-    async def _with_defaults(
+    def _with_defaults(
         self, name: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        """Resolve steering against its current prompt, and normalize tool defaults."""
+        """Normalize launch defaults before deriving the result-cache identity."""
         defaults: dict[str, object] = {}
-        if name == "steer_worker":
-            worker = await self._directory.find(self._text(arguments, "worker_id"))
-            epoch = worker["last_report"].get("prompt_epoch", 0)
-            if type(epoch) is not int or epoch < 0:
-                raise ValueError("worker prompt epoch must be a non-negative integer")
-            return {
-                "urgent": False,
-                **arguments,
-                "worker_id": worker["id"],
-                "prompt_epoch": epoch,
-            }
         if name == "start_worker" and len(repos := self._projects.repos()) == 1:
             defaults["project"] = repos[0]
         return {**defaults, **arguments}
@@ -173,22 +181,6 @@ class BossTools:
         if not isinstance(project, str):
             raise ValueError("project must be a string")
         return WorkerBrief.summary(await self._workers.start(task, project))
-
-    async def _steer(self, arguments: dict[str, object]) -> object:
-        urgent = arguments.get("urgent", False)
-        if not isinstance(urgent, bool):
-            raise ValueError("urgent must be a boolean")
-        words = self._text(arguments, "words")
-        choice = arguments.get("choice")
-        if choice is not None and choice not in ("approve", "deny"):
-            raise ValueError("choice must be approve or deny")
-        return await self._workers.steer(
-            self._text(arguments, "worker_id"),
-            words,
-            urgent=urgent,
-            prompt_epoch=cast("int", arguments["prompt_epoch"]),
-            choice=choice,
-        )
 
     async def _status(self, arguments: dict[str, object]) -> object:
         worker = await self._directory.find(self._text(arguments, "worker_id"))

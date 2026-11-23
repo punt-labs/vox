@@ -30,11 +30,13 @@ if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
-@pytest.mark.parametrize("advance", [False, True])
+@pytest.mark.parametrize(
+    "advance", ["none", "before_roster", "after_roster", "cleared"]
+)
 @pytest.mark.parametrize("choice", [None, "approve", "deny"])
 async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
     tmp_path: Path,
-    advance: bool,
+    advance: str,
     choice: DecisionChoice | None,  # None tests an ordinary idle-text instruction.
 ) -> None:
     provider = FakeWorkerProvider()
@@ -62,8 +64,13 @@ async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
     original = WorkerActor.workers
 
     async def snapshot_then_next_prompt(self: WorkerActor) -> list[WorkerPayload]:
+        if advance in ("before_roster", "cleared"):
+            update = {**question, "relay_seq": 5}
+            if advance == "cleared":
+                update["hook_event_name"] = "PostToolUse"
+            await hooks.ingest(update, worker_only=True)
         snapshot = await original(self)
-        if advance:
+        if advance == "after_roster":
             await hooks.ingest({**question, "relay_seq": 5}, worker_only=True)
         return snapshot
 
@@ -83,11 +90,24 @@ async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
     ):
         result, error = await BossTools(actor, allowlist).answer(
             "steer_worker",
-            {"worker_id": worker.id, "words": "Continue.", "choice": choice},
+            {
+                "worker_id": worker.id,
+                "words": "Continue.",
+                "choice": choice,
+                "prompt_seq": 3 if choice is not None else None,
+            },
         )
-        assert error == advance
-        if advance:
-            assert "new prompt" in result and "ask the person again" in result
+        rejected = advance == "after_roster" or (
+            choice is not None and advance in ("before_roster", "cleared")
+        )
+        assert error == rejected
+        if rejected:
+            assert (
+                "different prompt now" in result
+                if choice is not None
+                else "new prompt" in result
+            )
+            assert "ask the person again" in result
             decide.assert_not_called()
             steer.assert_not_called()
         else:
@@ -347,6 +367,7 @@ async def test_same_worker_serialized_but_other_workers_remain_concurrent() -> N
         urgent: bool,
         choice: object = None,
         prompt_epoch: object = None,  # None binds direct control to the live prompt.
+        prompt_seq: object = None,  # None is ordinary text, not a permission answer.
     ) -> int:
         baseline = sequences.get(worker, 0)
         sequences[worker] = baseline + 1
@@ -411,13 +432,23 @@ async def test_queued_steer_times_out_without_delivery() -> None:
                     steering.handle({"worker_id": "one", "words": "queued"}), 1
                 )
             registry.steer.assert_called_once_with(
-                "one", "first", urgent=False, choice=None, prompt_epoch=None
+                "one",
+                "first",
+                urgent=False,
+                choice=None,
+                prompt_epoch=None,
+                prompt_seq=None,
             )
         finally:
             release.set()
             await asyncio.wait_for(first, 1)
         registry.steer.assert_called_once_with(
-            "one", "first", urgent=False, choice=None, prompt_epoch=None
+            "one",
+            "first",
+            urgent=False,
+            choice=None,
+            prompt_epoch=None,
+            prompt_seq=None,
         )
         response = await steering.handle({"worker_id": "one", "words": "after"})
         assert response["receipt_seq"] == 5
@@ -451,7 +482,7 @@ async def test_no_delivery_after_deadline_while_actor_is_busy() -> None:
     )
     assert response["heard"] is True
     registry.steer.assert_called_once_with(
-        "one", "fresh", urgent=False, choice=None, prompt_epoch=None
+        "one", "fresh", urgent=False, choice=None, prompt_epoch=None, prompt_seq=None
     )
 
 

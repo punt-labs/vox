@@ -70,6 +70,8 @@ class WorkerActor:
         prompt_epoch: int
         | None = None,  # None binds direct control to the live prompt.
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
     ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         return await self.steer_request(
@@ -79,6 +81,7 @@ class WorkerActor:
                 "urgent": urgent,
                 "choice": choice,
                 "prompt_epoch": prompt_epoch,
+                "prompt_seq": prompt_seq,
             }
         )
 

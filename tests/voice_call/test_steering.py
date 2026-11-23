@@ -1,0 +1,54 @@
+"""Steering identity follows the question asked, not the newest notification."""
+
+from __future__ import annotations
+
+import pytest
+
+from punt_vox.voxd.voice_call.steering import SteeringTool
+from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
+
+from .fakes import FakeWorkers, payload
+
+
+async def test_choice_resolution_keeps_the_announced_question() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=9)]
+    resolved = await SteeringTool(workers, WorkerDirectory(workers)).resolve(
+        {"worker_id": "abcd", "words": "Yes!", "choice": "approve", "prompt_seq": 4}
+    )
+    assert resolved["worker_id"] == "abcd1234"
+    assert resolved["prompt_seq"] == resolved["prompt_epoch"] == 4
+
+
+@pytest.mark.parametrize("seq", [None, 0, -1, True, "4"])
+async def test_choice_requires_a_positive_prompt_sequence(seq: object) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=9)]
+    with pytest.raises(ValueError, match="choice requires prompt_seq"):
+        await SteeringTool(workers, WorkerDirectory(workers)).resolve(
+            {
+                "worker_id": "abcd1234",
+                "words": "Yes",
+                "choice": "approve",
+                "prompt_seq": seq,
+            }
+        )
+    assert workers.steered == []
+
+
+async def test_empty_answer_is_rejected_before_caching() -> None:
+    workers = FakeWorkers()
+    with pytest.raises(ValueError, match="words must be a non-empty string"):
+        await SteeringTool(workers, WorkerDirectory(workers)).resolve(
+            {"worker_id": "abcd", "words": " "}
+        )
+
+
+async def test_ordinary_text_keeps_exact_words_and_current_epoch() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=9)]
+    tool = SteeringTool(workers, WorkerDirectory(workers))
+    first = await tool.resolve({"worker_id": "abcd", "words": "Set X"})
+    second = await tool.resolve({"worker_id": "abcd", "words": "set X"})
+    assert first["prompt_epoch"] == 9
+    assert tool.identity(first) != tool.identity(second)

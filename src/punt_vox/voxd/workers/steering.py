@@ -52,6 +52,7 @@ class WorkerSteering:
                 deadline=deadline,
                 choice=choice,
                 prompt_epoch=parse_optional_int(msg, "prompt_epoch"),
+                prompt_seq=parse_optional_int(msg, "prompt_seq"),
             )
         finally:
             worker_lock.release()
@@ -75,6 +76,7 @@ class WorkerSteering:
         deadline: float,
         choice: DecisionChoice | None,  # None submits ordinary follow-up text.
         prompt_epoch: int | None,  # None binds direct control to the live prompt.
+        prompt_seq: int | None,  # None is ordinary text, not a permission answer.
     ) -> SteerReceipt:
         await self._acquire(self._lock, deadline)
         try:
@@ -87,6 +89,7 @@ class WorkerSteering:
                 urgent=urgent,
                 choice=choice,
                 prompt_epoch=prompt_epoch,
+                prompt_seq=prompt_seq,
             )
         finally:
             self._lock.release()

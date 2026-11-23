@@ -30,11 +30,13 @@ async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> Non
         "worker_id": "abcd1234",
         "words": "Yes, allow it.",
         "choice": "approve",
+        "prompt_seq": 4,
     }
     first = await tools.answer("steer_worker", answer)
     assert not first[1]
     assert await tools.answer("steer_worker", answer) == first
     workers.known = [payload("abcd1234", pending_decision={"seq": 9}, prompt_epoch=9)]
+    answer["prompt_seq"] = 9
     assert not (await tools.answer("steer_worker", answer))[1]
     assert workers.steered == [
         ("abcd1234", "Yes, allow it.", False),
@@ -65,10 +67,13 @@ async def test_reissued_steer_in_one_epoch_replays_even_after_pending_clears(
     arguments: dict[str, object] = {"worker_id": "abcd", "words": "Continue."}
     if choice is not None:
         arguments["choice"] = choice
+        arguments["prompt_seq"] = 4
     first = await tools.answer("steer_worker", arguments)
     assert not first[1]
-    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    workers.known = [payload("abcd1234", prompt_epoch=9 if choice is not None else 4)]
     reissued = {**arguments, "worker_id": "abcd1234", "urgent": False}
+    if choice is not None:
+        reissued["words"] = "CONTINUE!"
     assert await tools.answer("steer_worker", reissued) == first
     assert workers.steered == [("abcd1234", "Continue.", False)]
     assert tools.replayed == 1
@@ -138,7 +143,12 @@ async def test_explicit_denial_and_receipt_reach_the_worker_boundary() -> None:
     workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
     result, error = await _tools(workers).answer(
         "steer_worker",
-        {"worker_id": "abcd1234", "words": "No, don't run that", "choice": "deny"},
+        {
+            "worker_id": "abcd1234",
+            "words": "No, don't run that",
+            "choice": "deny",
+            "prompt_seq": 4,
+        },
     )
     assert not error
     assert json.loads(result)["choice"] == "deny"

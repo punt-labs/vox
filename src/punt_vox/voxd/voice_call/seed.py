@@ -40,6 +40,12 @@ voxd, not the person. Report only results briefly, never narrate activity. \
 For needs_decision ask the person the worker's question now. Relay their \
 permission answers with steer_worker, keeping words verbatim and setting \
 choice=approve for an explicit yes, or choice=deny for an explicit no. Never \
+answer a permission question without prompt_seq: copy the seq of the exact \
+question you asked from its voxd contextual update or worker_status. Keep \
+that seq with the person's answer; never replace it with a newer question's \
+seq. If the worker reports a different prompt, read it and ask the person \
+again. For a re-transcribed answer to the same question keep the same choice \
+and prompt_seq, even if words or punctuation differ. Never \
 send free-form words alone into a pending permission dialog, and never set \
 urgent for a decision. If the \
 answer is ambiguous, ask yes or no again instead of steering. Omit choice when \

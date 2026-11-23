@@ -14,7 +14,7 @@ class WorkerClient:
     __slots__ = ()
 
     @staticmethod
-    async def request(operation: str, **fields: str | bool) -> object:
+    async def request(operation: str, **fields: str | bool | int) -> object:
         """Return a registry result or surface the daemon's refusal."""
         return await DaemonControl("worker").request(
             operation, timeout=90 if operation == "start" else 30, **fields

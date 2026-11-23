@@ -236,13 +236,18 @@ def test_registry_hears_pending_dialog_without_user_prompt(
     }
     store.ingest(payload, worker_input=True)
     with (
+        patch.object(
+            FakeWorkerProvider, "progress", return_value=dict(store.snapshot(worker.id))
+        ),
         patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),
         patch.object(TrivialProfile, "inputs_since", side_effect=profile.inputs_since),
         patch.object(
             TrivialProfile, "matches_input", side_effect=profile.matches_input
         ),
     ):
-        baseline = registry.steer(worker.id, "The person's answer", choice=choice)
+        baseline = registry.steer(
+            worker.id, "The person's answer", choice=choice, prompt_seq=3
+        )
         assert baseline == 3
         assert registry.receipt(worker.id, "Yes, allow it.", baseline) is None
         store.ingest(

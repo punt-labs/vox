@@ -346,7 +346,12 @@ events cannot resurrect or clear a newer question.
 \end{schema}
 
 DecisionDelivery admits only an explicit approve or deny choice while a
-permission question is pending. Free-form steering without a choice is refused
+permission question is pending. Its question input is the prompt\_seq copied
+from the exact question announced to the person, not a sequence sampled when
+the answer arrives. Delivery checks this sequence against the pending permission
+question under the actor lock; a mismatch or cleared question returns ``worker
+has a different prompt now'' without sending any keys. The agent must ask the
+new question before answering it. Free-form steering without a choice is refused
 for permission\_prompt; a choice without a pending permission question and an urgent choice are also
 refused, without sending any keys. The harness maps approve to its explicit
 Yes selector and deny to its decline key; no answer text is pasted into the
@@ -428,15 +433,27 @@ promptEpoch is the newest admitted Stop, permission\_prompt or idle\_prompt
 sequence, exposed as prompt\_epoch through WorkerControl's live reports. Input
 acknowledgements clear a question but do not change its epoch. Unadmitted or
 stale hooks cannot advance it. The per-call steering cache uses the canonical
-worker identity, exact words, choice, urgency and prompt epoch, not the
-provider tool-call ID. An interrupted request reissued with a new ID in the
-same epoch replays its receipt; identical words in a newer epoch are delivered
-again, for both idle text and permission choices.
+worker identity, exact words, urgency and prompt epoch for ordinary text, not
+the provider tool-call ID. Permission choices instead use worker identity,
+choice and the announced question's sequence, ignoring the re-transcribed
+words. A genuine retry replays its receipt even after the question has cleared;
+a choice for a different question has a different identity.
 The observed epoch also accompanies delivery through WorkerControl. Under the
 same actor lock used to ingest hooks, delivery reconciles the current epoch
 and refuses a stale request before sending any keys. The error tells the agent
 to read the new prompt and ask the person again. Direct control without a
 sampled epoch targets the live prompt instead.
+Permission choices always require the announced question's sequence, including
+direct control; that check is never replaced by sampling the current epoch.
+
+\begin{schema}{DecisionRetryIdentity}
+  worker? : WORKER \\
+  choice? : DecisionChoice \\
+  question? : \nat \\
+  key! : WORKER \cross DecisionChoice \cross \nat
+\where
+  key! = (worker?, choice?, question?)
+\end{schema}
 
 \begin{schema}{PromptEpochDelivery}
   \Xi WorkerDecisions \\

@@ -27,6 +27,8 @@ def test_seed_maps_explicit_answers_and_reasks_ambiguous_ones() -> None:
     assert "choice=deny for an explicit no" in prompt
     assert "ambiguous, ask yes or no again instead of steering" in prompt
     assert "never set urgent for a decision" in prompt
+    assert "copy the seq of the exact question you asked" in prompt
+    assert "never replace it with a newer question's seq" in prompt
 
 
 def test_seed_drops_oldest_workers_to_stay_under_10_kb() -> None:

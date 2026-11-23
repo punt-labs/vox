@@ -176,6 +176,8 @@ class WorkerRegistry:
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
         prompt_epoch: int
         | None = None,  # None binds direct control to the live prompt.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
     ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
         if not words.strip():
@@ -187,6 +189,8 @@ class WorkerRegistry:
         record = self._checkpoint(self._lifecycle.observe(self._get(worker_id)))
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
+        if choice is not None:
+            self._question(record, prompt_seq)
         if prompt_epoch is not None and prompt_epoch != record.last_report.get(
             "prompt_epoch", 0
         ):
@@ -202,6 +206,27 @@ class WorkerRegistry:
         return SteerDelivery(profile, self._providers[record.provider]).send(
             record, words, urgent=urgent, choice=choice
         )
+
+    @staticmethod
+    def _question(
+        record: WorkerRecord,
+        prompt_seq: int | None,  # None cannot identify a permission question.
+    ) -> None:
+        if type(prompt_seq) is not int or prompt_seq <= 0:
+            raise ValueError(
+                "choice requires prompt_seq from the announced permission prompt"
+            )
+        pending = record.last_report.get("pending_decision")
+        if (
+            not isinstance(pending, dict)
+            or cast("dict[str, object]", pending).get("notification_type")
+            != "permission_prompt"
+            or cast("dict[str, object]", pending).get("seq") != prompt_seq
+        ):
+            raise ValueError(
+                "worker has a different prompt now; read worker_status and "
+                "ask the person again"
+            )
 
     # PY-TS-14: absence means no later input matches this steering request yet.
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:

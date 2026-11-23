@@ -36,6 +36,8 @@ class WorkerControl(Protocol):
         urgent: bool,
         prompt_epoch: int,
         choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
+        prompt_seq: int
+        | None = None,  # None is ordinary text, not a permission answer.
     ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         ...
