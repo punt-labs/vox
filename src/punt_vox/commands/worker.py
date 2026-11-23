@@ -56,7 +56,11 @@ class WorkerCli:
 
     @staticmethod
     def steer(
-        worker_id: str, words: str, *, urgent: bool = False, choice: str | None = None
+        worker_id: str,
+        words: str,
+        *,
+        urgent: bool = False,
+        choice: str | None = None,  # None submits ordinary follow-up text.
     ) -> None:
         """Send literal input and await acknowledgement, optionally interrupting."""
         fields: dict[str, str | bool] = {

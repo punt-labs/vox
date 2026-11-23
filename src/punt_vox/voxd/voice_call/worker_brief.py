@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, final
+from typing import TYPE_CHECKING, Final, cast, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
@@ -34,7 +34,11 @@ class WorkerBrief:
             "project": worker["project"],
             "state": worker["state"],
             "decision_choices": ["approve", "deny"]
-            if worker["last_report"].get("pending_decision") is not None
+            if isinstance(
+                pending := worker["last_report"].get("pending_decision"), dict
+            )
+            and cast("dict[str, object]", pending).get("notification_type")
+            == "permission_prompt"
             else [],
         }
 

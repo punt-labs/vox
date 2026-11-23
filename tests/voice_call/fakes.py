@@ -36,7 +36,7 @@ class FakeWorkers:
         self.allowed = projects
         self.started: list[tuple[str, str]] = []
         self.steered: list[tuple[str, str, bool]] = []
-        self.choices: list[DecisionChoice | None] = []
+        self.choices: list[DecisionChoice | None] = []  # None records ordinary text.
         self.stopped: list[str] = []
         self.known: list[WorkerPayload] = []
         self.gate = asyncio.Event()
@@ -66,7 +66,7 @@ class FakeWorkers:
         words: str,
         *,
         urgent: bool,
-        choice: DecisionChoice | None = None,
+        choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
     ) -> SteerReceipt:
         self.steered.append((worker_id, words, urgent))
         self.choices.append(choice)

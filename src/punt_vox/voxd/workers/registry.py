@@ -173,7 +173,7 @@ class WorkerRegistry:
         words: str,
         *,
         urgent: bool = False,
-        choice: DecisionChoice | None = None,
+        choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
     ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
         if not words.strip():

@@ -31,7 +31,10 @@ class HookDecisions:
         if seq <= self._high:
             return
         self._high = seq
-        if self._pending is not None:
+        if (
+            self._pending is not None
+            and self._pending["notification_type"] == "permission_prompt"
+        ):
             self._receipts.append((self._pending["seq"], seq))
         if event != "Notification":
             self._pending = None
@@ -47,8 +50,13 @@ class HookDecisions:
         return self._pending.copy() if self._pending is not None else None
 
     def baseline(self) -> int:
-        """Return the newest event only while waiting for a decision."""
-        return self._high if self._pending is not None else 0
+        """Return the newest event only while waiting for a permission choice."""
+        return (
+            self._high
+            if self._pending is not None
+            and self._pending["notification_type"] == "permission_prompt"
+            else 0
+        )
 
     def receipts(self, baseline: int) -> list[int]:
         """Only accept progress from a question already present at delivery."""

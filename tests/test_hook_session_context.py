@@ -42,7 +42,7 @@ def test_worker_decision_and_input_are_independent_of_latest_result() -> None:
     assert snapshot["pending_decision"] is None
     assert session.last_input() == (2, "task")
     assert session.inputs_since(1) == [(2, "task")]
-    assert session.decisions.receipts(3) == [5]
+    assert session.decisions.receipts(3) == []
 
 
 def test_non_worker_notifications_do_not_create_worker_decisions() -> None:

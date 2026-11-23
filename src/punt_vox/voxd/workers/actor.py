@@ -67,7 +67,7 @@ class WorkerActor:
         words: str,
         *,
         urgent: bool,
-        choice: DecisionChoice | None = None,
+        choice: DecisionChoice | None = None,  # None submits ordinary follow-up text.
     ) -> SteerReceipt:
         """Deliver words verbatim and report whether the worker heard them."""
         return await self.steer_request(

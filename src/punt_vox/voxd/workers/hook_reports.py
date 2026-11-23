@@ -27,7 +27,12 @@ class HookReports:
         return self
 
     def observe(
-        self, session: str, payload: dict[str, object], pending: PendingDecision | None
+        self,
+        session: str,
+        payload: dict[str, object],
+        pending: PendingDecision | None,
+        *,
+        latest: int,
     ) -> WorkerProgress | None:
         """Project a validated event only after its checkpoint succeeded."""
         history = self._sessions.setdefault(session, HookGaps())
@@ -36,6 +41,8 @@ class HookReports:
             self._sessions.popitem(last=False)
         seq = cast("int", payload["relay_seq"])
         if not history.observe(seq):
+            return None
+        if payload.get("hook_event_name") == "Stop" and seq < latest:
             return None
         return self._event(session, seq, payload, pending)
 

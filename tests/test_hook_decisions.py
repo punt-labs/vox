@@ -41,9 +41,11 @@ def test_pending_snapshot_is_detached_and_next_hook_acknowledges_it() -> None:
 def test_receipt_history_is_bounded_and_missing_messages_are_empty() -> None:
     state = HookDecisions()
     for sequence in range(2, 140, 2):
-        state.ingest(sequence, "Notification", {"notification_type": "idle_prompt"})
+        state.ingest(
+            sequence, "Notification", {"notification_type": "permission_prompt"}
+        )
         assert state.pending() == {
-            "notification_type": "idle_prompt",
+            "notification_type": "permission_prompt",
             "message": "",
             "seq": sequence,
         }

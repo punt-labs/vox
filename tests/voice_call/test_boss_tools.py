@@ -67,7 +67,12 @@ async def test_invalid_choice_never_reaches_worker() -> None:
 
 async def test_status_advertises_choices_only_with_a_pending_decision() -> None:
     workers = FakeWorkers()
-    workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
+    workers.known = [
+        payload(
+            "abcd1234",
+            pending_decision={"seq": 4, "notification_type": "permission_prompt"},
+        )
+    ]
     tools = _tools(workers)
     result, error = await tools.answer(
         "worker_status", {"worker_id": "abcd1234"}, tool_call_id="pending"
@@ -77,6 +82,16 @@ async def test_status_advertises_choices_only_with_a_pending_decision() -> None:
     workers.known = [payload("abcd1234")]
     result, error = await tools.answer(
         "worker_status", {"worker_id": "abcd1234"}, tool_call_id="clear"
+    )
+    assert not error
+    assert json.loads(result)["decision_choices"] == []
+    workers.known = [
+        payload(
+            "abcd1234", pending_decision={"seq": 5, "notification_type": "idle_prompt"}
+        )
+    ]
+    result, error = await tools.answer(
+        "worker_status", {"worker_id": "abcd1234"}, tool_call_id="idle"
     )
     assert not error
     assert json.loads(result)["decision_choices"] == []

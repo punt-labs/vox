@@ -14,4 +14,4 @@ class SteerReceipt(TypedDict):
     heard: bool
     receipt_seq: int | None  # PY-TS-14: no sequence exists without a heard receipt.
     urgent: bool
-    choice: DecisionChoice | None
+    choice: DecisionChoice | None  # None submits ordinary follow-up text.

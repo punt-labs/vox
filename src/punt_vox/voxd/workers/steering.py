@@ -72,7 +72,7 @@ class WorkerSteering:
         *,
         urgent: bool,
         deadline: float,
-        choice: DecisionChoice | None,
+        choice: DecisionChoice | None,  # None submits ordinary follow-up text.
     ) -> SteerReceipt:
         await self._acquire(self._lock, deadline)
         try:

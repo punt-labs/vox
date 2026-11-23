@@ -30,7 +30,7 @@ class SteerDelivery:
         words: str,
         *,
         urgent: bool,
-        choice: DecisionChoice | None,
+        choice: DecisionChoice | None,  # None submits ordinary follow-up text.
     ) -> int:
         """Refuse ambiguous dialog input before invoking any provider operation."""
         previous = self._profile.last_input(record.id)

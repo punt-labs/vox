@@ -297,7 +297,7 @@ only the per-worker lock; waiting for the actor cannot renew deadline.
 \end{schema}
 
 cursor? is the latest harness input sequence sampled before sending, or zero
-when no input has been observed. When a decision is pending, cursor? instead
+when no input has been observed. When a permission decision is pending, cursor? instead
 uses the newest admitted hook sequence. ReceiptHeard uses the worker's own later
 input event. Stale or differently worded input cannot take this transition.
 The profile exposes inputs since a cursor, backed by the newest 32 input
@@ -310,6 +310,10 @@ does not promise unbounded delivery history.
 \begin{zed}
   DecisionChoice ::= approve | deny
 \end{zed}
+
+\begin{axdef}
+  permissionPrompt : WORDS
+\end{axdef}
 
 Only admitted worker events update decision state. Notification kinds
 permission\_prompt and idle\_prompt retain their clipped message and sender
@@ -328,21 +332,27 @@ events cannot resurrect or clear a newer question.
   \Xi WorkerDecisions \\
   worker? : WORKER \\
   choice? : DecisionChoice \\
+  question? : \nat \\
+  message? : WORDS \\
   sentChoice! : DecisionChoice
 \where
   worker? \in \dom pendingDecision \\
+  pendingDecision~worker? = (question?, permissionPrompt, message?) \\
   sentChoice! = choice?
 \end{schema}
 
 DecisionDelivery admits only an explicit approve or deny choice while a
-question is pending. Free-form steering without a choice is refused while
-pending; a choice without a pending question and an urgent choice are also
+permission question is pending. Free-form steering without a choice is refused
+for permission\_prompt; a choice without a pending permission question and an urgent choice are also
 refused, without sending any keys. The harness maps approve to its explicit
 Yes selector and deny to its decline key; no answer text is pasted into the
 dialog. For Claude these are the numeric key 1 and Escape, respectively,
 neither followed by Enter. A receipt includes the sent choice even on an
 unheard timeout; heard acknowledges a later hook, not permission approval.
 Ambiguous spoken answers require another yes/no question before delivery.
+An idle\_prompt still publishes needs\_decision, but waits for ordinary text,
+not permission keys. It accepts verbatim words without a choice and requires
+a matching UserPromptSubmit receipt; choices are refused for idle prompts.
 
 \begin{schema}{InitWorkerDecisions}
   WorkerDecisions
@@ -371,10 +381,10 @@ DecisionNotification admits only permission\_prompt and idle\_prompt kinds.
   worker? : WORKER \\
   sequence? : \nat \\
   question? : \nat \\
-  kind?, message? : WORDS \\
+  message? : WORDS \\
   retained : \power (\nat \cross \nat)
 \where
-  pendingDecision~worker? = (question?, kind?, message?) \\
+  pendingDecision~worker? = (question?, permissionPrompt, message?) \\
   sequence? > decisionHigh~worker? \\
   pendingDecision' = pendingDecision \\
   decisionHigh' = decisionHigh \\
@@ -384,7 +394,7 @@ DecisionNotification admits only permission\_prompt and idle\_prompt kinds.
   decisionReceipts' = decisionReceipts \oplus \{worker? \mapsto retained\}
 \end{schema}
 
-DecisionHookReceipt runs before folding any newer hook while a question is
+DecisionHookReceipt runs before folding any newer hook while a permission question is
 pending, including another Notification. DecisionNotification then replaces
 the question for qualifying kinds; other Notifications retain the question
 while advancing decisionHigh. Non-Notification events use DecisionProgress.
@@ -432,9 +442,11 @@ UserPromptSubmit or Stop is introduced for dialog answers.
 After checkpointing, admitted Stop and decision notifications publish one
 provider-neutral live report per sender sequence. Decision notifications publish
 only when the store's current pending question has that notification's sequence;
-delayed notifications cannot ask an obsolete question. A separate bounded sequence
+delayed notifications cannot ask an obsolete question. Stop reports publish only
+when no newer admitted hook supersedes their sequence. A suppressed older Stop
+cannot replace a queued result. A separate bounded sequence
 window records successful checkpoints, so a failed checkpoint can be retried
-and a delayed event filling a tracked gap still publishes once. Each subscriber retains at
+and a still-current event filling a tracked gap publishes once. Each subscriber retains at
 most 32 reports, dropping the oldest on overflow; absent subscribers lose
 reports. The registry remains the durable status source. A live call sends
 hidden contextual\_update immediately, then a marked voxd user\_message to

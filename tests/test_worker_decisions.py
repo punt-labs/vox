@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
-from punt_vox.voxd.voice_call.progress import ProgressEvents
+from punt_vox.voxd.voice_agent.session import Conversation
+from punt_vox.voxd.voice_call.progress import CallProgress, ProgressEvents
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.contracts import WorkerInput
 from punt_vox.voxd.workers.hooks import WorkerHooks
@@ -119,7 +120,7 @@ async def test_admitted_publication_deduplicated(tmp_path: Path) -> None:
             "last_assistant_message": "late result",
         }
         await hooks.ingest(late, worker_only=True)
-        assert queue.get_nowait().text == "late result"
+        assert queue.empty()
         await hooks.ingest(late, worker_only=True)
         assert queue.empty()
         retry = {**payload, "relay_seq": 6}
@@ -199,7 +200,10 @@ def test_choice_keys_never_paste_words_or_confirm_highlighted_yes(
     ],
 )
 def test_mismatched_decision_requests_never_touch_the_transport(
-    tmp_path: Path, pending: bool, choice: DecisionChoice | None, urgent: bool
+    tmp_path: Path,
+    pending: bool,
+    choice: DecisionChoice | None,  # None tests refusal of free text while blocked.
+    urgent: bool,
 ) -> None:
     provider = FakeWorkerProvider()
     provider.ready = True
@@ -245,8 +249,108 @@ async def test_delayed_decision_does_not_publish_an_obsolete_question(
         )
         await hooks.ingest(notification, worker_only=True)
         assert queue.empty()
+
         assert store.snapshot(worker.id)["pending_decision"] is None
         await hooks.ingest({**notification, "relay_seq": 4}, worker_only=True)
         assert queue.get_nowait().kind == "needs_decision"
         await hooks.ingest(notification, worker_only=True)
         assert queue.empty()
+
+
+def test_idle_prompt_accepts_followup_text_and_requires_a_prompt_receipt(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    profile = ClaudeProfile(store)
+    event: dict[str, object] = {
+        "session_id": worker.id,
+        "hook_event_name": "UserPromptSubmit",
+        "relay_seq": 1,
+        "prompt": "task",
+    }
+    store.ingest(event, worker_input=True)
+    store.ingest(
+        {
+            **event,
+            "relay_seq": 2,
+            "hook_event_name": "Notification",
+            "notification_type": "idle_prompt",
+        },
+        worker_input=True,
+    )
+    assert store.snapshot(worker.id)["pending_decision"] is not None
+    assert profile.last_input(worker.id) == WorkerInput(1, "task")
+    with (
+        patch.object(TrivialProfile, "last_input", side_effect=profile.last_input),
+        patch.object(TrivialProfile, "inputs_since", side_effect=profile.inputs_since),
+        patch.object(
+            TrivialProfile, "matches_input", side_effect=profile.matches_input
+        ),
+        patch.object(FakeWorkerProvider, "steer") as text,
+        patch.object(FakeWorkerProvider, "decide") as decision,
+    ):
+        for choice in ("approve", "deny"):
+            with pytest.raises(ValueError, match="choice requires"):
+                registry.steer(worker.id, "answer", choice=choice)
+        baseline = registry.steer(worker.id, "followup")
+        text.assert_called_once()
+        decision.assert_not_called()
+        store.ingest(
+            {**event, "relay_seq": 3, "hook_event_name": "PostToolUse"},
+            worker_input=True,
+        )
+        assert registry.receipt(worker.id, "followup", baseline) is None
+        store.ingest({**event, "relay_seq": 4, "prompt": "followup"}, worker_input=True)
+        assert registry.receipt(worker.id, "followup", baseline) == 4
+        assert store.snapshot(worker.id)["pending_decision"] is None
+
+
+async def test_superseded_stop_is_silent_and_preserves_a_queued_result(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    provider.ready = True
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("task", str(tmp_path), provider="fake", harness="test")
+    events = ProgressEvents()
+    hooks = WorkerHooks(HookContextStore(), registry, asyncio.Lock(), events)
+    conversation = AsyncMock(spec=Conversation)
+    payload: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Stop",
+        "relay_seq": 5,
+        "last_assistant_message": "current result",
+    }
+    with patch.object(CallProgress, "LULL", 0.1):
+        task = asyncio.create_task(CallProgress(events).run(conversation))
+        try:
+            await asyncio.sleep(0)
+            await hooks.ingest(payload, worker_only=True)
+            await asyncio.sleep(0.01)
+            conversation.send_text.assert_not_awaited()
+            await hooks.ingest(
+                {**payload, "relay_seq": 8, "hook_event_name": "PostToolUse"},
+                worker_only=True,
+            )
+            await hooks.ingest(
+                {
+                    **payload,
+                    "relay_seq": 6,
+                    "last_assistant_message": "obsolete result",
+                },
+                worker_only=True,
+            )
+            await asyncio.sleep(0.12)
+            conversation.send_context.assert_awaited_once()
+            assert "current result" in conversation.send_context.call_args.args[0]
+            conversation.send_text.assert_awaited_once()
+            assert "event 5: finished" in conversation.send_text.call_args.args[0]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
