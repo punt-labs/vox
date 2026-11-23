@@ -475,10 +475,6 @@ _CAMEL_BOUNDARY = re.compile(
     r"|(?<=[0-9])(?=[a-zA-Z])"  # foo2bar → foo2 bar (combined: foo 2 bar)
 )
 
-# Tokens that look like file paths — leave these alone.
-_FILE_PATH_RE = re.compile(r"^[~/.]?/")
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -574,7 +570,7 @@ def _normalize_token(token: str) -> str:
     core, suffix = SpeechPunctuation.split(token)
 
     # File paths: keep core as-is but still strip non-speech wrapping
-    if not core or _FILE_PATH_RE.match(core):
+    if not core or SpeechPunctuation.is_path(core):
         return core + suffix
 
     if "_" in core:

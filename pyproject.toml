@@ -55,6 +55,7 @@ dependencies = [
     # size guard allocating attacker-controlled segments before rejecting them,
     # patched in 1.7.6); the floor keeps a PyPI install off them.
     "joserfc>=1.7.6",
+    "markdown-it-py>=4.0.0",
     # Keep this floor at or above the locked version: mcp < 1.30.0 is covered by
     # Dependabot security alert #57, and a PyPI install does not read uv.lock.
     # The <2 cap is load-bearing: server.py imports mcp.server.fastmcp, which

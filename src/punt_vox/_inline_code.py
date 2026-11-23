@@ -1,15 +1,15 @@
-"""Find matching backtick delimiters within a Markdown paragraph."""
+"""Find matching backtick delimiters within CommonMark inline blocks."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import final
 
-from punt_vox.markdown_fence import Fence
+from markdown_it import MarkdownIt
 
-_BLOCK_LINE = re.compile(r"^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:=+|-+|(?:>[ \t]*)+)[ \t]*$)")
-_LIST_ITEM = re.compile(r"^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]")
+_MARKDOWN_BLOCKS = MarkdownIt("commonmark").disable("inline")
+_LINE_END = re.compile(r"\r\n?|\n")
 _BACKTICKS = re.compile(r"`+")
 
 
@@ -22,40 +22,21 @@ class InlineCode:
         """Apply *transform* inside matched spans, leaving delimiters intact."""
         if "`" not in text:
             return text
-        return "".join(
-            cls._rewrite_paragraph(block, transform) if inline else block
-            for block, inline in cls._blocks(text)
-        )
-
-    @staticmethod
-    def _blocks(text: str) -> Iterator[tuple[str, bool]]:
-        paragraph: list[str] = []
-        fence: Fence | None = None
-        for line in text.splitlines(keepends=True):
-            content = line.rstrip("\r\n")
-            delimiter = Fence.parse(content.rstrip(" \t"))
-            if fence is not None:
-                yield line, False
-                if delimiter is not None and delimiter.closes(fence):
-                    fence = None
-            elif (
-                delimiter is not None
-                or not content.strip()
-                or _BLOCK_LINE.match(content)
-            ):
-                yield "".join(paragraph), True
-                paragraph.clear()
-                yield line, delimiter is None
-                fence = delimiter
-            else:
-                if _LIST_ITEM.match(content):
-                    yield "".join(paragraph), True
-                    paragraph.clear()
-                paragraph.append(line)
-        yield "".join(paragraph), True
+        offsets = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
+        parts: list[str] = []
+        cursor = 0
+        for token in _MARKDOWN_BLOCKS.parse(text):
+            if token.type == "inline" and token.map is not None:
+                start, end = (offsets[line] for line in token.map)
+                parts.extend(
+                    (text[cursor:start], cls._rewrite_block(text[start:end], transform))
+                )
+                cursor = end
+        parts.append(text[cursor:])
+        return "".join(parts)
 
     @classmethod
-    def _rewrite_paragraph(cls, text: str, transform: Callable[[str], str]) -> str:
+    def _rewrite_block(cls, text: str, transform: Callable[[str], str]) -> str:
         runs = tuple(_BACKTICKS.finditer(text))
         closers = cls._closers(text, runs)
         parts: list[str] = []

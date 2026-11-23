@@ -371,6 +371,16 @@ class TestSymbolStripping:
                 "> Use ` here\n>\n> Pay -$5 there `",
                 "Use here Pay minus 5 dollars there",
             ),
+            ("Use `$1\n> pay $5`", "Use 1 dollar pay 5 dollars"),
+            (
+                "- Use ` here\n    - Pay $1 there `",
+                "Use here Pay 1 dollar there",
+            ),
+            (
+                "Use ` here\n***\nPay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            ("Use `/tmp/$1`", "Use /tmp/$1"),
             (
                 "Use ` here\nTitle\n=====\nPay -$5 there `",
                 "Use here Title Pay minus 5 dollars there",

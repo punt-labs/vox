@@ -29,6 +29,8 @@ _LEADING_NON_SPEECH_RE = re.compile(
     r"[^\w~/.])+"
 )
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
+_FILE_PATH_RE = re.compile(r"^[~/.]?/")
+_TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 
 
@@ -50,7 +52,19 @@ class SpeechPunctuation:
     @classmethod
     def spell_code_currency(cls, text: str) -> str:
         """Say a code currency symbol literally rather than as a monetary unit."""
-        return _CODE_CURRENCY_AMOUNT.sub(cls._spell_code_symbol, text)
+        return _TOKEN_RE.sub(cls._spell_code_token, text)
+
+    @staticmethod
+    def is_path(core: str) -> bool:
+        """Recognize path prefixes on a token without leading wrappers."""
+        return _FILE_PATH_RE.match(core) is not None
+
+    @classmethod
+    def _spell_code_token(cls, match: re.Match[str]) -> str:
+        token = match[0]
+        if cls.is_path(_LEADING_NON_SPEECH_RE.sub("", token)):
+            return token
+        return _CODE_CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
 
     @staticmethod
     def _spell_code_symbol(match: re.Match[str]) -> str:
