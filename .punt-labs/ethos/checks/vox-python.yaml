@@ -1,0 +1,73 @@
+name: vox-python
+description: Advisory file lint on edit, staged lint and ratchets at commit, full gate at handoff.
+checks:
+  - name: ruff-edit
+    stage: edit
+    files: ["**/*.py", "**/*.pyi"]
+    adapter: uv
+    uv: [ruff, check, "{file}"]
+    on_fail: advisory
+    timeout: 10s
+  - name: ruff-format-edit
+    stage: edit
+    files: ["**/*.py", "**/*.pyi"]
+    adapter: uv
+    uv: [ruff, format, --check, "{file}"]
+    on_fail: advisory
+    timeout: 10s
+  - name: shellcheck-edit
+    stage: edit
+    files: ["**/*.sh", .githooks/pre-commit, .githooks/pre-push]
+    adapter: exec
+    run: [shellcheck, "{file}"]
+    on_fail: advisory
+    timeout: 10s
+  - name: ruff-commit
+    stage: commit
+    files: ["**/*.py", "**/*.pyi"]
+    adapter: uv
+    uv: [ruff, check, "{files}"]
+    on_fail: block
+    timeout: 120s
+  - name: ruff-format-commit
+    stage: commit
+    files: ["**/*.py", "**/*.pyi"]
+    adapter: uv
+    uv: [ruff, format, --check, "{files}"]
+    on_fail: block
+    timeout: 120s
+  - name: shellcheck-commit
+    stage: commit
+    files: ["**/*.sh", .githooks/pre-commit, .githooks/pre-push]
+    adapter: exec
+    run: [shellcheck, "{files}"]
+    on_fail: block
+    timeout: 120s
+  - name: oo-commit
+    stage: commit
+    files: ["**/*.py", .oo-baseline.json]
+    adapter: make
+    target: check-oo
+    on_fail: block
+    timeout: 120s
+  - name: coupling-commit
+    stage: commit
+    files: ["**/*.py", .oo-coupling-baseline.json]
+    adapter: make
+    target: check-coupling
+    on_fail: block
+    timeout: 120s
+  - name: suppressions-commit
+    stage: commit
+    files: ["**/*.py", .suppression-baseline.json]
+    adapter: make
+    target: check-suppressions
+    on_fail: block
+    timeout: 120s
+  - name: full-gate
+    stage: handoff
+    files: all
+    adapter: make
+    target: check
+    on_fail: block
+    timeout: 20m

@@ -1,3 +1,4 @@
 agent: claude
 team: engineering
 resolution: repo-only
+checks: vox-python

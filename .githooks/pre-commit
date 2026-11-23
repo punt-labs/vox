@@ -18,3 +18,27 @@ if ! git diff --cached --quiet -- '*.py'; then
   fi
   make test-changed
 fi
+ethos_hook="$(git rev-parse --git-common-dir)/hooks/pre-commit"
+if grep -q '^# --- BEGIN ETHOS DES-058 SEAL ---$' "${BASH_SOURCE[0]}"; then
+  :
+elif [[ -x "$ethos_hook" && ! "$ethos_hook" -ef "${BASH_SOURCE[0]}" ]] &&
+  grep -q '^# --- BEGIN ETHOS DES-058 SEAL ---$' "$ethos_hook"; then
+  "$ethos_hook"
+elif [[ -e "$(git rev-parse --show-toplevel)/.punt-labs/ethos/enabled" ]]; then
+  if command -v ethos >/dev/null 2>&1; then
+    ethos_bin=ethos
+  elif [[ -x "$HOME/.local/bin/ethos" ]]; then
+    ethos_bin="$HOME/.local/bin/ethos"
+  else
+    echo 'ethos is enabled but its pre-commit hook is not installed; run ethos enable' >&2
+    exit 1
+  fi
+  ethos_capture=$(if "$ethos_bin" hook pre-commit; then printf x0; else printf 'x%s' "$?"; fi)
+  ethos_status=${ethos_capture##*x}
+  ethos_output=${ethos_capture%x*}
+  if [[ "$ethos_status" -ne 0 || -n "$ethos_output" ]]; then
+    [[ -z "$ethos_output" ]] || printf '%s' "$ethos_output" >&2
+    echo 'ethos hook pre-commit failed or produced unexpected output; the commit is blocked' >&2
+    exit 1
+  fi
+fi

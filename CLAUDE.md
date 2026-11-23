@@ -134,9 +134,10 @@ See `docs/architecture.tex` for the full system description.
 Workflow:
 
 1. Write code that improves OO quality on the files you touch.
-2. `make check` runs `check-oo --check` automatically. If it fails, fix the regression.
+2. The commit hook runs the existing `.githooks/pre-commit` gates plus the Ethos commit-stage checks: staged Ruff check/format-check and shellcheck, and the OO/coupling/suppression ratchets when their file scopes match. If a check fails, fix it.
 3. After all checks pass, run `make update-oo` to write the new baseline.
 4. Stage `.oo-baseline.json` and `.oo-audit.jsonl` with your commit — they are committed files.
+5. Run full `make check` at handoff or before opening a PR, not before every commit. Edit-stage Ruff and shellcheck feedback is advisory (DES-085).
 
 Bootstrap (first time only): run `make update-oo` to create the initial baseline.
 
@@ -153,7 +154,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
 
-The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: `make check` green before every commit; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test`, plus `make test-e2e` against the installed wheel; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
+The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: commit-hook checks green for every commit, full `make check` green at handoff or before opening a PR; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test`, plus `make test-e2e` against the installed wheel; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
 ### PR boundaries
 

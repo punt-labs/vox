@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
+  lint and quality ratchets at commit, and the full quality gate at handoff
+  through the Ethos `vox-python` check set.
+
 ### Added
 
 - Bare `vox call` talks to voxd's Mode B call agent: it starts the call, shows
