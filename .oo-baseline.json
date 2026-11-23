@@ -6710,10 +6710,10 @@
   "src/punt_vox/voxd/workers/inventory.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.41,
+    "avg_params": 1.44,
     "max_complexity": 7.0,
-    "avg_complexity": 2.47,
-    "module_size": 112.0,
+    "avg_complexity": 2.11,
+    "module_size": 115.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

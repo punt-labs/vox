@@ -52,12 +52,14 @@ class WorkerInventory:
         unconfirmed: set[str] | None = None,  # PY-TS-14: omit without a probe pass.
     ) -> None:
         """Install the inventory before any RPC is accepted."""
-        self._workers = {record.id: record for record in records}
-        self._unconfirmed = set(unconfirmed or ())
+        with self._updates:
+            self._workers = {record.id: record for record in records}
+            self._unconfirmed = set(unconfirmed or ())
 
     def confirm(self, worker_id: str) -> None:
         """Admit active hooks after a positive provider observation."""
-        self._unconfirmed.discard(worker_id)
+        with self._updates:
+            self._unconfirmed.discard(worker_id)
 
     def registered(self) -> list[WorkerRecord]:
         """Return a snapshot of the registered workers."""
@@ -86,11 +88,13 @@ class WorkerInventory:
 
     def remember(self, record: WorkerRecord) -> None:
         """Retain a record in memory if rollback cannot persist it."""
-        self._workers[record.id] = record
+        with self._updates:
+            self._workers[record.id] = record
 
     def close(self, worker_id: str) -> None:
         """Close active hook admission before the context becomes evictable."""
-        self._exited.add(worker_id)
+        with self._updates:
+            self._exited.add(worker_id)
 
     def exited(self, record: WorkerRecord) -> bool:
         """Check whether startup or a later listing observed an exit."""
@@ -100,47 +104,47 @@ class WorkerInventory:
         self, worker_id: object, cwd: object, event: object
     ) -> WorkerRecord | None:
         """Match the exact registered worktree and admissible event type."""
-        record = self._worktree_record(worker_id, cwd)
-        return record if record is not None and self._accepts(record, event) else None
+        record, _ = self._classify(worker_id, cwd, event)
+        return record
 
     def admission(
         self, worker_id: object, cwd: object, event: object
     ) -> tuple[bool, bool]:
         """Say whether to admit the hook or advise retrying a quarantine denial."""
-        record = self._worktree_record(worker_id, cwd)
-        if record is None:
-            return False, False
-        if self._accepts(record, event):
-            return True, False
-        return False, (
-            isinstance(event, str)
-            and record.id in self._unconfirmed
-            and "launch_error" not in record.last_report
-            and record.state != "stopped"
-            and not self.exited(record)
-        )
+        record, retryable = self._classify(worker_id, cwd, event)
+        return record is not None, retryable
 
-    def _worktree_record(self, worker_id: object, cwd: object) -> WorkerRecord | None:
-        if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
-            return None
-        record = self._workers.get(worker_id)
-        if record is None:
+    def _classify(
+        self, worker_id: object, cwd: object, event: object
+    ) -> tuple[WorkerRecord | None, bool]:
+        if not isinstance(worker_id, str) or worker_id not in self._workers:
+            return None, False
+        worktree = self._hook_worktree(cwd)
+        with self._updates:
+            record = self._workers.get(worker_id)
+            if record is None or record.worktree != worktree:
+                return None, False
+            return self._admit_record(record, event)
+
+    def _admit_record(
+        self, record: WorkerRecord, event: object
+    ) -> tuple[WorkerRecord | None, bool]:
+        if "launch_error" in record.last_report or record.state == "stopped":
+            return None, False
+        if event in ("Stop", "SessionEnd"):
+            return record, False
+        if self.exited(record):
+            return None, False
+        if record.id in self._unconfirmed and event != "Notification":
+            return None, isinstance(event, str)
+        return record, False
+
+    @staticmethod
+    def _hook_worktree(cwd: object) -> str | None:
+        if not isinstance(cwd, str) or not cwd:
             return None
         path = Path(cwd)
-        if path.is_absolute() and record.worktree == str(path.resolve()):
-            return record
-        return None
-
-    def _accepts(self, record: WorkerRecord, event: object) -> bool:
-        if "launch_error" in record.last_report or record.state == "stopped":
-            return False
-        if self.exited(record):
-            return event in ("Stop", "SessionEnd")
-        return record.id not in self._unconfirmed or event in (
-            "Notification",
-            "Stop",
-            "SessionEnd",
-        )
+        return str(path.resolve()) if path.is_absolute() else None
 
     @staticmethod
     def received(record: WorkerRecord, sequence: int) -> bool:
