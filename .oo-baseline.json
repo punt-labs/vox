@@ -4253,9 +4253,9 @@
   "src/punt_vox/voxd/hook_decisions.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.57,
+    "avg_params": 0.67,
     "max_complexity": 7.0,
-    "avg_complexity": 2.57,
+    "avg_complexity": 2.67,
     "module_size": 56.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
@@ -6177,7 +6177,7 @@
   "src/punt_vox/voxd/voice_call/boss_tools.py": {
     "method_ratio": 0.917,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.15,
+    "avg_params": 1.23,
     "max_complexity": 6.0,
     "avg_complexity": 2.15,
     "module_size": 179.0,
