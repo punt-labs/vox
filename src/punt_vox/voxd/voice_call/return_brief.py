@@ -86,17 +86,18 @@ class ReturnBrief:
     def _labelled_updates(
         updates: list[tuple[str, str, str]],
     ) -> tuple[str | None, dict[str, str]]:
-        counts = Counter(project for _, project, _ in updates)
+        counts = Counter(project.casefold() for _, project, _ in updates)
         ordinals: Counter[str] = Counter()
         labels: dict[str, str] = {}
         spoken: list[str] = []
         for worker_id, project, update in updates:
-            if counts[project] == 1:
+            key = project.casefold()
+            if counts[key] == 1:
                 label = f"The worker in {project}"
             else:
-                ordinals[project] += 1
-                label = f"Worker {ordinals[project]} in {project}"
-                labels[label] = worker_id
+                ordinals[key] += 1
+                label = f"Worker {ordinals[key]} in {project}"
+            labels[label] = worker_id
             spoken.append(f"{label} {update}")
         if not spoken:
             return None, labels

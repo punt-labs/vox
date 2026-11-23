@@ -338,6 +338,25 @@ async def test_spoken_label_can_find_worker_outside_bounded_roster(
     assert json.loads(result)["worker_id"] == workers.known[-1]["id"]
 
 
+def test_return_opener_numbers_case_equivalent_projects_together(
+    tmp_path: Path,
+) -> None:
+    brief = ReturnBrief(tmp_path / "departure.json")
+    brief.depart({})
+    first = payload("first", last_assistant_message="First result.", result_seq=1)
+    second = {
+        **payload("second", last_assistant_message="Second result.", result_seq=1),
+        "project": "/elsewhere/Repo",
+    }
+    options = brief.options([first, second], (), ())
+
+    assert options.first_message == (
+        "While you were away, worker 1 in Repo finished: Second result. "
+        "Worker 2 in repo finished: First result."
+    )
+    assert brief.labels == {"worker 1 in repo": "second", "worker 2 in repo": "first"}
+
+
 async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None:
     workers = FakeWorkers()
     workers.known = [payload("working")]
