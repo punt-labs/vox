@@ -284,11 +284,6 @@ draining the final reply after a remote hang-up.
   current = \emptyset \lor id? \in current
 \end{schema}
 
-A named stop checks identity before cancellation, under the same lock as
-\texttt{Start}. A mismatch leaves the call unchanged (C11). Stopping before
-the first call or stopping the same settled call again is a no-op. A stop
-without an ID explicitly targets the current call.
-
 \begin{schema}{SettleCall}
   \Delta Call \\
   \Xi ManagedAgent
@@ -304,6 +299,21 @@ without an ID explicitly targets the current call.
   current' = current \\
   issued' = issued
 \end{schema}
+
+\begin{schema}{StopNamedDuringCleanup}
+  SettleCall \\
+  id? : CALLID
+\where
+  id? \in current
+\end{schema}
+
+A named stop checks identity before cancellation, under the same lock as
+\texttt{Start}. A mismatch leaves the call unchanged (C11). A matching
+stop ends a connecting or live call and waits for it to settle. If the call
+has already ended or failed but its task is still cleaning up, a matching
+stop cancels the remaining work and waits for settlement without changing
+the terminal status. Before the first call or after the matching call has
+settled, stopping is a no-op. A stop without an ID targets the current call.
 
 \begin{schema}{TeardownAgent}
   \Xi Call \\
