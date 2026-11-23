@@ -15,9 +15,13 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 
+class HookAdmissionPending(VoxdProtocolError):
+    """The registered worker is still awaiting a positive liveness probe."""
+
+
 @final
 class HookDeliveryRetry:
-    """Retry transport failures within the managed hook's delivery budget."""
+    """Retry transport failures and pending admission within the hook budget."""
 
     __slots__ = ()
 
@@ -37,6 +41,8 @@ class HookDeliveryRetry:
 
     @staticmethod
     def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
+        if isinstance(exc, HookAdmissionPending):
+            return True
         if isinstance(exc, VoxdProtocolError):
             return isinstance(exc.__cause__, TimeoutError)
         return not isinstance(exc, VoxdHandshakeRejectedError)

@@ -736,7 +736,9 @@ probes run concurrently with a shared deadline; an inconclusive probe leaves
 the registration protected without admitting ordinary active hooks until a
 later positive liveness observation. A protected worker whose liveness is
 unknown can still send a notification or terminal report; neither confirms
-that it is live or exited. A confirmed exit observed during a worker
+that it is live or exited. Other managed hook attempts are denied with a
+retry indication, within the same five-second delivery budget.
+A confirmed exit observed during a worker
 listing is checkpointed and schedules trust cleanup without waiting for
 the harness configuration lock.
 

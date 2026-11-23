@@ -100,10 +100,31 @@ class WorkerInventory:
         self, worker_id: object, cwd: object, event: object
     ) -> WorkerRecord | None:
         """Match the exact registered worktree and admissible event type."""
+        record = self._worktree_record(worker_id, cwd)
+        return record if record is not None and self._accepts(record, event) else None
+
+    def admission(
+        self, worker_id: object, cwd: object, event: object
+    ) -> tuple[bool, bool]:
+        """Say whether to admit the hook or advise retrying a quarantine denial."""
+        record = self._worktree_record(worker_id, cwd)
+        if record is None:
+            return False, False
+        if self._accepts(record, event):
+            return True, False
+        return False, (
+            isinstance(event, str)
+            and record.id in self._unconfirmed
+            and "launch_error" not in record.last_report
+            and record.state != "stopped"
+            and not self.exited(record)
+        )
+
+    def _worktree_record(self, worker_id: object, cwd: object) -> WorkerRecord | None:
         if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
             return None
         record = self._workers.get(worker_id)
-        if record is None or not self._accepts(record, event):
+        if record is None:
             return None
         path = Path(cwd)
         if path.is_absolute() and record.worktree == str(path.resolve()):

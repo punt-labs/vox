@@ -50,11 +50,22 @@ class WorkerHooks:
         """Check advisory metadata without waiting behind worker launches."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            admitted = await asyncio.to_thread(self._target, msg) is not None
+            admitted, retryable = await asyncio.to_thread(
+                self._registry.hook_records.admission,
+                msg.get("session_id"),
+                msg.get("cwd"),
+                msg.get("hook_event_name"),
+            )
         except (OSError, ValueError, RuntimeError) as exc:
             await reply.error(str(exc))
             return
-        await reply.send({"type": "worker_hook_admission", "admitted": admitted})
+        await reply.send(
+            {
+                "type": "worker_hook_admission",
+                "admitted": admitted,
+                "retryable": retryable,
+            }
+        )
 
     async def ingest(self, payload: dict[str, object], *, worker_only: bool) -> None:
         """Revalidate admission and checkpoint before returning a delivery receipt."""

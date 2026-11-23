@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
-from punt_vox.hook_delivery_retry import HookDeliveryRetry
+from punt_vox.hook_delivery_retry import HookAdmissionPending, HookDeliveryRetry
 
 
 @final
@@ -45,6 +45,8 @@ class HookContextClient:
                 expected="worker_hook_admission",
             )
             if admission.get("admitted") is not True:
+                if admission.get("retryable") is True:
+                    raise HookAdmissionPending("Worker hook admission pending liveness")
                 return
         await cls._request(
             {"type": "hook_event", "payload": payload, "worker_only": worker_only},

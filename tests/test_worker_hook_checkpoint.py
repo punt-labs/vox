@@ -27,11 +27,11 @@ from punt_vox.voxd.hook_gaps import HookGaps
 from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.voice_call.progress import ProgressEvents
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
-from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
@@ -534,6 +534,90 @@ async def test_quarantined_worker_delivers_permission_notification(
             snapshot["last_report"]["pending_decision"]
             == saved.last_report["pending_decision"]
         )
+
+
+async def test_quarantined_progress_retries_before_return_opener(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    base = {"session_id": worker.id, "cwd": worker.worktree}
+    before = HookContextStore()
+    before.ingest(
+        {**base, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    before.ingest(
+        {
+            **base,
+            "hook_event_name": "Notification",
+            "relay_seq": 2,
+            "notification_type": "permission_prompt",
+            "message": "Allow the tool?",
+        },
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            state="ready",
+            last_report=checkpoint,
+        )
+    )
+    cursor = tmp_path / "departure.json"
+    cursor.write_text(json.dumps({worker.id: 0}))
+    store = HookContextStore()
+    payload: dict[str, object] = {
+        **base,
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Continue.",
+        "relay_seq": 3,
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        socket = AsyncMock()
+
+        async def dispatch(
+            request: dict[str, object], *, expected: str
+        ) -> dict[str, object]:
+            if expected == "worker_hook_admission":
+                await hooks.admit(request, socket)
+                return dict(socket.send_json.call_args.args[0])
+            assert expected == "hook_event_accepted"
+            assert request["payload"] == payload
+            await hooks.ingest(payload, worker_only=True)
+            return {"type": expected}
+
+        async def confirm_on_retry(_delay: float) -> None:
+            [snapshot] = await actor.workers()
+            opener = ReturnBrief(cursor).options([snapshot], (str(tmp_path),), ())
+            assert opener.first_message is not None
+            assert "Allow the tool?" in opener.first_message
+
+        with (
+            patch.object(HookContextClient, "_request", side_effect=dispatch),
+            patch("asyncio.sleep", side_effect=confirm_on_retry) as wait,
+        ):
+            await HookContextClient.send_event(payload, worker_only=True)
+        opener = ReturnBrief(cursor).options(
+            await actor.workers(), (str(tmp_path),), ()
+        )
+        assert opener.first_message is None
+        wait.assert_awaited_once()
+    assert records.load()[0].last_report["worker_seq"] == 3
 
 
 async def test_listing_unpins_exited_worker_without_losing_checkpoint(
@@ -1163,13 +1247,12 @@ async def test_recursive_envelopes_have_a_safe_ingestion_error() -> None:
 @pytest.mark.asyncio
 async def test_admission_path_errors_are_wire_errors(tmp_path: Path) -> None:
     registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
     socket = AsyncMock()
-    with patch.object(
-        WorkerInventory, "match", side_effect=OSError("path unavailable")
-    ):
+    with patch.object(Path, "resolve", side_effect=OSError("path unavailable")):
         await WorkerHandlers.build(registry, HookContextStore())[
             "worker_hook_admission"
-        ]({}, socket)
+        ]({"session_id": worker.id, "cwd": worker.worktree}, socket)
     assert socket.send_json.call_args.args[0]["type"] == "error"
 
 
