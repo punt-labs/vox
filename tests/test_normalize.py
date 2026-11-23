@@ -292,6 +292,9 @@ class TestAcronymSpacing:
     def test_acronym_in_camel(self) -> None:
         assert normalize_for_speech("HTMLParser") == "H T M L parser"
 
+    def test_known_abbreviation_in_camel(self) -> None:
+        assert normalize_for_speech("parseSTDERR") == "parse standard error"
+
     def test_acronym_with_punctuation(self) -> None:
         assert normalize_for_speech("(CLI)") == "C L I"
 
@@ -339,6 +342,81 @@ class TestSymbolStripping:
         normalized = normalize_for_speech(text)
         assert normalized == expected
         assert normalize_for_speech(normalized) == normalized
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
+            (
+                "Use `$1suffix prefix$2` then pay $5",
+                "Use dollar sign 1 suffix prefix dollar sign 2 then pay 5 dollars",
+            ),
+            (
+                "Use ``printf ` $1 $2`` then pay -$5",
+                "Use printf dollar sign 1 dollar sign 2 then pay minus 5 dollars",
+            ),
+            ("Use (`$1`), not $1", "Use dollar sign 1, not 1 dollar"),
+            ("Use `_-$5._`, not -$5", "Use minus dollar sign 5., not minus 5 dollars"),
+            ("Use `arg\n$1` then pay $5", "Use arg dollar sign 1 then pay 5 dollars"),
+            (r"Use \ `$1\` then pay -$5", "Use dollar sign 1 then pay minus 5 dollars"),
+            (r"Use \`$1\` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ``$1` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ` here\n\nPay -$5 there `", "Use here Pay minus 5 dollars there"),
+            (
+                "Use ` here\n# Heading\nPay -$5 there `",
+                "Use here Heading Pay minus 5 dollars there",
+            ),
+            (
+                "```sh\necho\n\n```\nPay -$5 here\n```sh\necho\n\n```",
+                "sh echo Pay minus 5 dollars here sh echo",
+            ),
+            (
+                "- Use ` here\n- Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            (
+                "> Use ` here\n>\n> Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            ("Use `$1\n> pay $5`", "Use 1 dollar pay 5 dollars"),
+            (
+                "- Use ` here\n    - Pay $1 there `",
+                "Use here Pay 1 dollar there",
+            ),
+            (
+                "Use ` here\n***\nPay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            ("Use `/tmp/$1`", "Use /tmp/$1"),
+            ("Use /tmp/`$1`", "Use /tmp/`$1"),
+            ("Use /tmp/`$1 $2`", "Use /tmp/`$1 dollar sign 2"),
+            ("Use /tmp/ `$1`", "Use /tmp dollar sign 1"),
+            ("Use `../prices/$5`", "Use ../prices/$5"),
+            ("Use `./price reports/$5`", "Use ./price reports/$5"),
+            ("Use `./price $5`", "Use ./price dollar sign 5"),
+            ("Use `“/tmp/$5”` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (
+                "Use `$HOME/prices/$5` then pay $5",
+                "Use HOME/prices/$5 then pay 5 dollars",
+            ),
+            (r"Use `\/tmp/$5` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (r"Use `prices\/$5` then pay $5", r"Use prices\/$5 then pay 5 dollars"),
+            (
+                "Use `echo $((total/$2))` then pay $5",
+                "Use echo total/dollar sign 2 then pay 5 dollars",
+            ),
+            (
+                "Use ` here\nTitle\n=====\nPay -$5 there `",
+                "Use here Title Pay minus 5 dollars there",
+            ),
+            ("```\nx\n```\t\nUse `$5` now", "x Use dollar sign 5 now"),
+        ],
+    )
+    def test_currency_bypassed_only_inside_code_spans(
+        self, text: str, expected: str
+    ) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
 
     @pytest.mark.parametrize(
         ("text", "expected"),

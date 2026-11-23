@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the model for one request, use `--model` instead of `TTS_MODEL`.
   (PL-1151, PL-1150)
 
+- Speak inline-code amounts such as `$1` literally without changing prose
+  prices. (PL-1413)
+
 - `vox status` reports the daemon as `unknown`, not `not running`, when vox
   cannot tell: an unreadable or malformed `serve.port`, a malformed
   `VOXD_PORT`, a rejected handshake or a bad reply. Only a refused connection
