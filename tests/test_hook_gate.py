@@ -77,15 +77,24 @@ def _path_without_vox() -> str:
     )
 
 
-def _run_hook(name: str, cwd: str, event: str, env: dict[str, str]) -> int:
+def _run_hook(
+    name: str,
+    cwd: str,
+    event: str,
+    env: dict[str, str],
+    *,
+    launch_dir: Path | None = None,
+) -> int:
     payload = json.dumps({"cwd": cwd, "hook_event_name": event})
     result = subprocess.run(
         ["bash", str(_HOOKS_DIR / name)],
         input=payload,
         text=True,
         capture_output=True,
+        cwd=launch_dir,
         env=env,
         check=False,
+        timeout=3,
     )
     return result.returncode
 
@@ -276,6 +285,99 @@ class TestHookGate:
 
         assert rc == 0
         assert not sentinel.exists(), "hook fired with no marker in any parent"
+
+    @pytest.mark.parametrize("name", sorted(_GATED_HOOKS))
+    @pytest.mark.parametrize(
+        "cwd_kind",
+        ["directory", "deleted", "symlink-in", "symlink-out", "symlink-out-deleted"],
+    )
+    def test_relative_cwd_without_git_respects_repo_marker(
+        self, name: str, cwd_kind: str, isolated_root: Path
+    ) -> None:
+        launch_dir = isolated_root / "launch"
+        relative_cwd = Path("nested dir") / "child"
+        hook_dir = launch_dir / relative_cwd
+        marker_root = isolated_root
+        if cwd_kind.startswith("symlink-"):
+            target = isolated_root / "target repo" / "src"
+            target.mkdir(parents=True)
+            hook_dir.parent.mkdir(parents=True)
+            hook_dir.symlink_to(target, target_is_directory=True)
+            marker_root = target.parent if cwd_kind == "symlink-in" else launch_dir
+            if cwd_kind == "symlink-out-deleted":
+                relative_cwd /= "deleted"
+        else:
+            hook_dir.mkdir(parents=True)
+            if cwd_kind == "deleted":
+                hook_dir.rmdir()
+        bin_dir = isolated_root / "bin"
+        bin_dir.mkdir()
+        sentinel = isolated_root / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        _write_failing_git(bin_dir)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+        rc = _run_hook(
+            name, str(relative_cwd), _GATED_HOOKS[name], env, launch_dir=launch_dir
+        )
+
+        assert rc == 0
+        assert not sentinel.exists(), f"{name} fired with no marker in any parent"
+
+        _mark_enabled(marker_root)
+        rc = _run_hook(
+            name, str(relative_cwd), _GATED_HOOKS[name], env, launch_dir=launch_dir
+        )
+
+        assert rc == 0
+        assert sentinel.exists(), f"{name} did not reach vox with an enabled ancestor"
+
+    def test_deleted_relative_cwd_respects_git_boundary(
+        self, isolated_root: Path
+    ) -> None:
+        _mark_enabled(isolated_root)
+        repo = _make_repo(isolated_root)
+        bin_dir = isolated_root / "bin"
+        bin_dir.mkdir()
+        sentinel = isolated_root / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+        rc = _run_hook("notify.sh", "deleted", "Stop", env, launch_dir=repo)
+
+        assert rc == 0
+        assert not sentinel.exists(), "hook crossed an unenabled Git worktree"
+
+    def test_deleted_relative_cwd_retries_git_in_symlink_target(
+        self, isolated_root: Path
+    ) -> None:
+        logical = _make_repo(isolated_root)
+        target_parent = isolated_root / "target"
+        target_parent.mkdir()
+        physical = _make_repo(target_parent)
+        child = physical / "nested"
+        child.mkdir()
+        (logical / "link").symlink_to(child, target_is_directory=True)
+        _mark_enabled(logical)
+        bin_dir = isolated_root / "bin"
+        bin_dir.mkdir()
+        sentinel = isolated_root / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+        rc = _run_hook("notify.sh", "link/../deleted", "Stop", env, launch_dir=logical)
+
+        assert rc == 0
+        assert not sentinel.exists(), "hook used the symlink's worktree"
+
+        _mark_enabled(physical)
+        rc = _run_hook("notify.sh", "link/../deleted", "Stop", env, launch_dir=logical)
+
+        assert rc == 0
+        assert sentinel.exists(), "hook did not use the enabled worktree of the target"
 
     def test_marker_resolved_from_git_root_of_subdir(self, tmp_path: Path) -> None:
         # cwd is a nested subdir; the marker lives at the git worktree root.
