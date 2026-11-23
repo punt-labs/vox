@@ -270,6 +270,7 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox call` | Talk to voxd's call agent; prints a live status line, then the transcript |
 | `vox call --script greet.jsonl` | Feed recorded caller turns (`{"pcm_path": ..., "pause_s": ...}` per line) instead of the microphone |
 | `vox call status` | Show voxd's call: state, tool calls, transcript so far |
+| `vox call teardown` | Delete the managed ElevenLabs agent and tools; the next call provisions them again |
 | `vox call start --context snapshot.md` | Start a voice call; the call agent opens with the snapshot file |
 | `vox call start --context - < snapshot.md` | Read the snapshot from stdin |
 | `vox call start --context snapshot.md --trace-turns` | Also print a turn-by-turn latency trace |

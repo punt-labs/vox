@@ -19,6 +19,10 @@ class AgentConnector(Protocol):
         """Return a signed URL and the registered tool IDs."""
         ...
 
+    def teardown(self) -> None:
+        """Delete a previously provisioned agent and its tools."""
+        ...
+
 
 @final
 class CallConnector:

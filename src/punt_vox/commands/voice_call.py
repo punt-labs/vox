@@ -88,6 +88,11 @@ class VoiceCall:
         for line in view.report():
             typer.echo(line)
 
+    def teardown(self) -> None:
+        """Remove only the managed agent and tools, not calls or workers."""
+        self._run(self._control.request("teardown", timeout=_CONTROL_TIMEOUT_S))
+        typer.echo("The next vox call will provision a new agent.")
+
     def _begin(self, fields: dict[str, object]) -> CallStatusView:
         """Send ``call_start``; a call that failed to connect reports its trace."""
         try:

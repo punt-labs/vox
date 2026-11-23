@@ -195,7 +195,7 @@ def test_registration_without_first_message_permission_requires_explicit_teardow
             agent.connection((_CLOCK,))
         wire.calls.clear()
 
-        with pytest.raises(ConvAIError, match="tear down the agent first"):
+        with pytest.raises(ConvAIError, match="vox call teardown"):
             agent.connection((_CLOCK,))
         assert wire.calls == []
         agent.teardown()

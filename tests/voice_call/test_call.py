@@ -62,10 +62,14 @@ def _start(call_id: str) -> str:
 class _Connector:
     def __init__(self, url: str) -> None:
         self.url = url
+        self.teardowns = 0
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
         return self.url, ("tool_a",)
+
+    def teardown(self) -> None:
+        self.teardowns += 1
 
 
 async def _rpc(handlers: CallHandlers, msg: dict[str, object]) -> dict[str, object]:
@@ -646,6 +650,9 @@ class _SlowConnector:
         self.release.wait(5)
         raise ConvAIError("agent provisioning failed")
 
+    def teardown(self) -> None:
+        raise AssertionError("unexpected teardown")
+
 
 async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
     connector = _SlowConnector()
@@ -711,7 +718,12 @@ async def test_a_call_that_never_connects_times_out(
             trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
-        assert set(handlers.handlers()) == {"call_start", "call_stop", "call_status"}
+        assert set(handlers.handlers()) == {
+            "call_start",
+            "call_stop",
+            "call_status",
+            "call_teardown",
+        }
         reply = await _rpc(handlers, {"type": "call_start"})
         hold.set()
     assert "did not connect" in str(reply)
@@ -728,3 +740,33 @@ async def test_stop_without_a_call_reports_idle(tmp_path: Path) -> None:
         opener=_LOOPBACK,
     )
     assert (await _rpc(handlers, {"type": "call_stop"}))["result"] == {"state": "idle"}
+
+
+async def test_agent_teardown_refuses_a_live_call(tmp_path: Path) -> None:
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.wait_closed()
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    workers = FakeWorkers()
+    async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        connector = _Connector(f"ws://127.0.0.1:{port}/convai")
+        handlers = CallHandlers(
+            workers,
+            workers,
+            cast("PlaybackQueue", FakePlayback()),
+            connector=connector,
+            trace_dir=tmp_path,
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        refused = await _rpc(handlers, {"type": "call_teardown"})
+        assert connector.teardowns == 0
+        await _rpc(handlers, {"type": "call_stop"})
+        reported = await _rpc(handlers, {"type": "call_teardown"})
+    assert "already running" in str(refused.get("message"))
+    assert "result" in reported
+    assert connector.teardowns == 1

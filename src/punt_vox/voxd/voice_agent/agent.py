@@ -64,7 +64,7 @@ class VoiceAgent:
             if stored is None:
                 stored = self._provision(ordered, fingerprint)
             if stored.configuration_hash != fingerprint:
-                msg = "Vox voice agent configuration changed; tear down the agent first"
+                msg = "Vox voice agent configuration changed; run `vox call teardown` first"
                 raise ConvAIError(msg)
             agent_id = stored.agent_id
             if agent_id is None:

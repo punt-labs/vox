@@ -1,4 +1,4 @@
-"""call_start / call_stop / call_status: the daemon owns at most one Mode B call."""
+"""Lifecycle RPCs for the daemon's one Mode B call and its managed agent."""
 
 from __future__ import annotations
 
@@ -108,7 +108,9 @@ class CallHandlers:
 
     def handlers(self) -> dict[str, MessageHandler]:
         """Expose the call lifecycle RPCs."""
-        return dict.fromkeys(("call_start", "call_stop", "call_status"), self.handle)
+        return dict.fromkeys(
+            ("call_start", "call_stop", "call_status", "call_teardown"), self.handle
+        )
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Answer one lifecycle RPC with the call's status."""
@@ -120,6 +122,8 @@ class CallHandlers:
                 case "call_stop":
                     async with self._lock:
                         status = await self._stop()
+                case "call_teardown":
+                    status = await self._teardown()
                 case _:
                     status = self._status()
         except (ValueError, OSError, ConvAIError) as exc:
@@ -129,6 +133,16 @@ class CallHandlers:
 
     def _status(self) -> dict[str, object]:
         return self._active.status() if self._active is not None else {"state": "idle"}
+
+    def _require_idle(self) -> None:
+        if self._active is not None and not self._active.task.done():
+            raise ValueError("a call is already running; stop it first")
+
+    async def _teardown(self) -> dict[str, object]:
+        async with self._lock:
+            self._require_idle()
+            await asyncio.to_thread(self._connector.agent().teardown)
+            return self._status()
 
     async def _start(self, msg: dict[str, object]) -> dict[str, object]:
         """Launch under the lock, then wait unlocked so call_stop can cancel."""
@@ -145,8 +159,7 @@ class CallHandlers:
         return status
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
-        if self._active is not None and not self._active.task.done():
-            raise ValueError("a call is already running; stop it first")
+        self._require_idle()
         agent = self._connector.agent()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
