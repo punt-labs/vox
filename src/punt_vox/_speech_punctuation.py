@@ -18,7 +18,8 @@ _CURRENCY_UNITS = {
 }
 _SIGN_WORDS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
 _CURRENCY_AMOUNT = re.compile(
-    rf"(?P<sign>[-+\u2212]?)(?P<symbol>[{''.join(_CURRENCY_UNITS)}])"
+    rf"(?P<sign_before>[-+\u2212])?(?P<symbol>[{''.join(_CURRENCY_UNITS)}])"
+    r"(?(sign_before)|(?P<sign_after>[-+\u2212])?)"
     r"(?P<amount>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
 )
 _LEADING_NON_SPEECH_RE = re.compile(
@@ -67,7 +68,8 @@ class SpeechPunctuation:
         match = _CURRENCY_AMOUNT.fullmatch(core)
         if match is None:
             return core
-        sign, symbol, amount = match.group("sign", "symbol", "amount")
+        symbol, amount = match.group("symbol", "amount")
+        sign = match["sign_before"] or match["sign_after"] or ""
         singular, plural = _CURRENCY_UNITS[symbol]
         is_one = "." not in amount and Decimal(amount.replace(",", "")) == 1
         unit = singular if is_one else plural
