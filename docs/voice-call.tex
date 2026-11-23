@@ -275,10 +275,19 @@ draining the final reply after a remote hang-up.
   id? \notin current
 \end{schema}
 
+\begin{schema}{StopNamedNoChange}
+  \Xi Call \\
+  \Xi ManagedAgent \\
+  id? : CALLID
+\where
+  settled = ztrue \\
+  current = \emptyset \lor id? \in current
+\end{schema}
+
 A named stop checks identity before cancellation, under the same lock as
-\texttt{Start}. A mismatch leaves the call unchanged (C11); with no call,
-there is nothing to cancel. A stop without an ID explicitly targets the
-current call.
+\texttt{Start}. A mismatch leaves the call unchanged (C11). Stopping before
+the first call or stopping the same settled call again is a no-op. A stop
+without an ID explicitly targets the current call.
 
 \begin{schema}{SettleCall}
   \Delta Call \\
