@@ -222,11 +222,12 @@ its bounded queue; the cut filters duplicates among events that remain queued.
 
 \begin{schema}{ReturnBoundary}
   departed : ZBOOL \\
-  cursor, cut : CALLWORKER \pfun \nat \\
-  subscribed : ZBOOL
+  cursor, cut, known : CALLWORKER \pfun \nat \\
+  subscribed, snapshotted : ZBOOL
 \where
   departed = zfalse \implies cursor = \emptyset \\
-  subscribed = zfalse \implies cut = \emptyset
+  snapshotted = ztrue \implies subscribed = ztrue \\
+  snapshotted = zfalse \implies cut = \emptyset \land known = \emptyset
 \end{schema}
 
 \begin{schema}{SubscribeForReturn}
@@ -234,7 +235,9 @@ its bounded queue; the cut filters duplicates among events that remain queued.
 \where
   subscribed = zfalse \\
   subscribed' = ztrue \\
+  snapshotted' = zfalse \\
   cut' = \emptyset \\
+  known' = \emptyset \\
   departed' = departed \\
   cursor' = cursor
 \end{schema}
@@ -246,15 +249,19 @@ its bounded queue; the cut filters duplicates among events that remain queued.
   newResults!, openQuestions! : \power CALLWORKER
 \where
   subscribed = ztrue \\
+  snapshotted = zfalse \\
+  snapshotted' = ztrue \\
   subscribed' = subscribed \\
   departed' = departed \\
   cursor' = cursor \\
   departed = zfalse \implies
-    cut' = \emptyset \land newResults! = \emptyset \land openQuestions! = \emptyset \\
+    cut' = \emptyset \land known' = result? \land
+    newResults! = \emptyset \land openQuestions! = \emptyset \\
   departed = ztrue \implies
     cut' = newest? \land openQuestions! = questions? \\
   departed = ztrue \implies newResults! =
-    \{ w : \dom result? | w \notin \dom cursor \lor result?~w > cursor~w \}
+    \{ w : \dom result? | w \notin \dom cursor \lor result?~w > cursor~w \} \\
+  departed = ztrue \implies known' = cursor \oplus (newResults! \dres result?)
 \end{schema}
 
 \begin{schema}{LiveUpdateAfterCut}
@@ -263,17 +270,40 @@ its bounded queue; the cut filters duplicates among events that remain queued.
   sequence? : \nat
 \where
   subscribed = ztrue \\
+  snapshotted = ztrue \\
   worker? \notin \dom cut \lor sequence? > cut~worker?
+\end{schema}
+
+\begin{schema}{SubmitLiveResult}
+  \Delta ReturnBoundary \\
+  worker? : CALLWORKER \\
+  sequence? : \nat \\
+  nonempty? : ZBOOL
+\where
+  subscribed = ztrue \\
+  snapshotted = ztrue \\
+  nonempty? = ztrue \\
+  worker? \notin \dom cut \lor sequence? > cut~worker? \\
+  (worker? \in \dom known \land sequence? \leq known~worker?) \implies known' = known \\
+  (worker? \notin \dom known \lor sequence? > known~worker?) \implies
+    known' = known \oplus \{ worker? \mapsto sequence? \} \\
+  subscribed' = subscribed \\
+  snapshotted' = snapshotted \\
+  departed' = departed \\
+  cursor' = cursor \\
+  cut' = cut
 \end{schema}
 
 \begin{schema}{DepartCall}
   \Delta ReturnBoundary \\
-  established? : ZBOOL \\
-  knownResult? : CALLWORKER \pfun \nat
+  established? : ZBOOL
 \where
   subscribed' = zfalse \\
+  snapshotted' = zfalse \\
   cut' = \emptyset \\
-  established? = ztrue \implies departed' = ztrue \land cursor' = knownResult? \\
+  known' = \emptyset \\
+  established? = ztrue \implies
+    snapshotted = ztrue \land departed' = ztrue \land cursor' = known \\
   established? = zfalse \implies departed' = departed \land cursor' = cursor
 \end{schema}
 
