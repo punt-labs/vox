@@ -92,6 +92,42 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.parametrize(
+        ("provider_args", "expected_provider", "expected_model"),
+        [
+            ([], "elevenlabs", "eleven_v3"),
+            (["--provider", "polly"], "polly", None),
+            (["--provider", "openai", "--model", "tts-1-hd"], "openai", "tts-1-hd"),
+        ],
+        ids=["repo-default", "explicit-provider", "explicit-model"],
+    )
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_provider_ignores_environment(
+        self,
+        mock_client_cls: MagicMock,
+        provider_args: list[str],
+        expected_provider: str,
+        expected_model: str | None,
+        hermetic_config: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        (hermetic_config / "vox.md").write_text(
+            "---\nprovider: elevenlabs\nmodel: eleven_v3\n---\n"
+        )
+        monkeypatch.setenv("TTS_PROVIDER", "openai")
+        monkeypatch.setenv("TTS_MODEL", "tts-1")
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        result = CliRunner().invoke(app, ["say", "hello", *provider_args])
+
+        assert result.exit_code == 0, result.output
+        synthesize.assert_called_once()
+        spec = synthesize.call_args.args[1]
+        assert (spec.provider, spec.model) == (expected_provider, expected_model)
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_basic(
         self,
@@ -1198,22 +1234,27 @@ class TestVoiceCommand:
         assert result.exit_code == 0
         assert "roger (current)" in result.output
 
+    @pytest.mark.parametrize(
+        ("provider_args", "expected"),
+        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        ids=["repo-default", "explicit-flag"],
+    )
     @patch(f"{_CLI}.VoxClientSync")
-    def test_voice_no_arg_passes_provider(
+    def test_voice_provider_ignores_environment(
         self,
         mock_client_cls: MagicMock,
-        tmp_path: Path,
+        provider_args: list[str],
+        expected: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        monkeypatch.delenv("TTS_PROVIDER", raising=False)
+        monkeypatch.setenv("TTS_PROVIDER", "openai")
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
         runner = CliRunner()
-        result = runner.invoke(app, ["voice", "--provider", "polly"])
+        result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with("polly")
+        mock_client_cls.return_value.voices.assert_called_once_with(expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(

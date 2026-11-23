@@ -150,7 +150,6 @@ ProviderOpt = Annotated[
     str | None,
     typer.Option(
         "--provider",
-        envvar="TTS_PROVIDER",
         help=(
             "TTS provider (elevenlabs, polly, openai, say, espeak)."
             " Default: this repo's vox.md provider (vox provider <name>)."
@@ -161,7 +160,6 @@ ModelOpt = Annotated[
     str | None,
     typer.Option(
         "--model",
-        envvar="TTS_MODEL",
         help="Model name (e.g. eleven_v3, tts-1). Provider-specific.",
     ),
 ]

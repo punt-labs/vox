@@ -378,8 +378,7 @@ AWS_DEFAULT_REGION=us-east-1
 # AWS_SECRET_ACCESS_KEY=...
 # AWS_DEFAULT_REGION=us-east-1
 
-# Optional: pin a specific provider.
-# Auto-detect order: ElevenLabs > OpenAI > Polly > say (macOS) / espeak (Linux).
+# Optional: prefer this provider when enabling a repo, if the provider is ready.
 TTS_PROVIDER=elevenlabs
 ```
 
@@ -481,8 +480,7 @@ Calls with a per-call key skip the synthesis cache, so every call reaches the pr
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TTS_PROVIDER` | Force a specific provider | auto-detect |
-| `TTS_MODEL` | Model override | provider default |
+| `TTS_PROVIDER` | Preferred ready provider during setup (for example, `vox enable`); does not override `vox.md` at runtime | First ready provider |
 | `VOX_OUTPUT_DIR` | Output directory | `~/Music/vox/` |
 | `VOX_API_KEY` | Per-call provider key for `vox say` | none |
 | `VOXD_HOST` | Remote voxd host (client) | `127.0.0.1` |
