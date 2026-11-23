@@ -5,18 +5,25 @@ from __future__ import annotations
 import logging
 import subprocess
 import unicodedata
+from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 from uuid import uuid4
 
+from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch, WorkerProvider
+from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.retirement import WorkerRetirement
 from punt_vox.voxd.workers.steer_delivery import SteerDelivery
 from punt_vox.voxd.workers.steering_types import DecisionChoice
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from concurrent.futures import Future
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +33,19 @@ class WorkerRegistry:
     """Resolve providers and harnesses by name, never by special-case branches."""
 
     __slots__ = (
+        "_inventory",
         "_lifecycle",
         "_policy",
         "_profiles",
         "_providers",
-        "_records",
-        "_workers",
+        "_retirement",
     )
+    _inventory: WorkerInventory
     _lifecycle: WorkerLifecycle
     _policy: WorkerRepoPolicy
     _profiles: dict[str, HarnessProfile]
     _providers: dict[str, WorkerProvider]
-    _records: WorkerRecords
-    _workers: dict[str, WorkerRecord]
+    _retirement: WorkerRetirement
 
     def __new__(
         cls,
@@ -47,14 +54,42 @@ class WorkerRegistry:
         providers: dict[str, WorkerProvider],
         profiles: dict[str, HarnessProfile],
     ) -> Self:
-        """Rebuild persistent workers using the supplied provider catalogs."""
+        """Wire an empty registry for startup recovery."""
         self = super().__new__(cls)
-        self._policy, self._records = policy, records
+        self._policy = policy
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
-        self._workers = {r.id: r for r in records.load(strict=False)}
-        self.list()
+        self._inventory = WorkerInventory(records)
+        self._retirement = WorkerRetirement(profiles, self._inventory)
         return self
+
+    def restore(
+        self,
+        records: list[WorkerRecord],
+        *,
+        unconfirmed: set[str] | None = None,  # PY-TS-14: omit without a probe pass.
+    ) -> None:
+        """Install reconciled checkpoints before admitting callers."""
+        self._inventory.restore(records, unconfirmed=unconfirmed)
+        for record in records:
+            self._retirement.schedule(record.id)
+
+    def cleanup_idle(self) -> bool:
+        """Check whether any worker cleanup remains in flight."""
+        return self._retirement.cleanup_idle()
+
+    def shutdown(self) -> None:
+        """Bound the final wait for worker retirement cleanup."""
+        self._retirement.shutdown()
+
+    def release_with(self, release: Callable[[str], None]) -> None:
+        """Release a confirmed exit's retained context on either control path."""
+        self._retirement.release_with(release)
+
+    @property
+    def hook_records(self) -> WorkerInventory:
+        """Expose admission and receipt lookup without exposing worker control."""
+        return self._inventory
 
     def start(
         self,
@@ -71,7 +106,7 @@ class WorkerRegistry:
             raise ValueError("Unknown worker provider or harness")
         repo = self._policy.resolve(project)
         worker_id = str(uuid4())
-        worktree = self._records.worktree(worker_id)
+        worktree = self._inventory.worktree(worker_id)
         branch = f"vox-worker/{worker_id}"
         handle = f"vox-worker-{worker_id}"
         record = WorkerRecord(
@@ -87,85 +122,73 @@ class WorkerRegistry:
             created_at=datetime.now(UTC).isoformat(),
             last_report={},
         )
-        self._records.save(record)
-        self._workers[worker_id] = record
+        self._inventory.save(record)
         profile = self._profiles[harness]
         try:
             self._policy.create(repo, worktree, branch)
             profile.prepare(worktree)
             self._providers[provider].start(
-                WorkerLaunch(handle, worker_id, worktree, task), profile
+                WorkerLaunch(
+                    handle, worker_id, worktree, task, self._inventory.namespace
+                ),
+                profile,
             )
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._rollback(record, exc)
             raise
-        return self._checkpoint(self._lifecycle.observe(record))
-
-    def _checkpoint(self, record: WorkerRecord) -> WorkerRecord:
-        if self._workers.get(record.id) == record:
-            return record
-        self._records.save(record)
-        self._workers[record.id] = record
-        return record
+        observed, _ = self._lifecycle.observe(record)
+        self._inventory.save(observed)
+        self._retirement.schedule(observed.id)
+        return observed
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
         record = self._lifecycle.rollback(record, error)
         try:
-            self._checkpoint(record)
+            self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
-            self._workers[record.id] = record
+            self._inventory.remember(record)
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
 
     def list(self) -> list[WorkerRecord]:
-        """Reconcile live state, including after a daemon restart."""
-        result: list[WorkerRecord] = []
-        for record in self._workers.values():
-            try:
-                result.append(self._checkpoint(self._lifecycle.observe(record)))
-            except (
-                KeyError,
-                OSError,
-                ValueError,
-                RuntimeError,
-                subprocess.SubprocessError,
-            ) as exc:
-                logger.warning(
-                    "Worker %s reconciliation unavailable (%s)",
-                    record.id,
-                    type(exc).__name__,
-                )
-                result.append(record)
-        return result
-
-    def _get(self, worker_id: str) -> WorkerRecord:
-        try:
-            return self._workers[worker_id]
-        except KeyError:
-            raise ValueError(f"no worker {worker_id}") from None
+        """Report current state and close hook admission for confirmed exits."""
+        return [
+            self._retirement.observe(record, self._lifecycle)
+            for record in self._inventory.registered()
+        ]
 
     def admits_hook(self, worker_id: object, cwd: object) -> bool:
-        """Accept only an active worker's exact session and canonical worktree."""
-        if not isinstance(worker_id, str) or not isinstance(cwd, str) or not cwd:
-            return False
-        record = self._workers.get(worker_id)
-        return (
-            record is not None
-            and record.state in ("starting", "ready")
-            and "launch_error" not in record.last_report
-            and Path(cwd).is_absolute()
-            and record.worktree == str(Path(cwd).resolve())
-        )
+        """Check that a worker accepts active hook traffic from this worktree."""
+        return self._inventory.match(worker_id, cwd, None) is not None
 
-    def checkpoint_progress(self, worker_id: object, cwd: object) -> None:
+    def checkpoint_progress(self, record: WorkerRecord) -> None:
         """Persist curated progress before a managed hook delivery is acknowledged."""
-        if self.admits_hook(worker_id, cwd):
-            self._checkpoint(
-                self._lifecycle.report(self._workers[cast("str", worker_id)])
-            )
+        self._inventory.save(self._lifecycle.report(record))
+
+    def checkpoint_exit(
+        self, record: WorkerRecord, checkpoint: WorkerHookCheckpoint
+    ) -> None:
+        """Update terminal progress without changing phase or cleanup markers."""
+        self._inventory.update(
+            record.id,
+            lambda current: replace(
+                current, last_report={**current.last_report, **checkpoint}
+            ),
+        )
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        return self._checkpoint(self._lifecycle.stop(self._get(worker_id)))
+        record, cleanup = self.request_stop(worker_id)
+        if cleanup is None:
+            return record
+        cleanup.result()
+        return self._inventory.get(worker_id)
+
+    def request_stop(
+        self, worker_id: str
+    ) -> tuple[WorkerRecord, Future[None] | None]:  # PY-TS-14: only wait on a new job.
+        """Persist termination and start cleanup without waiting for its lease."""
+        record = self._inventory.update(worker_id, self._lifecycle.terminate)
+        return record, self._retirement.schedule(worker_id)
 
     def steer(
         self,
@@ -186,9 +209,12 @@ class WorkerRegistry:
             raise ValueError(
                 "Worker words must not contain control characters or newlines"
             )
-        record = self._checkpoint(self._lifecycle.observe(self._get(worker_id)))
+        record = self._retirement.observe(
+            self._inventory.get(worker_id), self._lifecycle
+        )
         if record.state != "ready":
             raise ValueError(f"Worker {worker_id} is not ready ({record.state})")
+        self._inventory.save(record)
         if choice is not None:
             self._question(record, prompt_seq)
         if prompt_epoch is not None and prompt_epoch != record.last_report.get(
@@ -235,7 +261,7 @@ class WorkerRegistry:
     # PY-TS-14: absence means no later input matches this steering request yet.
     def receipt(self, worker_id: str, words: str, baseline: int) -> int | None:
         """Recognize a later matching input without inferring turn completion."""
-        profile = self._profiles[self._get(worker_id).harness]
+        profile = self._profiles[self._inventory.get(worker_id).harness]
         for receipt in profile.inputs_since(worker_id, baseline):
             if receipt.seq > baseline and profile.matches_input(receipt, words):
                 return receipt.seq

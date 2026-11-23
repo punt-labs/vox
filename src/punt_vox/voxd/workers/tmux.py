@@ -13,6 +13,7 @@ from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.environment import WorkerEnvironment
 from punt_vox.voxd.workers.steering_types import DecisionChoice
+from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 
 
 @final
@@ -33,7 +34,7 @@ class TmuxWorkerProvider:
         profile: HarnessProfile,
     ) -> None:
         """Start with an explicitly empty environment, not tmux's server env."""
-        environment = WorkerEnvironment()
+        environment = WorkerEnvironment(launch.namespace)
         try:
             self._run(
                 "new-session",
@@ -42,6 +43,8 @@ class TmuxWorkerProvider:
                 launch.handle,
                 "-c",
                 str(launch.worktree),
+                "-e",
+                f"VOX_WORKER_OWNER={launch.namespace}:{launch.worker_id}",
                 "--",
                 "env",
                 "-i",
@@ -53,7 +56,12 @@ class TmuxWorkerProvider:
                 str(environment.address),
                 *profile.argv(launch.worker_id, launch.task),
             )
-            environment.send(profile.environment(os.environ))
+            environment.send(
+                {
+                    **profile.environment(os.environ),
+                    "VOX_WORKER_SESSION_ID": launch.worker_id,
+                }
+            )
         finally:
             environment.close()
 
@@ -84,12 +92,24 @@ class TmuxWorkerProvider:
 
     def status(self, handle: str) -> bool:
         """Report whether the session is still alive."""
-        if self._run("has-session", "-t", f"={handle}", check=False).returncode != 0:
+        session = self._run("has-session", "-t", f"={handle}", check=False)
+        if self._session_missing(handle, session):
             return False
         pane = self._run(
             "display-message", "-p", "-t", f"={handle}:", "#{pane_dead}", check=False
         )
-        return pane.returncode == 0 and pane.stdout.strip() == "0"
+        return TmuxProbe.pane_alive(pane)
+
+    def _session_missing(
+        self, handle: str, result: subprocess.CompletedProcess[str]
+    ) -> bool:
+        if result.returncode != 0 and result.stderr.strip() == "no current target":
+            sessions = self._run("list-sessions", "-F", "#{session_name}", check=False)
+            return (
+                TmuxProbe.missing(sessions)
+                or handle not in sessions.stdout.splitlines()
+            )
+        return TmuxProbe.missing(result)
 
     def stop(self, handle: str) -> None:
         """Kill the session and its pane process group."""
@@ -106,21 +126,7 @@ class TmuxWorkerProvider:
                 group = None
             self._run("kill-session", "-t", f"={handle}", check=False)
             if group is not None:
-                self._finish(group)
-
-    @staticmethod
-    def _finish(group: int) -> None:
-        if group == os.getpgrp():
-            raise RuntimeError("Worker pane must have its own process group")
-        deadline = time.monotonic() + 3
-        while True:
-            try:
-                os.killpg(group, 0)
-            except ProcessLookupError:
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Worker pane did not exit after stop")
-            time.sleep(0.01)
+                TmuxProbe.wait_for_exit(group)
 
     # PY-TS-14: transport relays the profile's open JSON snapshot schema unchanged.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:

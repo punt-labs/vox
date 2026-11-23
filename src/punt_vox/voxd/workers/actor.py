@@ -21,15 +21,23 @@ if TYPE_CHECKING:
 class WorkerActor:
     """Serialize mutations while running blocking provider I/O off the event loop."""
 
-    __slots__ = ("_lock", "_registry", "_steering")
+    __slots__ = ("_lock", "_registry", "_steering", "_store")
     _registry: WorkerRegistry
     _lock: asyncio.Lock
     _steering: WorkerSteering
+    _store: HookContextStore | None  # PY-TS-14: standalone actors have no hooks.
 
-    def __new__(cls, registry: WorkerRegistry) -> Self:
+    def __new__(
+        cls,
+        registry: WorkerRegistry,
+        store: HookContextStore | None = None,  # PY-TS-14: standalone actors omit it.
+    ) -> Self:
         """Bind one registry and its serialization lock."""
         self = super().__new__(cls)
         self._registry = registry
+        self._store = store
+        if store is not None:
+            registry.release_with(store.release_worker)
         self._lock = asyncio.Lock()
         self._steering = WorkerSteering(registry, self._lock)
         return self
@@ -47,19 +55,30 @@ class WorkerActor:
             record = await asyncio.to_thread(
                 self._registry.start, task, project, provider=provider, harness=harness
             )
-        return WorkerRecordCodec.encode(record)
+        return WorkerRecordCodec.public(record)
 
     async def stop(self, worker_id: str) -> WorkerPayload:
         """Stop one worker; its worktree and branch are retained."""
         async with self._lock:
-            record = await asyncio.to_thread(self._registry.stop, worker_id)
-        return WorkerRecordCodec.encode(record)
+            record, cleanup = await asyncio.to_thread(
+                self._registry.request_stop, worker_id
+            )
+            if self._store is not None:
+                self._store.release_worker(worker_id)
+        if cleanup is not None:
+            await asyncio.shield(asyncio.wrap_future(cleanup))
+            record = self._registry.hook_records.get(worker_id)
+        return WorkerRecordCodec.public(record)
+
+    def shutdown(self) -> None:
+        """Close the worker subsystem's cleanup queue."""
+        self._registry.shutdown()
 
     async def workers(self) -> list[WorkerPayload]:
         """Reconcile and return every known worker."""
         async with self._lock:
             records = await asyncio.to_thread(self._registry.list)
-        return [WorkerRecordCodec.encode(record) for record in records]
+        return [WorkerRecordCodec.public(record) for record in records]
 
     async def steer(
         self,

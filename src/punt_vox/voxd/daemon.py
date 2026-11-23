@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
 from socket import socket
 from typing import TYPE_CHECKING, Self
@@ -72,6 +72,7 @@ class VoxDaemon:
         "_programs",
         "_router",
         "_synthesis",
+        "_worker_lifetime",
     )
 
     _config: DaemonConfig
@@ -82,6 +83,7 @@ class VoxDaemon:
     _synthesis: SynthesisPipeline
     _lux_clients: LuxClientFactory | None
     _port_file: PortFile
+    _worker_lifetime: ExitStack
 
     def __new__(
         cls,
@@ -99,6 +101,7 @@ class VoxDaemon:
         # ``vox.music`` scene from its own scratch store, putting a second
         # "Music" frame on their display beside the real one.
         lux_clients: LuxClientFactory | None = None,
+        worker_lifetime: ExitStack | None = None,  # PY-TS-14: router can omit workers.
     ) -> Self:
         """Create a vox daemon."""
         self = super().__new__(cls)
@@ -110,6 +113,9 @@ class VoxDaemon:
         self._router = router
         self._lux_clients = lux_clients
         self._port_file = PortFile(config.run_dir)
+        self._worker_lifetime = (
+            worker_lifetime if worker_lifetime is not None else ExitStack()
+        )
         return self
 
     def build_app(self) -> Starlette:
@@ -199,6 +205,7 @@ class VoxDaemon:
         try:
             yield
         finally:
+            await asyncio.to_thread(self._worker_lifetime.close)
             # Reverse start order: scene, playback, supervisor, then the writer.
             await producers.stop_all()
             service.shutdown()
@@ -286,6 +293,7 @@ class VoxDaemon:
         syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
         progs = programs or VoxDaemon.build_programs()
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
+        lifetime = ExitStack()
 
         if router is None:
             handlers = HandlerRegistry(
@@ -293,10 +301,17 @@ class VoxDaemon:
                 playback=pb,
                 programs=progs,
                 health=hlth,
-            ).build()
+            ).build(lifetime)
             router = WebSocketRouter(handlers=handlers, auth_token=auth_token)
 
-        return VoxDaemon._starlette(health=hlth, router=router)
+        @asynccontextmanager
+        async def close_workers(_app: Starlette) -> AsyncGenerator[None]:
+            try:
+                yield
+            finally:
+                await asyncio.to_thread(lifetime.close)
+
+        return VoxDaemon._starlette(health=hlth, router=router, lifespan=close_workers)
 
 
 # Public module API: the voxd console-script entrypoint and app factory.

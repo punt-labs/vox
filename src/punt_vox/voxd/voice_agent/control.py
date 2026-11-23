@@ -30,6 +30,7 @@ _RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
 _OVERRIDABLE: AgentPermissions = {
     "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
+    "first_message": True,
 }
 
 

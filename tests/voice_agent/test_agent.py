@@ -151,7 +151,8 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         "conversation_config_override"
     ] == {
         "agent": {
-            "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}
+            "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
+            "first_message": True,
         },
         "conversation": {"text_only": True},
     }
@@ -178,6 +179,41 @@ def test_changed_agent_settings_require_teardown(
             agent.connection((_CLOCK,))
         assert len(wire.calls) == 3
         agent.teardown()
+
+
+def test_registration_without_first_message_permission_requires_explicit_teardown(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        with monkeypatch.context() as legacy:
+            legacy.setattr(
+                "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
+                {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}},
+            )
+            agent.connection((_CLOCK,))
+        wire.calls.clear()
+
+        with pytest.raises(ConvAIError, match="vox call teardown"):
+            agent.connection((_CLOCK,))
+        assert wire.calls == []
+        agent.teardown()
+
+        assert VoiceAgent(control, path=config).connection((_CLOCK,)) == (
+            _SIGNED_URL,
+            ("tool_clock",),
+        )
+        assert [method for method, _, _ in wire.calls] == [
+            "DELETE",
+            "DELETE",
+            "POST",
+            "POST",
+            "GET",
+        ]
+        wire.calls.clear()
+        agent.connection((_CLOCK,))
+        assert [method for method, _, _ in wire.calls] == ["GET"]
 
 
 def test_teardown_first_keeps_new_config_tree_private(tmp_path: Path) -> None:
@@ -214,6 +250,19 @@ def test_existing_provisioning_lock_reports_retry(
         pytest.raises(ConvAIError, match="provisioning or teardown is in progress"),
     ):
         VoiceAgent(control, path=config).connection((_CLOCK,))
+
+
+def test_signed_url_auth_error_explains_required_access(
+    tmp_path: Path, wire: Requests
+) -> None:
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        wire.signed_url_status = 403
+        with pytest.raises(
+            ConvAIError, match="403; check the key's ElevenLabs Agents access"
+        ):
+            agent.connection((_CLOCK,))
 
 
 def test_invalid_utf8_registration_is_unreadable(tmp_path: Path) -> None:
@@ -285,6 +334,27 @@ def test_partial_provision_is_cleaned_before_retry(
         wire.create_agent_status = 200
         agent.connection((_CLOCK,))
         assert wire.calls[2][:2] == ("DELETE", "/v1/convai/tools/tool_clock?force=true")
+
+
+def test_failed_partial_cleanup_blocks_reprovisioning(
+    tmp_path: Path, wire: Requests
+) -> None:
+    wire.create_agent_status = 403
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        with pytest.raises(ConvAIError, match="HTTP 403"):
+            agent.connection((_CLOCK,))
+        partial = config.read_bytes()
+        wire.create_agent_status = 200
+        wire.delete_tool_status = 403
+        with pytest.raises(ConvAIError, match="HTTP 403"):
+            agent.connection((_CLOCK,))
+
+    assert config.read_bytes() == partial
+    assert [request[:2] for request in wire.calls[2:]] == [
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true")
+    ]
 
 
 def test_failed_delete_keeps_config_for_retry(tmp_path: Path, wire: Requests) -> None:

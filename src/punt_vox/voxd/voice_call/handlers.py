@@ -1,26 +1,27 @@
-"""call_start / call_stop / call_status: the daemon owns at most one Mode B call."""
+"""Lifecycle RPCs for the daemon's one Mode B call and its managed agent."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Self, TextIO, final
+from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import user_state_dir
-from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_agent.trace import EventTrace
+from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
-from punt_vox.voxd.voice_call.connector import CallConnector
+from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
 from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
-from punt_vox.voxd.voice_call.seed import CallSeed
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.types import MessageHandler
-    from punt_vox.voxd.voice_call.call import Dial, Opener
+    from punt_vox.voxd.voice_agent.contracts import SessionOptions
+    from punt_vox.voxd.voice_call.call import Opener
     from punt_vox.voxd.voice_call.connector import AgentConnector
     from punt_vox.voxd.voice_call.contracts import (
         CallInput,
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
 __all__ = ["CallHandlers"]
 
 _CONNECT_TIMEOUT_S: Final = 30.0  # Provisioning the agent and the handshake.
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +77,17 @@ class CallHandlers:
     _progress: ProgressEvents
     _projects: ProjectAllowlist
     _playback: PlaybackQueue
-    _connector: CallConnector
+    _connector: AgentOperations
     _trace_dir: Path
     _active: _ActiveCall | None  # None before the first call.
     _lock: asyncio.Lock
     _opener: Opener
+    ROUTES: ClassVar[tuple[str, ...]] = (
+        "call_start",
+        "call_stop",
+        "call_status",
+        "call_teardown",
+    )
 
     def __new__(
         cls,
@@ -95,7 +104,7 @@ class CallHandlers:
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
         self._progress = progress if progress is not None else ProgressEvents()
-        self._playback, self._connector = playback, CallConnector(connector)
+        self._playback, self._connector = playback, AgentOperations(connector)
         self._trace_dir = (
             trace_dir if trace_dir is not None else user_state_dir() / "calls"
         )
@@ -106,7 +115,7 @@ class CallHandlers:
 
     def handlers(self) -> dict[str, MessageHandler]:
         """Expose the call lifecycle RPCs."""
-        return dict.fromkeys(("call_start", "call_stop", "call_status"), self.handle)
+        return dict.fromkeys(self.ROUTES, self.handle)
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Answer one lifecycle RPC with the call's status."""
@@ -118,6 +127,8 @@ class CallHandlers:
                 case "call_stop":
                     async with self._lock:
                         status = await self._stop()
+                case "call_teardown":
+                    status = await self._teardown()
                 case _:
                     status = self._status()
         except (ValueError, OSError, ConvAIError) as exc:
@@ -127,6 +138,16 @@ class CallHandlers:
 
     def _status(self) -> dict[str, object]:
         return self._active.status() if self._active is not None else {"state": "idle"}
+
+    def _require_idle(self) -> None:
+        if self._active is not None and not self._active.task.done():
+            raise ValueError("a call is already running; stop it first")
+
+    async def _teardown(self) -> dict[str, object]:
+        async with self._lock:
+            self._require_idle()
+            await self._connector.teardown()
+            return self._status()
 
     async def _start(self, msg: dict[str, object]) -> dict[str, object]:
         """Launch under the lock, then wait unlocked so call_stop can cancel."""
@@ -143,22 +164,22 @@ class CallHandlers:
         return status
 
     async def _launch(self, msg: dict[str, object]) -> _ActiveCall:
-        if self._active is not None and not self._active.task.done():
-            raise ValueError("a call is already running; stop it first")
-        agent = self._connector.agent()
+        self._require_idle()
+        await self._connector.prepare()
         audio: CallInput = (
             await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
             if "script" in msg
             else MicInput()
         )
-        self._trace_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
         stamp = f"{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
         path = self._trace_dir / f"call-{stamp}.jsonl"
         stream = os.fdopen(
             os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
         )
+        returning = ReturnBrief(self._trace_dir / "departure.json")
         call = VoiceAgentCall(
-            BossTools(self._workers, self._projects),
+            BossTools(self._workers, self._projects, spoken_labels=returning.labels),
             audio,
             AgentSpeaker(self._playback),
             trace=EventTrace(stream),
@@ -167,20 +188,29 @@ class CallHandlers:
         )
 
         async def dial() -> tuple[str, SessionOptions]:
-            prompt = CallSeed(self._projects.repos(), await self._workers.workers())
-            url, tool_ids = await asyncio.to_thread(agent.connection, BossTools.CATALOG)
-            return url, SessionOptions(prompt.prompt(), tool_ids)
+            url, tool_ids = await self._connector.connection(BossTools.CATALOG)
+            workers = await self._workers.workers()
+            options = await asyncio.to_thread(
+                returning.options,
+                workers,
+                self._projects.repos(),
+                tool_ids,
+            )
+            return url, options
 
-        task = asyncio.create_task(self._run(call, dial, stream))
+        async def depart(reported: dict[str, int]) -> None:
+            try:
+                await asyncio.to_thread(returning.depart, reported)
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.warning("Call departure not saved (%s)", type(exc).__name__)
+
+        async def run() -> None:
+            with stream:
+                await call.run(dial, returning.covered, depart=depart)
+
+        task = asyncio.create_task(run())
         self._active = _ActiveCall(call, task, path)
         return self._active
-
-    @staticmethod
-    async def _run(call: VoiceAgentCall, dial: Dial, stream: TextIO) -> None:
-        try:
-            await call.run(dial)
-        finally:
-            stream.close()
 
     async def _stop(self) -> dict[str, object]:
         if self._active is not None:

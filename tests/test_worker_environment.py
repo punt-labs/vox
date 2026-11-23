@@ -8,11 +8,13 @@ import signal
 import socket
 import stat
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
 from punt_vox.voxd.workers.bootstrap import WorkerBootstrap
 from punt_vox.voxd.workers.environment import WorkerEnvironment
+from punt_vox.voxd.workers.reaper import WorkerReaper
 
 
 def test_environment_socket_is_private_single_use_and_removed() -> None:
@@ -27,6 +29,56 @@ def test_environment_socket_is_private_single_use_and_removed() -> None:
     finally:
         broker.close()
     assert not address.parent.exists()
+
+
+def test_startup_reaps_only_its_private_broker() -> None:
+    namespace = uuid4().hex[:16]
+    with patch("os.getpid", return_value=894321):
+        abandoned = WorkerEnvironment(namespace)
+        shared = WorkerEnvironment(namespace)
+    with patch("os.getpid", return_value=0):
+        invalid_owner = WorkerEnvironment(namespace)
+    live = WorkerEnvironment(namespace)
+    other = WorkerEnvironment()
+    try:
+        shared.address.parent.chmod(0o755)
+
+        def signal_owner(pid: int, signal_number: int) -> None:
+            assert signal_number == 0
+            assert pid > 0
+            if pid == 894321:
+                raise ProcessLookupError
+
+        with patch("os.kill", side_effect=signal_owner):
+            WorkerReaper.reap_brokers(namespace)
+        assert not abandoned.address.parent.exists()
+        assert shared.address.is_socket()
+        assert invalid_owner.address.is_socket()
+        assert live.address.is_socket()
+        assert other.address.is_socket()
+    finally:
+        abandoned.close()
+        shared.close()
+        invalid_owner.close()
+        live.close()
+        other.close()
+
+
+def test_broker_reaper_does_not_delete_a_regular_file_in_place_of_socket() -> None:
+    namespace = uuid4().hex[:16]
+    with patch("os.getpid", return_value=894321):
+        broker = WorkerEnvironment(namespace)
+    address = broker.address
+    try:
+        address.unlink()
+        address.write_text("not a socket")
+
+        with patch("os.kill", side_effect=ProcessLookupError):
+            WorkerReaper.reap_brokers(namespace)
+
+        assert address.read_text() == "not a socket"
+    finally:
+        broker.close()
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"KEY": 1}'])

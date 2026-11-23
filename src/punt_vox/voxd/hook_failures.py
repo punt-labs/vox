@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.hook_context_projection import HookToolResult, ToolUpdate
+    from punt_vox.voxd.hook_context_projection import (
+        HookToolResult,
+        HookToolUpdate,
+        ToolUpdate,
+    )
 
 _MAX_SUBJECTS = 48
 
@@ -49,3 +53,10 @@ class HookFailures:
             return None
         sequence, update = failure
         return update.as_result(sequence)
+
+    def checkpoint(self) -> list[tuple[int, HookToolUpdate]]:
+        """Persist recent outcomes, including successes that displace failures."""
+        return sorted(
+            (sequence, update.checkpoint())
+            for sequence, update in self._outcomes.values()
+        )

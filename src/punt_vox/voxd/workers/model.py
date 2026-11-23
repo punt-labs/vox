@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, final
 
@@ -35,4 +35,16 @@ class WorkerRecord:
         """Detach the snapshot so callers cannot mutate the stored checkpoint."""
         object.__setattr__(
             self, "last_report", MappingProxyType(deepcopy(dict(self.last_report)))
+        )
+
+    def retire(self) -> WorkerRecord:
+        """Record confirmed death without running harness cleanup."""
+        return replace(
+            self,
+            state="exited",
+            last_report={
+                **self.last_report,
+                "cleanup_pending": True,
+                "pane_stop_pending": True,
+            },
         )

@@ -25,6 +25,8 @@ words verbatim. Set urgent only when they want the worker to stop what it is \
 doing first.
 - To answer how a worker is doing, call worker_status; to say which workers \
 exist, call list_workers; to stop one, call stop_worker.
+- When the caller refers to a worker from your opener, you can pass \
+the whole spoken label (for example, "worker 2 in repo") as worker_id.
 - When the person is not talking to you, or asks you to be quiet, call \
 remain_silent and then say nothing.
 - If a tool call is interrupted and the person asks again, call the same tool \
@@ -72,20 +74,28 @@ class CallSeed:
         self._workers = sorted(workers, key=lambda w: w["created_at"], reverse=True)
         return self
 
-    def prompt(self) -> str:
+    def prompt(self, labels: dict[str, str] | None = None) -> str:
         """Return the prompt, dropping the oldest workers until it fits LIMIT."""
         briefs = [WorkerBrief.detail(worker) for worker in self._workers]
-        text = self._render(briefs)
+        lookup = labels or {}
+        if len(self._render([], lookup).encode()) > self.LIMIT:
+            lookup = {}
+        text = self._render(briefs, lookup)
         while len(text.encode()) > self.LIMIT and briefs:
             briefs.pop()
-            text = self._render(briefs)
+            text = self._render(briefs, lookup)
         return self._cut(text)
 
-    def _render(self, briefs: list[dict[str, object]]) -> str:
+    def _render(self, briefs: list[dict[str, object]], labels: dict[str, str]) -> str:
         projects = json.dumps(list(self._projects), ensure_ascii=False)
         lines = [_ROLE, f"Repositories a worker may use: {projects}"]
         if len(self._projects) == 1:
             lines.append("start_worker uses that repository when no project is given.")
+        if labels:
+            lines.append(
+                "Spoken worker labels to worker IDs (JSON): "
+                + json.dumps(labels, ensure_ascii=False, separators=(",", ":"))
+            )
         state = {
             "workers": briefs,
             "older_workers_omitted": len(self._workers) - len(briefs),

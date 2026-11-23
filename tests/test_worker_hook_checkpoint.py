@@ -2,33 +2,1080 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
+from punt_vox.client_errors import (
+    VoxdHandshakeRejectedError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextRelay, main
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.hook_gaps import HookGaps
+from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.voice_call.progress import ProgressEvents
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.hook_gaps import HookGapReport
     from punt_vox.voxd.workers.contracts import HarnessProfile
 
 
 def _profile_progress(worker: str, harness: HarnessProfile) -> dict[str, object]:
     return harness.progress(worker)
+
+
+async def test_worker_delivery_retries_same_sequence_across_short_restart() -> None:
+    payload: dict[str, object] = {"session_id": "worker", "relay_seq": 19}
+    request = AsyncMock(
+        side_effect=[
+            {"admitted": True},
+            VoxdRefusedError("restarting"),
+            VoxdRefusedError("restarting"),
+            {"admitted": True},
+            {},
+        ]
+    )
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await HookContextClient.send_event(payload, worker_only=True)
+    deliveries = [
+        call.args[0]["payload"]
+        for call in request.await_args_list
+        if call.args[0]["type"] == "hook_event"
+    ]
+    assert deliveries == [payload, payload]
+
+
+@pytest.mark.parametrize(
+    ("failure", "attempts"),
+    [(VoxdHandshakeRejectedError, 1), (VoxdRefusedError, 8), (VoxdProtocolError, 1)],
+)
+async def test_worker_retry_stops_at_auth_rejection_or_backoff_limit(
+    failure: type[Exception], attempts: int
+) -> None:
+    request = AsyncMock(side_effect=failure("not available"))
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock) as delay,
+        pytest.raises(failure, match="not available"),
+    ):
+        await HookContextClient.send_event({"session_id": "worker"}, worker_only=True)
+    assert request.await_count == attempts
+    assert delay.await_count == attempts - 1
+
+
+async def test_worker_delivery_retries_a_daemon_response_timeout() -> None:
+    payload: dict[str, object] = {"session_id": "worker", "relay_seq": 19}
+    timeout = VoxdProtocolError("Timeout waiting for response to 'hook_event'")
+    timeout.__cause__ = TimeoutError()
+    request = AsyncMock(
+        side_effect=[{"admitted": True}, timeout, {"admitted": True}, {}]
+    )
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await HookContextClient.send_event(payload, worker_only=True)
+
+    assert [call.args[0]["payload"] for call in request.await_args_list[1::2]] == [
+        payload,
+        payload,
+    ]
+
+
+def test_checkpoint_writer_matches_recovery_schema() -> None:
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": "worker", "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint("worker")
+    assert checkpoint is not None
+    assert checkpoint.keys() == WorkerHookCheckpoint.__annotations__.keys()
+
+
+def test_startup_skips_incomplete_hook_checkpoint(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, last_report={"worker_seq": 1}))
+    restarted = HookContextStore()
+
+    WorkerRecovery.restore(records.load(), restarted)
+
+    assert f"Worker {worker.id} hook checkpoint unavailable (KeyError)" in caplog.text
+    with pytest.raises(ValueError, match="no hook context"):
+        restarted.snapshot(worker.id)
+
+
+def test_checkpoint_missing_tool_history_is_not_restored(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    incomplete = dict(checkpoint)
+    incomplete.pop("tool_history_checkpoint")
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, last_report=incomplete))
+
+    restarted = HookContextStore()
+    WorkerRecovery.restore(records.load(), restarted)
+
+    with pytest.raises(ValueError, match="no hook context"):
+        restarted.snapshot(worker.id)
+
+
+def test_invalid_gap_ranges_cannot_be_restored_or_acknowledged() -> None:
+    invalid: HookGapReport = {
+        "highest_seen": 4,
+        "untracked_through": 0,
+        "missing_ranges": [(2, 5)],
+        "missing_count": 4,
+    }
+
+    with pytest.raises(ValueError, match="Invalid hook gap checkpoint"):
+        HookGaps().restore(invalid)
+    assert not HookGaps.received(invalid, 1)
+
+
+async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    before = HookContextStore()
+    policy = WorkerSubsystem.policy()
+    records = WorkerRecords(tmp_path / "workers")
+    registry = WorkerRegistry(
+        policy, records, {"tmux": provider}, {"claude": ClaudeProfile(before)}
+    )
+    with (
+        patch.object(type(policy), "resolve", return_value=tmp_path),
+        patch.object(type(policy), "create"),
+        patch.object(ClaudeProfile, "prepare"),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        worker = registry.start("work", str(tmp_path))
+        hooks = WorkerActor(registry).hooks(before)
+        base: dict[str, object] = {"session_id": worker.id, "cwd": worker.worktree}
+        await hooks.ingest(
+            {**base, "hook_event_name": "SessionStart", "relay_seq": 1},
+            worker_only=True,
+        )
+        tool = {
+            **base,
+            "tool_name": "Write",
+            "tool_input": {"file_path": "src/example.py"},
+        }
+        await hooks.ingest(
+            {
+                **tool,
+                "hook_event_name": "PostToolUseFailure",
+                "relay_seq": 4,
+                "error": "disk full",
+            },
+            worker_only=True,
+        )
+        await hooks.ingest(
+            {
+                **base,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Finished the tests.",
+            },
+            worker_only=True,
+        )
+        await hooks.ingest(
+            {
+                **base,
+                "hook_event_name": "Notification",
+                "relay_seq": 5,
+                "notification_type": "permission_prompt",
+                "message": "Allow the next task?",
+            },
+            worker_only=True,
+        )
+        after = HookContextStore()
+        with (
+            patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+            patch(
+                "punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider
+            ),
+        ):
+            adopted = WorkerSubsystem.recover(after, policy)
+        events = ProgressEvents()
+        resumed = adopted.hooks(after, events)
+        async with events.subscribe() as subscription:
+            await resumed.ingest(
+                {
+                    **base,
+                    "hook_event_name": "Notification",
+                    "relay_seq": 5,
+                    "notification_type": "permission_prompt",
+                    "message": "Allow the next task?",
+                },
+                worker_only=True,
+            )
+            assert subscription.empty()
+        snapshot = after.snapshot(worker.id)
+        assert snapshot == before.snapshot(worker.id)
+        assert snapshot["last_assistant_message"] == "Finished the tests."
+        assert snapshot["pending_decision"] == {
+            "notification_type": "permission_prompt",
+            "message": "Allow the next task?",
+            "seq": 5,
+        }
+        assert after.decision_baseline(worker.id) == 5
+        await resumed.ingest(
+            {
+                **base,
+                "hook_event_name": "Stop",
+                "relay_seq": 3,
+                "last_assistant_message": "A delayed older result.",
+            },
+            worker_only=True,
+        )
+        assert (
+            after.snapshot(worker.id)["pending_decision"]
+            == snapshot["pending_decision"]
+        )
+        row = (await adopted.workers())[0]
+        assert row["state"] == "ready"
+        assert "tool_history_checkpoint" not in row["last_report"]
+        await resumed.ingest(
+            {
+                **tool,
+                "hook_event_name": "PostToolUse",
+                "relay_seq": 6,
+                "tool_response": "written",
+            },
+            worker_only=True,
+        )
+        assert after.snapshot(worker.id)["open_failure"] is None
+
+
+async def test_startup_reconciles_dead_worker_before_hook_admission(
+    tmp_path: Path,
+) -> None:
+    """StartupAdoptsAndReaps: Startup retires dead workers before hook admission."""
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    before = HookContextStore()
+    before.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            state="ready",
+            provider="tmux",
+            harness="claude",
+            last_report=dict(checkpoint),
+        )
+    )
+    provider.alive = False
+    after = HookContextStore()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup") as cleanup,
+    ):
+        actor = WorkerSubsystem.recover(after, WorkerSubsystem.policy())
+        ws = AsyncMock()
+        await actor.hooks(after).admit(
+            {"session_id": worker.id, "cwd": worker.worktree}, ws
+        )
+        assert ws.send_json.call_args.args[0]["admitted"] is False
+        assert records.load()[0].state == "exited"
+        assert after.checkpoint(worker.id) is None
+        assert (await actor.workers())[0]["state"] == "exited"
+        async with asyncio.timeout(1):
+            while not cleanup.called:
+                await asyncio.sleep(0.01)
+        cleanup.assert_called_once_with(Path(worker.worktree))
+        await actor.stop(worker.id)
+        cleanup.assert_called_once_with(Path(worker.worktree))
+        assert records.load()[0].state == "exited"
+        await actor.stop(worker.id)
+        cleanup.assert_called_once_with(Path(worker.worktree))
+
+
+async def test_natural_exit_removes_only_worker_trust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    config = tmp_path / ".claude.json"
+    remaining = {"projects": {"other": {"hasTrustDialogAccepted": True}}}
+    config.write_text(json.dumps(remaining))
+    store = HookContextStore()
+    ClaudeProfile(store).prepare(Path(worker.worktree))
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        provider.alive = False
+        assert (await actor.workers())[0]["state"] == "exited"
+        async with asyncio.timeout(1):
+            while json.loads(config.read_text()) != remaining:
+                await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("observed_exit", [False, True])
+async def test_inconclusive_restart_does_not_reopen_active_hook_admission(
+    tmp_path: Path, observed_exit: bool
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "SessionStart",
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup"),
+    ):
+        if observed_exit:
+            actor = WorkerSubsystem.recover(
+                HookContextStore(), WorkerSubsystem.policy()
+            )
+            provider.alive = False
+            assert (await actor.workers())[0]["state"] == "exited"
+        store = HookContextStore()
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            restarted = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+            hook = restarted.hooks(store)
+            socket = AsyncMock()
+            await hook.admit(request, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is False
+            await hook.ingest({**request, "relay_seq": 1}, worker_only=True)
+            assert store.checkpoint(worker.id) is None
+        assert records.protects_session(worker.id) is not observed_exit
+
+        if not observed_exit:
+            assert (await restarted.workers())[0]["state"] != "exited"
+            await hook.admit(request, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is True
+
+
+async def test_positive_liveness_restores_hooks_despite_progress_error(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    WorkerRecords(tmp_path / "workers").save(
+        replace(worker, provider="tmux", harness="claude")
+    )
+    request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "SessionStart",
+    }
+    store = HookContextStore()
+    socket = AsyncMock()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        await hooks.admit(request, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+        with patch.object(
+            FakeWorkerProvider, "progress", side_effect=OSError("unreadable progress")
+        ) as progress:
+            assert (await actor.workers())[0]["state"] == worker.state
+        progress.assert_called_once()
+        await hooks.admit(request, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is True
+
+
+async def test_unknown_startup_liveness_accepts_terminal_hooks_only(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    store = HookContextStore()
+    hooks_request: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+    }
+    socket = AsyncMock()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        for seq, event in enumerate(("Stop", "SessionEnd"), 1):
+            payload = {
+                **hooks_request,
+                "hook_event_name": event,
+                "relay_seq": seq,
+                "last_assistant_message": "Finished while the daemon was away.",
+            }
+            await hooks.admit(payload, socket)
+            assert socket.send_json.call_args.args[0]["admitted"] is True
+            await hooks.ingest(payload, worker_only=True)
+        await hooks.admit({**hooks_request, "hook_event_name": "SessionStart"}, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+    [saved] = records.load()
+    assert saved.state != "exited"
+    assert saved.last_report["worker_seq"] == 2
+    assert saved.last_report["last_assistant_message"] == (
+        "Finished while the daemon was away."
+    )
+
+
+async def test_quarantined_worker_delivers_permission_notification(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    store = HookContextStore()
+    payload: dict[str, object] = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt",
+        "message": "Allow the next task?",
+        "relay_seq": 1,
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        socket = AsyncMock()
+
+        async def dispatch(
+            request: dict[str, object], *, expected: str
+        ) -> dict[str, object]:
+            if expected == "worker_hook_admission":
+                await hooks.admit(request, socket)
+                return dict(socket.send_json.call_args.args[0])
+            assert expected == "hook_event_accepted"
+            await hooks.ingest(payload, worker_only=True)
+            return {"type": expected}
+
+        with patch.object(HookContextClient, "_request", side_effect=dispatch):
+            await HookContextClient.send_event(payload, worker_only=True)
+        [saved] = records.load()
+        assert saved.last_report.get("pending_decision") == {
+            "notification_type": "permission_prompt",
+            "message": "Allow the next task?",
+            "seq": 1,
+        }
+        await hooks.admit({**payload, "hook_event_name": "SessionStart"}, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+        [snapshot] = await actor.workers()
+        assert (
+            snapshot["last_report"]["pending_decision"]
+            == saved.last_report["pending_decision"]
+        )
+
+
+async def test_quarantined_progress_retries_before_return_opener(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    base = {"session_id": worker.id, "cwd": worker.worktree}
+    before = HookContextStore()
+    before.ingest(
+        {**base, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    before.ingest(
+        {
+            **base,
+            "hook_event_name": "Notification",
+            "relay_seq": 2,
+            "notification_type": "permission_prompt",
+            "message": "Allow the tool?",
+        },
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            state="ready",
+            last_report=checkpoint,
+        )
+    )
+    cursor = tmp_path / "departure.json"
+    cursor.write_text(json.dumps({worker.id: 0}))
+    store = HookContextStore()
+    payload: dict[str, object] = {
+        **base,
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Continue.",
+        "relay_seq": 3,
+    }
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        with patch.object(FakeWorkerProvider, "status", side_effect=TimeoutError):
+            actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        socket = AsyncMock()
+
+        async def dispatch(
+            request: dict[str, object], *, expected: str
+        ) -> dict[str, object]:
+            if expected == "worker_hook_admission":
+                await hooks.admit(request, socket)
+                return dict(socket.send_json.call_args.args[0])
+            assert expected == "hook_event_accepted"
+            assert request["payload"] == payload
+            await hooks.ingest(payload, worker_only=True)
+            return {"type": expected}
+
+        async def confirm_on_retry(_delay: float) -> None:
+            [snapshot] = await actor.workers()
+            opener = ReturnBrief(cursor).options([snapshot], (str(tmp_path),), ())
+            assert opener.first_message is not None
+            assert "Allow the tool?" in opener.first_message
+
+        with (
+            patch.object(HookContextClient, "_request", side_effect=dispatch),
+            patch("asyncio.sleep", side_effect=confirm_on_retry) as wait,
+        ):
+            await HookContextClient.send_event(payload, worker_only=True)
+        opener = ReturnBrief(cursor).options(
+            await actor.workers(), (str(tmp_path),), ()
+        )
+        assert opener.first_message is None
+        wait.assert_awaited_once()
+    assert records.load()[0].last_report["worker_seq"] == 3
+
+
+async def test_explicit_stop_cleanup_does_not_block_another_workers_completion(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    stopped = registry.start("stop", str(tmp_path), provider="fake", harness="test")
+    live = registry.start("finish", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    actor = WorkerActor(registry, store)
+    hooks = actor.hooks(store)
+    cursor = tmp_path / "cursor.json"
+    ReturnBrief(cursor).depart({live.id: 0})
+    started, release = Event(), Event()
+
+    def hold_cleanup(path: Path) -> None:
+        if path == Path(stopped.worktree):
+            started.set()
+            assert release.wait(3)
+
+    def report(worker_id: str, _profile: HarnessProfile) -> dict[str, object]:
+        return dict(store.checkpoint(worker_id) or {})
+
+    def status(session: str) -> bool:
+        return session == live.session or provider.alive
+
+    payload: dict[str, object] = {
+        "session_id": live.id,
+        "cwd": live.worktree,
+        "hook_event_name": "Stop",
+        "relay_seq": 1,
+        "last_assistant_message": "Finished while cleanup was waiting.",
+    }
+    socket = AsyncMock()
+    with (
+        patch.object(TrivialProfile, "cleanup", side_effect=hold_cleanup),
+        patch.object(FakeWorkerProvider, "progress", side_effect=report),
+        patch.object(FakeWorkerProvider, "status", side_effect=status),
+    ):
+        stopping = asyncio.create_task(actor.stop(stopped.id))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            async with asyncio.timeout(1):
+                await hooks.admit(payload, socket)
+                assert socket.send_json.call_args.args[0]["admitted"] is True
+                await hooks.ingest(payload, worker_only=True)
+                opener = ReturnBrief(cursor).options(
+                    await actor.workers(), (str(tmp_path),), ()
+                )
+                assert opener.first_message is not None
+                assert "Finished while cleanup was waiting." in opener.first_message
+            assert not stopping.done()
+        finally:
+            release.set()
+            await stopping
+            actor.shutdown()
+
+
+async def test_listing_unpins_exited_worker_without_losing_checkpoint(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, provider="tmux", harness="claude"))
+    store = HookContextStore()
+    base = {"session_id": worker.id, "cwd": worker.worktree}
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+        patch.object(ClaudeProfile, "cleanup") as cleanup,
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        hooks = actor.hooks(store)
+        await hooks.ingest(
+            {**base, "hook_event_name": "SessionStart", "relay_seq": 1},
+            worker_only=True,
+        )
+        await hooks.ingest(
+            {
+                **base,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Finished the tests.",
+            },
+            worker_only=True,
+        )
+        assert records.load()[0].last_report["last_assistant_message"] == (
+            "Finished the tests."
+        )
+        provider.alive = False
+        assert (await actor.workers())[0]["state"] == "exited"
+        async with asyncio.timeout(1):
+            while not cleanup.called:
+                await asyncio.sleep(0.01)
+        cleanup.assert_called_once_with(Path(worker.worktree))
+        socket = AsyncMock()
+        await hooks.admit({**base}, socket)
+        assert socket.send_json.call_args.args[0]["admitted"] is False
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+    with patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress):
+        await hooks.ingest(
+            {**base, "hook_event_name": "SessionStart", "relay_seq": 3},
+            worker_only=True,
+        )
+    [saved] = records.load()
+    assert saved.last_report["last_assistant_message"] == "Finished the tests."
+    completion_socket = AsyncMock()
+    await hooks.admit({**base, "hook_event_name": "Stop"}, completion_socket)
+    assert completion_socket.send_json.call_args.args[0]["admitted"] is True
+    await hooks.ingest(
+        {
+            **base,
+            "hook_event_name": "Stop",
+            "relay_seq": 4,
+            "last_assistant_message": "Finished the build too.",
+        },
+        worker_only=True,
+    )
+    await hooks.ingest(
+        {**base, "hook_event_name": "SessionEnd", "relay_seq": 5},
+        worker_only=True,
+    )
+    [merged] = records.load()
+    assert merged.last_report["last_assistant_message"] == "Finished the build too."
+    assert merged.last_report["session_started"] is True
+    assert merged.last_report["worker_seq"] == 5
+    context_socket = AsyncMock()
+    await HookContextHandlers(store).snapshot({"session_id": worker.id}, context_socket)
+    response = context_socket.send_json.call_args.args[0]
+    assert response["type"] == "hook_context"
+    assert response["snapshot"]["last_assistant_message"] == ("Finished the build too.")
+    assert store.worker_sequence(worker.id) == 5
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"later-ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+
+
+async def test_steer_exit_releases_pinned_worker_context(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    records = WorkerRecords(tmp_path / "workers")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    records.save(
+        replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
+    )
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup"),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        try:
+            provider.alive = False
+            for _ in range(2):
+                with pytest.raises(ValueError, match="not ready \\(exited\\)"):
+                    await actor.steer(worker.id, "continue", urgent=False)
+            assert records.load()[0].state == "exited"
+        finally:
+            actor.shutdown()
+    assert store.snapshot(worker.id)["session_started"]
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+
+
+async def test_retirement_does_not_evict_context_during_late_session_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    store = HookContextStore()
+    base = {"session_id": worker.id, "cwd": worker.worktree}
+    store.ingest(
+        {
+            **base,
+            "hook_event_name": "Stop",
+            "relay_seq": 1,
+            "last_assistant_message": "Saved result.",
+        },
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(worker, provider="tmux", harness="claude", last_report=checkpoint)
+    )
+    release, cleaned = Event(), Event()
+    restore, cleanup = HookContextStore.restore, ClaudeProfile.cleanup
+
+    def finish_cleanup(profile: ClaudeProfile, path: Path) -> None:
+        assert release.wait(3)
+        try:
+            cleanup(profile, path)
+        finally:
+            cleaned.set()
+
+    def restore_and_churn(
+        context: HookContextStore, session: str, saved: WorkerHookCheckpoint | None
+    ) -> None:
+        restore(context, session, saved)
+        release.set()
+        assert cleaned.wait(1)
+        for index in range(65):
+            context.ingest(
+                {
+                    "session_id": f"ordinary-{index}",
+                    "hook_event_name": "SessionStart",
+                    "relay_seq": 1,
+                }
+            )
+
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(
+            ClaudeProfile, "cleanup", autospec=True, side_effect=finish_cleanup
+        ),
+    ):
+        actor = WorkerSubsystem.recover(store, WorkerSubsystem.policy())
+        try:
+            provider.alive = False
+            assert (await actor.workers())[0]["state"] == "exited"
+            with patch.object(
+                HookContextStore,
+                "restore",
+                autospec=True,
+                side_effect=restore_and_churn,
+            ):
+                await actor.hooks(store).ingest(
+                    {**base, "hook_event_name": "SessionEnd", "relay_seq": 2},
+                    worker_only=True,
+                )
+        finally:
+            release.set()
+            actor.shutdown()
+    assert records.load()[0].last_report["last_assistant_message"] == "Saved result."
+
+
+async def test_first_worker_completion_after_exit_ignores_ordinary_context(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    actor = WorkerActor(registry, store)
+    provider.alive = False
+    assert (await actor.workers())[0]["state"] == "exited"
+    payload = {
+        "session_id": worker.id,
+        "cwd": worker.worktree,
+        "hook_event_name": "Stop",
+        "relay_seq": 1,
+    }
+    store.ingest({**payload, "last_assistant_message": "Ordinary context."})
+    await actor.hooks(store).ingest(
+        {**payload, "last_assistant_message": "The first worker result."},
+        worker_only=True,
+    )
+    assert (
+        store.snapshot(worker.id)["last_assistant_message"]
+        == "The first worker result."
+    )
+    [saved] = WorkerRecords(tmp_path / "workers").load()
+    assert saved.last_report["last_assistant_message"] == "The first worker result."
+
+
+async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            last_report={
+                **checkpoint,
+                "gaps": {
+                    "highest_seen": 4,
+                    "untracked_through": 0,
+                    "missing_ranges": [(2, 5)],
+                    "missing_count": 4,
+                },
+            },
+        )
+    )
+
+    restarted = HookContextStore()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        actor = WorkerSubsystem.recover(restarted, WorkerSubsystem.policy())
+        assert restarted.checkpoint(worker.id) is None
+        assert "hook checkpoint unavailable (ValueError)" in caplog.text
+        await actor.hooks(restarted).ingest(
+            {
+                "session_id": worker.id,
+                "cwd": worker.worktree,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Fresh result",
+            },
+            worker_only=True,
+        )
+    assert restarted.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
+
+
+@pytest.mark.parametrize(
+    "sequence_field", ["worker_seq", "prompt_epoch", "result_seq", "goal_seq"]
+)
+@pytest.mark.parametrize("invalid", ["invalid", 999])
+async def test_malformed_ordering_checkpoint_does_not_block_fresh_hooks(
+    tmp_path: Path,
+    sequence_field: str,
+    invalid: str | int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = FakeWorkerProvider()
+    registry = _registry(tmp_path, provider)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    before = HookContextStore()
+    before.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = before.checkpoint(worker.id)
+    assert checkpoint is not None
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(
+        replace(
+            worker,
+            provider="tmux",
+            harness="claude",
+            state="ready",
+            last_report={**checkpoint, sequence_field: invalid},
+        )
+    )
+    after = HookContextStore()
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(FakeWorkerProvider, "progress", side_effect=_profile_progress),
+    ):
+        actor = WorkerSubsystem.recover(after, WorkerSubsystem.policy())
+        await actor.hooks(after).ingest(
+            {
+                "session_id": worker.id,
+                "cwd": worker.worktree,
+                "hook_event_name": "Stop",
+                "relay_seq": 2,
+                "last_assistant_message": "Fresh result",
+            },
+            worker_only=True,
+        )
+
+    assert after.snapshot(worker.id)["last_assistant_message"] == "Fresh result"
+    assert "hook checkpoint unavailable (ValueError)" in caplog.text
+
+
+def test_restore_keeps_managed_sessions_outside_ordinary_cache() -> None:
+    previous = HookContextStore()
+    previous.ingest(
+        {"session_id": "original", "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = previous.checkpoint("original")
+    assert checkpoint is not None
+
+    restarted = HookContextStore()
+    restarted.restore("original", checkpoint)
+    for index in range(65):
+        restarted.restore(f"worker-{index}", checkpoint)
+
+    assert restarted.snapshot("original")["session_started"]
+
+
+async def test_failed_trust_cleanup_still_releases_terminal_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude.json").write_text("not valid JSON")
+    store = HookContextStore()
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    with patch.object(
+        TrivialProfile, "cleanup", side_effect=ClaudeProfile(store).cleanup
+    ):
+        assert (await WorkerActor(registry, store).stop(worker.id))[
+            "state"
+        ] == "stopped"
+    assert registry.list()[0].last_report["cleanup_error"] == "JSONDecodeError"
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
 
 
 def test_hook_sender_does_not_open_the_worker_registry(tmp_path: Path) -> None:
@@ -73,7 +1120,9 @@ async def test_delivered_session_start_is_durable_without_list(tmp_path: Path) -
         socket = AsyncMock()
         await handlers["hook_event"](
             {
+                "type": "hook_event",
                 "id": "hook",
+                "worker_only": True,
                 "payload": {
                     "session_id": record.id,
                     "cwd": record.worktree,
@@ -109,21 +1158,31 @@ async def test_unadmitted_worker_events_never_leave_the_client() -> None:
     ) as request:
         await HookContextClient.send_event(payload, worker_only=True)
     request.assert_awaited_once_with(
-        {"type": "worker_hook_admission", "session_id": "unknown", "cwd": "/repo"},
+        {
+            "type": "worker_hook_admission",
+            "session_id": "unknown",
+            "cwd": "/repo",
+            "hook_event_name": None,
+        },
         expected="worker_hook_admission",
     )
 
 
 @pytest.mark.asyncio
-async def test_admitted_event_retains_server_side_revalidation() -> None:
+@pytest.mark.parametrize("worker_only", [True, False])
+async def test_admitted_event_retains_server_side_revalidation(
+    worker_only: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payload: dict[str, object] = {"session_id": "worker", "cwd": "/repo"}
+    if not worker_only:
+        monkeypatch.setenv("VOX_WORKER_SESSION_ID", "worker")
     with patch.object(
         HookContextClient,
         "_request",
         new_callable=AsyncMock,
         side_effect=[{"admitted": True}, {}],
     ) as request:
-        await HookContextClient.send_event(payload, worker_only=True)
+        await HookContextClient.send_event(payload, worker_only=worker_only)
     assert request.await_count == 2
     assert request.call_args.args[0] == {
         "type": "hook_event",
@@ -175,12 +1234,13 @@ async def test_failed_checkpoint_is_not_acknowledged(tmp_path: Path) -> None:
     with patch.object(WorkerRecords, "save", side_effect=OSError("disk failed")):
         await routes["hook_event"](
             {
+                "worker_only": True,
                 "payload": {
                     "session_id": record.id,
                     "cwd": record.worktree,
                     "hook_event_name": "SessionStart",
                     "relay_seq": 1,
-                }
+                },
             },
             socket,
         )
@@ -244,13 +1304,12 @@ async def test_recursive_envelopes_have_a_safe_ingestion_error() -> None:
 @pytest.mark.asyncio
 async def test_admission_path_errors_are_wire_errors(tmp_path: Path) -> None:
     registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
     socket = AsyncMock()
-    with patch.object(
-        WorkerRegistry, "admits_hook", side_effect=OSError("path unavailable")
-    ):
+    with patch.object(Path, "resolve", side_effect=OSError("path unavailable")):
         await WorkerHandlers.build(registry, HookContextStore())[
             "worker_hook_admission"
-        ]({}, socket)
+        ]({"session_id": worker.id, "cwd": worker.worktree}, socket)
     assert socket.send_json.call_args.args[0]["type"] == "error"
 
 

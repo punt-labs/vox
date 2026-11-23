@@ -27,6 +27,34 @@ async def test_fanout_bounded_and_unsubscribed() -> None:
     events.publish(event)
 
 
+async def test_return_snapshot_covers_pre_cut_events_without_losing_later_ones() -> (
+    None
+):
+    events = ProgressEvents()
+    progress = CallProgress(events)
+    conv = AsyncMock(spec=Conversation)
+    delivered = asyncio.Event()
+
+    def after_delivery(_context: str) -> None:
+        delivered.set()
+
+    conv.send_context.side_effect = after_delivery
+    async with progress.subscribe() as queue:
+        events.publish(WorkerProgress("w", 3, "finished", "covered"))
+        events.publish(WorkerProgress("w", 4, "finished", "after cut"))
+        task = asyncio.create_task(
+            progress.run(cast("Conversation", conv), queue, {"w": 3})
+        )
+        try:
+            await asyncio.wait_for(delivered.wait(), 1)
+            conv.send_context.assert_awaited_once()
+            assert "after cut" in conv.send_context.call_args.args[0]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+
 async def test_context_immediate_results_wait_decisions_bypass_lull() -> None:
     events = ProgressEvents()
     progress = CallProgress(events)
@@ -54,6 +82,56 @@ async def test_context_immediate_results_wait_decisions_bypass_lull() -> None:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+async def test_empty_completion_does_not_advance_reported_result_sequence() -> None:
+    progress = CallProgress(ProgressEvents())
+    conv = AsyncMock(spec=Conversation)
+    sent = asyncio.Event()
+
+    def after_submission(_text: str) -> None:
+        sent.set()
+
+    conv.send_text.side_effect = after_submission
+    async with asyncio.timeout(1), progress.subscribe() as queue:
+        with patch.object(CallProgress, "LULL", 0):
+            task = asyncio.create_task(progress.run(cast("Conversation", conv), queue))
+            try:
+                queue.put_nowait(WorkerProgress("worker", 2, "finished", "result"))
+                await sent.wait()
+                sent.clear()
+                queue.put_nowait(WorkerProgress("worker", 4, "finished", ""))
+                await sent.wait()
+                assert progress.reported == {"worker": 2}
+            finally:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+
+async def test_pending_speech_drops_oldest_result_at_capacity() -> None:
+    progress = CallProgress(ProgressEvents())
+    queue: asyncio.Queue[WorkerProgress] = asyncio.Queue()
+    for index in range(ProgressEvents.LIMIT + 1):
+        queue.put_nowait(WorkerProgress(f"w{index}", index + 1, "finished", "done"))
+    conv = AsyncMock(spec=Conversation)
+    spoken = asyncio.Event()
+
+    def after_speech(_text: str) -> None:
+        spoken.set()
+
+    conv.send_text.side_effect = after_speech
+
+    with patch.object(CallProgress, "LULL", 0.05):
+        task = asyncio.create_task(progress.run(cast("Conversation", conv), queue))
+        try:
+            await asyncio.wait_for(spoken.wait(), 2)
+            assert conv.send_context.await_count == ProgressEvents.LIMIT + 1
+            assert "Worker w1 event 2:" in conv.send_text.await_args_list[0].args[0]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
 
 async def test_empty_source_cancellation_and_send_failure() -> None:

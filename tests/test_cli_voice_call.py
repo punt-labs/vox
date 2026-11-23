@@ -79,6 +79,25 @@ def _script(tmp_path: Path, *lines: str) -> Path:
     return path
 
 
+def test_call_teardown_requests_explicit_agent_deletion() -> None:
+    voxd = _Voxd({"state": "idle"})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), ["teardown"])
+
+    assert result.exit_code == 0, result.output
+    assert voxd.sent == [("teardown", {})]
+    assert "provision a new agent" in result.output
+
+
+def test_call_teardown_allows_the_serial_provider_deletion_budget() -> None:
+    with patch.object(DaemonControl, "request", return_value={"state": "idle"}) as rpc:
+        result = runner.invoke(CallCli.build_app(), ["teardown"])
+
+    assert result.exit_code == 0, result.output
+    assert rpc.await_args is not None
+    assert rpc.await_args.kwargs["timeout"] >= 75
+
+
 @pytest.mark.usefixtures("no_poll_delay")
 def test_bare_call_with_a_script_starts_follows_and_reports(tmp_path: Path) -> None:
     script = _script(tmp_path, '{"pcm_path": "greet.pcm", "pause_s": 2}', "")

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.hook_context_event import MAX_SEQUENCE, HookIdentity, HookRedaction
-from punt_vox.voxd.hook_session_context import HookContextSnapshot, SessionContext
+from punt_vox.voxd.hook_session_context import SessionContext
+from punt_vox.voxd.hook_sessions import HookSessions
 
-_MAX_SESSIONS = 64
+if TYPE_CHECKING:
+    from punt_vox.voxd.hook_snapshot import HookContextSnapshot, WorkerHookCheckpoint
 
 
 @final
@@ -16,12 +17,12 @@ class HookContextStore:
     """Own the rolling, in-memory context of the most active sessions."""
 
     __slots__ = ("_sessions",)
-    _sessions: OrderedDict[str, SessionContext]
+    _sessions: HookSessions
 
     def __new__(cls) -> Self:
-        """Initialize an empty store; never hydrate from a persisted ledger."""
+        """Initialize an empty store before restoring managed checkpoints."""
         self = super().__new__(cls)
-        self._sessions = OrderedDict()
+        self._sessions = HookSessions()
         return self
 
     def ingest(self, payload: dict[str, object], *, worker_input: bool = False) -> None:
@@ -35,11 +36,8 @@ class HookContextStore:
         context = self._sessions.get(identity.session)
         if context is None:
             context = SessionContext()
-            self._sessions[identity.session] = context
         context.ingest(sequence, identity.event, sanitized, worker_input=worker_input)
-        self._sessions.move_to_end(identity.session)
-        if len(self._sessions) > _MAX_SESSIONS:
-            self._sessions.popitem(last=False)
+        self._sessions.remember(identity.session, context, managed=worker_input)
 
     def snapshot(self, session: str) -> HookContextSnapshot:
         """Return only curated context and its gap report, never raw events."""
@@ -68,6 +66,22 @@ class HookContextStore:
         """Return the newest admitted worker hook, excluding shared context hooks."""
         context = self._sessions.get(session)
         return context.decisions.latest if context is not None else 0
+
+    def checkpoint(self, session: str) -> WorkerHookCheckpoint | None:
+        """Read the managed projection with its sequence ordering."""
+        context = self._sessions.get(session)
+        return context.checkpoint() if context is not None else None
+
+    def restore(self, session: str, checkpoint: WorkerHookCheckpoint | None) -> None:
+        """Restore a managed projection, or start clean when no checkpoint exists."""
+        context = SessionContext()
+        if checkpoint is not None:
+            context.restore(checkpoint)
+        self._sessions.remember(session, context, managed=True)
+
+    def release_worker(self, session: str) -> None:
+        """Return a terminal worker's context to the ordinary retention limit."""
+        self._sessions.release(session)
 
     def decision_receipts(self, session: str, baseline: int) -> list[int]:
         """Return progress acknowledging a question present at the baseline."""

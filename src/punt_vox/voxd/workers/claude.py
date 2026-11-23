@@ -91,7 +91,7 @@ class ClaudeProfile:
     # PY-TS-14: curated hook JSON is a snapshot; fields evolve with the hook source.
     def progress(self, worker_id: str) -> dict[str, object]:
         """SessionStart, not pane existence, establishes readiness."""
-        try:
-            return dict(self._store.snapshot(worker_id))
-        except ValueError:
-            return {"session_started": False}
+        checkpoint = self._store.checkpoint(worker_id)
+        return (
+            dict(checkpoint) if checkpoint is not None else {"session_started": False}
+        )

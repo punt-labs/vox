@@ -54,6 +54,10 @@ class HookDecisions:
         """Return a detached view, or None when the worker can proceed."""
         return self._pending.copy() if self._pending is not None else None
 
+    def restore(self, seq: int, epoch: int, pending: PendingDecision | None) -> None:
+        """Resume the last decision without manufacturing an input receipt."""
+        self._high, self._epoch, self._pending = seq, epoch, pending
+
     @property
     def latest(self) -> int:
         """Return the newest admitted worker hook, even without a pending question."""

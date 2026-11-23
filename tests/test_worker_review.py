@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 import pytest
@@ -12,8 +14,10 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 from punt_vox.hook_context_relay import HookContextRelay
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.claude import ClaudeProfile
+from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
+from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 
 
 def test_worker_environment_keeps_other_tool_credentials_private() -> None:
@@ -33,13 +37,35 @@ def test_dead_worker_cleanup_cannot_block_registry_rebuild(tmp_path: Path) -> No
     registry = _registry(tmp_path, provider)
     registry.start("edit", str(tmp_path), provider="fake", harness="test")
     provider.alive = False
-    with patch.object(TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")):
+    published = Event()
+    save = WorkerRecords.save
+
+    def save_outcome(records: WorkerRecords, record: WorkerRecord) -> None:
+        save(records, record)
+        if "cleanup_error" in record.last_report:
+            published.set()
+
+    with (
+        patch.object(
+            TrivialProfile, "cleanup", side_effect=ValueError("bad JSON")
+        ) as cleanup,
+        patch.object(WorkerRecords, "save", save_outcome),
+    ):
         restored = _registry(tmp_path, provider)
+        cleanup.assert_not_called()
         record = restored.list()[0]
         assert record.state == "exited"
-        assert record.last_report["cleanup_error"] == "ValueError"
-    cleaned = restored.list()[0]
+        assert record.last_report["cleanup_pending"] is True
+        assert published.wait(1)
+        deadline = time.monotonic() + 1
+        while not restored.cleanup_idle():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert restored.stop(record.id).last_report["cleanup_error"] == "ValueError"
+        assert cleanup.call_count == 2
+    cleaned = restored.stop(record.id)
     assert "cleanup_error" not in cleaned.last_report
+    assert "cleanup_pending" not in cleaned.last_report
     assert WorkerRecords(tmp_path / "workers").load()[0] == cleaned
 
 
@@ -83,7 +109,7 @@ def test_tmux_session_disappearing_during_control(operation: str) -> None:
     with (
         patch.object(TmuxWorkerProvider, "_run", side_effect=run),
         patch("os.getpgid", return_value=456),
-        patch.object(TmuxWorkerProvider, "_finish") as finish,
+        patch.object(TmuxProbe, "wait_for_exit") as finish,
     ):
         if operation == "status":
             assert provider.status("worker") is False
@@ -91,6 +117,19 @@ def test_tmux_session_disappearing_during_control(operation: str) -> None:
             provider.stop("worker")
         if operation == "stop-kill":
             finish.assert_called_once_with(456)
+
+
+def test_tmux_no_current_target_checks_exact_session_absence() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "no current target\n"),
+            subprocess.CompletedProcess([], 0, "worker-other\n", ""),
+        ],
+    ) as run:
+        assert TmuxWorkerProvider().status("worker") is False
+    run.assert_called_with("list-sessions", "-F", "#{session_name}", check=False)
 
 
 def test_managed_worker_hooks_need_no_repository_marker(tmp_path: Path) -> None:

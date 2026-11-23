@@ -1,4 +1,4 @@
-"""The ``vox call`` verbs for voxd's Mode B call: bare ``vox call`` and ``status``."""
+"""The ``vox call`` verbs for voxd's Mode B call agent."""
 
 from __future__ import annotations
 
@@ -37,10 +37,11 @@ class VoiceCallCli:
 
     @classmethod
     def register(cls, app: typer.Typer) -> None:
-        """Make bare ``vox call`` start voxd's call, and add ``vox call status``."""
+        """Register the bare call and its Mode B subcommands."""
         cli = cls()
         app.callback(invoke_without_command=True)(cli.call)
         app.command("status")(cli.status)
+        app.command("teardown")(cli.teardown)
 
     def call(self, ctx: typer.Context, script: _ScriptOpt = None) -> None:
         """Start voxd's call (mic, or --script audio) and follow it to its end."""
@@ -55,3 +56,7 @@ class VoiceCallCli:
     def status(self) -> None:
         """Show voxd's call: state, tool calls, transcript so far."""
         VoiceCall().status()
+
+    def teardown(self) -> None:
+        """Delete the managed ElevenLabs agent and tools when no call is active."""
+        VoiceCall().teardown()

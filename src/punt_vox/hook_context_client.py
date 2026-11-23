@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import cast, final
 from uuid import uuid4
 
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.client_transport import VoxdTransport
+from punt_vox.hook_delivery_retry import HookDeliveryResult, HookDeliveryRetry
 
 
 @final
@@ -20,21 +22,39 @@ class HookContextClient:
         cls, payload: dict[str, object], *, worker_only: bool = False
     ) -> None:
         """Deliver one stamped hook payload and check the daemon's receipt."""
+        managed_id = os.environ.get("VOX_WORKER_SESSION_ID")
+        managed = worker_only or (
+            managed_id is not None and managed_id == payload.get("session_id")
+        )
+        if not managed:
+            await cls._deliver(payload, worker_only=False)
+            return
+        await HookDeliveryRetry.run(lambda: cls._deliver(payload, worker_only=True))
+
+    @classmethod
+    async def _deliver(
+        cls, payload: dict[str, object], *, worker_only: bool
+    ) -> HookDeliveryResult:
+        """Start each attempt at admission, preserving the stamped event."""
         if worker_only:
             admission = await cls._request(
                 {
                     "type": "worker_hook_admission",
                     "session_id": payload.get("session_id"),
                     "cwd": payload.get("cwd"),
+                    "hook_event_name": payload.get("hook_event_name"),
                 },
                 expected="worker_hook_admission",
             )
             if admission.get("admitted") is not True:
-                return
+                if admission.get("retryable") is True:
+                    return HookDeliveryResult.PENDING
+                return HookDeliveryResult.DENIED
         await cls._request(
             {"type": "hook_event", "payload": payload, "worker_only": worker_only},
             expected="hook_event_accepted",
         )
+        return HookDeliveryResult.DELIVERED
 
     @classmethod
     async def snapshot(cls, session: str) -> dict[str, object]:

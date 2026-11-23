@@ -11,6 +11,7 @@ from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.startup import WorkerStartup
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 if TYPE_CHECKING:
@@ -29,13 +30,17 @@ class WorkerSubsystem:
         return WorkerRepoPolicy(ConfigStore(ConfigStore.global_dir()))
 
     @staticmethod
-    def actor(store: HookContextStore, policy: WorkerRepoPolicy) -> WorkerActor:
-        """Rehydrate the registry at daemon startup behind one serialized actor."""
-        return WorkerActor(
-            WorkerRegistry(
-                policy,
-                WorkerRecords(user_state_dir() / "workers"),
-                {"tmux": TmuxWorkerProvider()},
-                {"claude": ClaudeProfile(store)},
-            )
+    def recover(store: HookContextStore, policy: WorkerRepoPolicy) -> WorkerActor:
+        """Recover durable state before sharing the actor with any RPC."""
+        records = WorkerRecords(user_state_dir() / "workers")
+        provider = TmuxWorkerProvider()
+        registry = WorkerRegistry(
+            policy,
+            records,
+            {"tmux": provider},
+            {"claude": ClaudeProfile(store)},
         )
+
+        recovered, unconfirmed = WorkerStartup.run(records, store, provider)
+        registry.restore(recovered, unconfirmed=unconfirmed)
+        return WorkerActor(registry, store)

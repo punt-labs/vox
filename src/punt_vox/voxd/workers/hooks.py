@@ -5,16 +5,18 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.wire_reply import WireReply
 from punt_vox.voxd.workers.hook_reports import HookReports
+from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.hook_context_store import HookContextStore
     from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
+    from punt_vox.voxd.workers.model import WorkerRecord
 
 __all__ = ["WorkerHooks"]
 
@@ -48,16 +50,28 @@ class WorkerHooks:
         """Check advisory metadata without waiting behind worker launches."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            admitted = await asyncio.to_thread(
-                self._registry.admits_hook, msg.get("session_id"), msg.get("cwd")
+            admitted, retryable = await asyncio.to_thread(
+                self._registry.hook_records.admission,
+                msg.get("session_id"),
+                msg.get("cwd"),
+                msg.get("hook_event_name"),
             )
         except (OSError, ValueError, RuntimeError) as exc:
             await reply.error(str(exc))
             return
-        await reply.send({"type": "worker_hook_admission", "admitted": admitted})
+        await reply.send(
+            {
+                "type": "worker_hook_admission",
+                "admitted": admitted,
+                "retryable": retryable,
+            }
+        )
 
     async def ingest(self, payload: dict[str, object], *, worker_only: bool) -> None:
         """Revalidate admission and checkpoint before returning a delivery receipt."""
+        if not worker_only and await asyncio.to_thread(self._target, payload) is None:
+            self._store.ingest(payload)
+            return
         async with self._lock:
             event = await asyncio.to_thread(
                 self._ingest, payload, worker_only=worker_only
@@ -68,18 +82,48 @@ class WorkerHooks:
     def _ingest(
         self, payload: dict[str, object], *, worker_only: bool
     ) -> WorkerProgress | None:
-        session, cwd = payload.get("session_id"), payload.get("cwd")
-        admitted = self._registry.admits_hook(session, cwd)
-        if worker_only and not admitted:
+        record = self._target(payload)
+        if record is None:
+            if not worker_only:
+                self._store.ingest(payload)
             return None
-        self._store.ingest(payload, worker_input=admitted)
-        self._registry.checkpoint_progress(session, cwd)
-        if not admitted:
+        sequence = payload.get("relay_seq")
+        if type(sequence) is int and self._registry.hook_records.received(
+            record, sequence
+        ):
             return None
-        snapshot = self._store.snapshot(str(session))
+        self._project(record, payload)
+        snapshot = self._store.snapshot(record.id)
         return self._reports.observe(
-            str(session),
+            record.id,
             payload,
             snapshot["pending_decision"],
-            latest=self._store.worker_sequence(str(session)),
+            latest=self._store.worker_sequence(record.id),
         )
+
+    def _target(self, msg: dict[str, object]) -> WorkerRecord | None:
+        return self._registry.hook_records.match(
+            msg.get("session_id"), msg.get("cwd"), msg.get("hook_event_name")
+        )
+
+    def _project(self, record: WorkerRecord, payload: dict[str, object]) -> None:
+        exited = self._registry.hook_records.exited(record)
+        if exited:
+            self._restore_exit(record)
+        try:
+            self._store.ingest(payload, worker_input=True)
+            if exited:
+                checkpoint = self._store.checkpoint(record.id)
+                if checkpoint is not None:
+                    self._registry.checkpoint_exit(record, checkpoint)
+            else:
+                self._registry.checkpoint_progress(record)
+        finally:
+            if exited:
+                self._store.release_worker(record.id)
+
+    def _restore_exit(self, record: WorkerRecord) -> None:
+        try:
+            self._store.restore(record.id, WorkerRecovery.checkpoint(record))
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("Saved worker hook checkpoint is unavailable") from None

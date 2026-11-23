@@ -67,3 +67,41 @@ class HookGaps:
             "missing_count": sum(end - start + 1 for start, end in self._missing),
             "untracked_through": self._untracked_through,
         }
+
+    def restore(self, report: HookGapReport) -> None:
+        """Continue deduplication and retain known gaps after a process restart."""
+        if not self._valid(report):
+            raise ValueError("Invalid hook gap checkpoint")
+        self._high = report["highest_seen"]
+        self._missing = [(low, high) for low, high in report["missing_ranges"]]
+        self._untracked_through = report["untracked_through"]
+
+    @classmethod
+    def received(cls, report: HookGapReport, sequence: int) -> bool:
+        """Recognize a durable receipt, not a reported sequence gap."""
+        try:
+            return (
+                cls._valid(report)
+                and report["untracked_through"] < sequence <= report["highest_seen"]
+                and not any(
+                    start <= sequence <= end for start, end in report["missing_ranges"]
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _valid(report: HookGapReport) -> bool:
+        low, high = report["untracked_through"], report["highest_seen"]
+        ranges = report["missing_ranges"]
+        return (
+            type(low) is int
+            and type(high) is int
+            and 0 <= low <= high
+            and type(ranges) is list
+            and len(ranges) <= _MAX_RANGES
+            and all(
+                type(start) is int and type(end) is int and low < start <= end < high
+                for start, end in ranges
+            )
+        )

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.boss_tools import BossTools
     from punt_vox.voxd.voice_call.contracts import CallInput
+    from punt_vox.voxd.voice_call.progress_types import WorkerProgress
     from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
     type Opener = Callable[..., AbstractAsyncContextManager[Conversation]]
@@ -99,19 +100,18 @@ class VoiceAgentCall:
         self._tool_calls = deque(maxlen=_HISTORY)
         return self
 
-    async def run(self, dial: Dial) -> None:
+    async def run(
+        self,
+        dial: Dial,
+        covered: dict[str, int] | None = None,
+        *,
+        depart: Callable[[dict[str, int]], Awaitable[None]] | None = None,
+    ) -> None:
         """Dial, then hold the call until it ends, fails, or is cancelled."""
         hung_up = False  # Only a remote hang-up lets the last reply play out.
         try:
-            signed_url, options = await dial()
-            async with self._opener(signed_url, options, trace=self._trace) as conv:
-                self._conversation_id = conv.metadata.conversation_id
-                self._state = "live"
-                self._connected.set()
-                async with asyncio.TaskGroup() as group:
-                    group.create_task(self._pump(conv))
-                    group.create_task(self._progress.run(conv))
-                    group.create_task(self._listen(conv, group))
+            async with self._progress.subscribe() as queue:
+                await self._converse(dial, queue, covered)
         except* EOFError:
             self._state = "ended"
             hung_up = True
@@ -126,10 +126,32 @@ class VoiceAgentCall:
             if self._state in {"connecting", "live"}:
                 self._state = "ended"
             self._connected.set()
-            if hung_up:
-                await self._speaker.finish()
-            else:
-                await self._speaker.close()
+            try:
+                if not hung_up:
+                    await self._speaker.close()
+            finally:
+                try:
+                    if depart is not None and self._conversation_id is not None:
+                        await depart(self._progress.reported)
+                finally:
+                    if hung_up:
+                        await self._speaker.finish()
+
+    async def _converse(
+        self,
+        dial: Dial,
+        queue: asyncio.Queue[WorkerProgress],
+        covered: dict[str, int] | None,
+    ) -> None:
+        signed_url, options = await dial()
+        async with self._opener(signed_url, options, trace=self._trace) as conv:
+            self._conversation_id = conv.metadata.conversation_id
+            self._state = "live"
+            self._connected.set()
+            async with asyncio.TaskGroup() as group:
+                group.create_task(self._pump(conv))
+                group.create_task(self._progress.run(conv, queue, covered))
+                group.create_task(self._listen(conv, group))
 
     async def connected(self) -> None:
         """Return once the conversation is live or has already ended."""

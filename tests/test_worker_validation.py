@@ -15,6 +15,7 @@ from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
+from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 from punt_vox.voxd.workers.trust import ClaudeTrust
 
 
@@ -103,7 +104,7 @@ def test_stop_tolerates_a_pane_process_disappearing() -> None:
             ],
         ) as run,
         patch("punt_vox.voxd.workers.tmux.os.getpgid", side_effect=ProcessLookupError),
-        patch.object(TmuxWorkerProvider, "_finish") as finish,
+        patch.object(TmuxProbe, "wait_for_exit") as finish,
     ):
         TmuxWorkerProvider().stop("worker")
     assert run.call_args.args == ("kill-session", "-t", "=worker")
@@ -112,22 +113,22 @@ def test_stop_tolerates_a_pane_process_disappearing() -> None:
 
 def test_stop_refuses_its_own_process_group() -> None:
     with (
-        patch("punt_vox.voxd.workers.tmux.os.getpgrp", return_value=42),
-        patch("punt_vox.voxd.workers.tmux.os.killpg") as kill,
+        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=42),
+        patch("punt_vox.voxd.workers.tmux_probe.os.killpg") as kill,
         pytest.raises(RuntimeError, match="own process group"),
     ):
-        TmuxWorkerProvider._finish(42)
+        TmuxProbe.wait_for_exit(42)
     kill.assert_not_called()
 
 
 def test_stop_deadline_is_bounded() -> None:
     with (
-        patch("punt_vox.voxd.workers.tmux.os.getpgrp", return_value=1),
-        patch("punt_vox.voxd.workers.tmux.os.killpg"),
-        patch("punt_vox.voxd.workers.tmux.time.monotonic", side_effect=[0, 4]),
+        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=1),
+        patch("punt_vox.voxd.workers.tmux_probe.os.killpg"),
+        patch("punt_vox.voxd.workers.tmux_probe.time.monotonic", side_effect=[0, 4]),
         pytest.raises(RuntimeError, match="did not exit"),
     ):
-        TmuxWorkerProvider._finish(42)
+        TmuxProbe.wait_for_exit(42)
 
 
 def test_transport_forwards_the_selected_profiles_progress() -> None:

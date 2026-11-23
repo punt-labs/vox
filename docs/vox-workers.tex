@@ -14,9 +14,9 @@ snapshot, not a hook history. Pending cleanup is orthogonal to process lifecycle
 a failed cleanup is durable and retried even when the lifecycle is terminal.
 
 \begin{zed}
-  [WORKER, REPORT] \\
+  [WORKER, REPORT, RESULT] \\
   Phase ::= starting | ready | exited | stopped \\
-  Event ::= sessionStart | update
+  Event ::= sessionStart | update | stopHook | sessionEndHook
 \end{zed}
 
 \begin{schema}{Workers}
@@ -38,8 +38,10 @@ Named invariants checked by implementation tests are:
 \textbf{retryable cleanup} (terminal does not imply cleanup succeeded), and
 \textbf{unknown identity refusal} (controls require an existing worker).
 Unavailability is not evidence of death. Every omitted state component is framed
-explicitly below. Provider termination and harness cleanup are attempted before
-the termination result is checkpointed; failure is represented by pending.
+explicitly below. Explicit stop attempts provider termination, then checkpoints
+the terminal phase with pending cleanup before scheduling harness cleanup.
+If the daemon stops before cleanup runs, the durable pending marker lets
+recovery retry it rather than leaving the trust entry behind.
 Hook delivery receipts follow the curated report checkpoint; receipt is never
 issued for an uncommitted readiness transition.
 
@@ -77,7 +79,7 @@ issued for an uncommitted readiness transition.
   phase~worker? \in \{starting, ready\} \\
   next? \in \{starting, ready\} \\
   (phase~worker? = ready \lor event? = sessionStart) \implies next? = ready \\
-  (phase~worker? = starting \land event? = update) \implies next? = starting \\
+  (phase~worker? = starting \land event? \neq sessionStart) \implies next? = starting \\
   phase' = phase \oplus \{worker? \mapsto next?\} \\
   report' = report \oplus \{worker? \mapsto fresh?\} \\
   next? = ready \implies readySeen' = readySeen \cup \{worker?\} \\
@@ -88,6 +90,42 @@ issued for an uncommitted readiness transition.
 The ready value of next? requires either a previous ready phase or an observed
 SessionStart. Missing hook-store state and provider unavailability are no-ops;
 neither supplies a fresh report nor a new liveness fact.
+
+\begin{axdef}
+  mergeTerminal : REPORT \cross Event \cross \nat \cross REPORT \fun REPORT \\
+  result : REPORT \fun RESULT \\
+  resultSequence : RESULT \fun \nat
+\where
+  \forall saved, delivered : REPORT; seq : \nat @
+    result~(mergeTerminal(saved, sessionEndHook, seq, delivered)) = result~saved \\
+  \forall saved, delivered : REPORT; seq : \nat |
+    seq < resultSequence~(result~saved) @
+    result~(mergeTerminal(saved, stopHook, seq, delivered)) = result~saved
+\end{axdef}
+
+\begin{schema}{ObserveExitedReport}
+  \Delta Workers \\
+  worker? : WORKER \\
+  event? : Event \\
+  sequence? : \nat \\
+  delivered? : REPORT
+\where
+  worker? \in \dom phase \\
+  phase~worker? = exited \\
+  event? \in \{stopHook, sessionEndHook\} \\
+  report' = report \oplus
+    \{worker? \mapsto mergeTerminal(report~worker?, event?, sequence?, delivered?)\} \\
+  phase' = phase \\
+  readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+The exited phase includes an exit confirmed and checkpointed by listing.
+Only a registered worker's
+Stop or SessionEnd from its worktree can take this transition. The merge
+starts from the saved projection and respects its hook sequence ordering;
+SessionEnd does not erase a saved result. The merged report also becomes
+visible in shared hook context under ordinary retention.
 
 \begin{schema}{ObserveMissingOrUnavailable}
   \Xi Workers \\
@@ -112,9 +150,12 @@ neither supplies a fresh report nor a new liveness fact.
 
 Confirmed provider death selects exited; explicit stop and successful launch
 rollback select stopped. If rollback cannot confirm termination, starting is
-retained with a durable launch error and reconciliation retries termination.
+retained with a durable launch error and explicit stop can retry termination.
+After the termination checkpoint, \textit{RetryCleanup} records the outcome.
 Cleanup success removes the pending marker. On failure it remains, and an error
-may be attached to the opaque report without changing process phase.
+may be attached to the opaque report without changing process phase. The model
+does not distinguish an exited pane from its remaining tmux session. Explicit
+stop can still remove that session once without changing the exited phase.
 
 \begin{schema}{FailedLaunch}
   \Delta Workers \\
@@ -637,5 +678,78 @@ queued request must not release another request's per-worker lock.
   (receiptDeadline', admittedPhase', receiptSeq', receiptText', accepted', endedByReceipt') =
     (receiptDeadline, admittedPhase, receiptSeq, receiptText, accepted, endedByReceipt)
 \end{schema}
+
+\section{Daemon restart}
+
+\emph{Restart preserves result and current decision}: the boot projection
+is seeded with the checkpointed result, pending question and relay order
+before the next hook can be admitted. A lower sequence cannot replace the
+latest result or clear the latest decision. The retained tool projection
+also survives boot. The hook client retries the same stamped event for up
+to five seconds; delivery across longer outages is not guaranteed.
+
+\begin{zed}
+  [CHECKPOINT, PANE]
+\end{zed}
+
+\begin{schema}{WorkerRecovery}
+  saved, restored : WORKER \pfun CHECKPOINT \\
+  active : \power WORKER \\
+  panes : PANE \pfun WORKER \\
+  owned, live : \power PANE
+\where
+  active \subseteq \dom saved \\
+  restored \subseteq saved \\
+  owned \subseteq \dom panes \\
+  live \subseteq \dom panes
+\end{schema}
+
+\begin{schema}{StartupAdoptsAndReaps}
+  \Delta WorkerRecovery \\
+  \Delta Workers \\
+  protected?, retired?, verifiedLive?, hookEligible! : \power WORKER
+\where
+  active = \dom (phase \rres \{starting, ready\}) \\
+  retired? \subseteq active \\
+  retired? \cap \ran (live \dres panes) = \emptyset \\
+  verifiedLive? \subseteq active \cap \ran (live \dres panes) \\
+  hookEligible! = verifiedLive? \\
+  active \setminus retired? \subseteq protected? \\
+  retired? \cap protected? = \emptyset \\
+  saved' = saved \\
+  active' = active \setminus retired? \\
+  phase' = phase \oplus \{ w : retired? @ w \mapsto exited \} \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending \cup retired? \\
+  restored' = active' \dres saved \\
+  panes' = panes \\
+  owned' = owned \\
+  live' = live \setminus \{ p : owned | panes~p \notin protected? \}
+\end{schema}
+
+\emph{Startup retires dead workers before hook admission}:
+\textit{retired?} names the workers confirmed dead and checkpointed as
+\textit{exited}, not a new worker state. Their work products are retained.
+The \textit{hookEligible!} set describes ordinary active hook admission.
+Startup adds them to \textit{pending}, enabling background
+\textit{RetryCleanup} or a retry through explicit stop. The daemon serves
+requests after recovery. Independent tmux
+probes run concurrently with a shared deadline; an inconclusive probe leaves
+the registration protected without admitting ordinary active hooks until a
+later positive liveness observation. A protected worker whose liveness is
+unknown can still send a notification or terminal report; neither confirms
+that it is live or exited. Other managed hook attempts are denied with a
+retry indication, within the same five-second delivery budget.
+A confirmed exit observed during a worker
+listing is checkpointed and schedules trust cleanup without waiting for
+the harness configuration lock.
+
+\emph{Startup only reaps marked orphans}: the reaper removes only a pane
+marked as owned by this registry and not protected by a live or unreadable
+registry record. The reaper never modifies an inherited harness config.
+Credentials are transferred by a private Unix socket and not written to
+a dedicated credential file; private brokers are removed separately when
+their recorded owner process no longer exists.
 
 \end{document}

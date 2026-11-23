@@ -63,7 +63,7 @@ def test_failed_start_preserves_original_error_and_cleans_trust(tmp_path: Path) 
     payload = json.loads(next((tmp_path / "workers").glob("*.json")).read_text())
     assert payload["last_report"]["launch_error"] == "OSError"
     assert payload["last_report"]["stop_error"] == "RuntimeError"
-    retried = registry.list()[0]
+    retried = registry.stop(registry.list()[0].id)
     assert retried.state == "stopped"
     assert "stop_error" not in retried.last_report
 
@@ -97,11 +97,20 @@ def test_terminal_stop_retries_only_failed_cleanup(tmp_path: Path) -> None:
     assert "cleanup_error" not in cleaned.last_report
 
 
-def test_dead_worker_is_terminated_before_becoming_terminal(tmp_path: Path) -> None:
+def test_dead_worker_is_persisted_and_explicit_stop_clears_pane(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
-    registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    record = registry.start("edit", str(tmp_path), provider="fake", harness="test")
     provider.alive = False
-    with patch.object(FakeWorkerProvider, "stop") as stop:
-        assert registry.list()[0].state == "exited"
-    stop.assert_called_once()
+    with (
+        patch.object(FakeWorkerProvider, "stop") as stop,
+        patch.object(WorkerRecords, "save") as save,
+    ):
+        retired = registry.list()[0]
+        assert retired.state == "exited"
+        stop.assert_not_called()
+        save.assert_any_call(retired)
+        stopped = registry.stop(record.id)
+        assert stopped.state == "exited"
+        assert registry.stop(record.id).state == "exited"
+    stop.assert_called_once_with(record.session)

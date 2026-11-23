@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
@@ -28,6 +28,12 @@ class WorkerHandlers:
 
     __slots__ = ("_actor",)
     _actor: WorkerActor
+    ROUTES: ClassVar[tuple[str, ...]] = (
+        "worker_start",
+        "worker_list",
+        "worker_stop",
+        "worker_steer",
+    )
 
     def __new__(cls, actor: WorkerActor) -> Self:
         """Bind the actor every worker RPC is serialized through."""
@@ -42,7 +48,7 @@ class WorkerHandlers:
         store: HookContextStore | None = None,  # PY-TS-14: absent omits hook RPCs.
     ) -> dict[str, MessageHandler]:
         """Construct one serialized actor and expose its worker control surface."""
-        return cls(WorkerActor(registry)).handlers(store)
+        return cls(WorkerActor(registry, store)).handlers(store)
 
     def handlers(
         self,
@@ -50,10 +56,7 @@ class WorkerHandlers:
         events: ProgressEvents | None = None,  # None omits live report subscribers.
     ) -> dict[str, MessageHandler]:
         """Expose the worker RPCs, plus hook ingestion when a store exists."""
-        result: dict[str, MessageHandler] = dict.fromkeys(
-            ("worker_start", "worker_list", "worker_stop", "worker_steer"),
-            self.handle,
-        )
+        result: dict[str, MessageHandler] = dict.fromkeys(self.ROUTES, self.handle)
         if store is not None:
             hooks = self._actor.hooks(store, events)
             result.update(HookContextHandlers(store, hooks.ingest).handlers())
