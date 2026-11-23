@@ -10,14 +10,12 @@ from typing import TYPE_CHECKING, Self, final
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.commands.voice_call_status import CallStatusView
 
 if TYPE_CHECKING:
-    from punt_vox.daemon_control import DaemonControl
+    from punt_vox.commands.voice_call_control import CallControl
+    from punt_vox.commands.voice_call_status import CallStatusView
 
 __all__ = ["CallFollower"]
-
-_CONTROL_TIMEOUT_S = 30.0
 
 
 @final
@@ -25,10 +23,10 @@ class CallFollower:
     """Show a started call's live status line; hang it up when left unwatched."""
 
     __slots__ = ("_control", "_poll_s")
-    _control: DaemonControl
+    _control: CallControl
     _poll_s: float
 
-    def __new__(cls, control: DaemonControl, poll_s: float) -> Self:
+    def __new__(cls, control: CallControl, poll_s: float) -> Self:
         """Follow through the ``call_*`` *control*, polling every *poll_s* seconds."""
         self = super().__new__(cls)
         self._control = control
@@ -48,10 +46,10 @@ class CallFollower:
         try:
             return asyncio.run(self._follow(started))
         except KeyboardInterrupt:
-            return self.hang_up()
+            return self.hang_up(started.call_id)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             typer.echo(f"Lost the call's status, hanging up: {exc}", err=True)
-            self.finish(self.hang_up())
+            self.finish(self.hang_up(started.call_id))
             raise typer.Exit(1) from None
 
     @staticmethod
@@ -77,22 +75,18 @@ class CallFollower:
         self._show(view.line())
         while view.running:
             await asyncio.sleep(self._poll_s)
-            polled = CallStatusView(
-                await self._control.request("status", timeout=_CONTROL_TIMEOUT_S)
-            )
-            if polled.trace != view.trace:
+            polled = await self._control.request("status")
+            if polled.call_id != view.call_id:
                 break
             if polled.line() != view.line():
                 self._show(polled.line())
             view = polled
         return view
 
-    def hang_up(self) -> CallStatusView:
-        """Send ``call_stop`` and return the ended call; refuse to report it live."""
+    def hang_up(self, call_id: str) -> CallStatusView:
+        """Stop the named call and return its ended status."""
         try:
-            ended = CallStatusView(
-                asyncio.run(self._control.request("stop", timeout=_CONTROL_TIMEOUT_S))
-            )
+            ended = asyncio.run(self._control.request("stop", call_id=call_id))
         except KeyboardInterrupt:
             typer.echo(
                 "\nInterrupted while hanging up; the call may still be live:"
@@ -101,7 +95,7 @@ class CallFollower:
             )
             raise typer.Exit(130) from None
         except (VoxdConnectionError, VoxdProtocolError) as exc:
-            typer.echo(f"Could not hang up: {exc}; run `vox call stop`.", err=True)
+            typer.echo(f"Could not hang up: {exc}; run `vox call status`.", err=True)
             raise typer.Exit(1) from None
         if ended.running:
             typer.echo(

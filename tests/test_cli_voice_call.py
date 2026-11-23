@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
 from click import unstyle
@@ -24,12 +25,14 @@ _FOLLOW = "punt_vox.commands.voice_call_follow"
 
 _LIVE: dict[str, object] = {
     "state": "live",
+    "call_id": "first",
     "transcript": [],
     "tool_calls": [],
     "trace": "/tmp/call-trace.jsonl",
 }
 _ENDED: dict[str, object] = {
     "state": "ended",
+    "call_id": "first",
     "transcript": [
         {"role": "user", "text": "Add a greeting to the demo repo."},
         {"role": "agent", "text": "Started a worker on demo."},
@@ -110,6 +113,7 @@ def test_bare_call_with_a_script_starts_follows_and_reports(tmp_path: Path) -> N
     assert result.exit_code == 0, result.output
     operation, fields = voxd.sent[0]
     assert operation == "start"
+    assert UUID(str(fields.pop("call_id"))).version == 4
     assert fields == {
         "script": [{"pcm_path": str(tmp_path / "greet.pcm"), "pause_s": 2}]
     }
@@ -126,7 +130,8 @@ def test_bare_call_without_a_script_starts_a_mic_call() -> None:
     with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 0, result.output
-    assert voxd.sent == [("start", {})]
+    assert [op for op, _ in voxd.sent] == ["start"]
+    assert set(voxd.sent[0][1]) == {"call_id"}
 
 
 @pytest.mark.parametrize(("flag", "mode"), [("--headset", "headset"), ("--aec", "aec")])
@@ -136,14 +141,15 @@ def test_bare_call_forwards_echo_declaration(flag: str, mode: str) -> None:
         result = runner.invoke(CallCli.build_app(), [flag])
 
     assert result.exit_code == 0, result.output
-    assert voxd.sent == [("start", {"echo_control": mode})]
+    assert [op for op, _ in voxd.sent] == ["start"]
+    assert voxd.sent[0][1]["echo_control"] == mode
     bad = runner.invoke(CallCli.build_app(), [flag, "status"])
     assert bad.exit_code == 2
     assert "applies only to bare" in bad.output
 
 
 def test_a_failed_call_exits_one_with_its_error() -> None:
-    failed: dict[str, object] = {"state": "failed", "error": "ConvAI refused"}
+    failed: dict[str, object] = {**_ENDED, "state": "failed", "error": "ConvAI refused"}
     voxd = _Voxd(failed)
     with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), [])
@@ -163,16 +169,15 @@ def test_a_refusing_or_absent_voxd_exits_one(failure: Exception) -> None:
 
 
 def test_ctrl_c_while_following_stops_the_call() -> None:
-    voxd = _Voxd(_LIVE)
+    voxd = _Voxd(_LIVE, _ENDED)
 
     async def follow(_self: CallFollower, _view: CallStatusView) -> CallStatusView:
         raise KeyboardInterrupt
 
     with _voxd(voxd), patch.object(CallFollower, "_follow", follow):
-        voxd.statuses = [{**_ENDED, "state": "ended"}]
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 0, result.output
-    assert [op for op, _ in voxd.sent] == ["start", "stop"]
+    assert voxd.sent[1:] == [("stop", {"call_id": _LIVE["call_id"]})]
     assert "agent: Started a worker on demo." in result.output
 
 
@@ -182,6 +187,9 @@ def test_ctrl_c_while_the_call_starts_hangs_it_up() -> None:
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 0, result.output
     assert [c.args[0] for c in request.call_args_list] == ["start", "stop"]
+    start, stop = request.await_args_list
+    assert stop.kwargs["call_id"] == start.kwargs["call_id"]
+    assert UUID(start.kwargs["call_id"]).version == 4
     assert "agent: Started a worker on demo." in result.output
 
 
@@ -190,7 +198,7 @@ def test_a_hangup_voxd_refuses_exits_one() -> None:
     with patch.object(DaemonControl, "request", request):
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 1
-    assert "Could not hang up: down; run `vox call stop`." in result.output
+    assert "Could not hang up: down; run `vox call status`." in result.output
 
 
 def test_status_with_voxd_down_exits_one() -> None:
@@ -207,7 +215,7 @@ def test_stop_hangs_up_the_running_call() -> None:
     with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), ["stop"])
     assert result.exit_code == 0, result.output
-    assert [op for op, _ in voxd.sent] == ["status", "stop"]
+    assert voxd.sent == [("status", {}), ("stop", {"call_id": _LIVE["call_id"]})]
     assert "Stopping the call." in result.output
 
 
@@ -219,6 +227,21 @@ def test_stop_does_not_send_hangup_when_no_call_is_active() -> None:
     assert result.exit_code == 2, result.output
     assert "no call is active" in result.output
     assert voxd.sent == [("status", {})]
+
+
+def test_stop_does_not_retry_when_the_call_was_replaced() -> None:
+    request = AsyncMock(
+        side_effect=[
+            _LIVE,
+            VoxdProtocolError("the requested call is no longer current"),
+        ]
+    )
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), ["stop"])
+    assert result.exit_code == 1
+    assert "Call unavailable: the requested call is no longer current" in result.output
+    assert [item.args[0] for item in request.await_args_list] == ["status", "stop"]
+    assert request.await_args_list[1].kwargs["call_id"] == _LIVE["call_id"]
 
 
 def test_status_prints_the_line_and_transcript() -> None:
@@ -263,7 +286,7 @@ def test_an_absolute_pcm_path_is_kept(tmp_path: Path) -> None:
     voxd = _Voxd(_ENDED)
     with _voxd(voxd):
         runner.invoke(CallCli.build_app(), ["--script", str(script)])
-    assert voxd.sent[0][1] == {"script": [{"pcm_path": str(pcm)}]}
+    assert voxd.sent[0][1]["script"] == [{"pcm_path": str(pcm)}]
 
 
 def test_an_unreadable_script_is_a_usage_error(tmp_path: Path) -> None:
@@ -276,7 +299,7 @@ def test_an_unreadable_script_is_a_usage_error(tmp_path: Path) -> None:
 
 def test_the_status_line_truncates_long_turns() -> None:
     status: dict[str, object] = {
-        "state": "live",
+        **_LIVE,
         "transcript": [{"role": "agent", "text": "word " * 40}],
     }
     view = CallStatusView(status)
@@ -286,7 +309,10 @@ def test_the_status_line_truncates_long_turns() -> None:
     assert len(line.split("agent: ", 1)[1]) == 72
 
 
-@pytest.mark.parametrize("status", [None, {}, {"state": "stopping"}])
+@pytest.mark.parametrize(
+    "status",
+    [None, {}, {"state": "stopping"}, {"state": "live"}, {**_LIVE, "call_id": 1}],
+)
 def test_an_unreadable_status_is_a_protocol_error(status: object) -> None:
     with pytest.raises(VoxdProtocolError):
         CallStatusView(status)
@@ -308,13 +334,13 @@ def test_losing_the_status_mid_call_hangs_up_and_exits_one(lost: object) -> None
     with patch.object(DaemonControl, "request", side_effect=request):
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 1
-    assert [op for op, _ in voxd.sent] == ["start", "status", "stop"]
+    assert voxd.sent[1:] == [("status", {}), ("stop", {"call_id": _LIVE["call_id"]})]
     assert "Lost the call's status, hanging up" in result.output
     assert "agent: Started a worker on demo." in result.output
 
 
 def test_a_call_that_failed_to_connect_reports_its_trace() -> None:
-    failed = {"state": "failed", "error": "no agent", "trace": "/tmp/t.jsonl"}
+    failed = {**_ENDED, "state": "failed", "error": "no agent", "trace": "/tmp/t.jsonl"}
     request = AsyncMock(return_value=failed)
     with patch.object(DaemonControl, "request", request):
         result = runner.invoke(CallCli.build_app(), [])
@@ -340,7 +366,9 @@ def test_echo_refusal_does_not_read_a_previous_failed_call() -> None:
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 1
     assert "Live calls require echo protection" in result.output
-    request.assert_awaited_once_with("start", timeout=60.0)
+    request.assert_awaited_once()
+    assert request.await_args is not None
+    assert request.await_args.args == ("start",)
 
 
 @pytest.mark.parametrize(
@@ -361,7 +389,7 @@ def test_conflicting_call_input_flags_are_rejected(
 @pytest.mark.usefixtures("no_poll_delay")
 def test_following_stops_when_voxd_reports_another_call() -> None:
     first = {**_LIVE, "trace": "/tmp/first.jsonl"}
-    voxd = _Voxd(first, {**_LIVE, "trace": "/tmp/second.jsonl"})
+    voxd = _Voxd(first, {**_LIVE, "call_id": "second", "trace": "/tmp/second.jsonl"})
     with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), [])
     assert result.exit_code == 0, result.output

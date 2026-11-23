@@ -13,21 +13,18 @@ from typing import TYPE_CHECKING, Self, final
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.commands.voice_call_control import CallControl
 from punt_vox.commands.voice_call_follow import CallFollower
 from punt_vox.commands.voice_call_startup import CallStartup
-from punt_vox.commands.voice_call_status import CallStatusView
-from punt_vox.daemon_control import DaemonControl
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from punt_vox.commands.voice_call_options import VoiceCallOptions
+    from punt_vox.commands.voice_call_status import CallStatusView
 
 __all__ = ["VoiceCall"]
 
-_CONTROL_TIMEOUT_S = 30.0
-# Seven serial provider deletes at 10 seconds each, plus locking and I/O.
-_TEARDOWN_TIMEOUT_S = 90.0
 _POLL_INTERVAL_S = 0.5
 
 
@@ -36,13 +33,13 @@ class VoiceCall:
     """Start, follow, inspect and stop the daemon's voice call."""
 
     __slots__ = ("_control", "_poll_s")
-    _control: DaemonControl
+    _control: CallControl
     _poll_s: float
 
     def __new__(cls, poll_s: float = _POLL_INTERVAL_S) -> Self:
         """Bind the ``call_*`` RPC family; *poll_s* paces the live status line."""
         self = super().__new__(cls)
-        self._control = DaemonControl("call")
+        self._control = CallControl()
         self._poll_s = poll_s
         return self
 
@@ -63,30 +60,28 @@ class VoiceCall:
         Raises:
             typer.BadParameter: When no voice call is running.
         """
-        status = CallStatusView(
-            self._run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
-        )
+        status = self._run(self._control.request("status"))
         if not status.running:
             raise typer.BadParameter("no call is active")
-        self._run(self._control.request("stop", timeout=_CONTROL_TIMEOUT_S))
+        self._run(self._control.request("stop", call_id=status.call_id))
         typer.echo("Stopping the call.")
 
     def status(self) -> None:
         """Print the current call's status line and transcript so far."""
-        view = CallStatusView(
-            self._run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))
-        )
+        view = self._run(self._control.request("status"))
         typer.echo(view.line())
         for line in view.report():
             typer.echo(line)
 
     def teardown(self) -> None:
         """Remove only the managed agent and tools, not calls or workers."""
-        self._run(self._control.request("teardown", timeout=_TEARDOWN_TIMEOUT_S))
+        self._run(self._control.request("teardown"))
         typer.echo("The next vox call will provision a new agent.")
 
     @staticmethod
-    def _run(request: Coroutine[object, object, object]) -> object:
+    def _run(
+        request: Coroutine[object, object, CallStatusView],
+    ) -> CallStatusView:
         """Run one coroutine, turning an unreachable or refusing daemon into exit 1."""
         try:
             return asyncio.run(request)
