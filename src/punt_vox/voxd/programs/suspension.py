@@ -80,13 +80,18 @@ class PlaybackSuspension:
             self._sync(was_paused=was_paused)
             yield
         finally:
+            was_paused = self.is_paused
             self._call_held = False
-            self._sync(was_paused=True)
+            self._sync(was_paused=was_paused)
 
     def _sync(self, *, was_paused: bool) -> None:
-        if was_paused != self.is_paused:
-            control = self._player.pause if self.is_paused else self._player.resume
-            control()
+        paused = self.is_paused
+        if was_paused == paused:
+            return
+        if paused:
+            self._player.pause()
+        else:
+            self._player.resume()
 
     def reset(self) -> None:
         """Clear the user pause on a switch or off; the loop settles the mpv side.
