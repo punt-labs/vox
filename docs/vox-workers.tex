@@ -16,7 +16,7 @@ a failed cleanup is durable and retried even when the lifecycle is terminal.
 \begin{zed}
   [WORKER, REPORT] \\
   Phase ::= starting | ready | exited | stopped \\
-  Event ::= sessionStart | update
+  Event ::= sessionStart | update | stopHook | sessionEndHook
 \end{zed}
 
 \begin{schema}{Workers}
@@ -77,7 +77,7 @@ issued for an uncommitted readiness transition.
   phase~worker? \in \{starting, ready\} \\
   next? \in \{starting, ready\} \\
   (phase~worker? = ready \lor event? = sessionStart) \implies next? = ready \\
-  (phase~worker? = starting \land event? = update) \implies next? = starting \\
+  (phase~worker? = starting \land event? \neq sessionStart) \implies next? = starting \\
   phase' = phase \oplus \{worker? \mapsto next?\} \\
   report' = report \oplus \{worker? \mapsto fresh?\} \\
   next? = ready \implies readySeen' = readySeen \cup \{worker?\} \\
@@ -88,6 +88,33 @@ issued for an uncommitted readiness transition.
 The ready value of next? requires either a previous ready phase or an observed
 SessionStart. Missing hook-store state and provider unavailability are no-ops;
 neither supplies a fresh report nor a new liveness fact.
+
+\begin{axdef}
+  mergeTerminal : REPORT \cross Event \cross REPORT \fun REPORT
+\end{axdef}
+
+\begin{schema}{ObserveExitedReport}
+  \Delta Workers \\
+  worker? : WORKER \\
+  event? : Event \\
+  delivered? : REPORT
+\where
+  worker? \in \dom phase \\
+  phase~worker? = exited \\
+  event? \in \{stopHook, sessionEndHook\} \\
+  report' = report \oplus
+    \{worker? \mapsto mergeTerminal(report~worker?, event?, delivered?)\} \\
+  phase' = phase \\
+  readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+The exited phase includes an exit confirmed by listing, even when that
+observation has not changed the durable phase. Only a registered worker's
+Stop or SessionEnd from its worktree can take this transition. The merge
+starts from the saved projection and respects its hook sequence ordering;
+SessionEnd does not erase a saved result. The merged report also becomes
+visible in shared hook context under ordinary retention.
 
 \begin{schema}{ObserveMissingOrUnavailable}
   \Xi Workers \\
