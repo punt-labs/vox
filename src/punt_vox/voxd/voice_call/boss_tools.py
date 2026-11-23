@@ -178,13 +178,12 @@ class BossTools:
         urgent = arguments.get("urgent", False)
         if not isinstance(urgent, bool):
             raise ValueError("urgent must be a boolean")
-        worker = await self._directory.find(self._text(arguments, "worker_id"))
         words = self._text(arguments, "words")
         choice = arguments.get("choice")
         if choice is not None and choice not in ("approve", "deny"):
             raise ValueError("choice must be approve or deny")
         return await self._workers.steer(
-            worker["id"],
+            self._text(arguments, "worker_id"),
             words,
             urgent=urgent,
             choice=choice,

@@ -3356,8 +3356,8 @@
     "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.417,
-    "avg_lcom": 0.417
+    "max_lcom": 0.472,
+    "avg_lcom": 0.472
   },
   "src/punt_vox/voxd/voice_call/call.py": {
     "efferent_coupling": 4.0,

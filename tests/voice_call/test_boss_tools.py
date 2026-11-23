@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -240,6 +241,19 @@ async def test_steer_resolves_a_spoken_prefix_and_passes_words_verbatim() -> Non
     assert not error
     assert json.loads(result)["heard"] is True
     assert workers.steered == [("abcd1234", "use tabs;", True)]
+
+
+async def test_steer_reconciles_the_roster_once() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    with patch.object(workers, "workers", wraps=workers.workers) as listing:
+        assert not (
+            await _tools(workers).answer(
+                "steer_worker", {"worker_id": "abcd", "words": "Continue."}
+            )
+        )[1]
+        assert listing.await_count == 1
+    assert workers.steered == [("abcd1234", "Continue.", False)]
 
 
 async def test_ambiguous_or_short_ids_are_refused() -> None:
