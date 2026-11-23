@@ -40,6 +40,18 @@ async def test_identical_answers_to_two_decisions_both_reach_the_worker() -> Non
     assert workers.choices == ["approve", "approve"]
 
 
+async def test_ordinary_steer_reask_with_a_new_tool_id_replays_the_receipt() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    tools = _tools(workers)
+    arguments: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}
+    first = await tools.answer("steer_worker", arguments, tool_call_id="interrupted")
+    assert not first[1]
+    assert await tools.answer("steer_worker", arguments, tool_call_id="reask") == first
+    assert workers.steered == [("abcd1234", "Continue.", False)]
+    assert tools.replayed == 1
+
+
 async def test_explicit_denial_and_receipt_reach_the_worker_boundary() -> None:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", pending_decision={"seq": 4})]
