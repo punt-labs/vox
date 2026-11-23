@@ -1421,6 +1421,18 @@ class TestApplyVibeForSynthesis:
         raw = "Run `$1 [warm] $2` then pay $5"
         assert self._apply(raw, None, "elevenlabs", model) == expected
 
+    @pytest.mark.parametrize(
+        ("model", "prefix"),
+        [("eleven_v3", "[warm] "), ("eleven_flash_v2_5", "")],
+    )
+    def test_tag_before_fence_does_not_hide_following_code_span(
+        self, model: str, prefix: str
+    ) -> None:
+        raw = "[warm] ```sh\necho\n```\nUse `$1` then pay $5"
+        assert self._apply(raw, None, "elevenlabs", model) == (
+            f"{prefix}sh echo Use dollar sign 1 then pay 5 dollars"
+        )
+
 
 class TestOpenAIProviderKeyCapture:
     """The key is the one in effect when the provider was built, not at first use.

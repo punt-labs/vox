@@ -11,7 +11,7 @@ import re
 import unicodedata
 from typing import final
 
-from punt_vox._inline_code import InlineCode
+from punt_vox._inline_code import VIBE_TAG_RE as VIBE_TAG_RE, InlineCode
 from punt_vox._speech_abbreviations import SpeechAbbreviations
 from punt_vox._speech_punctuation import SpeechPunctuation
 
@@ -480,9 +480,6 @@ _CAMEL_BOUNDARY = re.compile(
 # ---------------------------------------------------------------------------
 
 
-VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
-
-
 def strip_vibe_tags(text: str) -> str:
     """Remove ElevenLabs-style expressive tags from *text*.
 
@@ -545,7 +542,7 @@ class SpeechText:
     @classmethod
     def for_synthesis(cls, text: str, *, expressive: bool) -> str:
         """Normalize text, retaining expressive tags only for supported models."""
-        prepared = InlineCode.rewrite(text, SpeechPunctuation.spell_code_currency)
+        prepared = InlineCode.rewrite_vibed(text, SpeechPunctuation.spell_code_currency)
         if not expressive:
             return cls._words(VIBE_TAG_RE.sub("", prepared))
         return " ".join(filter(None, cls._expressive_parts(prepared)))

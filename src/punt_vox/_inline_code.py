@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 _LINE_END = re.compile(r"\r\n?|\n")
 _TICK = re.compile("`")
 _SOURCE_OFFSET = "vox_source_offset"
+VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
+_VIBE_BEFORE_FENCE = re.compile(
+    rf"(?<![^\r\n])( {{0,3}})(?:{VIBE_TAG_RE.pattern}[ \t]*)+(?=`{{3,}}|~{{3,}})"
+)
 
 
 @final
@@ -24,14 +28,27 @@ class InlineCode:
     """Rewrite inline code without re-rendering the Markdown around it."""
 
     @classmethod
-    def rewrite(cls, text: str, transform: Callable[[str], str]) -> str:
-        """Apply *transform* inside matched spans, leaving delimiters intact."""
+    def rewrite_vibed(cls, text: str, transform: Callable[[str], str]) -> str:
+        """Recognize fences with leading synthesis tags without removing those tags."""
+        return cls.rewrite(
+            text, transform, markdown=_VIBE_BEFORE_FENCE.sub(r"\1", text)
+        )
+
+    @classmethod
+    def rewrite(
+        cls,
+        text: str,
+        transform: Callable[[str], str],
+        *,
+        markdown: str | None = None,
+    ) -> str:
+        """Rewrite spans in raw text using an optional line-aligned parse view."""
         if "`" not in text:
             return text
         lines = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
         parts: list[str] = []
         cursor = 0
-        for start, end in cls._source_spans(text, lines):
+        for start, end in cls._source_spans(text, lines, markdown):
             parts.extend((text[cursor:start], transform(text[start:end])))
             cursor = end
         parts.append(text[cursor:])
@@ -39,9 +56,9 @@ class InlineCode:
 
     @classmethod
     def _source_spans(
-        cls, text: str, lines: Sequence[int]
+        cls, text: str, lines: Sequence[int], markdown: str | None
     ) -> Iterator[tuple[int, int]]:
-        for token in cls._MARKDOWN.parse(text):
+        for token in cls._MARKDOWN.parse(text if markdown is None else markdown):
             if token.type != "inline" or token.map is None or not token.children:
                 continue
             spans = tuple(cls._spans(token.children))
