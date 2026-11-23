@@ -95,32 +95,35 @@ class WorkerLifecycle:
             record = replace(record, state="stopped")
         return WorkerCleanup.run(replace(record, last_report=report), self._profiles)
 
-    def stop(self, record: WorkerRecord) -> WorkerRecord:
-        """Terminal phase is stable, but failed cleanup remains retryable."""
+    def terminate(self, record: WorkerRecord) -> WorkerRecord:
+        """Stop the provider without performing harness cleanup."""
         if record.last_report.get("pane_stop_pending") is True:
             self._providers[record.provider].stop(record.session)
             report = dict(record.last_report)
             del report["pane_stop_pending"]
             record = replace(record, last_report=report)
         if record.state in ("stopped", "exited"):
-            return (
-                WorkerCleanup.run(record, self._profiles)
-                if WorkerCleanup.pending(record)
-                else record
-            )
+            return record
         dead = (
             "launch_error" not in record.last_report
             and self.probe(record, self._providers[record.provider])
             is WorkerLiveness.EXITED
         )
         self._providers[record.provider].stop(record.session)
-        return WorkerCleanup.run(
-            replace(
-                record,
-                state="exited" if dead else "stopped",
-                last_report={
-                    k: v for k, v in record.last_report.items() if k != "stop_error"
-                },
-            ),
-            self._profiles,
+        return replace(
+            record,
+            state="exited" if dead else "stopped",
+            last_report={
+                **{k: v for k, v in record.last_report.items() if k != "stop_error"},
+                "cleanup_pending": True,
+            },
+        )
+
+    def stop(self, record: WorkerRecord) -> WorkerRecord:
+        """Finish an explicit stop when no background cleanup owns the record."""
+        terminated = self.terminate(record)
+        return (
+            WorkerCleanup.run(terminated, self._profiles)
+            if WorkerCleanup.pending(terminated)
+            else terminated
         )

@@ -89,6 +89,11 @@ class WorkerRetirement:
         job = self._jobs.get(record.id)
         return self.finish(record) if job is not None and job.done() else record
 
+    def queued(self, worker_id: str) -> bool:
+        """Check whether cleanup is already queued or running."""
+        job = self._jobs.get(worker_id)
+        return job is not None and not job.done()
+
     def finish(self, record: WorkerRecord) -> WorkerRecord:
         """Fold cleanup markers only, preserving any late worker reports."""
         job = self._jobs.pop(record.id, None)

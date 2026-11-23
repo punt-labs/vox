@@ -155,7 +155,10 @@ class WorkerRegistry:
 
     def stop(self, worker_id: str) -> WorkerRecord:
         """Terminate a worker but preserve its branch and worktree."""
-        current = self._retirement.finish(self._inventory.get(worker_id))
+        current = self._inventory.get(worker_id)
+        if self._retirement.queued(worker_id):
+            return self._inventory.save(self._lifecycle.terminate(current))
+        current = self._retirement.status(current)
         return self._inventory.save(self._lifecycle.stop(current))
 
     def steer(
