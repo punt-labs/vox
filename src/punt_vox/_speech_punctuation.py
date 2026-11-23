@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterator
 from decimal import Decimal
 
 _CURRENCY_UNITS = {
@@ -24,12 +25,30 @@ _LEADING_NON_SPEECH_RE = re.compile(
     rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
     r"[^\w~/.])+"
 )
+_CODE_LEADING_NON_SPEECH_RE = re.compile(
+    r"^(?:[-\u2212]{2,}|(?![-\u2212]\.?\d)[^\w~/.])+"
+)
+_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)", re.DOTALL)
+_TOKEN_RE = re.compile(r"\S+")
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 
 
 class SpeechPunctuation:
     """Separate spoken semantics from punctuation in a speech token."""
+
+    @staticmethod
+    def tokens_for_speech(text: str) -> Iterator[str]:
+        """Yield tokens, stripping amount markers inside backtick code spans."""
+        spans = _CODE_SPAN_RE.finditer(text)
+        span = next(spans, None)
+        for token in _TOKEN_RE.finditer(text):
+            while span is not None and span.end() <= token.start():
+                span = next(spans, None)
+            if span is not None and token.end() > span.start():
+                yield _CODE_LEADING_NON_SPEECH_RE.sub("", token[0])
+            else:
+                yield token[0]
 
     @classmethod
     def split(cls, token: str) -> tuple[str, str]:

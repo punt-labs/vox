@@ -323,6 +323,8 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("Use `$1` for the first argument", "Use 1 for the first argument"),
+            ("Run ``echo $1 $2`` then pay $5", "Run echo 1 2 then pay 5 dollars"),
             ("-$5 off", "minus 5 dollars off"),
             ("-€20", "minus 20 euros"),
             ("-$5.50", "minus 5.50 dollars"),

@@ -570,7 +570,9 @@ def normalize_for_speech(text: str) -> str:
 
     Idempotent: running twice produces the same result.
     """
-    return " ".join(filter(None, map(_normalize_token, text.split())))
+    return " ".join(
+        filter(None, map(_normalize_token, SpeechPunctuation.tokens_for_speech(text)))
+    )
 
 
 def _normalize_token(token: str) -> str:
