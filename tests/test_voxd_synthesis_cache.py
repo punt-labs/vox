@@ -1,6 +1,10 @@
 """Anonymous cache lookup and billing-isolation boundaries."""
 
+import asyncio
+import shutil
+import threading
 from pathlib import Path
+from typing import BinaryIO
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +12,54 @@ import pytest
 from punt_vox.cache import CacheKey
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.synthesis_cache import SynthesisCache
+from punt_vox.voxd.synthesis_result import SynthesisOutcome
+
+
+@pytest.mark.parametrize("copy_fails", [False, True])
+async def test_cancelled_cache_copy_is_released(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, *, copy_fails: bool
+) -> None:
+    cached = tmp_path / "cached.mp3"
+    cached.write_bytes(b"audio")
+    loop = asyncio.get_running_loop()
+    started: asyncio.Future[Path] = loop.create_future()
+    resume = threading.Event()
+    collected = asyncio.Event()
+    copy = shutil.copyfileobj
+    collect = SynthesisOutcome._discard_unclaimed  # pyright: ignore[reportPrivateUsage]
+
+    def delayed_copy(source: BinaryIO, dest: BinaryIO) -> None:
+        loop.call_soon_threadsafe(started.set_result, Path(dest.name))
+        if not resume.wait(timeout=5):
+            raise TimeoutError("cache copy did not resume")
+        if copy_fails:
+            raise OSError("cache copy denied")
+        copy(source, dest)
+
+    def collect_outcome(work: asyncio.Future[SynthesisOutcome | None]) -> None:
+        collect(work)
+        collected.set()
+
+    with (
+        patch("punt_vox.voxd.synthesis_result.shutil.copyfileobj", delayed_copy),
+        patch.object(SynthesisOutcome, "_discard_unclaimed", collect_outcome),
+    ):
+        request = asyncio.create_task(SynthesisOutcome.from_cache(cached))
+        try:
+            snapshot = await asyncio.wait_for(started, timeout=2)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            assert snapshot.exists()
+        finally:
+            resume.set()
+        await asyncio.wait_for(collected.wait(), timeout=2)
+
+    assert not snapshot.exists()
+    assert cached.read_bytes() == b"audio"
+    assert (
+        "Abandoned cache copy failed: cache copy denied" in caplog.text
+    ) == copy_fails
 
 
 class TestSynthesisCache:
