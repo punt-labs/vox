@@ -345,10 +345,11 @@ async def test_return_call_opens_with_recovered_worker_result(tmp_path: Path) ->
                 handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]}
             )
             assert "result" in await _rpc(handlers, {"type": "call_stop"})
-    assert opening == [
+    expected = (
         f"While you were away, the worker in {tmp_path.name} finished: "
         "Finished the tests."
-    ]
+    )
+    assert opening == [expected]
 
 
 @pytest.mark.parametrize(
