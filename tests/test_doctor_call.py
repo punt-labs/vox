@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from punt_vox.doctor_call import CallChecks
+from punt_vox.doctor_result import WARN, CheckResult
 
 
 @pytest.mark.parametrize("tmux_found", [True, False])
@@ -20,9 +21,12 @@ def test_call_checks_report_host_requirements(
         return "/bin/tmux" if tmux_found and name == "tmux" else None
 
     with (
-        patch("punt_vox.doctor_call.shutil.which", side_effect=which),
+        patch("sys.platform", "linux"),
+        patch("punt_vox.doctor_call_workers.Path") as path,
+        patch("shutil.which", side_effect=which),
         patch("punt_vox.doctor_call_scope.httpx.get") as request,
     ):
+        path.return_value.is_dir.return_value = False
         results = CallChecks().run()
 
     request.assert_not_called()
@@ -39,3 +43,16 @@ def test_call_checks_report_host_requirements(
         "skip",
     ]
     assert not any(result.required for result in results)
+
+
+def test_call_checks_includes_systemd_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    worker_result = CheckResult.of(WARN, "systemd version: 249", required=False)
+    with (
+        patch("shutil.which", return_value=None),
+        patch(
+            "punt_vox.doctor_call.CallWorkerChecks.run",
+            side_effect=lambda: [worker_result],
+        ),
+    ):
+        assert worker_result in CallChecks().run()

@@ -1508,6 +1508,7 @@ class TestDoctorCommand:
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
+            patch("punt_vox.doctor_call_workers.Path") as worker_path,
             # Isolate the config-path helper from the real filesystem.
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
@@ -1516,6 +1517,7 @@ class TestDoctorCommand:
                 return_value=tmp_path / "Music",
             ),
         ):
+            worker_path.return_value.is_dir.return_value = False
             return runner.invoke(app, ["doctor"])
 
     def test_all_required_pass(self, tmp_path: Path) -> None:

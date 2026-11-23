@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vox daemon install`, or `uninstall` when it stopped no voxd, fails with
   that message. (PL-1189)
 
+- `vox doctor` warns when an older systemd cannot launch call workers
+  from the Vox service. These workers require systemd 254 or newer. (PL-1332)
+
 - Queued speech and recordings keep their audio even if the original entry
   is evicted from the speech cache. (PL-1191)
 

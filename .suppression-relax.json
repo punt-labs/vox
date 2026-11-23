@@ -6,6 +6,12 @@
     "added_at": "2026-11-23T13:11:47.257489Z"
   },
   {
+    "file": "src/punt_vox/doctor_call_workers.py",
+    "ceiling": 1,
+    "justify": "S603: Doctor runs the local systemd-run executable resolved on PATH with a fixed --version argument, no shell or caller input.",
+    "added_at": "2026-11-23T19:45:00Z"
+  },
+  {
     "file": "src/punt_vox/voxd/conversation_mode/git_ignores.py",
     "ceiling": 1,
     "justify": "S603 per-file-ignore: GitIgnores runs a fixed git argv (rev-parse, check-ignore) so the secret guard honours every ignore source git does; no shell, no caller-built program name -- the same allowance every other subprocess module in src has",
