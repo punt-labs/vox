@@ -145,7 +145,7 @@ class CallProgress:
             "Briefly report the result from the matching background update; "
             "if a decision is needed, ask the person now."
         )
-        if event.kind == "finished":
+        if event.kind == "finished" and event.text:
             self._reported[event.worker_id] = max(
                 event.seq, self._reported.get(event.worker_id, 0)
             )
