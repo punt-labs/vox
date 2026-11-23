@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- `vox doctor` warns when an older systemd cannot launch call workers
-  from the Vox service. These workers require systemd 254 or newer. (PL-1332)
-
 ### Removed
 
 - The unused append-log factory and stderr reporter from `PrivateState`.
@@ -34,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   voxd on the service port) reports `unknown` with "invalid UTF-8", and
   `vox daemon install`, or `uninstall` when it stopped no voxd, fails with
   that message. (PL-1189)
+
+- `vox doctor` warns when an older systemd cannot launch call workers
+  from the Vox service. These workers require systemd 254 or newer. (PL-1332)
 
 ### Added
 
