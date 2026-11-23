@@ -141,6 +141,32 @@ def test_ctrl_c_while_following_stops_the_call() -> None:
     assert "agent: Started a worker on demo." in result.output
 
 
+def test_ctrl_c_while_the_call_starts_hangs_it_up() -> None:
+    request = AsyncMock(side_effect=[KeyboardInterrupt, _ENDED])
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 0, result.output
+    assert [c.args[0] for c in request.call_args_list] == ["start", "stop"]
+    assert "agent: Started a worker on demo." in result.output
+
+
+def test_a_hangup_voxd_refuses_exits_one() -> None:
+    request = AsyncMock(side_effect=[KeyboardInterrupt, VoxdConnectionError("down")])
+    with patch.object(DaemonControl, "request", request):
+        result = runner.invoke(CallCli.build_app(), [])
+    assert result.exit_code == 1
+    assert "Could not hang up: down; run `vox call stop`." in result.output
+
+
+def test_status_with_voxd_down_exits_one() -> None:
+    with patch.object(
+        DaemonControl, "request", side_effect=VoxdConnectionError("down")
+    ):
+        result = runner.invoke(CallCli.build_app(), ["status"])
+    assert result.exit_code == 1
+    assert "Call unavailable: down" in result.output
+
+
 def test_stop_hangs_up_a_running_mode_b_call(tmp_path: Path) -> None:
     voxd = _Voxd(_LIVE)
     with (

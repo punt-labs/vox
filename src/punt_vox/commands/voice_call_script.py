@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Self, cast, final
+from typing import Required, Self, TypedDict, cast, final
 
 import typer
 
-__all__ = ["VoiceCallScript"]
+__all__ = ["ScriptTurn", "VoiceCallScript"]
+
+
+class ScriptTurn(TypedDict, total=False):
+    """One turn of ``call_start``'s ``script`` field; voxd validates each field."""
+
+    pcm_path: Required[str]
+    pause_s: float
 
 
 @final
@@ -21,9 +28,9 @@ class VoiceCallScript:
     """
 
     __slots__ = ("_turns",)
-    _turns: tuple[dict[str, object], ...]
+    _turns: tuple[ScriptTurn, ...]
 
-    def __new__(cls, turns: tuple[dict[str, object], ...]) -> Self:
+    def __new__(cls, turns: tuple[ScriptTurn, ...]) -> Self:
         """Hold already-resolved wire turns."""
         self = super().__new__(cls)
         self._turns = turns
@@ -49,7 +56,7 @@ class VoiceCallScript:
         return cls(turns)
 
     @staticmethod
-    def _turn(base: Path, number: int, line: str) -> dict[str, object]:
+    def _turn(base: Path, number: int, line: str) -> ScriptTurn:
         """Return one wire turn with an absolute ``pcm_path``."""
         try:
             parsed: object = json.loads(line)
@@ -59,8 +66,8 @@ class VoiceCallScript:
         pcm_path = turn.get("pcm_path")
         if not isinstance(pcm_path, str):
             raise typer.BadParameter(f'line {number}: expected {{"pcm_path": ...}}')
-        return {**turn, "pcm_path": str(base / pcm_path)}
+        return cast("ScriptTurn", {**turn, "pcm_path": str(base / pcm_path)})
 
-    def wire(self) -> list[dict[str, object]]:
+    def wire(self) -> list[ScriptTurn]:
         """Return the ``script`` field ``call_start`` sends to voxd."""
         return list(self._turns)

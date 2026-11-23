@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Self, cast, final
+from typing import Literal, Required, Self, TypedDict, cast, final
 
 from punt_vox.client_errors import VoxdProtocolError
 
-__all__ = ["CallStatusView"]
+__all__ = ["CallStatus", "CallStatusView"]
 
 _TEXT_WIDTH = 72
 _STATES = frozenset({"idle", "connecting", "live", "ended", "failed"})
+
+
+class CallStatus(TypedDict, total=False):
+    """The fields of voxd's ``call_status`` result this view reads."""
+
+    state: Required[str]
+    trace: str
+    error: str | None
+    transcript: list[object]
+    tool_calls: list[object]
 
 
 @final
@@ -17,7 +27,7 @@ class CallStatusView:
     """One ``call_status`` snapshot: the live line and the end-of-call report."""
 
     __slots__ = ("_status",)
-    _status: dict[str, object]
+    _status: CallStatus
 
     def __new__(cls, status: object) -> Self:
         """Wrap a ``call_status`` result.
@@ -26,17 +36,17 @@ class CallStatusView:
             VoxdProtocolError: If it is not a status with a known call state,
                 so an unreadable reply is never mistaken for an ended call.
         """
-        checked = cast("dict[str, object]", status) if isinstance(status, dict) else {}
-        if checked.get("state") not in _STATES:
+        fields = cast("dict[str, object]", status) if isinstance(status, dict) else {}
+        if fields.get("state") not in _STATES:
             raise VoxdProtocolError(f"Unexpected call status: {status!r}")
         self = super().__new__(cls)
-        self._status = checked
+        self._status = cast("CallStatus", fields)
         return self
 
     @property
     def state(self) -> str:
         """Return the call state: idle, connecting, live, ended or failed."""
-        return str(self._status["state"])
+        return self._status["state"]
 
     @property
     def running(self) -> bool:
@@ -72,8 +82,8 @@ class CallStatusView:
             for turn in self._entries("transcript")
         ]
         lines.extend(self._tool_line(call) for call in self._entries("tool_calls"))
-        if self._status.get("error"):
-            lines.append(f"error: {self._status['error']}")
+        if error := self._status.get("error"):
+            lines.append(f"error: {error}")
         if self.trace:
             lines.append(f"trace: {self.trace}")
         return lines
@@ -85,9 +95,11 @@ class CallStatusView:
         name, arguments = call.get("tool", "?"), call.get("arguments", {})
         return f"tool: {name}({arguments}) -> {outcome}"
 
-    def _entries(self, key: str) -> list[dict[str, object]]:
+    def _entries(
+        self, key: Literal["transcript", "tool_calls"]
+    ) -> list[dict[str, object]]:
         """Return the dict entries of a list field, skipping anything else."""
-        value = self._status.get(key)
+        value: object = self._status.get(key)
         entries = cast("list[object]", value) if isinstance(value, list) else []
         return [
             cast("dict[str, object]", entry)

@@ -50,13 +50,20 @@ class VoiceCall:
 
         Raises:
             typer.Exit: Exit 1 when voxd refuses or the call fails; see
-                ``CallFollower.until_end`` for a lost status or an interrupt.
+                ``CallFollower.until_end`` for a lost status or an interrupt,
+                and ``CallFollower.hang_up`` for Ctrl-C while the call starts.
         """
         fields: dict[str, object] = {}
         if script is not None:
             fields["script"] = VoiceCallScript.read(script).wire()
         follower = CallFollower(self._control, self._poll_s)
-        follower.finish(follower.until_end(self._begin(fields)))
+        try:
+            started = self._begin(fields)
+        except KeyboardInterrupt:
+            # voxd may already be dialing the call this request asked for.
+            follower.finish(follower.hang_up())
+            return
+        follower.finish(follower.until_end(started))
 
     def stop(self) -> None:
         """Stop the running call; refuse when no call is running.

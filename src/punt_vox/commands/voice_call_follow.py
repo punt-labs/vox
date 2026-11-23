@@ -48,10 +48,10 @@ class CallFollower:
         try:
             return asyncio.run(self._follow(started))
         except KeyboardInterrupt:
-            return self._hang_up()
+            return self.hang_up()
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             typer.echo(f"Lost the call's status, hanging up: {exc}", err=True)
-            self.finish(self._hang_up())
+            self.finish(self.hang_up())
             raise typer.Exit(1) from None
 
     @staticmethod
@@ -87,7 +87,7 @@ class CallFollower:
             view = polled
         return view
 
-    def _hang_up(self) -> CallStatusView:
+    def hang_up(self) -> CallStatusView:
         """Send ``call_stop`` and return the ended call; refuse to report it live."""
         try:
             ended = CallStatusView(
