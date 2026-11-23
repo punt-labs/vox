@@ -12,11 +12,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
-from punt_vox.client_errors import VoxdRefusedError
+from punt_vox.client_errors import VoxdHandshakeRejectedError, VoxdRefusedError
 from punt_vox.hook_context_client import HookContextClient
 from punt_vox.hook_context_relay import HookContextRelay, main
 from punt_vox.voxd.hook_context_handlers import HookContextHandlers
 from punt_vox.voxd.hook_context_store import HookContextStore
+from punt_vox.voxd.hook_gaps import HookGaps
+from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.workers.actor import WorkerActor
@@ -24,10 +26,12 @@ from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.recovery import WorkerRecovery
 from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.hook_gaps import HookGapReport
     from punt_vox.voxd.workers.contracts import HarnessProfile
 
 
@@ -57,6 +61,64 @@ async def test_worker_delivery_retries_same_sequence_across_short_restart() -> N
         if call.args[0]["type"] == "hook_event"
     ]
     assert deliveries == [payload, payload]
+
+
+@pytest.mark.parametrize(
+    ("failure", "attempts"),
+    [(VoxdHandshakeRejectedError, 1), (VoxdRefusedError, 8)],
+)
+async def test_worker_retry_stops_at_auth_rejection_or_backoff_limit(
+    failure: type[VoxdHandshakeRejectedError] | type[VoxdRefusedError], attempts: int
+) -> None:
+    request = AsyncMock(side_effect=failure("not available"))
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock) as delay,
+        pytest.raises(failure, match="not available"),
+    ):
+        await HookContextClient.send_event({"session_id": "worker"}, worker_only=True)
+    assert request.await_count == attempts
+    assert delay.await_count == attempts - 1
+
+
+def test_checkpoint_writer_matches_recovery_schema() -> None:
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": "worker", "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    checkpoint = store.checkpoint("worker")
+    assert checkpoint is not None
+    assert checkpoint.keys() == WorkerHookCheckpoint.__annotations__.keys()
+
+
+def test_startup_skips_incomplete_hook_checkpoint(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    records = WorkerRecords(tmp_path / "workers")
+    records.save(replace(worker, last_report={"worker_seq": 1}))
+    restarted = HookContextStore()
+
+    WorkerRecovery.restore(records, restarted)
+
+    assert f"Worker {worker.id} hook checkpoint unavailable (KeyError)" in caplog.text
+    with pytest.raises(ValueError, match="no hook context"):
+        restarted.snapshot(worker.id)
+
+
+def test_invalid_gap_ranges_cannot_be_restored_or_acknowledged() -> None:
+    invalid: HookGapReport = {
+        "highest_seen": 4,
+        "untracked_through": 0,
+        "missing_ranges": [(2, 5)],
+        "missing_count": 4,
+    }
+
+    with pytest.raises(ValueError, match="Invalid hook gap checkpoint"):
+        HookGaps().restore(invalid)
+    assert not HookGaps.received(invalid, 1)
 
 
 async def test_restart_preserves_result_and_current_decision(tmp_path: Path) -> None:

@@ -217,6 +217,19 @@ def test_existing_provisioning_lock_reports_retry(
         VoiceAgent(control, path=config).connection((_CLOCK,))
 
 
+def test_signed_url_auth_error_explains_required_access(
+    tmp_path: Path, wire: Requests
+) -> None:
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        wire.signed_url_status = 403
+        with pytest.raises(
+            ConvAIError, match="403; check the key's ElevenLabs Agents access"
+        ):
+            agent.connection((_CLOCK,))
+
+
 def test_invalid_utf8_registration_is_unreadable(tmp_path: Path) -> None:
     config = tmp_path / _COMPLETED_REGISTRATION
     config.write_bytes(b"\xff")

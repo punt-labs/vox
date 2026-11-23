@@ -84,6 +84,27 @@ async def test_context_immediate_results_wait_decisions_bypass_lull() -> None:
             await task
 
 
+async def test_pending_speech_drops_oldest_result_at_capacity() -> None:
+    progress = CallProgress(ProgressEvents())
+    queue: asyncio.Queue[WorkerProgress] = asyncio.Queue()
+    for index in range(ProgressEvents.LIMIT + 1):
+        queue.put_nowait(WorkerProgress(f"w{index}", index + 1, "finished", "done"))
+    conv = AsyncMock(spec=Conversation)
+    spoken = asyncio.Event()
+    conv.send_text.side_effect = lambda _text: spoken.set()
+
+    with patch.object(CallProgress, "LULL", 0.05):
+        task = asyncio.create_task(progress.run(cast("Conversation", conv), queue))
+        try:
+            await asyncio.wait_for(spoken.wait(), 2)
+            assert conv.send_context.await_count == ProgressEvents.LIMIT + 1
+            assert "Worker w1 event 2:" in conv.send_text.await_args_list[0].args[0]
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+
 async def test_empty_source_cancellation_and_send_failure() -> None:
     events = ProgressEvents()
     conv = AsyncMock(spec=Conversation)

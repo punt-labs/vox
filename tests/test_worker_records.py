@@ -47,7 +47,11 @@ def test_startup_only_reaps_marked_orphans(tmp_path: Path) -> None:
     foreign_id = str(uuid4())
     foreign = f"vox-worker-{foreign_id}"
 
-    listed = CompletedProcess([], 0, f"{registered.session}\n{foreign}\n{orphan}\n")
+    listed = CompletedProcess(
+        [],
+        0,
+        f"personal\nvox-worker-invalid\n{registered.session}\n{foreign}\n{orphan}\n",
+    )
     other = CompletedProcess([], 0, f"VOX_WORKER_OWNER=other:{foreign_id}\n")
     owned = CompletedProcess(
         [], 0, f"VOX_WORKER_OWNER={records.namespace}:{orphan_id}\n"
@@ -61,6 +65,63 @@ def test_startup_only_reaps_marked_orphans(tmp_path: Path) -> None:
     ):
         WorkerReaper.run(records, TmuxWorkerProvider())
     stop.assert_called_once_with(orphan)
+
+
+def test_startup_runs_other_reaper_when_tmux_is_unavailable(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    records = WorkerRecords(tmp_path / "workers")
+    with (
+        patch("punt_vox.voxd.workers.reaper.WorkerCommand.run", side_effect=OSError),
+        patch.object(
+            WorkerReaper, "reap_brokers", side_effect=PermissionError
+        ) as brokers,
+    ):
+        WorkerReaper.run(records, TmuxWorkerProvider())
+    brokers.assert_called_once_with(records.namespace)
+    assert "Worker session reaper unavailable (OSError)" in caplog.text
+    assert "Worker broker reaper unavailable (PermissionError)" in caplog.text
+
+
+def test_unreadable_worker_record_protects_its_session(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    records = WorkerRecords(tmp_path / "workers")
+    path = tmp_path / "workers" / f"{worker.id}.json"
+    worker_id = str(uuid4())
+    mismatched = path.with_name(f"{worker_id}.json")
+    path.rename(mismatched)
+
+    assert records.load(strict=False) == []
+    assert records.protects_session(worker_id)
+    assert f"Invalid worker record {mismatched.name} (ValueError)" in caplog.text
+
+
+def test_startup_keeps_reaping_after_one_orphan_cannot_stop(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    records = WorkerRecords(tmp_path / "workers")
+    ids = (uuid4(), uuid4())
+    handles = [f"vox-worker-{worker_id}" for worker_id in ids]
+    listed = CompletedProcess([], 0, "\n".join(handles))
+    owners = [
+        CompletedProcess([], 0, f"VOX_WORKER_OWNER={records.namespace}:{worker_id}")
+        for worker_id in ids
+    ]
+    with (
+        patch(
+            "punt_vox.voxd.workers.reaper.WorkerCommand.run",
+            side_effect=[listed, *owners],
+        ),
+        patch.object(
+            TmuxWorkerProvider, "stop", side_effect=[RuntimeError, None]
+        ) as stop,
+    ):
+        WorkerReaper.run(records, TmuxWorkerProvider())
+    assert [call.args[0] for call in stop.call_args_list] == handles
+    assert f"Worker orphan {handles[0]} not reaped (RuntimeError)" in caplog.text
 
 
 def test_ready_worker_accepts_fresh_post_restart_report(tmp_path: Path) -> None:

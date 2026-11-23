@@ -14,6 +14,7 @@ from websockets.asyncio.server import serve
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.handlers import CallHandlers
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 
 from .fakes import FakePlayback, FakeWorkers, payload
 
@@ -261,6 +262,22 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
     assert "Already reviewed." not in opening[1]
     assert all(f"Result {index}." in opening[1] for index in range(4, 7))
     assert opening[2] is None
+
+
+def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
+    brief = ReturnBrief(tmp_path / "departure.json")
+    brief.depart([payload("worker")])
+    result = payload(
+        "worker", last_assistant_message="A long result.\n" * 20, result_seq=1
+    )
+
+    options = brief.options([result], ("/repo",), ())
+
+    spoken = " ".join(("A long result.\n" * 20).split())[:159] + "…"
+    assert (
+        options.first_message
+        == f"While you were away, the worker in repo finished: {spoken}"
+    )
 
 
 async def test_start_without_a_key_is_refused(
