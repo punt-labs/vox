@@ -7,6 +7,7 @@ import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.client_errors import VoxdRecoveryPendingError
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.types import MessageHandler
 
 logger = logging.getLogger(__name__)
+_RECOVERY_TIMEOUT_S = 2.0
 
 
 @final
@@ -55,9 +57,20 @@ class StartupHandlers:
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Wait for durable worker state before dispatching."""
-        if not await asyncio.shield(asyncio.wrap_future(self._recovery)):
-            await WireReply(websocket, str(msg.get("id", ""))).error(
-                "Worker startup recovery failed; check the daemon log"
+        reply = WireReply(websocket, str(msg.get("id", "")))
+        try:
+            async with asyncio.timeout(_RECOVERY_TIMEOUT_S):
+                ready = await asyncio.shield(asyncio.wrap_future(self._recovery))
+        except TimeoutError:
+            await reply.send(
+                {
+                    "type": "error",
+                    "code": VoxdRecoveryPendingError.CODE,
+                    "message": "Worker startup recovery is still in progress; retry the request",
+                }
             )
+            return
+        if not ready:
+            await reply.error("Worker startup recovery failed; check the daemon log")
             return
         await self._handler(msg, websocket)

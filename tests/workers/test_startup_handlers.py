@@ -58,3 +58,35 @@ async def test_failed_recovery_is_logged_and_returns_rpc_error(
         }
     )
     assert "Worker startup recovery failed (OSError)" in caplog.text
+
+
+async def test_recovery_deadline_drops_expired_rpc_without_cancelling_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "punt_vox.voxd.workers.startup_handlers._RECOVERY_TIMEOUT_S", 0.1, raising=False
+    )
+    release = threading.Event()
+    handler = AsyncMock()
+
+    def recover() -> None:
+        assert release.wait(5)
+
+    gated = StartupHandlers.start(recover, {"worker_stop": handler})
+    stop = gated["worker_stop"]
+    socket = AsyncMock()
+    async with asyncio.timeout(1):
+        try:
+            await stop({"id": "expired"}, socket)
+            socket.send_json.assert_awaited_once_with(
+                {
+                    "type": "error",
+                    "id": "expired",
+                    "code": "worker_recovery_pending",
+                    "message": "Worker startup recovery is still in progress; retry the request",
+                }
+            )
+        finally:
+            release.set()
+        await stop({"id": "fresh"}, socket)
+    handler.assert_awaited_once_with({"id": "fresh"}, socket)

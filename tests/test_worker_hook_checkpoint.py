@@ -15,6 +15,7 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 from punt_vox.client_errors import (
     VoxdHandshakeRejectedError,
     VoxdProtocolError,
+    VoxdRecoveryPendingError,
     VoxdRefusedError,
 )
 from punt_vox.hook_context_client import HookContextClient
@@ -102,6 +103,20 @@ async def test_worker_delivery_retries_a_daemon_response_timeout() -> None:
         payload,
         payload,
     ]
+
+
+async def test_worker_delivery_retries_unfinished_recovery() -> None:
+    payload: dict[str, object] = {"session_id": "worker", "relay_seq": 19}
+    request = AsyncMock(
+        side_effect=[VoxdRecoveryPendingError("retry"), {"admitted": True}, {}]
+    )
+    with (
+        patch.object(HookContextClient, "_request", request),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await HookContextClient.send_event(payload, worker_only=True)
+    assert request.await_count == 3
+    assert request.await_args.args[0]["payload"] == payload
 
 
 def test_checkpoint_writer_matches_recovery_schema() -> None:

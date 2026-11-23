@@ -59,3 +59,9 @@ class VoxdRejectionError(VoxdProtocolError):
     reason verbatim; a bare ``VoxdProtocolError`` names a bug and
     propagates.
     """
+
+
+class VoxdRecoveryPendingError(VoxdRejectionError):
+    """voxd dropped an RPC because its worker recovery is not complete."""
+
+    CODE = "worker_recovery_pending"

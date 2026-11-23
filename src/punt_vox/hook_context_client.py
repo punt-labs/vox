@@ -11,6 +11,7 @@ from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdHandshakeRejectedError,
     VoxdProtocolError,
+    VoxdRecoveryPendingError,
 )
 from punt_vox.client_transport import VoxdTransport
 
@@ -48,7 +49,9 @@ class HookContextClient:
     @staticmethod
     def _retryable(exc: VoxdConnectionError | VoxdProtocolError) -> bool:
         if isinstance(exc, VoxdProtocolError):
-            return isinstance(exc.__cause__, TimeoutError)
+            return isinstance(exc, VoxdRecoveryPendingError) or isinstance(
+                exc.__cause__, TimeoutError
+            )
         return not isinstance(exc, VoxdHandshakeRejectedError)
 
     @classmethod
