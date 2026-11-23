@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import replace
-from threading import Lock
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.workers.cleanup import WorkerCleanup
@@ -27,16 +26,7 @@ logger = logging.getLogger(__name__)
 class WorkerRetirement:
     """Run terminal cleanup once per worker and checkpoint its outcome."""
 
-    __slots__ = (
-        "_executor",
-        "_inventory",
-        "_job_lock",
-        "_jobs",
-        "_profiles",
-        "_release",
-    )
-    _jobs: set[str]
-    _job_lock: Lock
+    __slots__ = ("_executor", "_inventory", "_profiles", "_release")
     _executor: WorkerCleanupQueue
     _inventory: WorkerInventory
     _profiles: dict[str, HarnessProfile]
@@ -49,8 +39,6 @@ class WorkerRetirement:
         self = super().__new__(cls)
         self._profiles = profiles
         self._inventory = inventory
-        self._jobs = set()
-        self._job_lock = Lock()
         self._executor = WorkerCleanupQueue()
         self._release = lambda _worker: None
         return self
@@ -63,23 +51,16 @@ class WorkerRetirement:
         self, worker_id: str
     ) -> Future[None] | None:  # PY-TS-14: no future without a newly queued job.
         """Queue terminal cleanup without waiting for a config file lease."""
-        with self._job_lock:
-            record = self._inventory.get(worker_id)
-            if worker_id in self._jobs or record.state not in ("exited", "stopped"):
-                return None
-            if not WorkerCleanup.pending(record):
-                return None
-            job = self._executor.submit(lambda: self._cleanup(record))
-            if job.cancelled():
-                return None
-            self._jobs.add(worker_id)
-            return job
+        record = self._inventory.get(worker_id)
+        if record.state not in ("exited", "stopped") or not WorkerCleanup.pending(
+            record
+        ):
+            return None
+        return self._executor.submit(worker_id, lambda: self._cleanup(worker_id))
 
     def shutdown(self) -> None:
         """Stop accepting cleanup and discard work that has not started."""
         self._executor.shutdown()
-        with self._job_lock:
-            self._jobs.clear()
 
     def observe(
         self,
@@ -115,17 +96,17 @@ class WorkerRetirement:
                 self.schedule(observed.id)
         return observed
 
-    def _cleanup(self, record: WorkerRecord) -> None:
+    def _cleanup(self, worker_id: str) -> None:
         try:
+            record = self._inventory.get(worker_id)
+            if not WorkerCleanup.pending(record):
+                return
             result = WorkerCleanup.run(record, self._profiles)
             self._inventory.update(
                 record.id, lambda current: self._merge(current, result)
             )
         except (OSError, ValueError) as exc:
             logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)
-        finally:
-            with self._job_lock:
-                self._jobs.discard(record.id)
 
     @staticmethod
     def _merge(record: WorkerRecord, result: WorkerRecord) -> WorkerRecord:

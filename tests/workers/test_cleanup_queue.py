@@ -13,15 +13,19 @@ def test_shutdown_cancels_waiting_and_future_work() -> None:
         started.set()
         assert release.wait(3)
 
-    running = queue.submit(hold)
+    running = queue.submit("running", hold)
+    assert running is not None
     try:
         assert started.wait(1)
-        waiting = queue.submit(ran.set)
+        assert queue.submit("running", ran.set) is None
+        waiting = queue.submit("waiting", ran.set)
+        assert waiting is not None
         queue.shutdown()
         assert waiting.cancelled()
-        assert queue.submit(ran.set).cancelled()
+        assert queue.submit("closed", ran.set) is None
         assert not running.done()
     finally:
         release.set()
     running.result(timeout=1)
+    assert not queue._active
     assert not ran.is_set()
