@@ -84,12 +84,30 @@ class TestConsumerResilience:
         forever and leak the task.
         """
         started = asyncio.Event()
+        active = tmp_path / "active.mp3"
+        pending = tmp_path / "pending.mp3"
+        active.write_bytes(b"speech")
+        pending.touch()
+        active_at_reap: list[bool] = []
 
-        async def blocking_play(_self: PlaybackQueue, _path: Path) -> None:
+        async def blocked_player() -> tuple[bytes, bytes]:
             started.set()
             await asyncio.Event().wait()  # never completes -> cancelled here
+            return b"", b""
 
-        monkeypatch.setattr(PlaybackQueue, "play_audio", blocking_play)
+        async def wait_for_killed_player() -> int:
+            active_at_reap.append(active.exists())
+            return -9
+
+        proc = MagicMock()
+        proc.communicate = AsyncMock(side_effect=blocked_player)
+        proc.wait = AsyncMock(side_effect=wait_for_killed_player)
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        )
+        monkeypatch.setattr(
+            PlaybackQueue, "_compute_timeout", AsyncMock(return_value=1.0)
+        )
 
         async def _run() -> PlaybackResult:
             pq = PlaybackQueue()
@@ -98,16 +116,29 @@ class TestConsumerResilience:
             outcome: asyncio.Future[PlaybackResult] = loop.create_future()
             await pq.enqueue(
                 PlaybackItem(
-                    path=tmp_path / "x.mp3",
+                    path=active,
                     request_id="1",
                     notify=asyncio.Event(),
                     outcome=outcome,
+                    discard=active.unlink,
                 )
             )
             await started.wait()  # consumer is inside play_audio, holding the item
+            pending_done = asyncio.Event()
+            await pq.enqueue(
+                PlaybackItem(
+                    path=pending,
+                    request_id="2",
+                    notify=pending_done,
+                    discard=pending.unlink,
+                )
+            )
             consumer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await consumer
+            assert pending_done.is_set()
+            assert not pending.exists()
+            assert not active.exists()
             # The finally must have resolved the outcome despite the cancel.
             return await asyncio.wait_for(outcome, timeout=2)
 
@@ -116,6 +147,9 @@ class TestConsumerResilience:
         assert result.rc == -1
         assert not result.ok
         assert "interrupted" in result.stderr
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
+        assert active_at_reap == [True]
 
 
 def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
@@ -130,6 +164,31 @@ def _fake_proc(rc: int, stderr: bytes) -> MagicMock:
 
 class TestPlayAudioObservability:
     """``PlaybackQueue.play_audio`` must never silently discard playback failures."""
+
+    async def test_timeout_reaps_player_and_records_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        audio = tmp_path / "timed-out.mp3"
+        audio.write_bytes(b"audio")
+        playback = _make_playback_queue()
+        proc = _fake_proc(rc=0, stderr=b"")
+        proc.communicate = AsyncMock(side_effect=TimeoutError)
+        proc.wait = AsyncMock()
+        monkeypatch.setattr(
+            PlaybackQueue, "_compute_timeout", AsyncMock(return_value=1)
+        )
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", AsyncMock(return_value=proc)
+        )
+
+        await playback.play_audio(audio)
+
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
+        result = playback.last_result
+        assert result is not None
+        assert result.rc == -1
+        assert result.stderr == "timeout after 1.0s"
 
     def test_nonzero_exit_logs_error_and_records(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

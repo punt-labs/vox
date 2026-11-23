@@ -51,15 +51,18 @@ class SynthesisCache:
         """Store anonymous audio, never audio from a credential override."""
         return cache_put(self._key, source) if self._anonymous else None
 
-    def outcome(self) -> SynthesisOutcome | None:
+    async def outcome(self) -> SynthesisOutcome | None:
         """Return reusable audio, or None for a miss or credential override."""
         if not self._anonymous:
             return None
         cached = cache_get(self._key)
-        if cached is None:
+        if (
+            cached is None
+            or (outcome := await SynthesisOutcome.from_cache(cached)) is None
+        ):
             return None
         logger.info(
             "served %d chars from cache",
             self._chars_in,
         )
-        return SynthesisOutcome(path=cached, cached=True)
+        return outcome

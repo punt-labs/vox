@@ -8,11 +8,9 @@ before writing. This is the  (P1) security primitive: the token
 authorizes audio operations, not filesystem writes as the daemon user, so no
 request -- local or remote -- can escape the root.
 
-The write itself is atomic: a fresh source is moved with an atomic rename (copy
-fallback only on cross-filesystem ``EXDEV``); a cached source is copied through
-the descriptor ``mkstemp`` returned (0600, ``O_EXCL``) then renamed onto the
-destination with ``os.replace``, so a crash mid-write leaves no partial file
-and a world-writable race cannot swap a symlink under the write.
+The write itself is atomic: the owned source is moved with an atomic rename.
+On cross-filesystem ``EXDEV``, it is copied through the private descriptor
+``mkstemp`` returned, then atomically renamed onto the destination.
 """
 
 from __future__ import annotations
@@ -111,16 +109,12 @@ class RecordStore:
         """
         return self._resolve_within_root(ref)
 
-    def place(
-        self, *, source: Path, text: str, name: str | None, cached: bool
-    ) -> RecordWrite:
+    def place(self, *, source: Path, text: str, name: str | None) -> RecordWrite:
         """Land *source* at its contained destination atomically; return path + bytes.
 
-        A fresh (non-cached) source is moved with an atomic rename -- no byte
-        copy -- falling back to the copy path only on cross-filesystem
-        ``EXDEV``. ``cached`` sources are always copied so the cache entry
-        survives. Either way the destination is replaced atomically, so it is
-        the complete file or untouched, never a partial write.
+        The owned source is moved with an atomic rename, falling back to a
+        copy only on cross-filesystem ``EXDEV``. Either way the destination
+        is replaced atomically, never with a partial write.
         """
         dest = self.resolve(name, text)
         # dest is a bare name under the root, so the parent is the root itself;
@@ -128,11 +122,8 @@ class RecordStore:
         self._root.mkdir(parents=True, exist_ok=True)
         self._root.chmod(0o700)
 
-        if not cached:
-            moved = self._move(source, dest)
-            if moved is not None:
-                return moved
-        return self._copy(source, dest, cached=cached)
+        moved = self._move(source, dest)
+        return moved if moved is not None else self._copy(source, dest)
 
     def entries(self) -> tuple[RecordingEntry, ...]:
         """Return the store's immediate recordings (name + bytes), sorted by name.
@@ -237,7 +228,7 @@ class RecordStore:
 
         The byte count is read from the *source* before the rename: reading
         ``dest`` afterwards would report a concurrent same-name write's size, not
-        the bytes this call landed (mirrors the cached copy path).
+        the bytes this call landed (mirrors the cross-device copy path).
         """
         try:
             byte_count = source.stat().st_size
@@ -252,7 +243,7 @@ class RecordStore:
         return RecordWrite(path=dest, byte_count=byte_count)
 
     @staticmethod
-    def _copy(source: Path, dest: Path, *, cached: bool) -> RecordWrite:
+    def _copy(source: Path, dest: Path) -> RecordWrite:
         """Copy *source* to a sibling temp then atomically rename onto *dest*.
 
         The byte count is taken from the temp *before* the rename (the commit
@@ -274,7 +265,6 @@ class RecordStore:
             tmp.unlink(missing_ok=True)
             raise
 
-        if not cached:
-            with contextlib.suppress(OSError):
-                source.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            source.unlink(missing_ok=True)
         return RecordWrite(path=dest, byte_count=byte_count)

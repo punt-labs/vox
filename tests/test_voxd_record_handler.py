@@ -5,16 +5,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from punt_vox import cache
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.types_provider_errors import ProviderAuthError, UnknownProviderError
 from punt_vox.voxd.record_handler import RecordHandler
-from punt_vox.voxd.record_store import RecordStore
+from punt_vox.voxd.record_store import RecordStore, RecordWrite
+from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
@@ -43,6 +47,88 @@ def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
     ws = MagicMock()
     ws.send_json = AsyncMock(side_effect=_send)
     return ws, sent
+
+
+@pytest.mark.parametrize("write_fails", [False, True])
+async def test_cache_hit_record_survives_eviction_during_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    write_fails: bool,
+) -> None:
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(cache, "MAX_ENTRIES", 1)
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    cached = cache.cache_put(cache.CacheKey("hello", "", "elevenlabs"), source)
+    assert cached is not None
+    store = _store(tmp_path)
+    loop = asyncio.get_running_loop()
+    started: asyncio.Future[Path] = loop.create_future()
+    resume = threading.Event()
+    place = RecordStore.place
+    discarded = asyncio.Event()
+    discard = SynthesisOutcome.discard
+
+    def delayed_place(
+        self: RecordStore, *, source: Path, text: str, name: str | None
+    ) -> RecordWrite:
+        loop.call_soon_threadsafe(started.set_result, source)
+        if not resume.wait(timeout=5):
+            raise TimeoutError("recording did not resume")
+        if write_fails:
+            raise OSError("record store denied the write")
+        return place(self, source=source, text=text, name=name)
+
+    monkeypatch.setattr(RecordStore, "place", delayed_place)
+
+    def mark_discarded(outcome: SynthesisOutcome) -> None:
+        discard(outcome)
+        discarded.set()
+
+    monkeypatch.setattr(SynthesisOutcome, "discard", mark_discarded)
+    ws, sent = _capturing_ws()
+    handler = RecordHandler(
+        synthesis=SynthesisPipeline(playback_mutex=asyncio.Lock()), store=store
+    )
+    request = asyncio.create_task(
+        handler(
+            {
+                "type": "record",
+                "text": "hello",
+                "provider": "elevenlabs",
+                "name": "queued.mp3",
+            },
+            ws,
+        )
+    )
+    try:
+        snapshot = await asyncio.wait_for(started, timeout=2)
+        os.utime(cached, (1, 1))
+        assert cache.cache_put(cache.CacheKey("later", "", "elevenlabs"), source)
+        assert not cached.exists()
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        assert snapshot.read_bytes() == b"audio"
+    finally:
+        resume.set()
+        if not request.done():
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+
+    await asyncio.wait_for(discarded.wait(), timeout=2)
+    recording = store.root / "queued.mp3"
+    if write_fails:
+        assert not recording.exists()
+        assert "Abandoned recording write failed: record store denied" in caplog.text
+    else:
+        assert recording.read_bytes() == b"audio"
+        assert recording.stat().st_mode & 0o777 == 0o600
+    assert not snapshot.exists()
+    assert [frame["type"] for frame in sent] == ["recording"]
 
 
 class TestRecordHandler:
@@ -212,7 +298,8 @@ class TestRecordHandler:
             "id": "r1",
             "message": "operation failed",
         }
-        place.assert_called_once_with(source=source, text="hi", name=None, cached=False)
+        place.assert_called_once_with(source=source, text="hi", name=None)
+        assert not source.exists()
         assert not store.root.exists()
 
     @pytest.mark.parametrize(

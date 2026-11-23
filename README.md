@@ -593,6 +593,12 @@ ask Vox what the workers did while you were away.
 
 The daemon needs an ElevenLabs API key with Agents Write (`convai_write`).
 For coding workers, install Git, tmux and Claude Code on the daemon host.
+On Linux, call workers launched by the Vox systemd service need
+systemd 254 or newer and a running systemd user manager. Ubuntu 24.04 LTS
+meets the version requirement; Ubuntu 22.04 LTS ships systemd 249 and
+cannot launch these workers from the service. Run `vox doctor` to check
+the installed version.
+
 As the daemon user, sign in to Claude Code and install and enable the
 [Vox plugin](#quick-start) in the Claude Code configuration workers use.
 Its hooks report when a worker is ready and send progress back to the call.

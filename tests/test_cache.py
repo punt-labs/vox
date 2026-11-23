@@ -147,6 +147,22 @@ class TestCacheGet:
             # Empty file should be deleted
             assert not cached.exists()
 
+    def test_entry_removed_during_lru_refresh_is_a_miss(self, tmp_path: Path) -> None:
+        key = CacheKey("hello", None, None)
+        cached = key.path_in(tmp_path)
+        _fake_mp3(cached)
+
+        def remove_entry(path: Path, _times: object) -> None:
+            path.unlink()
+            raise FileNotFoundError
+
+        with (
+            patch("punt_vox.cache.CACHE_DIR", tmp_path),
+            patch("punt_vox.cache.os.utime", side_effect=remove_entry),
+        ):
+            assert cache_get(key) is None
+        assert not cached.exists()
+
 
 # ---------------------------------------------------------------------------
 # cache_put tests
