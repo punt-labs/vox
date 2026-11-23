@@ -2415,6 +2415,40 @@ class TestGlobalFlags:
         data = json.loads(result.output)
         assert "provider" in data
 
+    @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_reports_non_utf8_desktop_config(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        hermetic_config: Path,
+        json_output: bool,
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        (hermetic_config / "vox.local.md").write_text(
+            "---\nvibe: calm\nvibe_tags: focus\n---\n", encoding="utf-8"
+        )
+        config_path = tmp_path / "claude_desktop_config.json"
+        config_path.write_bytes(b"\xff")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
+        ):
+            result = CliRunner().invoke(
+                app, ["status", "--json"] if json_output else ["status"]
+            )
+
+        assert result.exit_code == 0, result.exception
+        if json_output:
+            payload = json.loads(result.stdout)
+            assert payload["desktop"] == "config unreadable"
+            assert payload["vibe"] == "calm"
+            assert payload["vibe_tags"] == "focus"
+        else:
+            assert "Desktop:   config unreadable" in result.stdout
+            assert "Vibe:      calm" in result.stdout
+            assert "Tags:      focus" in result.stdout
+
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
         result = runner.invoke(app, ["version", "--quiet"])
