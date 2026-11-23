@@ -13,8 +13,10 @@ from websockets.asyncio.server import serve
 
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
+from punt_vox.voxd.voice_call.seed import CallSeed
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
 from .fakes import FakePlayback, FakeWorkers, payload
@@ -305,6 +307,32 @@ def test_return_opener_distinguishes_two_workers_in_the_same_repository(
         "Worker 1 in repo": finished["id"],
         "Worker 2 in repo": blocked["id"],
     }
+
+
+async def test_spoken_label_can_find_worker_outside_bounded_roster(
+    tmp_path: Path,
+) -> None:
+    brief = ReturnBrief(tmp_path / "departure.json")
+    brief.depart([])
+    workers = FakeWorkers()
+    workers.known = [
+        payload(f"{index:036d}", last_assistant_message="Done.", result_seq=1)
+        for index in range(200)
+    ]
+    options = brief.options(workers.known, ("/repo",), ())
+    assert len(options.prompt.encode()) <= CallSeed.LIMIT
+    assert "000000000000000000000000000000000199" not in options.prompt
+    assert (
+        options.first_message and "Worker 200 in repo finished" in options.first_message
+    )
+
+    tools = BossTools(workers, workers, spoken_labels=brief.labels)
+    result, error = await tools.answer(
+        "worker_status", {"worker_id": "worker 200 in repo"}
+    )
+
+    assert not error
+    assert json.loads(result)["worker_id"] == workers.known[-1]["id"]
 
 
 async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None:

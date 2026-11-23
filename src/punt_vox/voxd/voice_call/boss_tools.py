@@ -107,11 +107,17 @@ class BossTools:
     _projects: ProjectAllowlist
     _cache: ToolResultCache
 
-    def __new__(cls, workers: WorkerControl, projects: ProjectAllowlist) -> Self:
+    def __new__(
+        cls,
+        workers: WorkerControl,
+        projects: ProjectAllowlist,
+        *,
+        spoken_labels: dict[str, str] | None = None,
+    ) -> Self:
         """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
-        self._directory = WorkerDirectory(workers)
+        self._directory = WorkerDirectory(workers, spoken_labels)
         self._cache = ToolResultCache()
         return self
 

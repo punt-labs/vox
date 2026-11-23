@@ -19,21 +19,28 @@ if TYPE_CHECKING:
 class ReturnBrief:
     """Use only the provider's curated worker snapshot, never the live event log."""
 
-    __slots__ = ("_covered", "_file")
+    __slots__ = ("_covered", "_file", "_labels")
     _file: AtomicFile
     _covered: dict[str, int]
+    _labels: dict[str, str]
 
     def __new__(cls, path: Path) -> Self:
         """Bind the durable departure state for one prospective call."""
         self = super().__new__(cls)
         self._file = AtomicFile(path)
         self._covered = {}
+        self._labels = {}
         return self
 
     @property
     def covered(self) -> dict[str, int]:
         """Return the per-worker live stream cut."""
         return self._covered
+
+    @property
+    def labels(self) -> dict[str, str]:
+        """Return the call's spoken aliases shared with worker tools."""
+        return self._labels
 
     def options(
         self,
@@ -43,6 +50,9 @@ class ReturnBrief:
     ) -> SessionOptions:
         """Build the call prompt and opener from the same worker snapshot."""
         opening, labels = self._opening(workers)
+        self._labels.update(
+            (label.casefold(), worker_id) for label, worker_id in labels.items()
+        )
         return SessionOptions(
             CallSeed(projects, workers).prompt(labels),
             tool_ids,

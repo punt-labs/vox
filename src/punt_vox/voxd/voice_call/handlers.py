@@ -159,15 +159,15 @@ class CallHandlers:
         stream = os.fdopen(
             os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
         )
+        returning = ReturnBrief(self._trace_dir / "departure.json")
         call = VoiceAgentCall(
-            BossTools(self._workers, self._projects),
+            BossTools(self._workers, self._projects, spoken_labels=returning.labels),
             audio,
             AgentSpeaker(self._playback),
             trace=EventTrace(stream),
             opener=self._opener,
             progress=self._progress,
         )
-        returning = ReturnBrief(self._trace_dir / "departure.json")
 
         async def dial() -> tuple[str, SessionOptions]:
             url, tool_ids = await asyncio.to_thread(agent.connection, BossTools.CATALOG)

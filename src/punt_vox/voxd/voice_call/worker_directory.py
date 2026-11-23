@@ -11,19 +11,24 @@ if TYPE_CHECKING:
 
 @final
 class WorkerDirectory:
-    """Own exact-ID and unambiguous spoken-prefix lookup."""
+    """Own exact-ID, spoken alias, and unambiguous prefix lookup."""
 
-    __slots__ = ("_workers",)
+    __slots__ = ("_labels", "_workers")
     _workers: WorkerControl
+    _labels: dict[str, str]
 
-    def __new__(cls, workers: WorkerControl) -> Self:
+    def __new__(
+        cls, workers: WorkerControl, spoken_labels: dict[str, str] | None = None
+    ) -> Self:
         """Bind the live worker roster without retaining stale payloads."""
         self = super().__new__(cls)
         self._workers = workers
+        self._labels = {} if spoken_labels is None else spoken_labels
         return self
 
     async def find(self, wanted: str) -> WorkerPayload:
-        """Resolve an exact ID or a unique prefix of at least four characters."""
+        """Resolve an ID, spoken alias, or unique prefix of at least four chars."""
+        wanted = self._labels.get(wanted.strip().casefold(), wanted)
         workers = await self._workers.workers()
         exact = [w for w in workers if w["id"] == wanted]
         prefixed = [
