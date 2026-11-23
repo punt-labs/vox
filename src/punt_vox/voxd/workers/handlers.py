@@ -42,7 +42,7 @@ class WorkerHandlers:
         store: HookContextStore | None = None,  # PY-TS-14: absent omits hook RPCs.
     ) -> dict[str, MessageHandler]:
         """Construct one serialized actor and expose its worker control surface."""
-        return cls(WorkerActor(registry)).handlers(store)
+        return cls(WorkerActor(registry, store)).handlers(store)
 
     def handlers(
         self,

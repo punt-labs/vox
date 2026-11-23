@@ -21,15 +21,21 @@ if TYPE_CHECKING:
 class WorkerActor:
     """Serialize mutations while running blocking provider I/O off the event loop."""
 
-    __slots__ = ("_lock", "_registry", "_steering")
+    __slots__ = ("_lock", "_registry", "_steering", "_store")
     _registry: WorkerRegistry
     _lock: asyncio.Lock
     _steering: WorkerSteering
+    _store: HookContextStore | None  # PY-TS-14: standalone actors have no hooks.
 
-    def __new__(cls, registry: WorkerRegistry) -> Self:
+    def __new__(
+        cls,
+        registry: WorkerRegistry,
+        store: HookContextStore | None = None,  # PY-TS-14: standalone actors omit it.
+    ) -> Self:
         """Bind one registry and its serialization lock."""
         self = super().__new__(cls)
         self._registry = registry
+        self._store = store
         self._lock = asyncio.Lock()
         self._steering = WorkerSteering(registry, self._lock)
         return self
@@ -59,6 +65,10 @@ class WorkerActor:
         """Reconcile and return every known worker."""
         async with self._lock:
             records = await asyncio.to_thread(self._registry.list)
+            if self._store is not None:
+                for record in records:
+                    if record.state == "exited":
+                        self._store.release_worker(record.id)
         return [WorkerRecordCodec.public(record) for record in records]
 
     async def steer(

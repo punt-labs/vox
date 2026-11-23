@@ -343,6 +343,41 @@ async def test_startup_reconciles_dead_worker_before_hook_admission(
         cleanup.assert_called_once_with(Path(worker.worktree))
 
 
+async def test_listing_unpins_exited_worker_without_trust_cleanup(
+    tmp_path: Path,
+) -> None:
+    provider = FakeWorkerProvider()
+    worker = _registry(tmp_path, provider).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    WorkerRecords(tmp_path / "workers").save(replace(worker, provider="tmux"))
+    store = HookContextStore()
+    store.ingest(
+        {"session_id": worker.id, "hook_event_name": "SessionStart", "relay_seq": 1},
+        worker_input=True,
+    )
+    with (
+        patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path),
+        patch("punt_vox.voxd.workers.wiring.TmuxWorkerProvider", return_value=provider),
+        patch.object(ClaudeProfile, "cleanup") as cleanup,
+    ):
+        actor, recover = WorkerSubsystem.prepare(store, WorkerSubsystem.policy())
+        recover()
+        provider.alive = False
+        assert (await actor.workers())[0]["state"] == "exited"
+        cleanup.assert_not_called()
+    for index in range(65):
+        store.ingest(
+            {
+                "session_id": f"ordinary-{index}",
+                "hook_event_name": "SessionStart",
+                "relay_seq": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="no hook context"):
+        store.snapshot(worker.id)
+
+
 async def test_malformed_gap_checkpoint_does_not_block_fresh_hooks(
     tmp_path: Path,
 ) -> None:

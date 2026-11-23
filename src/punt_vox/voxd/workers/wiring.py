@@ -48,4 +48,4 @@ class WorkerSubsystem:
         def recover() -> None:
             registry.restore(WorkerStartup.run(records, store, provider))
 
-        return WorkerActor(registry), recover
+        return WorkerActor(registry, store), recover
