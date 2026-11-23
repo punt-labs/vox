@@ -67,6 +67,7 @@ def test_claude_login_expiry(
     ("payload", "exit_code", "reason"),
     [
         (b"not JSON", 0, "invalid JSON"),
+        (b'{"loggedIn":true,"loginExpiresAt":"not a date"}', 0, "invalid expiry date"),
         (b'{"loggedIn":true,"loginExpiresAt":"2026-12-12"}', 0, "no time zone"),
         (b"[]", 0, "expected a JSON object"),
         (b"{}", 0, "sign-in status not reported"),
