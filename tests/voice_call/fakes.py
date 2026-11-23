@@ -1,4 +1,4 @@
-"""Test doubles for the Mode B call's worker surface and playback stream."""
+"""Test doubles for the voice call's worker surface and playback stream."""
 
 from __future__ import annotations
 

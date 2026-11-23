@@ -1,13 +1,4 @@
-"""``vox call`` -- a live voice call, with one of two call agents.
-
-Bare ``vox call`` starts the Mode B call voxd owns
-(:class:`~.voice_call_cli.VoiceCallCli`): an ElevenLabs agent that delegates
-coding to persistent workers, with ``vox call status`` beside it.
-``vox call start --context`` is the read-only pi call agent
-(:class:`~.pi_call_cli.PiCallCli`), kept reachable unchanged until Mode B
-retires it. ``vox call stop`` (:class:`~.call_hangup.CallHangup`) hangs up
-whichever is running.
-"""
+"""The ``vox call`` group for voxd's voice-first call and hook context."""
 
 from __future__ import annotations
 
@@ -16,8 +7,7 @@ from typing import Self, final
 import typer
 
 from punt_vox.commands.call_context import CallContextCommand
-from punt_vox.commands.call_hangup import CallHangup
-from punt_vox.commands.pi_call_cli import PiCallCli
+from punt_vox.commands.voice_call import VoiceCall
 from punt_vox.commands.voice_call_cli import VoiceCallCli
 
 __all__ = ["CallCli"]
@@ -42,15 +32,8 @@ class CallCli:
     @classmethod
     def build_app(cls) -> typer.Typer:
         """Return the ``vox call`` Typer group with bound methods (no wrappers)."""
-        app = typer.Typer(
-            help=(
-                "A live voice call. Bare `vox call` talks to voxd's agent, "
-                "which delegates coding; `vox call start --context` is the "
-                "read-only pi call agent."
-            ),
-        )
+        app = typer.Typer(help="Place or manage a Vox call.")
         VoiceCallCli.register(app)
-        app.command("start")(PiCallCli().start)
-        app.command("stop")(CallHangup.stop)
+        app.command("stop")(VoiceCall().stop)
         app.command("context")(CallContextCommand.show)
         return app

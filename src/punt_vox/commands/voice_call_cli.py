@@ -1,4 +1,4 @@
-"""The ``vox call`` verbs for voxd's Mode B call agent."""
+"""The ``vox call`` verbs for voxd's voice call agent."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _ScriptOpt = Annotated[
     typer.Option(
         "--script",
         help=(
-            "Dev/CI path for bare `vox call`: a JSON Lines file of recorded "
+            "Dev/CI audio source: a JSON Lines file of recorded "
             'caller turns ({"pcm_path": ..., "pause_s": ...} per line; 16 kHz '
             "mono s16le PCM, relative paths beside the script) that voxd "
             "paces to the agent instead of the microphone."
@@ -40,12 +40,12 @@ class VoiceCallCli:
     __slots__ = ()
 
     def __new__(cls) -> Self:
-        """Create the Mode B call verbs."""
+        """Create the voice call verbs."""
         return super().__new__(cls)
 
     @classmethod
     def register(cls, app: typer.Typer) -> None:
-        """Register the bare call and its Mode B subcommands."""
+        """Register the bare call and its subcommands."""
         cli = cls()
         app.callback(invoke_without_command=True)(cli.call)
         app.command("status")(cli.status)

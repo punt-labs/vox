@@ -8,8 +8,6 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from punt_observe.logging import AtomicAppendLog, configure_logging
-from punt_observe.logging.formatter import RedactingFormatter
-from punt_observe.logging.handler import PrivateFileHandler, RedactingStreamHandler
 
 from punt_vox.config import ConfigStore
 from punt_vox.logging_role import ClientRoleFilter, Role as Role
@@ -18,7 +16,6 @@ from punt_vox.paths import log_dir
 if TYPE_CHECKING:
     from punt_observe.logging.append_log import SinkHealth
 
-_TURN_TIMER_LOGGER_NAME = "punt_vox.voxd.conversation_mode.turn_timer"
 _SUPPRESSED = (
     "boto3", "botocore", "urllib3", "s3transfer", "httpx", "httpx2",
     "websockets", "mcp", "mcp.server", "mcp.server.lowlevel", "asyncio", "httpcore",
@@ -42,51 +39,13 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
         configure_logging(
             "vox", role, level=_resolve_level(verbose=verbose), quiet=_SUPPRESSED
         )
-        _filter_client_records(role)
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(ClientRoleFilter(role))
         return
     with suppress(OSError):
         _file_handler().close()
     logging.getLogger().handlers[:] = [logging.NullHandler()]
     _warn_logging_unavailable()
-
-
-def _filter_client_records(role: Role) -> None:
-    for handler in logging.getLogger().handlers:
-        handler.addFilter(ClientRoleFilter(role))
-
-
-def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
-    """Keep turn timings durable at DEBUG independently of normal verbosity."""
-    logger = _reset_turn_timer()
-    with suppress(OSError):
-        if log_health()["status"] != "healthy":
-            raise OSError
-        handlers: list[logging.Handler] = [PrivateFileHandler(log_dir() / "vox.log")]
-        if echo_to_console:
-            handlers.append(RedactingStreamHandler(sys.stderr))
-        for handler in handlers:
-            handler.setLevel(logging.DEBUG)
-            handler.setFormatter(
-                RedactingFormatter(
-                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                    "%Y-%m-%d %H:%M:%S",
-                )
-            )
-            handler.addFilter(ClientRoleFilter("cli"))
-            logger.addHandler(handler)
-        return
-    _warn_logging_unavailable()
-
-
-def _reset_turn_timer() -> logging.Logger:
-    """Reset the dedicated timer's handlers without leaking resources."""
-    logger = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    for handler in logger.handlers:
-        handler.close()
-    logger.handlers[:] = [logging.NullHandler()]
-    return logger
 
 
 def log_health() -> SinkHealth:

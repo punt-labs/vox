@@ -91,7 +91,7 @@ dependencies = [
 # nothing `install.sh` provisions today. A hard top-level dependency here
 # would make every `vox` invocation -- `vox say`, `vox status`, every
 # hook -- fail on a host without it installed, even though only
-# `vox call start` (the live, microphone-capture path) needs it. Install
+# `vox call` (the live, microphone-capture path) needs it. Install
 # with `pip install punt-vox[call]` / `uv sync --extra call`.
 call = ["sounddevice>=0.5.6"]
 
@@ -245,7 +245,6 @@ ignore = [
 "src/punt_vox/service/installer.py" = ["PLC0415"]
 "src/punt_vox/playback.py" = ["S603", "S607"]
 # git check-ignore: the call agent's secret guard asks git what it ignores.
-"src/punt_vox/voxd/conversation_mode/git_ignores.py" = ["S603"]
 "src/punt_vox/voxd/workers/policy.py" = ["S603", "S607"]
 "src/punt_vox/voxd/workers/command.py" = ["S603", "S607"]
 # The supervised harness argv is intentional; its environment is isolated.
@@ -335,7 +334,6 @@ entry = [
     "punt_vox.server*",
     "punt_vox.hooks",
     "punt_vox.mcp_lifecycle",
-    "punt_vox.commands.call_options",
     "punt_vox.voxd.boot",
     "punt_vox.voxd.daemon",
     "punt_vox.voxd.programs.wiring",
@@ -422,25 +420,7 @@ adapters = [
     "punt_vox.voxd.wire_fault",
     "punt_vox.voxd.wire_reply",
     "punt_vox.voxd.wire_text",
-    "punt_vox.voxd.conversation_mode.call_agent_env",
-    "punt_vox.voxd.conversation_mode.call_agent_launch",
-    "punt_vox.voxd.conversation_mode.call_control",
-    "punt_vox.voxd.conversation_mode.call_lock",
-    "punt_vox.voxd.conversation_mode.call_snapshot",
-    "punt_vox.voxd.conversation_mode.call_summary",
-    "punt_vox.voxd.conversation_mode.git_ignores",
     "punt_vox.voxd.conversation_mode.mic_audio_source",
-    "punt_vox.voxd.conversation_mode.pi_call_agent",
-    "punt_vox.voxd.conversation_mode.pi_path",
-    "punt_vox.voxd.conversation_mode.pi_rpc_channel",
-    "punt_vox.voxd.conversation_mode.pi_rpc_record",
-    "punt_vox.voxd.conversation_mode.pi_stderr",
-    "punt_vox.voxd.conversation_mode.pi_turn_reply",
-    "punt_vox.voxd.conversation_mode.pi_turn_verdict",
-    "punt_vox.voxd.conversation_mode.reply_redaction",
-    "punt_vox.voxd.conversation_mode.ripgrep",
-    "punt_vox.voxd.conversation_mode.secret_path_policy",
-    "punt_vox.voxd.conversation_mode.tool_screen",
     "punt_vox.voxd.programs.edge_trim",
     "punt_vox.voxd.programs.filesystem_store",
     "punt_vox.voxd.programs.manifest",
@@ -491,14 +471,6 @@ application = [
     "punt_vox.voxd.temp_synthesis",
     "punt_vox.voxd.router",
     "punt_vox.voxd.conversation_mode",
-    "punt_vox.voxd.conversation_mode.call_agent_host",
-    "punt_vox.voxd.conversation_mode.call_session",
-    "punt_vox.voxd.conversation_mode.reply_delivery",
-    "punt_vox.voxd.conversation_mode.reply_recovery",
-    "punt_vox.voxd.conversation_mode.task_reaper",
-    "punt_vox.voxd.conversation_mode.turn_timer",
-    "punt_vox.voxd.conversation_mode.turn_transcriber",
-    "punt_vox.voxd.conversation_mode.wait_cue",
     "punt_vox.voxd.programs.album_binder",
     "punt_vox.voxd.programs.command_handler",
     "punt_vox.voxd.programs.control_channel",
@@ -574,30 +546,7 @@ domain = [
     "punt_vox.voxd.synthesis_result",
     "punt_vox.voxd.types",
     "punt_vox.voxd.conversation_mode.audio_chunk",
-    "punt_vox.voxd.conversation_mode.barge_in",
-    "punt_vox.voxd.conversation_mode.call_actor",
-    "punt_vox.voxd.conversation_mode.call_agent_errors",
-    "punt_vox.voxd.conversation_mode.call_agent_state",
-    "punt_vox.voxd.conversation_mode.call_command",
-    "punt_vox.voxd.conversation_mode.call_state",
-    "punt_vox.voxd.conversation_mode.capture_during_wait",
-    "punt_vox.voxd.conversation_mode.end_call",
-    "punt_vox.voxd.conversation_mode.mode",
-    "punt_vox.voxd.conversation_mode.pending_capture",
-    "punt_vox.voxd.conversation_mode.permanent_stt_failure",
-    "punt_vox.voxd.conversation_mode.reply",
-    "punt_vox.voxd.conversation_mode.reply_assembly",
-    "punt_vox.voxd.conversation_mode.reply_begins",
-    "punt_vox.voxd.conversation_mode.reply_ends",
-    "punt_vox.voxd.conversation_mode.session_attach",
-    "punt_vox.voxd.conversation_mode.speak_fn",
-    "punt_vox.voxd.conversation_mode.start_call",
     "punt_vox.voxd.conversation_mode.stt_provider",
-    "punt_vox.voxd.conversation_mode.timeout_call",
-    "punt_vox.voxd.conversation_mode.turn",
-    "punt_vox.voxd.conversation_mode.turn_detected",
-    "punt_vox.voxd.conversation_mode.turn_detector",
-    "punt_vox.voxd.conversation_mode.turn_signal",
     "punt_vox.voxd.programs",
     "punt_vox.voxd.programs.active_context",
     "punt_vox.voxd.programs.album_contents",
@@ -660,7 +609,7 @@ markers = [
     "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",
     "sdk: marks tests that drive a real Claude Agent SDK session and cost real money (run with -m sdk)",
     "levels: signal-level loudness, silence, and track-change checks for chimes and music via ffmpeg ebur128/silencedetect and an mpv render (offline by default; live music also marked integration)",
-    "e2e: marks packaging-e2e tests that drive the INSTALLED wheel -- `vox` binary as a subprocess and `vox mcp` over stdio; catches entry-point resolution / missing-wheel-data / stdio-startup faults no in-process test can see (run with -m e2e; requires `make install` first; distinct from the live-audio tier in tests/conversation_mode/coverage-matrix.md)",
+    "e2e: marks packaging-e2e tests that drive the INSTALLED wheel -- `vox` binary as a subprocess and `vox mcp` over stdio; catches entry-point resolution / missing-wheel-data / stdio-startup faults no in-process test can see (run with -m e2e; requires `make install` first)",
 ]
 filterwarnings = [
     # Upstream elevenlabs SDK bug: pydantic v1 compat on Python 3.14. Remove when elevenlabs ships a fix.

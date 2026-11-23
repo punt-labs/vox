@@ -1,4 +1,4 @@
-"""Start fields for a scripted or live Mode B call."""
+"""Start fields for a scripted or live voice call."""
 
 from __future__ import annotations
 

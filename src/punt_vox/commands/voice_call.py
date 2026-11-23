@@ -1,4 +1,4 @@
-"""``vox call`` without ``--context``: a thin client of voxd's Mode B call RPCs.
+"""``vox call``: a thin client of voxd's voice call RPCs.
 
 voxd owns the ElevenLabs conversation, the boss tools and the workers they
 start, so the call and its workers outlive this process. This client starts
@@ -33,7 +33,7 @@ _POLL_INTERVAL_S = 0.5
 
 @final
 class VoiceCall:
-    """Start, follow, inspect and stop the one daemon-owned Mode B call."""
+    """Start, follow, inspect and stop the daemon's voice call."""
 
     __slots__ = ("_control", "_poll_s")
     _control: DaemonControl
@@ -61,7 +61,7 @@ class VoiceCall:
         """Stop the running call; refuse when no call is running.
 
         Raises:
-            typer.BadParameter: When no Mode B call is running.
+            typer.BadParameter: When no voice call is running.
         """
         status = CallStatusView(
             self._run(self._control.request("status", timeout=_CONTROL_TIMEOUT_S))

@@ -49,7 +49,7 @@ _CLI_DESKTOP = "punt_vox.cli_desktop"
         ["--help"],
         ["hook", "user-prompt-submit"],
         ["call", "--help"],
-        ["call", "start", "--help"],
+        ["call", "stop", "--help"],
     ],
 )
 def test_cli_does_not_import_live_call_stack(args: list[str], tmp_path: Path) -> None:
@@ -68,8 +68,8 @@ try:
     app()
 finally:
     for name in (
-        "punt_vox.commands.call_execution",
-        "punt_vox.commands.call_runner",
+        "punt_vox.voxd.voice_call.call",
+        "punt_vox.voxd.voice_call.inputs",
         "elevenlabs",
     ):
         if name in sys.modules:

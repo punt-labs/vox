@@ -1,4 +1,4 @@
-"""One Mode B call: caller audio in, agent audio out, boss tools answered."""
+"""One Vox call: caller audio in, agent audio out, boss tools answered."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ class VoiceAgentCall:
             # The call is a background task: its failure is reported, not raised.
             failure = failures.exceptions[0]
             if not isinstance(failure, _EXPECTED):
-                logger.exception("Mode B call failed", exc_info=failure)
+                logger.exception("Voice call failed", exc_info=failure)
             self.mark_failed(str(failure) or type(failure).__name__)
         finally:
             if self._state in {"connecting", "live"}:

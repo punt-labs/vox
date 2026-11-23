@@ -1,4 +1,4 @@
-"""Mode B doctor host requirements."""
+"""Host requirements for voice calls."""
 
 from __future__ import annotations
 

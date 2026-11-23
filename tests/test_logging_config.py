@@ -37,11 +37,6 @@ def isolated_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     root.handlers[:] = handlers
     root.setLevel(level)
     logging.lastResort = fallback
-    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-    for handler in timer.handlers:
-        handler.close()
-    timer.handlers.clear()
-    timer.propagate = True
 
 
 @pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])
@@ -125,21 +120,6 @@ def test_verbose_overrides_config() -> None:
     assert "verbose marker" in (paths.log_dir() / "vox.log").read_text()
 
 
-@pytest.mark.parametrize("echo", [False, True])
-def test_turn_timer_always_debug(
-    echo: bool, capsys: pytest.CaptureFixture[str]
-) -> None:
-    logging_config.configure_client_logging(role="cli")
-    logging_config.configure_turn_timer_logging(echo_to_console=echo)
-    logging_config.configure_turn_timer_logging(echo_to_console=echo)
-    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-    timer.debug("turn marker")
-    contents = (paths.log_dir() / "vox.log").read_text()
-    assert contents.count("turn marker") == 1
-    assert "client.cli." in contents
-    assert ("turn marker" in capsys.readouterr().err) is echo
-
-
 def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
     path = paths.log_dir() / "vox.log"
     path.parent.mkdir(parents=True)
@@ -148,81 +128,6 @@ def test_unsafe_sink_is_closed(tmp_path: Path) -> None:
     path.symlink_to(target)
     with pytest.raises(LoggingSetupError):
         logging_config.configure_daemon_logging()
-
-
-@pytest.mark.parametrize("echo", [False, True])
-@pytest.mark.parametrize(
-    "error", [LoggingSetupError("secret-marker"), OSError("secret-marker")]
-)
-def test_call_proceeds_when_turn_timer_sink_fails(
-    tmp_path: Path, echo: bool, error: OSError, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from punt_vox.commands.pi_call_cli import PiCallCli
-
-    logging_config.configure_client_logging(role="cli")
-    logging_config.configure_turn_timer_logging(echo_to_console=True)
-    context = tmp_path / "context.md"
-    context.write_text("Call context")
-    with (
-        patch.object(logging_config, "PrivateFileHandler", side_effect=error),
-        patch("punt_vox.commands.pi_call_cli.asyncio.run") as run,
-    ):
-        PiCallCli().start(context, trace_turns=echo)
-    coroutine = run.call_args.args[0]
-    coroutine.close()
-    run.assert_called_once()
-    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-    timer.error("secret timer record")
-    logging.getLogger("punt_vox.test").info("root record after timer failure")
-    assert (
-        "root record after timer failure" in (paths.log_dir() / "vox.log").read_text()
-    )
-    assert all(isinstance(h, logging.NullHandler) for h in timer.handlers)
-    assert capsys.readouterr().err == (
-        "vox: private logging unavailable; continuing without file\n"
-    )
-
-
-@pytest.mark.parametrize("echo", [False, True])
-def test_timer_failure_preserves_client_file_logging(
-    echo: bool, capsys: pytest.CaptureFixture[str]
-) -> None:
-    logging_config.configure_client_logging(role="cli")
-    root = logging.getLogger()
-    handlers = root.handlers[:]
-    with patch.object(
-        logging_config, "PrivateFileHandler", side_effect=LoggingSetupError("private")
-    ):
-        logging_config.configure_turn_timer_logging(echo_to_console=echo)
-    logging.getLogger("punt_vox.timer_failure").info("client logging survives")
-    contents = (paths.log_dir() / "vox.log").read_text()
-    assert "client.cli.punt_vox.timer_failure: client logging survives" in contents
-    assert root.handlers == handlers
-    timer = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
-    timer.error("private timer record")
-    assert all(isinstance(handler, logging.NullHandler) for handler in timer.handlers)
-    assert capsys.readouterr().err == (
-        "vox: private logging unavailable; continuing without file\n"
-    )
-
-
-def test_turn_timer_unusable_path_is_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    logging_config.configure_client_logging(role="cli")
-    path = paths.log_dir() / "vox.log"
-    handlers = logging.getLogger().handlers[:]
-    blocked = tmp_path / "not-a-directory"
-    blocked.write_text("blocked")
-    monkeypatch.setattr(logging_config, "log_dir", lambda: blocked)
-    logging_config.configure_turn_timer_logging(echo_to_console=True)
-    logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME).error("private record")
-    logging.getLogger("punt_vox.test").info("root record after timer health failure")
-    assert "root record after timer health failure" in path.read_text()
-    assert logging.getLogger().handlers == handlers
-    assert capsys.readouterr().err == (
-        "vox: private logging unavailable; continuing without file\n"
-    )
 
 
 @pytest.mark.parametrize("role", ["cli", "mcp", "hook", "worker"])

@@ -1,4 +1,4 @@
-"""Tests for bare ``vox call``: a thin client of voxd's Mode B call RPCs."""
+"""Tests for bare ``vox call``: a thin client of voxd's call RPCs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
@@ -54,13 +55,6 @@ class _Voxd:
         return self.statuses[0]
 
 
-class _NoPiCall:
-    """A pi call lock with no live holder."""
-
-    def is_live(self) -> bool:
-        return False
-
-
 @pytest.fixture
 def no_poll_delay() -> Iterator[None]:
     with patch(
@@ -77,6 +71,15 @@ def _script(tmp_path: Path, *lines: str) -> Path:
     path = tmp_path / "greet.jsonl"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def test_call_start_no_longer_routes_to_the_pi_agent() -> None:
+    with patch.object(DaemonControl, "request", new_callable=AsyncMock) as rpc:
+        result = runner.invoke(CallCli.build_app(), ["start", "--context", "-"])
+
+    assert result.exit_code == 2, result.output
+    assert "No such command 'start'" in unstyle(result.output)
+    rpc.assert_not_awaited()
 
 
 def test_call_teardown_requests_explicit_agent_deletion() -> None:
@@ -199,18 +202,23 @@ def test_status_with_voxd_down_exits_one() -> None:
     assert "Call unavailable: down" in result.output
 
 
-def test_stop_hangs_up_a_running_mode_b_call(tmp_path: Path) -> None:
+def test_stop_hangs_up_the_running_call() -> None:
     voxd = _Voxd(_LIVE)
-    with (
-        _voxd(voxd),
-        patch(
-            "punt_vox.commands.call_hangup.CallLock.for_repo", return_value=_NoPiCall()
-        ),
-    ):
+    with _voxd(voxd):
         result = runner.invoke(CallCli.build_app(), ["stop"])
     assert result.exit_code == 0, result.output
     assert [op for op, _ in voxd.sent] == ["status", "stop"]
     assert "Stopping the call." in result.output
+
+
+def test_stop_does_not_send_hangup_when_no_call_is_active() -> None:
+    voxd = _Voxd({"state": "idle"})
+    with _voxd(voxd):
+        result = runner.invoke(CallCli.build_app(), ["stop"])
+
+    assert result.exit_code == 2, result.output
+    assert "no call is active" in result.output
+    assert voxd.sent == [("status", {})]
 
 
 def test_status_prints_the_line_and_transcript() -> None:
@@ -406,8 +414,10 @@ async def test_daemon_control_checks_the_reply_family() -> None:
     transport.close.assert_awaited_once()
 
 
-def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
+@pytest.mark.parametrize("text", ["short call status", "word " * 20])
+def test_a_terminal_status_line_fits_the_terminal_width(
     capsys: pytest.CaptureFixture[str],
+    text: str,
 ) -> None:
     """A wrapped line would strand rows the next in-place rewrite cannot reach."""
     with (
@@ -419,9 +429,18 @@ def test_a_terminal_status_line_is_clipped_to_the_terminal_width(
             return_value=os.terminal_size((40, 24)),
         ),
     ):
-        CallFollower._show("call live | 1 tool calls | agent: " + "word " * 20)
+        CallFollower._show(text)
 
     written = capsys.readouterr().out
     assert written.startswith("\r\x1b[K")
-    assert len(written.removeprefix("\r\x1b[K")) == 39
-    assert written.endswith("...")
+    expected = text if len(text) <= 39 else text[:36] + "..."
+    assert written.removeprefix("\r\x1b[K") == expected
+
+
+def test_terminal_call_report_starts_on_a_new_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(f"{_FOLLOW}.sys.stdout.isatty", return_value=True):
+        CallFollower.finish(CallStatusView(_ENDED))
+
+    assert capsys.readouterr().out.startswith("\n")

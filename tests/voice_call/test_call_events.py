@@ -229,4 +229,4 @@ async def test_an_unexpected_failure_is_logged_and_reported(
     await call.run(broken)
     assert call.status()["state"] == "failed"
     assert "agent_id" in str(call.status()["error"])
-    assert "Mode B call failed" in caplog.text
+    assert "Voice call failed" in caplog.text

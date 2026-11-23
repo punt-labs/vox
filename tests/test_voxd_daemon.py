@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_programs.mode import Mode
+from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import DaemonConfig
 from punt_vox.voxd.daemon import VoxDaemon
 from punt_vox.voxd.health import DaemonHealth
@@ -168,6 +169,36 @@ async def test_lifespan_starts_tasks_and_applies_a_command(
             applied = await _wait_for_mode(daemon, Mode.GENERATING_FIRST)
 
     assert applied  # the control writer listened and applied turn_on
+
+
+async def test_daemon_shutdown_logs_failed_jobs_and_still_releases_resources(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tasks = BackgroundTasks()
+    released = asyncio.Event()
+
+    async def hold_resource() -> None:
+        try:
+            await asyncio.Future[None]()
+        finally:
+            released.set()
+
+    async def finish() -> None:
+        return None
+
+    async def fail() -> None:
+        msg = "background job failed"
+        raise RuntimeError(msg)
+
+    tasks.start(hold_resource)
+    tasks.start(finish)
+    tasks.start(fail)
+    await asyncio.sleep(0)
+    await tasks.stop_all()
+
+    assert released.is_set()
+    assert "failed before shutdown cancelled it" in caplog.text
+    assert "RuntimeError: background job failed" in caplog.text
 
 
 async def test_lifespan_asks_the_injected_factory_for_its_lux_legs(

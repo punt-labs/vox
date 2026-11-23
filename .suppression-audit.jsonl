@@ -10,3 +10,4 @@
 {"ts":"2026-11-19T02:37:40Z","total":176,"by_category":{"noqa":24,"type_ignore":5,"pylint_disable":0,"pyright_ignore":58,"file_level":12,"per_file_ignores":77}}
 {"ts":"2026-11-22T07:34:00Z","verdict":"relaxed","file":"src/punt_vox/voxd/pcm_output.py","before":0,"after":1,"reason":"Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.","commit":"e4281f0"}
 {"ts":"2026-11-23T13:11:47Z","verdict":"relaxed","file":"src/punt_vox/doctor_call_claude.py","before":0,"after":1,"reason":"Doctor invokes only the locally resolved Claude executable with fixed auth status arguments, no shell or input from configuration.","commit":"116e8fc"}
+{"ts":"2026-11-23T17:54:18Z","total":170,"by_category":{"noqa":24,"type_ignore":2,"pylint_disable":0,"pyright_ignore":55,"file_level":12,"per_file_ignores":77}}

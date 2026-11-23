@@ -53,13 +53,10 @@ def recordings_dir() -> Path:
 
 
 def calls_dir() -> Path:
-    """Post-call summaries under ``<state>/calls``.
+    """Private call traces and worker recap cursor under ``<state>/calls``.
 
-    One ``<call-id>-summary.md`` per call, written when the call ends and read
-    by the session that started it. A durable record a human or that session
-    may revisit, so it lives beside ``recordings`` rather than under the
-    ephemeral ``run`` dir; 0700, because a summary carries whatever the call
-    discussed.
+    Traces can contain transcripts and worker activity, so this directory
+    uses the same private permissions as recordings.
     """
     return user_state_dir() / "calls"
 
@@ -80,7 +77,7 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
 
     All dirs are chmod 0700 because every one of them holds private
     per-user state: provider API keys, spoken-text logs, auth token,
-    cached synthesis output, saved recordings, call summaries. The chmod is
+    cached synthesis output, saved recordings, call traces. The chmod is
     applied on every call,
     not just at creation time, so pre-existing directories with looser
     permissions (for example 0755 from process umask) are tightened on startup.

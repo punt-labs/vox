@@ -1,4 +1,4 @@
-"""Dial voxd's Mode B call and report failures before live status polling."""
+"""Dial voxd's voice call and report failures before live status polling."""
 
 from __future__ import annotations
 

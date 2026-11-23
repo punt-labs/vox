@@ -1,4 +1,4 @@
-"""Follow voxd's running Mode B call on one terminal line until it ends."""
+"""Follow voxd's running voice call on one terminal line until it ends."""
 
 from __future__ import annotations
 

@@ -450,10 +450,6 @@ jobs:
   # wheel, an MCP server that fails to start over stdio) which the in-process
   # pytest above cannot see. Kept in its own job so a packaging break does not
   # mask a unit-test failure and vice versa.
-  #
-  # NOTE: distinct from the "Tier 5" designation in
-  # tests/conversation_mode/coverage-matrix.md, which names live-audio /
-  # human-judged testing. This is installed-wheel packaging smoke.
   packaging-e2e:
     runs-on: ubuntu-latest
     # 20m = 17m of apt step ceilings (1m prepare + 2m restore + 12m install

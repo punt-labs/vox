@@ -259,15 +259,14 @@ tests/
 Vox has no NATS/relay/multi-user surface, so this is not biff's eight-tier
 pyramid. Vox's actual shape is five TTS providers (mocked at the SDK
 boundary), a `voxd` daemon over WebSocket, an MCP server, a CLI, Claude Code
-hook shell scripts, a Lux display applet, and a `conversation_mode`
-subpackage whose call agent is one persistent `pi --mode rpc` process per
-call, spoken to as JSON lines over its stdin and stdout. The tiers below
-reflect that shape, not a copy of biff's.
+hook shell scripts, a Lux display applet, and a `voice_call` subpackage
+that streams audio to and from ElevenLabs and delegates to workers.
+The tiers below reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,305 |
-| `subprocess` | Real local shell, Node, and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 214 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 8,058 |
+| `subprocess` | Real local shell and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 157 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/manual | 40 |
@@ -279,7 +278,7 @@ reflect that shape, not a copy of biff's.
 | Live audio (no marker) | Manual, human-judged audio quality; not `e2e` | Follow `docs/testing/manual-tests.md` | No | N/A (manual) |
 
 Counts are collected test cases as of this revision, not execution results:
-9,305 default / 9,593 collected across all markers. Cross-cutting markers
+8,058 default / 8,290 collected across all markers. Cross-cutting markers
 overlap, so the counts are not additive.
 
 ### Default/unmarked: unit and mocked cross-component tests
@@ -335,20 +334,15 @@ spawning a real process to exercise scripts and their process boundaries:
 | `test_logging_sources.py` | Real Python logging-source gate against fixture trees |
 | `test_session_start_hook.py` | Real session-start command deployment; requires `jq` |
 | `test_session_start_pid.py` | Real session-start process-tree PID resolution |
-| `conversation_mode/test_pi_secret_guard.py` | Real Node secret-guard extension |
 
 `test_hook_scripts.py` looks like it belongs in this tier by name but does
 not: it makes static text assertions over the `.sh` files (`grep`-shaped
 checks for dead references), imports no `subprocess`, and spawns nothing. It
 stays in the default tier.
 
-`conversation_mode`'s call agent follows the same split. Its
-`pi --mode rpc` process is faked at the subprocess boundary
-(`tests/conversation_mode/_pi_rpc_fakes.py`: real pipes, scripted JSONL
-records), so the channel, record parsing, and agent state machine run in the
-default tier. The pi-side secret guard extension runs under real `node` in
-`test_pi_secret_guard.py`, under this same `subprocess` marker -- the same
-problem repeated in a different domain, not a new marker.
+The default tier exercises call lifecycle, audio routing and worker tools
+with test doubles at the provider and audio boundaries. The
+[README walkthrough](README.md#walkthrough) uses the real service.
 
 ### `integration`, `agent`, and `sdk`
 
@@ -361,8 +355,7 @@ the Claude Agent SDK. It is excluded from default, PR, and offline roundtrip
 runs. It does not replace playback capture or manual listening.
 
 `sdk` is reserved for a real paid Claude Agent SDK session and is not run in
-CI. Conversation mode already has default and subprocess coverage; that does
-not imply it has tests against a real SDK session.
+CI.
 
 ### `slow` -- cross-cutting overhead
 

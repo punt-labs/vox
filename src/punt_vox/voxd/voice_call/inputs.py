@@ -1,4 +1,4 @@
-"""Caller audio for a Mode B call: the microphone, or a scripted injection."""
+"""Caller audio for a voice call: the microphone, or a scripted injection."""
 
 from __future__ import annotations
 

@@ -1450,6 +1450,31 @@ class TestVoxClientHealth:
         assert result.daemon_version == "5.0.0"
 
 
+@pytest.mark.parametrize("provider", [None, "elevenlabs"])
+async def test_provider_status_sends_optional_provider_filter(
+    provider: str | None,
+) -> None:
+    ws = _make_mock_ws()
+    ws.recv = AsyncMock(
+        return_value=json.dumps(
+            {"type": "provider_status", "providers": [], "preferred": None}
+        )
+    )
+    client = VoxClient(port=8421, token="tok")
+    client._transport._ws = ws  # pyright: ignore[reportPrivateUsage]
+
+    result = await client.provider_status(provider)
+
+    assert result.providers == ()
+    assert result.preferred is None
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent["type"] == "provider_status"
+    if provider is None:
+        assert "provider" not in sent
+    else:
+        assert sent["provider"] == provider
+
+
 class TestVoxClientProgram:
     """The program_* methods parse the daemon's wire replies into typed values."""
 

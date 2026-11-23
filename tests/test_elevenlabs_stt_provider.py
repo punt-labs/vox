@@ -23,6 +23,13 @@ from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.providers.provider_status import ProviderStatusError
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
+
+
+@pytest.mark.parametrize("confidence", [-0.1, 1.1])
+def test_transcript_rejects_confidence_outside_unit_interval(confidence: float) -> None:
+    with pytest.raises(ValueError, match=r"confidence must be in \[0\.0, 1\.0\]"):
+        TranscriptEvent(text="hello", confidence=confidence, is_final=True)
 
 
 def _word(logprob: float) -> SpeechToTextWordResponseModel:

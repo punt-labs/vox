@@ -8,7 +8,7 @@ Origin: these were authored as claude.ai Artifacts during design work and captur
 
 | File | Companion to | What it is |
 |------|--------------|-----------|
-| [`e-plus-voice-architecture.html`](e-plus-voice-architecture.html) | DES-068, DES-071 | Final E+ voice architecture. Two entry modes: Mode A (session-attached via `/vox:talk`) and Mode B (voice-first, `voxd` launches a fresh session same-host by default). All labels use current DES numbering. |
+| [`e-plus-voice-architecture.html`](e-plus-voice-architecture.html) | DES-068, DES-071 | Historical proposal for two entry points. The session-attached entry point did not ship; see the [Vox call](../../README.md#vox-call) for the current feature. |
 | [`e-plus-adr-revision.html`](e-plus-adr-revision.html) | DES-068 | Two-walls framing (Wall 1: foreground can't span turns; Wall 2: background can't inject) and the D vs E+ side-by-side comparison that motivated DES-068's reconsideration of DES-066. Historical bridge document; the ratified position lives in the DES entries themselves. |
 | [`distributed-target-topology.html`](distributed-target-topology.html) | DES-069, DES-071 | Laptop ↔ WAN ↔ dev-box target topology. Shows where `voxd`, the ElevenLabs Conversational AI session, `mcp-proxy`, and `quarryd` sit relative to each other, and what crosses the WAN (text and events, never PCM). |
 
