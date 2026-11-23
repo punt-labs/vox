@@ -24,7 +24,7 @@
 voxd runs at most one Mode B call. \texttt{call\_start} creates it in
 \emph{connecting}; the call task provisions the ElevenLabs agent and opens
 the conversation, which makes it \emph{live}. A remote hang-up, a
-\texttt{call\_stop} or a connect timeout ends it; any other error fails it.
+\texttt{call\_stop} ends it; a connect timeout or other error fails it.
 While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
@@ -203,8 +203,10 @@ Acceptance here includes validating or provisioning the registration,
 obtaining the signed URL, preparing the worker snapshot, and completing the
 ElevenLabs handshake. A mismatched registration is refused rather than
 deleted on connect; failures outside registration itself end through
-\texttt{End}. A connect timeout cancels the task (an ended call) but
-returns an error to the requesting client.
+\texttt{End}. A connect timeout takes \texttt{End} with
+$failure? = ztrue$ and $draining? = zfalse$. It cancels the task and
+reports the failed status and error in both the start reply and later
+status replies.
 
 \begin{schema}{End}
   \Delta Call \\

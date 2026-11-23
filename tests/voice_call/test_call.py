@@ -921,6 +921,8 @@ async def test_a_call_that_never_connects_times_out(
             "call_teardown",
         }
         reply = await _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
+        result = cast("dict[str, object]", reply["result"])
+        assert result["state"] == "failed"
         assert reply == await _rpc(handlers, {"type": "call_status"})
         hold.set()
     assert "did not connect" in str(reply)
