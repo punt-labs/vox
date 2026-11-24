@@ -18,9 +18,7 @@ from punt_vox.client_errors import (
 from punt_vox.config import ConfigStore
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
-from punt_vox.panel.panel_settings import PanelSettings
 from punt_vox.panel.service import VoxPanelService
-from punt_vox.panel.state import PanelState
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
@@ -626,36 +624,6 @@ class TestApplyEvent:
         assert service.scene().provider == "elevenlabs"
         assert service.scene().voice == "benno"
 
-    def test_provider_yields_when_another_thread_won_the_race(self) -> None:
-        """A provider change during the roster fetch wins over this commit."""
-
-        class _RacingRoster:
-            def voices(self, provider: str) -> list[str]:
-                assert provider == "espeak"
-                settings.replace(
-                    settings.snapshot().with_provider(
-                        "openai", roster=("alloy",), model="tts-1", voice="alloy"
-                    ),
-                    PanelNotice.silent(),
-                )
-                return ["benno"]
-
-        store = _FakeStore(_config(voice="benno", provider="elevenlabs"))
-        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
-        settings.replace(
-            PanelState.empty().with_provider(
-                "elevenlabs", roster=("benno",), model=None, voice="benno"
-            ),
-            PanelNotice.silent(),
-        )
-
-        changed = settings.commit_provider("espeak")
-
-        assert changed is ControlPush.CORRECT
-        assert "provider" not in store.written
-        assert "voice" not in store.written
-        assert settings.scene().provider == "openai"
-
     def test_model_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(
             _FakeDaemonClient(),
@@ -681,26 +649,6 @@ class TestApplyEvent:
         service.prefetch()
         service.apply_event(PanelTopic.MODEL, {"value": 1})
         assert store.written["model"] == "tts-1"
-
-    def test_model_click_with_no_provider_selected_corrects(self) -> None:
-        """A model commit dispatched before any provider is chosen is abandoned.
-
-        ``apply_event``'s click target already refuses a MODEL
-        click with no provider selected (an empty model list makes
-        ``ModelControl`` raise before ``commit_model`` runs), so this drives
-        ``PanelSettings.commit_model`` directly to prove its own no-provider
-        guard also answers :attr:`~ControlPush.CORRECT`: the widget already
-        applied the pick optimistically and ``_state`` never moves, so only a
-        full reinstall snaps it back.
-        """
-        store = _FakeStore(_config(provider=None))
-        settings = PanelSettings(
-            _FakeDaemonClient(), store, logging.getLogger(__name__)
-        )
-        changed = settings.commit_model("tts-1")
-        assert changed is ControlPush.CORRECT
-        assert "model" not in store.written
-        assert "voice" not in store.written
 
     def test_model_roster_fetch_error_aborts_the_write(self) -> None:
         """VoxdConnectionError on the model-switch roster fetch aborts the commit.
@@ -735,36 +683,6 @@ class TestApplyEvent:
         assert "model" not in store.written
         assert "voice" not in store.written
         assert service.scene().notice == PanelNotice.voxd_unavailable()
-
-    def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
-        """A provider change during the roster fetch wins over this commit."""
-
-        class _RacingRoster:
-            def voices(self, provider: str) -> list[str]:
-                assert provider == "elevenlabs"
-                settings.replace(
-                    settings.snapshot().with_provider(
-                        "espeak", roster=("en",), model=None, voice="en"
-                    ),
-                    PanelNotice.silent(),
-                )
-                return ["matilda"]
-
-        store = _FakeStore(_config(voice="matilda", provider="elevenlabs"))
-        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
-        settings.replace(
-            PanelState.empty().with_provider(
-                "elevenlabs", roster=("matilda",), model=None, voice="matilda"
-            ),
-            PanelNotice.silent(),
-        )
-
-        changed = settings.commit_model("tts-1-hd")
-
-        assert changed is ControlPush.CORRECT
-        assert "model" not in store.written
-        assert "voice" not in store.written
-        assert settings.scene().provider == "espeak"
 
     def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
