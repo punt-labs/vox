@@ -31,6 +31,14 @@ class TestRecordResult:
         with pytest.raises(VoxdProtocolError, match="Expected 'audio'"):
             RecordResult.from_audio({"type": "done"})
 
+    def test_audio_frame_carries_its_warning(self) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        result = RecordResult.from_audio(
+            {"type": "audio", "name": "a", "path": "p", "bytes": 42, "warning": warning}
+        )
+
+        assert result.warning == warning
+
     def test_missing_field_is_a_protocol_error(self) -> None:
         with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
             RecordResult.from_audio({"type": "audio", "name": "a", "path": "p"})
@@ -47,6 +55,15 @@ class TestSynthesizeResult:
         assert SynthesizeResult.from_terminal("r1", {"cached": True}) == (
             SynthesizeResult("r1", cached=True)
         )
+
+    @pytest.mark.parametrize("deduped", [False, True])
+    def test_terminal_frame_carries_its_warning(self, *, deduped: bool) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        result = SynthesizeResult.from_terminal(
+            "r1", {"deduped": deduped, "warning": warning}
+        )
+
+        assert result.warning == warning
 
     def test_deduped_frame_carries_its_window(self) -> None:
         result = SynthesizeResult.from_terminal(

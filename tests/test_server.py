@@ -427,6 +427,20 @@ class TestUnmute:
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
 
+    def test_forwards_synthesis_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        client = MagicMock()
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        client.synthesize.side_effect = synthesize
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: client)
+
+        result = json.loads(unmute(text="hello", rate=120))
+
+        assert result[0]["warning"] == warning
+
     def test_unconfigured_provider_returns_error_envelope(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
