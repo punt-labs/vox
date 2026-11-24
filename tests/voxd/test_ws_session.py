@@ -211,7 +211,7 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
     started, resume, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
     watcher_finished = asyncio.Event()
     original_measure = FetchDigest.measure
-    original_watch = WebSocketSession._watch_fetch
+    original_watch = WebSocketSession._watch_stream
 
     async def measure(digest: FetchDigest, path: Path) -> object:
         started.set()
@@ -227,7 +227,7 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
         watcher_finished.set()
 
     monkeypatch.setattr(FetchDigest, "measure", measure)
-    monkeypatch.setattr(WebSocketSession, "_watch_fetch", watch)
+    monkeypatch.setattr(WebSocketSession, "_watch_stream", watch)
     router.handlers["next"] = next_request
     peer = _FetchPeer(router)
     try:
