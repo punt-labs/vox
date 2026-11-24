@@ -96,6 +96,26 @@ class TestElevenLabsProviderResolveVoice:
 
         assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
 
+    def test_unknown_voice_skips_names_interpreted_as_ids(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        voice = mock_elevenlabs_client.voices.get_all.return_value.voices[0]
+        voice.name = "ABCDEFGHIJKLMNOPQRST - bright, calm"
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        suggestion = "abcdefghijklmnopqrst - bright, calm"
+        assert exc_info.value.available == [suggestion, "drew"]
+        provider.synthesize(
+            SynthesisRequest(text="Hello", voice=suggestion), tmp_path / "voice.mp3"
+        )
+        assert (
+            mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["voice_id"]
+            == voice.voice_id
+        )
+
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock
     ) -> None:

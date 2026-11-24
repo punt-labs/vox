@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -11,7 +10,7 @@ from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
-from punt_vox.providers.voice_resolver import VoiceResolver
+from punt_vox.providers.elevenlabs_voices import ElevenLabsVoices
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -48,9 +47,6 @@ _MODEL_CHAR_LIMITS: dict[str, int] = {
 }
 _DEFAULT_CHAR_LIMIT = 10_000
 
-# ElevenLabs voice IDs are 20-char alphanumeric strings.
-_VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
-
 # Voice cache TTL in seconds -- re-fetched so newly added voices
 # appear without a daemon restart.
 _VOICE_CACHE_TTL_S: int = 1800
@@ -71,7 +67,7 @@ class ElevenLabsProvider(TTSProvider):
 
     _model: str
     _client: ElevenLabsClient
-    _voices: VoiceResolver[str]
+    _voices: ElevenLabsVoices
 
     def __new__(
         cls,
@@ -84,7 +80,7 @@ class ElevenLabsProvider(TTSProvider):
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = ElevenLabsClient(sdk=client)
-        self._voices = VoiceResolver(
+        self._voices = ElevenLabsVoices(
             self._fetch_voices,
             default_key="matilda",
             ttl_seconds=_VOICE_CACHE_TTL_S,
@@ -174,7 +170,7 @@ class ElevenLabsProvider(TTSProvider):
         logger.info("Wrote %s", output_path)
         display_voice = (
             resolved_voice
-            if _VOICE_ID_RE.match(resolved_voice)
+            if self._voices.is_id(resolved_voice)
             else resolved_voice.lower()
         )
         return SynthesisResult(
@@ -193,7 +189,7 @@ class ElevenLabsProvider(TTSProvider):
         multilingual (70+ languages with eleven_v3).
         """
         self._resolve_voice_id(name)
-        if _VOICE_ID_RE.match(name):
+        if self._voices.is_id(name):
             return name
         return name.lower()
 
@@ -263,7 +259,7 @@ class ElevenLabsProvider(TTSProvider):
     def _resolve_voice_id(self, name: str) -> str:
         """Resolve a voice name or ID to a voice_id string."""
         # Accept raw voice_id (20 alphanumeric chars) directly.
-        if _VOICE_ID_RE.match(name):
+        if self._voices.is_id(name):
             return name
 
         return self._voices.resolve(name)
