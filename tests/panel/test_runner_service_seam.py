@@ -368,6 +368,43 @@ class TestRunnerServiceSeam:
         assert service.scene().provider == before.provider
         assert service.scene().voice == before.voice
 
+    async def test_an_external_rejected_model_can_be_repaired_on_the_first_pick(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        voices = _ProviderRosters.voices
+
+        def reject_unknown_model(
+            client: _ProviderRosters, target: VoiceTarget
+        ) -> list[str]:
+            if target.model == "unknown-model":
+                msg = "unknown model"
+                raise VoxdRejectionError(msg)
+            return voices(client, target)
+
+        monkeypatch.setattr(_ProviderRosters, "voices", reject_unknown_model)
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        await runner.warmed()
+        await service.install_scene(rest_factory())
+        store.write_field("model", "unknown-model")
+        await runner.reconciled()
+        assert service.scene().notice == PanelNotice.voxd_rejected("unknown model")
+        model_id, _ = _engine_combo(rest.rendered[-1], "Model")
+        await runner.changed(PanelTopic.MODEL, {"element_id": model_id, "value": 2})
+        assert store.read().model == "tts-1-hd"
+
     async def test_an_unreadable_config_takes_priority_over_an_old_control_notice(
         self, tmp_path: Path
     ) -> None:

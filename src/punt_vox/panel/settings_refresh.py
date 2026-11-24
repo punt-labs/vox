@@ -104,7 +104,22 @@ class SettingsRefresh:
             )
             return before, notice, exc
         except VoxdRejectionError as exc:
-            return before if external else fresh, notices.rejected(str(exc)), exc
+            return (
+                self._after_refusal(before, fresh, external=external),
+                notices.rejected(str(exc)),
+                exc,
+            )
         except VoxdConnectionError as exc:
             return before, notices.unavailable, exc
         return state, notices.success, None
+
+    @staticmethod
+    def _after_refusal(
+        before: PanelState, fresh: PanelState, *, external: bool
+    ) -> PanelState:
+        """Keep the confirmed picker unless the on-disk model needs repair."""
+        if not external or (
+            fresh.provider == before.provider and fresh.model != before.model
+        ):
+            return fresh
+        return before
