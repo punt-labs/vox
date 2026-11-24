@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
-from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput, ScriptTurn
+from punt_vox.voxd.voice_call.inputs import ScriptInput, ScriptTurn
+from punt_vox.voxd.voice_call.mic_input import MicInput
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

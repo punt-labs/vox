@@ -428,6 +428,7 @@ adapters = [
     "punt_vox.voxd.wire_text",
     "punt_vox.voxd.conversation_mode.input_device",
     "punt_vox.voxd.voice_call.call_log",
+    "punt_vox.voxd.voice_call.mic_input",
     "punt_vox.voxd.conversation_mode.mic_audio_source",
     "punt_vox.voxd.programs.album_manifest_file",
     "punt_vox.voxd.programs.edge_trim",
