@@ -225,6 +225,7 @@ async def test_program_list_peer_disconnect_cancels_active_handler() -> None:
         release.set()
         await asyncio.wait_for(peer.wait_closed(), timeout=5)
     assert cancelled.is_set()
+    assert not peer.sent
 
 
 @pytest.mark.parametrize("broken_receive", [False, True])
