@@ -56,10 +56,10 @@ class _FakeCommands:
     def prev(self) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def pause(self) -> None:  # pragma: no cover - unused here
+    def pause(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def resume(self) -> None:  # pragma: no cover - unused here
+    def resume(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
 

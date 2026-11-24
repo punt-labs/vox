@@ -60,11 +60,11 @@ class _IdleProgram:
     def prev(self) -> None:
         pass
 
-    def pause(self) -> None:
-        pass
+    def pause(self) -> bool:
+        return True
 
-    def resume(self) -> None:
-        pass
+    def resume(self) -> bool:
+        return True
 
 
 @final
