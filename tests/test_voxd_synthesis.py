@@ -1350,6 +1350,10 @@ class TestApplyVibeForSynthesis:
         )
         assert result == "[whisper] my function works"
 
+    def test_v3_speaks_suffix_amount_but_not_inline_code(self) -> None:
+        result = self._apply("[whisper] 5€ or `5€`.", None, "elevenlabs", "eleven_v3")
+        assert result == "[whisper] 5 euros or 5."
+
     def test_trailing_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [alert] [serious]", None, "polly", None)
         assert result == "hello"

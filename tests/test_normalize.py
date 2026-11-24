@@ -346,6 +346,28 @@ class TestSymbolStripping:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
+            ("I paid 5€.", "I paid 5 euros."),
+            ("It cost 12.50$!", "It cost 12.50 dollars!"),
+            ("It cost (1£), not 1,000£.", "It cost 1 pound, not 1,000 pounds."),
+            ("It cost -5.50€.", "It cost minus 5.50 euros."),
+            ("I paid €5.", "I paid 5 euros."),
+            ("I paid €1,50, not 1,50€.", "I paid 1,50, not 1,50."),
+            (
+                "Use `prices 5€ or $5` then pay 5€.",
+                "Use prices 5 or dollar sign 5 then pay 5 euros.",
+            ),
+            ("Use `prices 5€ or $5`.", "Use prices 5 or dollar sign 5."),
+            ("See /tmp/5€.", "See /tmp/5."),
+        ],
+    )
+    def test_suffix_currency_is_prose_money(self, text: str, expected: str) -> None:
+        normalized = normalize_for_speech(text)
+        assert normalized == expected
+        assert normalize_for_speech(normalized) == normalized
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
             ("$5off", "5 dollars off"),
             ("-$5off", "minus 5 dollars off"),
             ("$5/repo", "5 dollars per repository"),

@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak trailing currency signs on standalone prose amounts (`5€`, `12.50$`)
+  as money, without changing prefix amounts, decimal commas, or inline code.
+  (PL-1473)
+
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
   credentials, now reports not ready with the provider's reason instead of
