@@ -190,7 +190,8 @@ tests/
   test_voxd_wire_text.py     # Wire text handling
   test_voxd_wire_fault.py    # Wire fault handling
   test_voxd_synthesis.py     # Daemon-side synthesis
-  test_voxd_speech_handlers.py    # Speech handlers
+  test_voxd_speech_request.py     # Shared speech request parsing
+  test_voxd_synthesize_handler.py # Synthesis handler
   test_voxd_play_handler.py  # Play handler
   test_voxd_playback.py      # Playback queue
   test_voxd_fetch_handler.py # Fetch handler
