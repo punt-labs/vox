@@ -33,6 +33,8 @@ from punt_vox.voxd.programs.mode_transition_log import ModeTransitionLog
 from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.programs.change_signal import ChangeSignal
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
     from punt_vox.voxd.programs.playback_source import PlaybackSource
@@ -94,11 +96,19 @@ class ControlChannel:
         """Return the active source this channel is the sole writer to."""
         return self._source
 
-    @property
-    def is_active(self) -> bool:
-        """Whether the current Program or replay Selection is active."""
+    def apply_transport(self, action: Callable[[], None]) -> bool:
+        """Apply and publish an in-place transport action on an active source.
+
+        The action changes suspension, not the source cursor, so it does not
+        enqueue a control signal. An off Program is a no-op; a replay Selection
+        is active by construction.
+        """
         source = self._source
-        return not isinstance(source, Program) or source.mode is not Mode.OFF
+        if isinstance(source, Program) and source.mode is Mode.OFF:
+            return False
+        action()
+        self._emit_change()
+        return True
 
     def retarget(self, source: PlaybackSource) -> None:
         """Swap which source the sole writer animates (a switch to program/replay).

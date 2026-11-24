@@ -37,6 +37,7 @@ class PauseHandler(ProgramCommandHandler):
     __slots__ = ()
     _WIRE_TYPE = "program_pause"
 
+    # None preserves the bare wire acknowledgement when pause succeeds.
     def _run(self, _msg: dict[str, object], /) -> CommandOutcome | None:
         """Suspend the active source (no fields to parse)."""
         return None if self._service.pause() else _NOTHING_PLAYING
@@ -49,6 +50,7 @@ class ResumeHandler(ProgramCommandHandler):
     __slots__ = ()
     _WIRE_TYPE = "program_resume"
 
+    # None preserves the bare wire acknowledgement when resume succeeds.
     def _run(self, _msg: dict[str, object], /) -> CommandOutcome | None:
         """Continue the suspended source (no fields to parse)."""
         return None if self._service.resume() else _NOTHING_PLAYING

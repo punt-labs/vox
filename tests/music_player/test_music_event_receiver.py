@@ -106,6 +106,11 @@ def test_idle_transport_reprojects_without_a_fault(
     transport.assert_called_once_with()
     presenter.present_transport_failure.assert_called_once_with()
     assert f"received music.{command}; applying" in caplog.text
+    assert [
+        record.levelno
+        for record in caplog.records
+        if "ignoring transport control: Nothing playing." in record.getMessage()
+    ] == [logging.INFO]
     assert all(record.levelno < logging.WARNING for record in caplog.records)
     assert _PRIVATE not in caplog.text
 

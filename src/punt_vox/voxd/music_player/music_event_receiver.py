@@ -59,13 +59,15 @@ class MusicEventReceiver:
             self._apply(event)
 
     def _apply(self, event: PlayerEvent) -> None:
-        """Apply an event, preserving refusal feedback on the scene only."""
-        applied: bool | None = None
+        """Apply an event and refresh the scene on a refusal or fault."""
+        refused = False
         with LuxFaultBoundary(
             logger, "music operation could not play; showing it in the scene"
         ) as fault:
-            applied = event.apply(self._service)
-        if fault.failed() or applied is False:
+            refused = event.apply(self._service) is False
+        if refused:
+            logger.info("[lux] ignoring transport control: Nothing playing.")
+        if fault.failed() or refused:
             self._surface_failure(event)
 
     def _surface_failure(self, event: PlayerEvent) -> None:

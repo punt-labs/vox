@@ -75,6 +75,7 @@ class ProgramCommandHandler(ABC):
         await reply.send(dict(payload))
 
     @abstractmethod
+    # None is a bare wire acknowledgement, without a synchronous outcome.
     def _run(self, msg: dict[str, object], /) -> CommandOutcome | None:
         """Issue the command, returning a synchronous refusal if not applied."""
 
