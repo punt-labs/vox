@@ -84,7 +84,9 @@ class HandlerRegistry:
                 playback=self._playback,
             ),
             "voices": VoicesHandler(),
-            "health": HealthHandler(health=self._health),
+            "health": HealthHandler(
+                health=self._health, output_health=self._programs.output_health
+            ),
             "provider_status": ProviderStatusHandler(env_lock=self._synthesis.env_lock),
             **WorkerContext.handlers(
                 self._playback,

@@ -242,12 +242,15 @@ class VoxClientSync:
         """
         return self._drive(lambda c: c.voices(provider))
 
-    def health(self, *, timeout: float | None = None) -> HealthStatus:
+    def health(
+        self, *, timeout: float | None = None, output_dirs: bool = False
+    ) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version).
 
         *timeout* bounds the whole call, connect included, in seconds; a
         bounded poll passes what is left of its wait. Absent (``None``), the
         client's own per-step timeouts apply, as for every other call.
+        Set *output_dirs* to also probe the daemon's album output directory.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -255,7 +258,9 @@ class VoxClientSync:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        return self._drive(lambda c: c.health(), within_s=timeout)
+        return self._drive(
+            lambda c: c.health(output_dirs=output_dirs), within_s=timeout
+        )
 
     def provider_status(
         self, provider: str | None = None, *, verify: bool = False

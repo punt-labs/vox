@@ -1533,17 +1533,13 @@ class TestDoctorCommand:
                 "provider": "elevenlabs",
                 "active_sessions": 2,
                 "port": 8421,
+                "output_dir": "writable",
             }
             if daemon_version is not None:
                 health_payload["daemon_version"] = daemon_version
             mock_client.health.return_value = HealthStatus.from_wire(health_payload)
         else:
             mock_client.health.side_effect = VoxdRefusedError("not running")
-
-        # Create Music dir so the Music-directory doctor check passes.
-        (tmp_path / "Music").mkdir(exist_ok=True)
-        # Create output dir so the output-directory doctor check passes.
-        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
@@ -1565,20 +1561,12 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
             patch("punt_vox.doctor_call_workers.Path") as worker_path,
             # Isolate the config-path helper from the real filesystem.
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             worker_path.return_value.is_dir.return_value = False
             return runner.invoke(app, ["doctor"])
@@ -1726,18 +1714,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1814,18 +1794,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1888,18 +1860,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
