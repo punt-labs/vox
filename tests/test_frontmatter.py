@@ -203,6 +203,27 @@ class TestRead:
         monkeypatch.setattr(Path, "read_text", read_during_lock)
         assert config.read_fields(strict=True) == {"voice": "fin"}
 
+    @pytest.mark.parametrize("racing_writer", [False, True], ids=["absent", "appears"])
+    def test_strict_reads_account_for_the_first_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, racing_writer: bool
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        config = Frontmatter(path)
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        fenced_block = ConfigFile.fenced_block
+
+        def read_with_possible_writer(file: ConfigFile) -> FrontmatterBlock | None:
+            block = fenced_block(file)
+            if block is None and racing_writer:
+                config.write_field("voice", "fin")
+            return block
+
+        monkeypatch.setattr(ConfigFile, "fenced_block", read_with_possible_writer)
+        assert config.read_fields(strict=True) == (
+            {"voice": "fin"} if racing_writer else {}
+        )
+        assert lock.exists() is racing_writer
+
 
 class TestWrite:
     def test_read_only_config_fails_the_write(self, tmp_path: Path) -> None:

@@ -32,6 +32,20 @@ class _Roster:
 
 
 class TestPanelSettings:
+    def test_an_old_resync_cannot_replace_newer_settings(self, tmp_path: Path) -> None:
+        settings = PanelSettings(_Roster(), ConfigStore(tmp_path))
+        before = settings.snapshot()
+        current = before.with_provider("espeak", roster=("en",), model=None, voice="en")
+        stale = before.with_provider(
+            "elevenlabs", roster=("matilda",), model=None, voice="matilda"
+        )
+        assert settings.replace_if_current(before, current, PanelNotice.silent())
+        assert not settings.replace_if_current(
+            before, stale, PanelNotice.voxd_unavailable(), external=True
+        )
+        assert settings.snapshot() is current
+        assert settings.scene().notice == PanelNotice.silent()
+
     def test_roster_failure_logs_under_settings_module(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
