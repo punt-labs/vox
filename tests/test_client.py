@@ -26,6 +26,7 @@ from punt_vox.client_errors import (
     VoxError,
 )
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.client_transport import VoxdTransport
 from punt_vox.paths import run_dir
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
@@ -1437,6 +1438,18 @@ class TestVoxClientVoices:
         assert result == ["fred"]
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["provider"] == "say"
+
+    @pytest.mark.asyncio
+    async def test_voices_waits_longer_than_provider_enumeration(self) -> None:
+        client = VoxClient(port=8421, token="tok")
+        with patch.object(VoxdTransport, "send_and_recv") as send:
+            send.return_value = {"voices": ["fred"]}
+
+            assert await client.voices("say") == ["fred"]
+
+        call = send.await_args
+        assert call is not None
+        assert call.kwargs["timeout"] > 10
 
     @pytest.mark.asyncio
     async def test_voices_missing_key_raises_protocol_error(self) -> None:
