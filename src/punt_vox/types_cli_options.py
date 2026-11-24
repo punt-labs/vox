@@ -92,7 +92,7 @@ BATCH_JSON_LINES_EPILOG = (
 
 Save stdout and check Vox's exit status separately from jq:
 
-status=0
+\b\nstatus=0
 vox %s --from segments.json --json > out.jsonl || status=$?
 jq -c . out.jsonl
 echo "Vox exit status: $status" >&2"""
