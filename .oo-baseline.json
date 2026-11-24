@@ -4627,7 +4627,7 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
-  "src/punt_vox/voxd/programs/album_export.py": {
+  "src/punt_vox/voxd/programs/album_export_reader.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
     "avg_params": 3.0,

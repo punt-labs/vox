@@ -20,7 +20,7 @@ import contextlib
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
-from punt_vox.voxd.programs.album_export import AlbumExport
+from punt_vox.voxd.programs.album_export_reader import AlbumExportReader
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
@@ -146,7 +146,7 @@ class MusicLibrary:
         """
         album = self._require(album_id)
         root = ContainmentRoot(self._root / album.locator, _PART_LABEL)
-        return await AlbumExport.read(album, root, self._require)
+        return await AlbumExportReader.read(album, root, self._require)
 
     def resolve_part(self, album_id: AlbumId, part_name: str) -> Path:
         """Resolve one album part to a contained regular file, never a symlink.

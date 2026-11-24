@@ -15,11 +15,11 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
 
-__all__ = ["AlbumExport"]
+__all__ = ["AlbumExportReader"]
 
 
 @final
-class AlbumExport:
+class AlbumExportReader:
     """Coordinate the live disk read with the event-loop-owned catalog."""
 
     __slots__ = ()
