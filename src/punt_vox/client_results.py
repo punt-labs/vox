@@ -84,6 +84,17 @@ class RecordResult:
     cached: bool = False
     warning: str | None = None
 
+    def metadata(self, *, include_warning: bool = False) -> dict[str, object]:
+        """Return the public recording metadata without exposing the store path."""
+        entry: dict[str, object] = {
+            "id": self.name,
+            "bytes": self.byte_count,
+            "cached": self.cached,
+        }
+        if include_warning and self.warning is not None:
+            entry["warning"] = self.warning
+        return entry
+
     @classmethod
     def from_audio(cls, terminal: dict[str, Any]) -> Self:  # a decoded frame
         """Build the locator from ``record``'s terminal ``audio`` frame.
