@@ -107,11 +107,11 @@ class TestSayCommand:
         command: list[str],
         rate: str,
     ) -> None:
-        say_client.return_value.synthesize.return_value = SynthesizeResult(
-            request_id="abc123"
+        say_client.return_value.synthesize.side_effect = lambda *_args, **_kwargs: (
+            SynthesizeResult(request_id="abc123")
         )
-        rec_client.return_value.record.return_value = RecordResult(
-            "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+        rec_client.return_value.record.side_effect = lambda *_args, **_kwargs: (
+            RecordResult("abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100)
         )
         result = CliRunner().invoke(
             app,
