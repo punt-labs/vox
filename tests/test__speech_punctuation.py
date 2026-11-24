@@ -10,10 +10,10 @@ from punt_vox._speech_punctuation import SpeechPunctuation
 @pytest.mark.parametrize(
     ("token", "core", "suffix"),
     [
-        ("[\u2212£.50],", "minus 0.50 pounds", ","),
+        ("[\u2212£.50],", "minus 50 pence", ","),
         ("+€1,200!", "plus 1,200 euros", "!"),
         ("$1", "1 dollar", ""),
-        ("$1.00", "1.00 dollars", ""),
+        ("$1.00", "1 dollar", ""),
         ("$HOME", "HOME", ""),
         ("€", "", ""),
     ],

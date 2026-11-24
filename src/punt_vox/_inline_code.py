@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator, Sequence
-from itertools import dropwhile, pairwise
 from typing import TYPE_CHECKING, cast, final
 
 from markdown_it import MarkdownIt
 from markdown_it.rules_block import fence
 from markdown_it.rules_inline import backtick, image
 
+from punt_vox._backtick_offsets import BacktickOffsets
+from punt_vox._currency_grammar import CurrencyGrammar
 from punt_vox._speech_punctuation import SpeechPunctuation
 
 if TYPE_CHECKING:
@@ -18,8 +19,6 @@ if TYPE_CHECKING:
     from markdown_it.rules_inline import StateInline
     from markdown_it.token import Token
 
-_LINE_END = re.compile(r"\r\n?|\n")
-_TICK = re.compile("`")
 _WORD = re.compile(r"\S+")
 _SOURCE_OFFSET = "vox_source_offset"
 _VIBED = "vox_vibed"
@@ -38,12 +37,14 @@ class InlineCode:
 
     @classmethod
     def rewrite_currency(cls, text: str, *, vibed: bool = False) -> str:
-        """Spell code currency signs literally, except in paths."""
+        """Canonicalize prose amounts and spell code signs literally outside paths."""
+        tag = VIBE_TAG_RE if vibed else None
         return cls._rewrite(
             text,
             lambda body, in_path: SpeechPunctuation.spell_code_currency(
                 body, in_path=in_path
             ),
+            prose=lambda body: CurrencyGrammar.prefix_suffix_amounts(body, tag=tag),
             vibed=vibed,
         )
 
@@ -53,19 +54,20 @@ class InlineCode:
         text: str,
         transform: Callable[[str, bool], str],
         *,
+        prose: Callable[[str], str] = str,
         vibed: bool = False,
     ) -> str:
-        """Pass each span and whether it starts in an existing path to *transform*."""
+        """Transform prose separately from code, with path context for code."""
         if "`" not in text:
-            return text
-        lines = [0, *(end.end() for end in _LINE_END.finditer(text)), len(text)]
+            return prose(text)
         parts: list[str] = []
         cursor = 0
-        spans = cls._source_spans(text, lines, vibed=vibed)
+        spans = cls._source_spans(text, vibed=vibed)
         for in_path, start, end in cls._with_path_context(text, spans):
-            parts.extend((text[cursor:start], transform(text[start:end], in_path)))
+            parts.append(prose(text[cursor:start]))
+            parts.append(transform(text[start:end], in_path))
             cursor = end
-        parts.append(text[cursor:])
+        parts.append(prose(text[cursor:]))
         return "".join(parts)
 
     @staticmethod
@@ -84,45 +86,20 @@ class InlineCode:
             yield in_path, start, end
 
     @classmethod
-    def _source_spans(
-        cls, text: str, lines: Sequence[int], *, vibed: bool
-    ) -> Iterator[tuple[int, int, int]]:
+    def _source_spans(cls, text: str, *, vibed: bool) -> Iterator[tuple[int, int, int]]:
+        lines = BacktickOffsets.line_boundaries(text)
         for token in cls._MARKDOWN.parse(text, {_VIBED: vibed}):
             if token.type != "inline" or token.map is None or not token.children:
                 continue
             spans = tuple(cls._spans(token.children))
             if not spans:
                 continue
-            ticks = cls._source_ticks(
+            ticks = BacktickOffsets.from_content(
                 text, lines[token.map[0] : token.map[1] + 1], token.content
             )
             for opening, closing, width in spans:
                 if opening in ticks and closing in ticks:
                     yield ticks[opening], ticks[opening] + width, ticks[closing]
-
-    @staticmethod
-    def _source_ticks(text: str, lines: Sequence[int], content: str) -> dict[int, int]:
-        """Map inline backticks to the raw text, skipping block prefixes."""
-        ticks: dict[int, int] = {}
-        position = 0
-        raw_lines = (
-            (start, text[start:end].replace("\0", "\ufffd"))
-            for start, end in pairwise(lines)
-        )
-        content_lines = content.split("\n")
-        first = content_lines[0].lstrip()
-        aligned = dropwhile(lambda entry: first not in entry[1], raw_lines)
-        for (start, raw), line in zip(aligned, content_lines, strict=False):
-            piece = line.lstrip()
-            column = raw.find(piece)
-            if column >= 0:
-                padding = len(line) - len(piece)
-                ticks.update(
-                    (position + padding + tick.start(), start + column + tick.start())
-                    for tick in _TICK.finditer(piece)
-                )
-            position += len(line) + 1
-        return ticks
 
     @classmethod
     def _spans(

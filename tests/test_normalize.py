@@ -331,7 +331,7 @@ class TestSymbolStripping:
             ("€-20", "minus 20 euros"),
             ("€\u221220", "minus 20 euros"),
             ("$-5", "minus 5 dollars"),
-            ("-$5.50", "minus 5.50 dollars"),
+            ("-$5.50", "minus 5 dollars and 50 cents"),
             ("$5", "5 dollars"),
             ("-$5._", "minus 5 dollars."),
             ("_-$5._", "minus 5 dollars."),
@@ -339,6 +339,28 @@ class TestSymbolStripping:
         ],
     )
     def test_currency_amounts_survive(self, text: str, expected: str) -> None:
+        normalized = normalize_for_speech(text)
+        assert normalized == expected
+        assert normalize_for_speech(normalized) == normalized
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("I paid 5€.", "I paid 5 euros."),
+            ("It cost 12.50$!", "It cost 12 dollars and 50 cents!"),
+            ("It cost (1£), not 1,000£.", "It cost 1 pound, not 1,000 pounds."),
+            ("It cost -5.50€.", "It cost minus 5 euros and 50 cents."),
+            ("I paid €5.", "I paid 5 euros."),
+            ("I paid €1,50, not 1,50€.", "I paid 1,50, not 1,50."),
+            (
+                "Use `prices 5€ or $5` then pay 5€.",
+                "Use prices 5 or dollar sign 5 then pay 5 euros.",
+            ),
+            ("Use `prices 5€ or $5`.", "Use prices 5 or dollar sign 5."),
+            ("See /tmp/5€.", "See /tmp/5."),
+        ],
+    )
+    def test_suffix_currency_is_prose_money(self, text: str, expected: str) -> None:
         normalized = normalize_for_speech(text)
         assert normalized == expected
         assert normalize_for_speech(normalized) == normalized
