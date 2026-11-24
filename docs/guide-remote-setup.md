@@ -214,8 +214,9 @@ vox rec new "the build is green"
 Without `--name`, the recording id depends only on the text. Recording the
 same text again silently replaces the earlier take, even if you change
 synthesis settings. Use a different `--name` for each take to keep them
-separate. Supply a bare filename, such as `--name greeting.mp3` (no
-directories, no `..`). `vox rec list` enumerates the store.
+separate. `--name` only works for a single text segment. Supply a bare filename,
+such as `--name greeting.mp3` (no directories, no `..`). `vox rec list`
+enumerates the store.
 
 **`vox rec play <id>`** plays a stored recording on the daemon host by its id —
 audio comes out of A's speakers even though you ran the command on B:

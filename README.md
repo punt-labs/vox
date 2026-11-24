@@ -245,6 +245,7 @@ Without `--name`, the recording id depends only on the text. Recording the
 same text again silently replaces the earlier take, even if you change the
 voice or rate. Use a different `--name` for each take (for example,
 `--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
+`--name` only works for a single text segment.
 
 #### Music
 

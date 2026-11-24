@@ -134,7 +134,7 @@ _NameOpt = Annotated[
     str | None,
     typer.Option(
         "--name",
-        help="Bare filename (no path). Use distinct names to keep takes separate.",
+        help="Bare filename. Unnamed same-text takes overwrite. Use distinct names.",
     ),
 ]
 _ProviderOpt = Annotated[
@@ -232,6 +232,7 @@ class RecCli:
         Without --name, recording the same text reuses the same id and
         silently replaces the earlier take, even if synthesis settings change.
         Pass a different --name for each take to keep them separate.
+        --name only works for a single text segment.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         boost = speaker_boost if speaker_boost else None

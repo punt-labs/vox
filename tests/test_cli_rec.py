@@ -614,10 +614,11 @@ def test_rec_new_help_explains_unnamed_overwrite() -> None:
     assert any(
         "Without --name, recording the same text reuses the same id and "
         "silently replaces the earlier take, even if synthesis settings change. "
-        "Pass a different --name for each take to keep them separate." in text
+        "Pass a different --name for each take to keep them separate. "
+        "--name only works for a single text segment." in text
         for text in help_texts
     )
-    assert "Use distinct names to keep takes separate." in option_help(
+    assert "Unnamed same-text takes overwrite. Use distinct names." in option_help(
         "rec", "new", option="--name"
     )
 
