@@ -16,6 +16,7 @@ from mcp.types import TextContent
 if TYPE_CHECKING:
     from punt_vox.types_provider import ProviderStatusPayload
 
+import punt_vox.server
 from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
@@ -664,20 +665,22 @@ class TestMcpSegmentValidation:
         arguments: dict[str, object],
         message: str,
     ) -> None:
-        import punt_vox.server as srv
-
         client = MagicMock()
         client.synthesize.return_value = SynthesizeResult(request_id="req")
         client.record.return_value = RecordResult(
             id="test.mp3", name="test.mp3", store_path=Path("test.mp3"), byte_count=1
         )
         client_factory = MagicMock(return_value=client)
-        monkeypatch.setattr(srv, "_voxd_client", client_factory)
-        monkeypatch.setattr(srv._rec_tool, "_client_factory", client_factory)
+        monkeypatch.setattr(punt_vox.server, "_voxd_client", client_factory)
+        monkeypatch.setattr(
+            punt_vox.server._rec_tool, "_client_factory", client_factory
+        )
         if tool == "rec":
             arguments = {**arguments, "subcommand": "new"}
 
-        async with create_connected_server_and_client_session(srv.mcp) as session:
+        async with create_connected_server_and_client_session(
+            punt_vox.server.mcp
+        ) as session:
             result = await session.call_tool(tool, arguments)
 
         assert result.isError, result.content
