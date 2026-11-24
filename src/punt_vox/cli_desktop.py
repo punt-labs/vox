@@ -174,7 +174,7 @@ class DesktopCli:
         servers["vox"] = {
             "command": uvx,
             "args": ["--from", "punt-vox", "vox", "mcp"],
-            "env": installer.server_env(),
+            "env": {**installer.server_env()},
         }
         config.write(data)
 

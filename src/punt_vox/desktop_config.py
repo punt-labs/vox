@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, Self, cast, final
+from typing import TYPE_CHECKING, ClassVar, Self, cast, final
 
 import typer
 
@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from punt_vox.output_formatter import OutputFormatter
 
 __all__ = ["DesktopConfig"]
+
+type _JsonValue = str | int | float | bool | list[_JsonValue] | _JsonObject | None
+type _JsonObject = dict[str, _JsonValue]
 
 
 @final
@@ -34,7 +37,7 @@ class DesktopConfig:
         self._formatter = formatter
         return self
 
-    def load(self) -> dict[str, Any]:
+    def load(self) -> _JsonObject:
         """Read a Claude Desktop config JSON object, or ``{}`` if absent.
 
         A non-object top level (list/string) would crash deep inside the
@@ -47,14 +50,14 @@ class DesktopConfig:
         if not config_path.exists():
             return {}
         try:
-            parsed = json.loads(config_path.read_text(encoding="utf-8"))
+            parsed: object = json.loads(config_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             raise self._error(f"Could not read {config_path}: {exc}") from exc
         if not isinstance(parsed, dict):
             raise self._error(f"{config_path} must be a JSON object.")
-        return cast("dict[str, Any]", parsed)
+        return cast("_JsonObject", parsed)
 
-    def server_map(self, data: dict[str, Any]) -> dict[str, Any]:
+    def server_map(self, data: _JsonObject) -> _JsonObject:
         """Return the config's ``mcpServers`` object, creating it when absent.
 
         A non-object value under that key is the case that bites silently:
@@ -68,9 +71,9 @@ class DesktopConfig:
             raise self._error(
                 f'{self._path} must have a JSON object under "mcpServers".'
             )
-        return cast("dict[str, Any]", servers)
+        return servers
 
-    def write(self, data: dict[str, Any]) -> None:
+    def write(self, data: _JsonObject) -> None:
         """Replace the config atomically, or refuse with a clean error.
 
         ``claude_desktop_config.json`` is not vox's file: every other MCP
