@@ -144,7 +144,7 @@ class VoxdExchange:
         """
         try:
             parsed: object = json.loads(str(raw))
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
         if not isinstance(parsed, dict):
             raise VoxdProtocolError("expected a JSON object from voxd")

@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
@@ -78,6 +79,20 @@ def test_a_daemon_error_reply_is_a_rejection() -> None:
 def test_a_reply_that_is_not_json_is_a_protocol_error() -> None:
     with pytest.raises(VoxdProtocolError, match="invalid JSON from voxd"):
         VoxdExchange.decode("not json")
+
+
+def test_a_reply_past_the_integer_conversion_limit_is_a_protocol_error() -> None:
+    digits = sys.get_int_max_str_digits()
+    if not digits:
+        pytest.skip("Python integer conversion limit is disabled")
+    with pytest.raises(VoxdProtocolError, match="invalid JSON from voxd"):
+        VoxdExchange.decode("1" * (digits + 1))
+
+
+def test_a_reply_nested_past_the_recursion_limit_is_a_protocol_error() -> None:
+    depth = sys.getrecursionlimit() + 1
+    with pytest.raises(VoxdProtocolError, match="invalid JSON from voxd"):
+        VoxdExchange.decode("[" * depth + "0" + "]" * depth)
 
 
 @pytest.mark.parametrize("frame", [[], 1, "x", True, None])
