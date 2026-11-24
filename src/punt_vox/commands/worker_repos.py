@@ -36,18 +36,24 @@ class WorkerReposCli:
             typer.echo(path)
 
     @staticmethod
-    def allow(path: Path, *, as_json: JsonFlag = False) -> None:
-        """Allow workers in a repository; PATH must be a git top level."""
-        WorkerReposCli._paths(
-            "allow", as_json=as_json, project=str(path.expanduser().resolve())
-        )
+    def _project(operation: str, path: str) -> str:
+        """Resolve PATH for the daemon; a blank one would resolve to the cwd."""
+        if not path.strip():
+            typer.echo(f"vox: worker {operation}: PATH must not be blank", err=True)
+            raise typer.Exit(2)
+        return str(Path(path).expanduser().resolve())
 
     @staticmethod
-    def disallow(path: Path, *, as_json: JsonFlag = False) -> None:
+    def allow(path: str, *, as_json: JsonFlag = False) -> None:
+        """Allow workers in a repository; PATH must be a git top level."""
+        project = WorkerReposCli._project("allow", path)
+        WorkerReposCli._paths("allow", as_json=as_json, project=project)
+
+    @staticmethod
+    def disallow(path: str, *, as_json: JsonFlag = False) -> None:
         """Remove a repository from the worker allowlist."""
-        WorkerReposCli._paths(
-            "disallow", as_json=as_json, project=str(path.expanduser().resolve())
-        )
+        project = WorkerReposCli._project("disallow", path)
+        WorkerReposCli._paths("disallow", as_json=as_json, project=project)
 
     @staticmethod
     def repos(*, as_json: JsonFlag = False) -> None:

@@ -248,3 +248,36 @@ def test_allow_and_disallow_refuse_bad_entries_before_git(
         policy.disallow(entry)
     git.assert_not_called()
     assert policy.repos() == ()
+
+
+def test_allow_round_trips_a_path_with_an_apostrophe(tmp_path: Path) -> None:
+    """repr() would switch to double quotes, which the frontmatter refuses."""
+    repo = tmp_path / "Jim's repo"
+    repo.mkdir()
+    config = ConfigStore(tmp_path / "config")
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    stored = config.read_field("worker_repos")
+    assert stored is not None
+    assert '"' not in stored
+    assert WorkerRepoPolicy(config).repos() == (str(repo.resolve()),)
+    assert policy.disallow(str(repo)) == ()
+
+
+def test_allow_refuses_a_path_with_a_double_quote_by_name(tmp_path: Path) -> None:
+    repo = tmp_path / 'say "hi"'
+    repo.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run") as git,
+        pytest.raises(
+            ValueError, match=f"worker_repos entry has a double quote: {str(repo)!r}"
+        ),
+    ):
+        policy.allow(str(repo))
+    git.assert_not_called()
+    assert policy.repos() == ()

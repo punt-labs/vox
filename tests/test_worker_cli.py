@@ -158,3 +158,17 @@ def test_worker_help_names_the_allowlist_commands() -> None:
     output = CliRunner().invoke(app, ["worker", "--help"]).output
     for command in ("allow", "disallow", "repos"):
         assert command in output
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_allow_and_disallow_refuse_a_blank_path_before_sending(blank: str) -> None:
+    """Path('') is the cwd; the daemon's blank check must see the blank."""
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request", new_callable=AsyncMock
+    ) as request:
+        allow = CliRunner().invoke(app, ["worker", "allow", blank])
+        disallow = CliRunner().invoke(app, ["worker", "disallow", blank])
+    request.assert_not_awaited()
+    for result, name in ((allow, "allow"), (disallow, "disallow")):
+        assert result.exit_code == 2, result.output
+        assert f"vox: worker {name}: PATH must not be blank" in result.output

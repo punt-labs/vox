@@ -48,11 +48,13 @@ class RepoAllowlist:
         """Resolve one entry, refusing a blank, relative or root path by name.
 
         Raises:
-            ValueError: If *raw* is blank after strip, relative after
-                expanduser, or resolves to the filesystem root.
+            ValueError: If *raw* is blank after strip, holds a double quote,
+                is relative after expanduser, or resolves to the filesystem root.
         """
         if not raw.strip():
             raise ValueError(f"worker_repos entry blank: {raw!r}")
+        if '"' in raw:
+            raise ValueError(f"worker_repos entry has a double quote: {raw!r}")
         path = Path(raw).expanduser()
         if not path.is_absolute():
             raise ValueError(f"worker_repos entry not absolute: {raw!r}")
@@ -62,7 +64,19 @@ class RepoAllowlist:
         return path
 
     def save(self, paths: set[Path]) -> tuple[str, ...]:
-        """Write *paths* sorted and return them as strings."""
+        """Write *paths* sorted and return them as strings.
+
+        Each entry is a single-quoted Python literal, so the stored text never
+        holds a double quote (the frontmatter refuses one) and ``literal_eval``
+        reads an apostrophe back unchanged.
+        """
         repos = tuple(sorted(str(path) for path in paths))
-        self._config.write_field(_FIELD, repr(list(repos)))
+        self._config.write_field(_FIELD, self._literal(repos))
         return repos
+
+    @staticmethod
+    def _literal(repos: tuple[str, ...]) -> str:
+        quoted = (
+            "'" + repo.replace("\\", "\\\\").replace("'", "\\'") + "'" for repo in repos
+        )
+        return "[" + ", ".join(quoted) + "]"
