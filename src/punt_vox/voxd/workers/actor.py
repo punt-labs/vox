@@ -58,7 +58,11 @@ class WorkerActor:
         return WorkerRecordCodec.public(record)
 
     async def stop(self, worker_id: str) -> WorkerPayload:
-        """Stop one worker; its worktree and branch are retained."""
+        """Stop one worker; its worktree and branch are retained.
+
+        The reply waits only for the job the registry hands back: harness
+        cleanup. A retried discard is queued and reported pending instead.
+        """
         async with self._lock:
             record, cleanup = await asyncio.to_thread(
                 self._registry.request_stop, worker_id

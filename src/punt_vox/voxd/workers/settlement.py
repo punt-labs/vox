@@ -85,6 +85,14 @@ class WorkerSettlement:
         """Check whether the record still carries a debt to settle."""
         return WorkerCleanup.pending(record) or WorkerDiscard.queued(record)
 
+    @staticmethod
+    def prompt(record: WorkerRecord) -> bool:
+        """Check whether every debt the record owes settles within a reply.
+
+        Harness cleanup does; a worktree discard runs git and may not.
+        """
+        return not WorkerDiscard.queued(record)
+
     def settle(self, record: WorkerRecord) -> SettledDebts:
         """Run whichever of harness cleanup and worktree discard is owed."""
         ran: list[ReportMarkers] = []

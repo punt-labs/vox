@@ -179,19 +179,24 @@ class WorkerRegistry:
         )
 
     def stop(self, worker_id: str) -> WorkerRecord:
-        """Terminate a worker but preserve its branch and worktree."""
-        record, cleanup = self.request_stop(worker_id)
-        if cleanup is None:
+        """Terminate a worker and settle every debt it owes before returning."""
+        record = self._inventory.update(worker_id, self._lifecycle.terminate)
+        job = self._retirement.schedule(worker_id)
+        if job is None:
             return record
-        cleanup.result()
+        job.result()
         return self._inventory.get(worker_id)
 
     def request_stop(
         self, worker_id: str
     ) -> tuple[WorkerRecord, Future[None] | None]:  # PY-TS-14: only wait on a new job.
-        """Persist termination and start cleanup without waiting for its lease."""
+        """Persist termination and queue cleanup; return a job a reply may wait on.
+
+        A retried worktree discard is queued but withheld: the reply reports
+        ``discard_pending`` and the outcome lands on the record later.
+        """
         record = self._inventory.update(worker_id, self._lifecycle.terminate)
-        return record, self._retirement.schedule(worker_id)
+        return record, self._retirement.schedule_prompt(worker_id)
 
     def steer(
         self,
@@ -215,16 +220,20 @@ class WorkerRegistry:
         self._inventory.save(record)
         if choice is not None:
             self._question(record, prompt_seq)
-        if prompt_epoch is not None and prompt_epoch != record.last_report.get(
-            "prompt_epoch", 0
-        ):
+        if prompt_epoch is not None:
+            self._live_prompt(record, prompt_epoch)
+        return SteerDelivery(
+            self._profiles[record.harness], self._providers[record.provider]
+        ).send(record, words, urgent=urgent, choice=choice)
+
+    @staticmethod
+    def _live_prompt(record: WorkerRecord, prompt_epoch: int) -> None:
+        """Refuse steering bound to a prompt the worker has since replaced."""
+        if prompt_epoch != record.last_report.get("prompt_epoch", 0):
             raise ValueError(
                 "Worker has a new prompt; read worker_status and ask the person "
                 "again before steering"
             )
-        return SteerDelivery(
-            self._profiles[record.harness], self._providers[record.provider]
-        ).send(record, words, urgent=urgent, choice=choice)
 
     @staticmethod
     def _question(

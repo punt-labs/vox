@@ -12,6 +12,7 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.actor import WorkerActor
+from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -33,6 +34,10 @@ def _settled(registry: WorkerRegistry) -> None:
     while not registry.cleanup_idle():
         assert time.monotonic() < deadline, f"never settled: {registry.list()}"
         time.sleep(0.01)
+
+
+def _raise(exc: Exception) -> None:
+    raise exc
 
 
 def test_successful_stop_forgets_finished_cleanup_job(tmp_path: Path) -> None:
@@ -226,3 +231,43 @@ def test_discard_retried_during_a_cleanup_only_job_is_not_lost(
     assert not any(k.startswith("discard_") for k in done.last_report)
     assert done.last_report["worktree_discarded"] is True
     worktrees.discard.assert_called_once()
+
+
+async def test_stop_returns_before_a_retried_discard_runs(tmp_path: Path) -> None:
+    """A retried discard runs off the stop reply, which reports it pending.
+
+    The client's stop budget is seconds; a discard is up to six git calls at
+    20 s each. The reply carries discard_pending and the outcome lands on
+    the record once the queue has run it.
+    """
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    busy = DiscardError()
+    busy.attempt("rmtree", lambda: _raise(OSError("busy")))
+    worktrees.discard.side_effect = busy
+    registry = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    _settled(registry)
+    failed = registry.list()[0]
+    assert failed.last_report["discard_error"] == "rmtree: OSError: busy"
+    release = Event()
+
+    def blocking_discard(project: Path, worktree: Path, worker_id: str) -> None:
+        assert release.wait(3)
+
+    worktrees.discard.side_effect = blocking_discard
+    actor = WorkerActor(registry)
+    try:
+        async with asyncio.timeout(1):
+            reply = await actor.stop(failed.id)
+    finally:
+        release.set()
+    assert reply["state"] == "stopped"
+    assert reply["last_report"]["discard_pending"] is True
+    _settled(registry)
+    done = registry.list()[0]
+    assert done.last_report["worktree_discarded"] is True
+    assert "discard_pending" not in done.last_report
+    assert worktrees.discard.call_count == 2

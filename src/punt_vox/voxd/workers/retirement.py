@@ -66,6 +66,21 @@ class WorkerRetirement:
             return None
         return self._executor.submit(worker_id, lambda: self._cleanup(worker_id))
 
+    def schedule_prompt(
+        self, worker_id: str
+    ) -> Future[None] | None:  # PY-TS-14: no future unless the job settles promptly.
+        """Queue terminal cleanup; return the job only when a reply can wait on it.
+
+        Harness cleanup is quick. A retried worktree discard is up to six git
+        calls at 20 s each, against a client budget of seconds, so its job is
+        queued but withheld: the record reports ``discard_pending`` and the
+        outcome lands on it once the queue has run the discard.
+        """
+        job = self.schedule(worker_id)
+        if self._settlement.prompt(self._inventory.get(worker_id)):
+            return job
+        return None
+
     def cleanup_idle(self) -> bool:
         """Check whether all scheduled cleanup has settled."""
         return self._executor.is_idle()
