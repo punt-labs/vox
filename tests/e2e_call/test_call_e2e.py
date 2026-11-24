@@ -202,6 +202,7 @@ def test_scripted_call_reaches_the_tool_result(
 
     assert agent.fault is None
     assert agent.cut_short is None
+    assert rest.errors == []
     assert agent.audio_chunks > 0
     assert ("POST", "/v1/convai/agents/create") in rest.requests
     override = cast(
@@ -233,12 +234,13 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """An interruption mid-reply, then a remote hangup, is a clean end, not a fault."""
-    agent, _rest, result = asyncio.run(
+    agent, rest, result = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _INTERRUPTED_STEPS)
     )
 
     assert agent.fault is None
     assert agent.cut_short is None
+    assert rest.errors == []
     report = result.stdout + result.stderr
     assert result.returncode == 0, report
     assert "call ended" in report

@@ -276,11 +276,6 @@ check-style-mismatch = true
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-[tool.ruff.lint.flake8-builtins]
-# ``format`` is the parameter name http.server's ``log_message`` fixes for its
-# overrides; pyright rejects an override that renames it.
-builtins-ignorelist = ["format"]
-
 [tool.ruff.lint.pep8-naming]
 # Stdlib names fixed by the base-class API: the RotatingFileHandler override
 # method ``doRollover`` (renaming it would fail to override -- N802) and the
