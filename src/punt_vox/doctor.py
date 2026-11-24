@@ -14,7 +14,6 @@ import os
 import platform
 import shutil
 import sys
-import tempfile
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.client_errors import (
@@ -24,14 +23,11 @@ from punt_vox.client_errors import (
     VoxdRefusedError,
 )
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.dirs import (
-    _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
-    default_output_dir,
-)
 from punt_vox.doctor_call import CallChecks
 from punt_vox.doctor_desktop import DesktopCheck
 from punt_vox.doctor_guide import GuideCheck
 from punt_vox.doctor_mpv import MpvCheck
+from punt_vox.doctor_output import OutputDirCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
@@ -295,19 +291,12 @@ class DoctorCheck:
         return []
 
     def check_music_dir(self) -> list[CheckResult]:
-        """Check the music dir -- present/absent verdict, no abs path.
+        """Check the music dir that normally holds the output root.
 
-        An in-jail path under the ``output`` root, reported as a relative verdict
-        so its absolute prefix never crosses to a client.
+        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
-        if not music_dir.is_dir():
-            return [
-                CheckResult.warn(
-                    "output music dir: absent — created on first 'vox record'"
-                )
-            ]
-        return []
+        return OutputDirCheck().music_dir()
 
     def check_uvx(self) -> CheckResult:
         """Check for uvx -- present/absent verdict, no host path (out of jail)."""
@@ -328,20 +317,12 @@ class DoctorCheck:
         return DesktopCheck().run()
 
     def check_output_dir(self) -> list[CheckResult]:
-        """Check the output dir -- writable verdict, no abs path or raw OSError.
+        """Check the output data root is present and writable.
 
-        The dir *is* the ``output`` data root, so its own label is the name; the
-        absolute path and the raw ``OSError`` stay out of the client-facing reply.
+        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        out_dir = default_output_dir()
-        if out_dir.is_dir():
-            try:
-                with tempfile.TemporaryFile(buffering=0, dir=out_dir) as probe:
-                    probe.write(b"ok")
-                return [CheckResult.ok("output: writable")]
-            except OSError:
-                return [CheckResult.fail("output: not writable — check permissions")]
-        return [CheckResult.warn("output: absent — created on first 'vox record'")]
+        return OutputDirCheck().output_dir()
 
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.
