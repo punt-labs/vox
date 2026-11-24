@@ -12,7 +12,9 @@ _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
 _TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
-_SYMBOL_NAME_RE = re.compile(r"(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)")
+_SYMBOL_NAME_RE = re.compile(
+    r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
+)
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
 
 
@@ -34,8 +36,8 @@ class SpeechPunctuation:
         )
         core_candidate = re.sub(leading, "", token)
         if named := _SYMBOL_NAME_RE.fullmatch(core_candidate):
-            name, mark, raw_suffix = named.groups()
-            return f"{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
+            joined, name, mark, raw_suffix = named.groups(default="")
+            return f"{joined}{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
         core, raw_suffix = cls._split_trailing(core_candidate)
         return CurrencySpeech.speak_prose(core), cls._prosody(raw_suffix)
 
