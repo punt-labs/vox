@@ -1456,6 +1456,10 @@ class TestNotifyCommand:
         child.mkdir(parents=True)
         if in_repo:
             (no_config_dir / ".git").mkdir()
+        else:
+            monkeypatch.setattr(
+                "punt_vox.dirs.find_repo_root", MagicMock(return_value=None)
+            )
         relative_config = Path(".punt-labs") / "vox"
         monkeypatch.chdir(child)
         monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", relative_config)

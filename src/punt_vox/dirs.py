@@ -11,7 +11,7 @@ from pathlib import Path
 from punt_vox.config_seed import InheritedConfig
 
 DEFAULT_CONFIG_DIR = Path(".punt-labs") / "vox"
-_CONFIG_FILES = (DEFAULT_CONFIG_DIR / "vox.md", DEFAULT_CONFIG_DIR / "vox.local.md")
+_CONFIG_PATHS = (DEFAULT_CONFIG_DIR / "vox.md", DEFAULT_CONFIG_DIR / "vox.local.md")
 _XDG_MUSIC_SETTING = re.compile(r'^XDG_MUSIC_DIR="([^"]*)"', re.MULTILINE)
 
 
@@ -33,7 +33,7 @@ def find_config_dir(start: Path | None = None) -> Path | None:
     exists inside it.  No legacy fallback.  A repo with no config of its
     own inherits the nearest one above it (e.g. its workspace's).
     """
-    paths = (base / name for base, name in product(_ancestors(start), _CONFIG_FILES))
+    paths = (base / name for base, name in product(_ancestors(start), _CONFIG_PATHS))
     return next((path.parent for path in paths if path.exists()), None)
 
 
