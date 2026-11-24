@@ -22,12 +22,12 @@ from punt_vox.cli_group import VoxGroup
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
+from punt_vox.cli_status import StatusCli
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
 from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
@@ -60,18 +60,6 @@ cache_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(cache_app, name="cache")
-
-# ---------------------------------------------------------------------------
-# Display constants
-# ---------------------------------------------------------------------------
-
-_PROVIDER_DISPLAY = {
-    "elevenlabs": "ElevenLabs",
-    "polly": "Polly",
-    "openai": "OpenAI",
-    "say": "Say",
-    "espeak": "eSpeak",
-}
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -642,44 +630,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
-
-    # Probe liveness only; provider selection comes from repo state.
-    daemon_status = DaemonCli.probe_status()
-
-    provider_name = cfg.provider or "unknown"
-    display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
-    desktop_reg = DesktopInstaller.registration()
-
-    info: dict[str, str | None] = {
-        "daemon": daemon_status,
-        "provider": provider_name,
-        "voice": cfg.voice or None,
-        "notify": cfg.notify,
-        "speak": cfg.speak,
-        "vibe_mode": cfg.vibe_mode,
-        "vibe": cfg.vibe,
-        "vibe_tags": cfg.vibe_tags,
-        # The effective level (global vox log setting, or a repo override), not
-        # this dir's raw field -- so status reflects what the daemon/clients use.
-        "log_level": ConfigStore.resolve_log_level(),
-        "desktop": desktop_reg,
-    }
-
-    text_lines = [
-        f"Daemon:    {daemon_status}",
-        f"Provider:  {display_name}",
-        f"Voice:     {info['voice'] or '(default)'}",
-        f"Notify:    {info['notify']}",
-        f"Speak:     {info['speak']}",
-        f"Vibe mode: {info['vibe_mode']}",
-        f"Log level: {info['log_level']}",
-        f"Desktop:   {desktop_reg}",
-    ]
-    if cfg.vibe:
-        text_lines.append(f"Vibe:      {cfg.vibe}")
-    if cfg.vibe_tags:
-        text_lines.append(f"Tags:      {cfg.vibe_tags}")
-    _formatter.emit(info, "\n".join(text_lines))
+    StatusCli.emit(_formatter, cfg)
 
 
 # ---------------------------------------------------------------------------
