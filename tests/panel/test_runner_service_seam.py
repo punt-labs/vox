@@ -34,6 +34,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.panel.panel_guard import PanelGuard
 from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.panel_runner import PanelRunner
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.topics import PanelTopic
@@ -370,21 +371,48 @@ class TestRunnerServiceSeam:
             PANEL_LOGGER,
         )
         calls: list[RenderRequest] = []
+        installing, fail_install, refreshing = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        refresh = PanelPush.refresh
 
         async def failed_install(
             accessor: _SceneAccessor, request: RenderRequest
         ) -> SceneShown | OpError:
             calls.append(request)
+            installing.set()
+            await fail_install.wait()
             raise HubUnavailableError("menu install lost Lux")
 
+        async def track_refresh(
+            push: PanelPush,
+            client: LuxClient,
+            request: RenderRequest,
+            *,
+            background: bool = False,
+        ) -> None:
+            refreshing.set()
+            await refresh(push, client, request, background=background)
+
         monkeypatch.setattr(_SceneAccessor, "show", failed_install)
+        monkeypatch.setattr(PanelPush, "refresh", track_refresh)
         store.write_fields({"provider": "espeak", "voice": "af"})
         poll = asyncio.create_task(runner.reconciled())
+        click: asyncio.Task[None] | None = None
         try:
             await asyncio.wait_for(reading.wait(), timeout=5)
-            await runner.clicked()
+            click = asyncio.create_task(runner.clicked())
+            await asyncio.wait_for(installing.wait(), timeout=5)
+            release.set()
+            await asyncio.wait_for(refreshing.wait(), timeout=5)
+            assert not poll.done()
         finally:
             release.set()
+            fail_install.set()
+            if click is not None:
+                await click
             await poll
         assert service.scene().provider == "espeak"
         assert len(calls) == 1
