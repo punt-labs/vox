@@ -82,6 +82,23 @@ class TestElevenLabsSharedCatalog:
 
         assert mock_elevenlabs_client.voices.get_all.call_count == 10
 
+    def test_a_new_provider_lists_new_voices_before_shared_catalog_expiry(
+        self, monkeypatch: pytest.MonkeyPatch, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        with patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ):
+            first = ElevenLabsProvider()
+            assert first.resolve_voice("matilda") == "matilda"
+            assert "aria" not in first.list_voices()
+            mock_elevenlabs_client.voices.get_all.return_value.voices.append(
+                SimpleNamespace(name="Aria", voice_id="A" * 20)
+            )
+
+            assert "aria" in ElevenLabsProvider().list_voices()
+
     def test_eviction_preserves_an_entry_held_by_a_lookup(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

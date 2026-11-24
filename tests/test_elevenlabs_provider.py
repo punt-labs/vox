@@ -644,10 +644,10 @@ class TestElevenLabsVoiceCacheTTL:
             "punt_vox.providers.elevenlabs_client.ElevenLabs",
             return_value=mock_elevenlabs_client,
         ):
-            ElevenLabsProvider().list_voices()
+            ElevenLabsProvider().resolve_voice("matilda")
             mock_elevenlabs_client.voices.get_all.assert_called_once()
             clock.return_value += _VOICE_CACHE_TTL_S + 1
-            ElevenLabsProvider().list_voices()
+            ElevenLabsProvider().resolve_voice("matilda")
         assert mock_elevenlabs_client.voices.get_all.call_count == 2
 
     def test_new_voice_found_after_ttl_expiry(

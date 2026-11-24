@@ -23,9 +23,10 @@ _MAX_CATALOGS = 8
 class ElevenLabsCatalog:
     """Resolve names with bounded, credential-scoped catalog storage."""
 
-    __slots__ = ("_client", "_scope")
+    __slots__ = ("_client", "_local", "_scope")
     _client: ElevenLabsClient
-    _scope: bytes | ElevenLabsCatalogEntry
+    _local: ElevenLabsCatalogEntry
+    _scope: bytes | None
     _shared: ClassVar[OrderedDict[bytes, ElevenLabsCatalogEntry]] = OrderedDict()
     _shared_lock: ClassVar[Lock] = Lock()
     # An evicted entry can still coordinate lookups until its callers release it.
@@ -34,11 +35,11 @@ class ElevenLabsCatalog:
     )
 
     def __new__(cls, client: ElevenLabsClient) -> Self:
-        """Select a credential scope or keep an isolated resolver."""
+        """Capture the credential scope and create a provider-local resolver."""
         self = super().__new__(cls)
         self._client = client
-        scope = client.catalog_scope
-        self._scope = ElevenLabsCatalogEntry() if scope is None else scope
+        self._local = ElevenLabsCatalogEntry()
+        self._scope = client.catalog_scope
         return self
 
     @property
@@ -55,14 +56,13 @@ class ElevenLabsCatalog:
         )
 
     def short_names(self) -> list[str]:
-        """Return available short names without descriptions."""
-        names = self._catalog().lookup(self._client, ElevenLabsVoices.list_all)
+        """Return short names from the provider-local roster."""
+        names = self._local.lookup(self._client, ElevenLabsVoices.list_all)
         return [name for name in names if DESCRIPTION_SEPARATOR not in name]
 
     def _catalog(self) -> ElevenLabsCatalogEntry:
-        scope = self._scope
-        if isinstance(scope, ElevenLabsCatalogEntry):
-            return scope
+        if (scope := self._scope) is None:
+            return self._local
 
         with self._shared_lock:
             entry = self._live.get(scope)
