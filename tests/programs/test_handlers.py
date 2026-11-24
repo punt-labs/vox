@@ -22,12 +22,11 @@ from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.status_handler import StatusHandler
 from punt_vox.voxd.programs.stop_handler import StopHandler
-from punt_vox.voxd.programs.transport_handlers import PauseHandler, ResumeHandler
+from punt_vox.voxd.programs.transport_handler import TransportHandler
 
 from .conftest import make_service, seed_album
 
@@ -103,15 +102,98 @@ class TestMutatingHandlers:
         assert reply == {"type": "program_stop", "id": "9"}
 
     async def test_next_acks(self, tmp_path: Path) -> None:
-        reply = await _reply(NextHandler(_service(tmp_path)), {"id": "2"})
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        await service.run_once()
+        handlers = TransportHandler.handlers(service)
+        reply = await _reply(handlers["program_next"], {"id": "2"})
         assert reply == {"type": "program_next", "id": "2"}
+        await service.run_once()
+        reply = await _reply(handlers["program_prev"], {"id": "3"})
+        assert reply == {"type": "program_prev", "id": "3"}
 
-    @pytest.mark.parametrize("handler", [PauseHandler, ResumeHandler])
+    @pytest.mark.parametrize("queued_stop", [False, True])
+    async def test_next_and_prev_follow_a_queued_replay(
+        self, tmp_path: Path, queued_stop: bool
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        if queued_stop:
+            await _reply(StopHandler(service), {"id": "s"})
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        assert service.status().is_idle
+        handlers = TransportHandler.handlers(service)
+        assert await _reply(handlers["program_next"], {"id": "n"}) == {
+            "type": "program_next",
+            "id": "n",
+        }
+        assert await _reply(handlers["program_prev"], {"id": "b"}) == {
+            "type": "program_prev",
+            "id": "b",
+        }
+        async with asyncio.timeout(1):
+            if queued_stop:
+                await service.run_once()
+            await service.run_once()
+            await service.run_once()
+            advanced = service.status().now_playing
+            assert advanced is not None and advanced.index == 2
+            await service.run_once()
+        stepped_back = service.status().now_playing
+        assert stepped_back is not None and stepped_back.index == 1
+        await _reply(StopHandler(service), {"id": "s"})
+        await service.run_once()
+        assert (await _reply(handlers["program_next"], {"id": "n"}))["applied"] is False
+
+    @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
+    @pytest.mark.parametrize("initially_active", [False, True])
+    async def test_step_after_queued_start_then_stop(
+        self, tmp_path: Path, wire_type: str, initially_active: bool
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        if initially_active:
+            await _reply(SelectHandler(service), {"id": "a", "style": "trance"})
+            await service.run_once()
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        await _reply(StopHandler(service), {"id": "s"})
+        assert service.status().is_idle is not initially_active
+
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "t"})
+
+        assert reply == {
+            "type": wire_type,
+            "id": "t",
+            "applied": False,
+            "message": "Nothing playing.",
+        }
+        await service.run_once()
+        await service.run_once()
+        assert service.status().is_idle
+
+    @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
+    async def test_next_and_prev_report_nothing_playing(
+        self,
+        tmp_path: Path,
+        wire_type: str,
+    ) -> None:
+        service = _service(tmp_path)
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "2"})
+        assert reply == {
+            "type": wire_type,
+            "applied": False,
+            "message": "Nothing playing.",
+            "id": "2",
+        }
+        assert service.status().is_idle
+
+    @pytest.mark.parametrize("wire_type", ["program_pause", "program_resume"])
     @pytest.mark.parametrize("stopped_program", [False, True])
     async def test_pause_and_resume_report_nothing_playing(
         self,
         tmp_path: Path,
-        handler: type[PauseHandler] | type[ResumeHandler],
+        wire_type: str,
         stopped_program: bool,
     ) -> None:
         service = _service(tmp_path)
@@ -120,9 +202,9 @@ class TestMutatingHandlers:
             await service.run_once()
             service.stop()
             await service.run_once()
-        reply = await _reply(handler(service), {"id": "2"})
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "2"})
         assert reply == {
-            "type": f"program_{handler.__name__.removesuffix('Handler').lower()}",
+            "type": wire_type,
             "applied": False,
             "message": "Nothing playing.",
             "id": "2",
@@ -298,7 +380,7 @@ class _RaisingHandler(ProgramCommandHandler):
 
     __slots__ = ("_error",)
     _error: Exception
-    _WIRE_TYPE = "program_probe"
+    _wire_type = "program_probe"
 
     def __new__(cls, error: Exception) -> Self:
         self = super().__new__(cls, cast("ProgramService", None))

@@ -154,9 +154,9 @@ class TestRejectedInterruptDoesNotFire:
     """
 
     async def test_prev_on_a_program_is_rejected_without_interrupting(
-        self, policy: PlaybackPolicy
+        self, make_rotating: RotatingFactory, policy: PlaybackPolicy
     ) -> None:
-        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel = ControlChannel(make_rotating(policy))
         channel.interrupt.clear()
         channel.post(StepBack())  # prev has no meaning on a generate Program
         await channel.apply_next()

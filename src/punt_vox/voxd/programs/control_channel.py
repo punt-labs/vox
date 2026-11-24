@@ -26,16 +26,15 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.types_programs.mode import Mode
-from punt_vox.voxd.programs.control_signal import ControlSignal
+from punt_vox.voxd.programs.control_queue import ControlQueue
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode_transition_log import ModeTransitionLog
-from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.voxd.programs.change_signal import ChangeSignal
+    from punt_vox.voxd.programs.control_signal import ControlSignal
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
     from punt_vox.voxd.programs.playback_source import PlaybackSource
 
@@ -64,7 +63,7 @@ class ControlChannel:
         "_source",
     )
     _source: PlaybackSource
-    _queue: asyncio.Queue[ControlSignal]
+    _queue: ControlQueue
     _changed: asyncio.Event
     _interrupt: asyncio.Event
     _reconciler: FillReconciler | None
@@ -75,7 +74,7 @@ class ControlChannel:
         """Create a control channel."""
         self = super().__new__(cls)
         self._source = source
-        self._queue = asyncio.Queue()
+        self._queue = ControlQueue()
         self._changed = asyncio.Event()
         self._interrupt = asyncio.Event()
         self._reconciler = None
@@ -104,8 +103,7 @@ class ControlChannel:
         emit a change, and return True. This changes suspension, not the
         source cursor, so no control signal is enqueued.
         """
-        source = self._source
-        if isinstance(source, Program) and source.mode is Mode.OFF:
+        if self._queue.is_off(self._source):
             return False
         action()
         self._emit_change()
@@ -131,9 +129,9 @@ class ControlChannel:
         """Return the event set when an interrupting command is applied."""
         return self._interrupt
 
-    def post(self, signal: ControlSignal) -> None:
-        """Enqueue a command for the single consumer to apply."""
-        self._queue.put_nowait(signal)
+    def post(self, signal: ControlSignal) -> bool:
+        """Enqueue a command, or refuse a user step if the queue tail is off."""
+        return self._queue.post(self._source, signal)
 
     async def serve(self) -> None:
         """Drain and apply commands forever -- the sole writer to the source."""

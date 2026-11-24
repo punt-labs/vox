@@ -73,10 +73,10 @@ class _FakeService:
     def stop(self) -> None:
         self.stops += 1
 
-    def advance(self) -> None:  # pragma: no cover - unused here
+    def advance(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def prev(self) -> None:  # pragma: no cover - unused here
+    def prev(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
     def pause(self) -> bool:  # pragma: no cover - unused here
@@ -111,10 +111,10 @@ class _FlakyService:
     def stop(self) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def advance(self) -> None:  # pragma: no cover - unused here
+    def advance(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def prev(self) -> None:  # pragma: no cover - unused here
+    def prev(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
     def pause(self) -> bool:  # pragma: no cover - unused here
