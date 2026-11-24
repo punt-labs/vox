@@ -272,6 +272,23 @@ class ConfigStore:
         store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
         store.write_fields({key: value}, check=check)
 
+    def update_field(
+        self,
+        key: str,
+        transform: Callable[[str | None], str],
+        *,
+        # Most field updates have no precondition; check only when supplied.
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> str:
+        """Replace *key* with ``transform(current)`` under the file's lock.
+
+        One locked read-modify-write: a concurrent writer waits rather than
+        being overwritten. Returns the stored value.
+        """
+        self._reject_unknown(key)
+        store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
+        return store.update_field(key, transform, check=check)
+
     def write_fields(self, updates: dict[str, str]) -> None:
         """Write multiple config fields, routing each to the correct file."""
         for key, value in updates.items():

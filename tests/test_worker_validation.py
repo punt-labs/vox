@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -420,3 +422,45 @@ def test_allow_refuses_an_unfenced_file_that_already_holds_the_field(
     ):
         policy.allow(str(repo))
     assert path.read_bytes() == unfenced.encode()
+
+
+def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None:
+    """An allow that lands between our read and write waits; nothing is lost."""
+    config = ConfigStore(tmp_path / "config")
+    config.write_field("worker_repos", "['/a']")
+    policy = WorkerRepoPolicy(config)
+    repo_a, repo_b = tmp_path / "a", tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    started: list[threading.Thread] = []
+    done = threading.Event()
+    real_eval = ast.literal_eval
+
+    def rival() -> None:
+        with patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo_b.resolve()),
+        ):
+            WorkerRepoPolicy(config).allow(str(repo_b))
+        done.set()
+
+    def eval_then_race(raw: str) -> object:
+        # Only the first read starts the rival; its own read passes through.
+        if not started:
+            started.append(threading.Thread(target=rival))
+            started[0].start()
+            done.wait(2)
+        return real_eval(raw)
+
+    with (
+        patch("punt_vox.voxd.workers.allowlist.ast.literal_eval", eval_then_race),
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo_a.resolve()),
+        ),
+    ):
+        policy.allow(str(repo_a))
+    started[0].join(10)
+    assert policy.repos() == tuple(
+        sorted(("/a", str(repo_a.resolve()), str(repo_b.resolve())))
+    )

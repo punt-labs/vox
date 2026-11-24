@@ -63,7 +63,7 @@ class WorkerRepoPolicy:
             raise ValueError(f"not a directory: {path}")
         if self._top_level(path) != path:
             raise ValueError(f"not a git repository top level: {path}")
-        return self._allowlist.save(self._allowlist.paths() | {path})
+        return self._allowlist.edit(lambda allowed: allowed | {path})
 
     def disallow(self, project: str) -> tuple[str, ...]:
         """Remove a repository from the allowlist and return the new list.
@@ -72,10 +72,13 @@ class WorkerRepoPolicy:
             ValueError: If the resolved path is not allowlisted.
         """
         path = RepoAllowlist.entry(project)
-        allowed = self._allowlist.paths()
-        if path not in allowed:
-            raise ValueError(f"not allowlisted: {path}")
-        return self._allowlist.save(allowed - {path})
+
+        def remove(allowed: set[Path]) -> set[Path]:
+            if path not in allowed:
+                raise ValueError(f"not allowlisted: {path}")
+            return allowed - {path}
+
+        return self._allowlist.edit(remove)
 
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""

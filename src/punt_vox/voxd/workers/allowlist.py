@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.config import ConfigStore
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _FIELD = "worker_repos"
 _SHAPE = "worker_repos must be a list of repository paths"
@@ -36,9 +39,46 @@ class RepoAllowlist:
             OSError: If the config file exists but cannot be read.
             UnicodeDecodeError: If the config file is not UTF-8.
         """
-        raw = self._config.read_field(_FIELD, strict=True) or "[]"
+        return {
+            self.entry(p)
+            for p in self._parse(self._config.read_field(_FIELD, strict=True))
+        }
+
+    def edit(self, change: Callable[[set[Path]], set[Path]]) -> tuple[str, ...]:
+        """Replace the allowlist with ``change(current)`` under the file's lock.
+
+        One locked read-modify-write: a writer that lands between the read
+        and the write waits, so no entry is lost. Returns the stored paths,
+        sorted. A malformed config file is refused, never rebuilt around
+        this field.
+
+        Raises:
+            ValueError: If the stored field is malformed, *change* refuses,
+                or the file has no closing fence to hold the field.
+            OSError: If the file cannot be read or written.
+            UnicodeDecodeError: If the config file is not UTF-8.
+        """
+        stored: list[str] = []
+
+        def transform(raw: str | None) -> str:
+            current = {self.entry(p) for p in self._parse(raw)}
+            stored.extend(sorted(str(path) for path in change(current)))
+            return self._literal(tuple(stored))
+
+        # A checked write never rebuilds a malformed file around this field;
+        # the policy itself has no precondition, so the check is a no-op.
+        self._config.update_field(_FIELD, transform, check=lambda _fields: None)
+        return tuple(stored)
+
+    @staticmethod
+    def _parse(raw: str | None) -> list[str]:
+        """Return the stored strings of *raw*, an absent field reading as empty.
+
+        Raises:
+            ValueError: If *raw* is not a Python list literal of strings.
+        """
         try:
-            repos: object = ast.literal_eval(raw)
+            repos: object = ast.literal_eval(raw or "[]")
         except (ValueError, SyntaxError) as exc:
             raise ValueError(_SHAPE) from exc
         if not isinstance(repos, list):
@@ -46,7 +86,7 @@ class RepoAllowlist:
         items = cast("list[object]", repos)
         if not all(isinstance(p, str) for p in items):
             raise ValueError(_SHAPE)
-        return {self.entry(str(p)) for p in items}
+        return [str(p) for p in items]
 
     @staticmethod
     def entry(raw: str) -> Path:
@@ -68,29 +108,13 @@ class RepoAllowlist:
             raise ValueError(f"worker_repos entry the filesystem root: {raw!r}")
         return path
 
-    def save(self, paths: set[Path]) -> tuple[str, ...]:
-        """Write *paths* sorted and return them as strings.
-
-        Each entry is a single-quoted Python literal, so the stored text never
-        holds a double quote (the frontmatter refuses one) and ``literal_eval``
-        reads an apostrophe back unchanged.
-
-        A malformed config file is refused, never rebuilt around this field.
-
-        Raises:
-            ValueError: If the file has no closing fence to hold the field.
-            OSError: If the file cannot be read or written.
-        """
-        repos = tuple(sorted(str(path) for path in paths))
-        # A checked write never rebuilds a malformed file around this field;
-        # the policy itself has no precondition, so the check is a no-op.
-        self._config.write_field(
-            _FIELD, self._literal(repos), check=lambda fields: None
-        )
-        return repos
-
     @staticmethod
     def _literal(repos: tuple[str, ...]) -> str:
+        """Render *repos* as single-quoted Python literals.
+
+        The stored text never holds a double quote (the frontmatter refuses
+        one) and ``literal_eval`` reads an apostrophe back unchanged.
+        """
         quoted = (
             "'" + repo.replace("\\", "\\\\").replace("'", "\\'") + "'" for repo in repos
         )
