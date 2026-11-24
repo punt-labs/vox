@@ -34,6 +34,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
 from punt_vox.types_cli_options import (
+    BATCH_JSON_LINES_EPILOG,
     FromOpt,
     JsonOutput,
     LanguageOpt,
@@ -194,22 +195,6 @@ class RecCli:
         silently replaces the earlier take, even if synthesis settings change.
         Pass a different --name for each take to keep them separate.
         --name only works for a single text segment.
-
-        With --from and --json, stdout is JSON Lines: one JSON object per
-        successful segment, in input order. If the daemon rejects a segment or
-        the connection fails during processing, Vox writes a final
-        {"error": "..."} line and exits nonzero. Earlier lines remain; later
-        segments are skipped.
-
-        Save stdout and check Vox's exit status separately from jq:
-
-        status=0
-
-        vox rec new --from segments.json --json > out.jsonl || status=$?
-
-        jq -c . out.jsonl
-
-        echo "Vox exit status: $status" >&2
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         segments, spec = self._synthesis.prepare(
@@ -336,7 +321,7 @@ def build_rec_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer
         help="Author and manage stored recordings.",
         no_args_is_help=True,
     )
-    app.command("new")(cli.new)
+    app.command("new", epilog=BATCH_JSON_LINES_EPILOG % "rec new")(cli.new)
     app.command("list")(cli.list_recordings)
     app.command("play")(cli.play)
     app.command("get")(cli.get)

@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 __all__ = [
+    "BATCH_JSON_LINES_EPILOG",
     "FromOpt",
     "JsonOutput",
     "LanguageOpt",
@@ -77,3 +78,22 @@ VoiceOpt = Annotated[
     str | None,
     typer.Option("--voice", help="vox.md voice for its provider, or provider default."),
 ]
+
+
+_BATCH_JSON_LINES_CONTRACT = """\
+With --from and --json, stdout is JSON Lines: one JSON object per successful
+segment, in input order. If the daemon rejects a segment or the connection
+fails during processing, Vox writes a final {"error": "..."} line and exits
+nonzero. Earlier lines remain; later segments are skipped."""
+
+BATCH_JSON_LINES_EPILOG = (
+    _BATCH_JSON_LINES_CONTRACT
+    + """
+
+Save stdout and check Vox's exit status separately from jq:
+
+status=0
+vox %s --from segments.json --json > out.jsonl || status=$?
+jq -c . out.jsonl
+echo "Vox exit status: $status" >&2"""
+)
