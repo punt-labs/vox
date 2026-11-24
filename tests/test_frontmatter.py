@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
+import io
 import logging
 import multiprocessing
 import os
 import time
 from multiprocessing.synchronize import Event
 from pathlib import Path
+from typing import IO
 from unittest.mock import patch
 
 import pytest
 
+from punt_vox.config_file import ConfigFile
 from punt_vox.frontmatter import Frontmatter
 from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.sibling_lock import SiblingLock
@@ -147,7 +151,7 @@ class TestRead:
         path = tmp_path / "vox.md"
         path.write_text('---\nvoice: "charlie"\n---\n')
         monkeypatch.setattr(Path, "read_text", _boom)
-        with caplog.at_level(logging.WARNING, logger="punt_vox.frontmatter"):
+        with caplog.at_level(logging.WARNING, logger="punt_vox.config_file"):
             assert Frontmatter(path).read_fields() == {}
         messages = [r.getMessage() for r in caplog.records]
         assert any("unreadable" in m and str(path) in m for m in messages)
@@ -161,7 +165,7 @@ class TestRead:
         path = tmp_path / "vox.md"
         path.write_text('---\nvoice: "charlie"\n---\n')
         monkeypatch.setattr(Path, "read_text", _boom)
-        with caplog.at_level(logging.WARNING, logger="punt_vox.frontmatter"):
+        with caplog.at_level(logging.WARNING, logger="punt_vox.config_file"):
             assert Frontmatter(path).read_field("voice") is None
         assert any(str(path) in r.getMessage() for r in caplog.records)
 
@@ -175,6 +179,50 @@ class TestWrite:
         with pytest.raises(PermissionError):
             Frontmatter(path).write_field("voice", "fin")
         assert path.read_text() == original
+        assert list(tmp_path.iterdir()) == [path]
+
+    def test_a_short_write_leaves_the_original_bytes_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Running out of space mid-write never truncates the live config.
+
+        The write lands on a sibling temp file and is renamed over the
+        config only once it is complete, so a disk-full failure leaves every
+        setting the file held and the error reaches the caller.
+        """
+        path = tmp_path / "vox.md"
+        original = '---\nvoice: "initial"\nprovider: "polly"\n---\n'
+        path.write_text(original, encoding="utf-8")
+        real_open = io.open
+
+        class ShortWrite(io.TextIOWrapper):
+            """A text handle whose first write runs out of space."""
+
+            def write(self, _text: str, /) -> int:
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+        # The signature ``Path.open`` and ``os.fdopen`` both call ``io.open``
+        # with, so the stand-in sits under the old in-place write and the
+        # replacement alike; ``None`` is each keyword's own default.
+        def open_then_fail(
+            file: str | Path | int,
+            mode: str,
+            buffering: int,
+            encoding: str | None,
+            errors: str | None = None,
+            newline: str | None = None,
+        ) -> IO[str]:
+            if "w" not in mode:
+                return real_open(file, mode, buffering, encoding, errors, newline)
+            binary = real_open(file, "wb", buffering)
+            return ShortWrite(binary, encoding, errors, newline)
+
+        monkeypatch.setattr(io, "open", open_then_fail)
+        with pytest.raises(OSError, match="No space left") as failed:
+            Frontmatter(path).write_field("voice", "fin")
+        assert failed.value.errno == errno.ENOSPC
+        assert path.read_text(encoding="utf-8") == original
+        assert sorted(tmp_path.iterdir()) == [path]
 
     def test_checked_write_refuses_an_unfenced_file_as_a_format_fault(
         self, tmp_path: Path
@@ -201,7 +249,7 @@ class TestWrite:
         original = '---\nvoice: "initial"\n---\n'
         path.write_text(original)
         with monkeypatch.context() as scoped:
-            scoped.setattr(Path, "write_text", _boom)
+            scoped.setattr(ConfigFile, "replace", _boom)
             with pytest.raises(PermissionError):
                 Frontmatter(path).write_field("provider", "polly")
         assert path.read_text() == original
@@ -244,17 +292,27 @@ class TestWrite:
         assert list(first.path.parent.iterdir()) == [first.path]
         assert list(second.path.parent.iterdir()) == [second.path]
 
-    def test_writable_file_in_read_only_directory(self, tmp_path: Path) -> None:
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root writes a mode-555 dir")
+    def test_read_only_directory_refuses_the_write_and_keeps_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        """The replacement lands by rename, which needs the directory.
+
+        A writable file in a directory the user locked is refused whole, the
+        same answer as any other unwritable location, and nothing is left
+        behind in the directory.
+        """
         directory = tmp_path / "config"
         directory.mkdir()
         path = directory / "vox.md"
-        path.write_text('---\nvoice: "initial"\n---\n')
-        inode = path.stat().st_ino
+        original = '---\nvoice: "initial"\n---\n'
+        path.write_text(original)
         directory.chmod(0o555)
         try:
-            Frontmatter(path).write_field("voice", "fin")
-            assert path.stat().st_ino == inode
-            assert Frontmatter(path).read_field("voice") == "fin"
+            with pytest.raises(PermissionError):
+                Frontmatter(path).write_field("voice", "fin")
+            assert path.read_text() == original
+            assert list(directory.iterdir()) == [path]
         finally:
             directory.chmod(0o755)
 
@@ -325,16 +383,16 @@ class TestWrite:
         # read must come before the lock-file test, not after it.
         path = tmp_path / ".punt-labs" / "vox" / "vox.md"
         lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
-        read_block = Frontmatter._read_block
+        read_block = ConfigFile.block
 
         def read_while_a_writer_starts(
-            fm: Frontmatter,
+            file: ConfigFile,
         ) -> FrontmatterBlock | None:  # None: no config file.
             lock.parent.mkdir(parents=True, exist_ok=True)
             lock.touch()
-            return read_block(fm)
+            return read_block(file)
 
-        monkeypatch.setattr(Frontmatter, "_read_block", read_while_a_writer_starts)
+        monkeypatch.setattr(ConfigFile, "block", read_while_a_writer_starts)
         seen: list[dict[str, str]] = []
 
         Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
