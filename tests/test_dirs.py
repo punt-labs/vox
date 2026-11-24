@@ -214,9 +214,14 @@ class TestWritableConfigDir:
         assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
 
     @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory"])
+    @pytest.mark.parametrize("inherited", [False, True], ids=["fresh", "inherited"])
     def test_first_write_refuses_a_destination_outside_the_checkout(
-        self, no_config_dir: Path, entry: str
+        self, no_config_dir: Path, entry: str, *, inherited: bool
     ) -> None:
+        if inherited:
+            workspace_config = no_config_dir / DEFAULT_CONFIG_DIR
+            workspace_config.mkdir(parents=True)
+            (workspace_config / "vox.md").write_text("---\nnotify: n\n---\n")
         repo = no_config_dir / "repo"
         child = repo / "src"
         child.mkdir(parents=True)
@@ -225,6 +230,7 @@ class TestWritableConfigDir:
         outside = no_config_dir / "outside"
         if entry == "directory":
             config.parent.mkdir()
+            outside.mkdir()
             config.symlink_to(outside, target_is_directory=True)
         else:
             config.mkdir(parents=True)
@@ -232,7 +238,10 @@ class TestWritableConfigDir:
 
         with pytest.raises(OSError, match="outside the Git checkout"):
             writable_config_dir(child)
-        assert not outside.exists()
+        if entry == "directory":
+            assert not list(outside.iterdir())
+        else:
+            assert not outside.exists()
 
     def test_no_config_or_repo(self, tmp_path: Path) -> None:
         with (

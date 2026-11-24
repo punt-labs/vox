@@ -28,19 +28,18 @@ class RepoConfigTarget:
         return self
 
     def prepare(self, inherited: Path | None) -> Path:
-        """Seed inherited settings or verify a fresh destination stays in Git.
+        """Verify the new destination stays in Git, then seed if needed.
 
         Raises:
-            PermissionError: A fresh destination resolves outside the checkout.
+            PermissionError: The destination resolves outside the checkout.
         """
+        self._check_contained()
         own = self._root / DEFAULT_CONFIG_DIR
-        if inherited is None:
-            self._check_fresh_target()
-        else:
+        if inherited is not None:
             InheritedConfig(inherited).seed(self._root, own)
         return own
 
-    def _check_fresh_target(self) -> None:
+    def _check_contained(self) -> None:
         """Reject paths that resolve outside the checkout, even if absent."""
         for relative in (DEFAULT_CONFIG_DIR, *CONFIG_PATHS):
             path = self._root / relative

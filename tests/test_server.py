@@ -155,10 +155,8 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     ``vox.md`` or ``vox.local.md`` inside tmp_path.
     """
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     return tmp_path
 
 
@@ -1900,11 +1898,9 @@ class TestStatusProviderStatus:
 def _refresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # pyright: ignore[reportUnusedFunction]
     """Patch _find_config_dir and DEFAULT_CONFIG_DIR for refresh tests."""
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
     import punt_vox.server as srv
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(srv, "_find_config_dir", lambda: tmp_path)
     return tmp_path
 
