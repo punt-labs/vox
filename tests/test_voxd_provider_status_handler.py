@@ -11,8 +11,7 @@ drift between the wire shape and the client's decoder surfaces here.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.providers.live_check import LiveCheck
@@ -172,14 +171,19 @@ def _live_check_rejecting(name: str) -> LiveCheck:
     """Return a :class:`LiveCheck` whose provider *name* rejects its key."""
 
     @final
-    @dataclass(frozen=True, slots=True)
     class _Provider:
-        provider: str
+        __slots__ = ("_provider",)
+        _provider: str
+
+        def __new__(cls, provider: str) -> Self:
+            self = super().__new__(cls)
+            self._provider = provider
+            return self
 
         def check_health(self) -> list[HealthCheck]:
-            if self.provider == name:
+            if self._provider == name:
                 return [HealthCheck(passed=False, message=f"{name}: key rejected")]
-            return [HealthCheck(passed=True, message=f"{self.provider}: ok")]
+            return [HealthCheck(passed=True, message=f"{self._provider}: ok")]
 
     def build(provider: str) -> TTSProvider:
         return cast("TTSProvider", _Provider(provider))
