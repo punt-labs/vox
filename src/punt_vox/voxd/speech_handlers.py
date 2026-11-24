@@ -250,7 +250,7 @@ class SynthesizeHandler(MessageHandler):
             hit.original_played_at,
             hit.ttl_seconds_remaining,
         )
-        await req.reply(
+        await SpeechReply(req.websocket, req.request_id).send(
             {
                 "type": "done",
                 "deduped": True,

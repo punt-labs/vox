@@ -480,6 +480,7 @@ class TestHandleSynthesizeOnceFlag:
             "text": "wall msg",
             "provider": "elevenlabs",
             "once": 600,
+            "rate": 120,
         }
         await handler(msg2, ws)
 
@@ -492,6 +493,7 @@ class TestHandleSynthesizeOnceFlag:
         deduped = deduped_msgs[0]
         assert deduped["id"] == "b"
         assert deduped["type"] == "done"
+        assert "warning" not in deduped
         assert "original_played_at" in deduped
         assert "ttl_seconds_remaining" in deduped
         assert deduped["ttl_seconds_remaining"] > 0
