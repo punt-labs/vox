@@ -71,7 +71,7 @@ class WebSocketSession:
         handler = self._handlers.get(kind)
         if handler is None:
             await self._error(f"unknown message type: {kind}", str(msg.get("id", "")))
-        elif kind in {"fetch", "rec_list"}:
+        elif kind in {"fetch", "program_list", "rec_list"}:
             await self._stream(handler, msg)
         else:
             await handler(msg, self._socket)
