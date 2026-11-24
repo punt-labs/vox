@@ -377,12 +377,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/cli_rec.py": {
-    "method_ratio": 0.962,
+    "method_ratio": 0.958,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.27,
+    "avg_params": 2.38,
     "max_complexity": 4.0,
-    "avg_complexity": 1.73,
-    "module_size": 295.0,
+    "avg_complexity": 1.71,
+    "module_size": 274.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 0.667,
     "init_violations": 0.0,
