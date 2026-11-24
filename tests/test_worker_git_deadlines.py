@@ -188,3 +188,44 @@ def test_discard_failure_logs_the_command_and_scrubbed_stderr(
         "CalledProcessError: git -C <path> worktree remove --force <path>: "
         "fatal: <path> hint: is it locked?"
     )
+
+
+def test_worktree_create_timeout_logs_its_elapsed_time(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    repo = tmp_path / "shiny-repo"
+    repo.mkdir()
+    with (
+        caplog.at_level(logging.INFO, logger="punt_vox.voxd.workers.worktrees"),
+        patch(
+            "punt_vox.voxd.workers.worktrees.time.monotonic", side_effect=[0.0, 90.0]
+        ),
+        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["git"], 90)),
+        pytest.raises(ValueError, match="timed out creating the worktree after 90 s"),
+    ):
+        WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
+    assert any(
+        r.getMessage() == "Worker worktree for shiny-repo timed out after 90.0 s"
+        for r in caplog.records
+    )
+
+
+def test_worktree_create_git_failure_logs_its_elapsed_time(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    repo = tmp_path / "shiny-repo"
+    repo.mkdir()
+    with (
+        caplog.at_level(logging.INFO, logger="punt_vox.voxd.workers.worktrees"),
+        patch("punt_vox.voxd.workers.worktrees.time.monotonic", side_effect=[0.0, 2.5]),
+        patch(
+            "subprocess.run",
+            side_effect=subprocess.CalledProcessError(128, ["git"], stderr="fatal"),
+        ),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
+    assert any(
+        r.getMessage() == "Worker worktree for shiny-repo failed in 2.5 s"
+        for r in caplog.records
+    )

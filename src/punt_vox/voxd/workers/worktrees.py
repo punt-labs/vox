@@ -30,7 +30,11 @@ class WorkerWorktrees:
     __slots__ = ()
 
     def create(self, project: Path, worktree: Path, branch: str) -> None:
-        """Keep the source checkout untouched and retain the new branch."""
+        """Keep the source checkout untouched and retain the new branch.
+
+        The elapsed time is logged on every exit, so a slow repository shows
+        up whether git finished, failed, or ran past the deadline.
+        """
         started = time.monotonic()
         try:
             subprocess.run(
@@ -50,13 +54,22 @@ class WorkerWorktrees:
                 timeout=self.CREATE_DEADLINE,
             )
         except subprocess.TimeoutExpired as exc:
+            self._timed(project, started, "timed out after")
             raise ValueError(
                 "worker start timed out creating the worktree after "
                 f"{self.CREATE_DEADLINE} s"
             ) from exc
+        except subprocess.CalledProcessError:
+            self._timed(project, started, "failed in")
+            raise
+        self._timed(project, started, "created in")
+
+    @staticmethod
+    def _timed(project: Path, started: float, outcome: str) -> None:
         logger.info(
-            "Worker worktree for %s created in %.1f s",
+            "Worker worktree for %s %s %.1f s",
             project.name,
+            outcome,
             time.monotonic() - started,
         )
 
