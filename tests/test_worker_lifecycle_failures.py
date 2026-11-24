@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -228,3 +229,34 @@ def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
     assert record.last_report["launch_error"] == "OSError"
     assert record.last_report["discard_error"] == "OSError"
     assert "worktree_discarded" not in record.last_report
+
+
+class _StopRefusingProvider(FakeWorkerProvider):
+    """A provider whose launch fails and whose pane then refuses to stop."""
+
+    def stop(self, handle: str) -> None:
+        raise RuntimeError("tmux kill-session refused")
+
+
+def test_failed_stop_keeps_the_worktree_and_says_why(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pane that may still be live keeps its checkout; the record says so."""
+    provider = _StopRefusingProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    registry = _registry(tmp_path, provider, worktrees)
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
+        pytest.raises(OSError, match="launch failed"),
+    ):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    record = registry.list()[0]
+    worktrees.discard.assert_not_called()
+    assert record.state == "starting"
+    assert record.last_report["stop_error"] == "RuntimeError"
+    assert record.last_report["discard_skipped"] == "provider stop failed"
+    assert "worktree_discarded" not in record.last_report
+    assert any(
+        "worktree kept: provider stop failed" in r.getMessage() for r in caplog.records
+    )
