@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep the daemon responsive to other requests while it hashes a large store
   file before sending it. (PL-1430)
 
+- `vox say --provider <other>` without `--voice` now uses that provider's
+  default voice instead of failing with `VoiceNotFoundError` on the saved
+  voice of the configured provider. (PL-799)
+
 - `vox doctor` probes the output dir with a private, uniquely created
   temporary file, so it no longer overwrites or deletes an existing
   `.doctor_test` file or writes through a symlink of that name. (PL-1431)
