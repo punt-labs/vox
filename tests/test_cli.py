@@ -103,9 +103,11 @@ class TestSayCommand:
         tmp_path: Path,
     ) -> None:
         say_call = say_client.return_value.synthesize
-        say_call.return_value = SynthesizeResult(request_id="abc123")
+        say_call.side_effect = lambda *_, **_kwargs: SynthesizeResult(
+            request_id="abc123"
+        )
         rec_call = rec_client.return_value.record
-        rec_call.return_value = RecordResult(
+        rec_call.side_effect = lambda *_, **_kwargs: RecordResult(
             "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
         )
         source = tmp_path / "segments.json"
