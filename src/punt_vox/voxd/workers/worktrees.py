@@ -90,6 +90,10 @@ class WorkerWorktrees:
         A launch that failed left nothing of value, unlike a stop. The path
         must be the inventory's ``<worker-id>/worktree`` and the branch is
         derived from the id, so no other checkout or branch can be removed.
+        ``git worktree remove --force`` unregisters this worker's entry whether
+        or not its directory still exists; the repository is never pruned,
+        since that would drop another checkout whose directory is away for a
+        moment.
         """
         owner = str(UUID(worker_id))
         if worktree.name != _WORKTREE_LEAF or worktree.parent.name != owner:
@@ -98,7 +102,6 @@ class WorkerWorktrees:
             self._git(project, "worktree", "remove", "--force", str(worktree))
         if worktree.exists():
             shutil.rmtree(worktree)
-        self._git(project, "worktree", "prune")
         branch = f"vox-worker/{owner}"
         if self._has_branch(project, branch):
             self._git(project, "branch", "-D", branch)

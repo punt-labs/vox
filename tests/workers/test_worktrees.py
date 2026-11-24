@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 from uuid import uuid4
@@ -93,3 +94,43 @@ def test_discard_refuses_a_path_that_is_not_the_workers_own_worktree(
 def test_discard_refuses_a_malformed_worker_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         WorkerWorktrees().discard(tmp_path, tmp_path / "main" / "worktree", "main")
+
+
+def _worktree_listing(repo: Path) -> str:
+    return _git(repo, "worktree", "list", "--porcelain")
+
+
+def _is_listed(repo: Path, worktree: Path) -> bool:
+    listing = _worktree_listing(repo)
+    return any(
+        f"worktree {path}\n" in listing + "\n"
+        for path in (worktree, worktree.resolve())
+    )
+
+
+def test_discard_leaves_a_missing_sibling_worktree_registered(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Discard never prunes the repository: another checkout whose directory is
+    away for a moment (a mount, a move) keeps its registration."""
+    mine, other = str(uuid4()), str(uuid4())
+    my_tree = tmp_path / "workers" / mine / "worktree"
+    other_tree = tmp_path / "workers" / other / "worktree"
+    WorkerWorktrees().create(repo, my_tree, f"vox-worker/{mine}")
+    WorkerWorktrees().create(repo, other_tree, f"vox-worker/{other}")
+    shutil.rmtree(other_tree)
+    WorkerWorktrees().discard(repo, my_tree, mine)
+    assert not _is_listed(repo, my_tree)
+    assert _is_listed(repo, other_tree)
+
+
+def test_discard_unregisters_its_own_worktree_whose_directory_is_gone(
+    repo: Path, tmp_path: Path
+) -> None:
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    WorkerWorktrees().create(repo, worktree, f"vox-worker/{worker_id}")
+    shutil.rmtree(worktree)
+    WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert not _is_listed(repo, worktree)
+    assert _git(repo, "branch", "--list", f"vox-worker/{worker_id}") == ""
