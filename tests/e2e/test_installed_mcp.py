@@ -300,7 +300,17 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
     )
     desktop = home / ".config" / "Claude" / "claude_desktop_config.json"
     entry = json.loads(desktop.read_text(encoding="utf-8"))["mcpServers"]["vox"]
+    command = cast("str", entry["command"])
     args = cast("list[str]", entry["args"])
+    assert command == uvx
+    assert args == [
+        "--directory",
+        str(desktop.parent / "vox"),
+        "--from",
+        "punt-vox",
+        "vox",
+        "mcp",
+    ]
     env.update(cast("dict[str, str]", entry["env"]))
     daemon = subprocess.Popen(
         [binary.with_name("voxd"), "--port", "0"], cwd=home, env=env
@@ -311,9 +321,7 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
             while not port.exists():
                 assert daemon.poll() is None, "voxd exited before binding a port"
                 await asyncio.sleep(0.05)
-            params = _desktop_stdio(
-                binary, cast("str", entry["command"]), args, env, first
-            )
+            params = _desktop_stdio(binary, command, args, env, first)
             async with (
                 stdio_client(params) as (rx, tx),
                 ClientSession(rx, tx) as client,
