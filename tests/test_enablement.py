@@ -446,6 +446,7 @@ class _RaisingStore(ConfigStore):
         key: str,
         value: str,
         *,
+        # Match the base method, whose plain writes have no precondition.
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
         _ = (key, value, check)

@@ -260,6 +260,7 @@ class ConfigStore:
         key: str,
         value: str,
         *,
+        # Most field writes have no precondition; check only when supplied.
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
         """Write one field, optionally checking that file under its write lock."""

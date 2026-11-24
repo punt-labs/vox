@@ -69,6 +69,7 @@ class Frontmatter:
         self,
         updates: dict[str, str],
         *,
+        # A plain update has no precondition; checked writes opt in.
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
         """Write multiple key-value pairs in a single read-write cycle.
@@ -96,7 +97,7 @@ class Frontmatter:
     def _write_fields(
         self,
         updates: dict[str, str],
-        check: Callable[[dict[str, str]], None] | None,
+        check: Callable[[dict[str, str]], None] | None,  # None for plain updates.
     ) -> None:
         """Read and write the config while holding its local-state lock."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +121,7 @@ class Frontmatter:
         self,
         block: FrontmatterBlock,
         updates: dict[str, str],
-        check: Callable[[dict[str, str]], None] | None,
+        check: Callable[[dict[str, str]], None] | None,  # Only plain writes can repair.
     ) -> FrontmatterBlock:
         if check is not None:
             check(block.fields())
