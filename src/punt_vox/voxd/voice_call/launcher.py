@@ -155,15 +155,22 @@ class CallLauncher:
         already carries the failure; this is the one log line for it, and
         reading the exception here keeps a task nobody awaits from reporting
         "exception was never retrieved" when it is collected.
+
+        The trace stream closes whatever else fails here: nothing holds it
+        after this callback, so a close skipped by a raising input close (a
+        device that vanished) would leak the file handle for the daemon's
+        life. The failure itself still propagates to asyncio's handler.
         """
-        if task.cancelled():
-            if call.outcome().state == "connecting":
-                with CallLog(trace.path, call.outcome):
-                    call.mark_ended()
-                    audio.close()
-        elif (exc := task.exception()) is not None:
-            logger.warning("Call task ended with %s", LogText.failure(exc))
-        trace.stream.close()
+        try:
+            if task.cancelled():
+                if call.outcome().state == "connecting":
+                    with CallLog(trace.path, call.outcome):
+                        call.mark_ended()
+                        audio.close()
+            elif (exc := task.exception()) is not None:
+                logger.warning("Call task ended with %s", LogText.failure(exc))
+        finally:
+            trace.stream.close()
 
     async def teardown(self) -> None:
         """Delete the agent registration once outstanding operations settle."""

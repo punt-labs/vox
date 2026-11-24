@@ -30,6 +30,7 @@ from punt_vox.voxd.voice_agent.events import Metadata
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
+from punt_vox.voxd.voice_call.call_trace import CallTrace
 from punt_vox.voxd.voice_call.launcher import CallLauncher
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
@@ -39,6 +40,7 @@ from .fakes import FakePlayback, FakeWorkers
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
     from contextlib import AbstractContextManager
+    from uuid import UUID
 
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
@@ -743,3 +745,34 @@ class TestCancelBeforeFirstStep:
         await asyncio.sleep(0)  # the task takes its first step
         await active.cancel()
         assert exits == [1]
+
+    async def test_the_trace_stream_is_closed_when_the_input_close_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A device that vanished raises from close; the trace file still closes.
+
+        The trace stream outlives the daemon otherwise: nothing else holds
+        it once the task is done.
+        """
+        reserved: list[CallTrace] = []
+        reserve = CallTrace.reserve
+
+        def record(directory: Path, call_id: UUID) -> CallTrace:
+            trace = reserve(directory, call_id)
+            reserved.append(trace)
+            return trace
+
+        monkeypatch.setattr(CallTrace, "reserve", record)
+
+        def vanish(_stream: FakeInputStream, *_exc_info: object) -> None:
+            raise OSError("Error closing stream: Device unavailable")
+
+        monkeypatch.setattr(FakeInputStream, "__exit__", vanish)
+        fake_sounddevice(monkeypatch)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "echo_control": "headset"}
+        )
+        await active.cancel()
+        (trace,) = reserved
+        assert trace.stream.closed
