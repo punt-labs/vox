@@ -1005,8 +1005,10 @@ class TestVoxClientRecMusic:
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
                 {
-                    "type": "recordings",
+                    "type": "recordings_page",
                     "id": "l1",
+                    "page": 0,
+                    "more": False,
                     "entries": [
                         {"name": "a.mp3", "bytes": 5},
                         {"name": "b.mp3", "bytes": 2},
@@ -1920,7 +1922,7 @@ class TestVoxClientSyncFrameDispatch:
     def test_rec_list_puts_type_on_the_wire(self) -> None:
         _, sent = self._run(
             lambda s: s.rec_list(),
-            [{"type": "rec_list", "entries": []}],
+            [{"type": "recordings_page", "page": 0, "more": False, "entries": []}],
         )
         assert len(sent) == 1
         assert sent[0]["type"] == "rec_list"

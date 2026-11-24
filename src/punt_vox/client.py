@@ -24,6 +24,10 @@ from punt_vox.bare_name import BareName
 from punt_vox.client_errors import (
     VoxdProtocolError,
 )
+from punt_vox.client_recordings import (
+    RecordingListing,
+    RecordingSummary as RecordingSummary,
+)
 from punt_vox.client_results import (
     RecordResult as RecordResult,
     SynthesizeResult as SynthesizeResult,
@@ -46,14 +50,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class RecordingSummary:
-    """One recording in the store's list: its bare name and byte count."""
-
-    name: str
-    byte_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,20 +388,13 @@ class VoxClient:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        resp = await self._command("rec_list")
+        msg: dict[str, object] = {
+            "type": "rec_list",
+            "id": uuid.uuid4().hex[:12],
+        }
         with self._wire_guard():
-            obj = JsonObject.coerce(resp, "rec_list")
-            return tuple(
-                self._recording_row(JsonObject.coerce(item, "rec_list.entries"))
-                for item in obj.require_list("entries")
-            )
-
-    @staticmethod
-    def _recording_row(row: JsonObject) -> RecordingSummary:
-        """Parse one ``rec_list`` entry (name + bytes) from the wire."""
-        return RecordingSummary(
-            name=row.require_str("name"), byte_count=row.require_int("bytes")
-        )
+            async with self._transport.exchange(msg) as exchange:
+                return await RecordingListing.read(exchange, timeout=_TIMEOUT_SHORT)
 
     async def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store (a hostile/absent ref raises).

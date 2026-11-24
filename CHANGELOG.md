@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox rec list` lists large recording stores without exceeding WebSocket frame
+  limits or blocking other daemon requests while it scans the directory.
+
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
 

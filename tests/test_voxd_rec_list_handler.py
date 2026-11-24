@@ -1,0 +1,160 @@
+"""Tests for the recording listing handler."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import threading
+from typing import TYPE_CHECKING, cast, final
+
+from punt_vox.voxd.rec_list_handler import RecListHandler
+from punt_vox.voxd.record_store import RecordingEntry, RecordStore
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    import pytest
+    from starlette.websockets import WebSocket
+
+
+def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
+    sent: list[dict[str, object]] = []
+
+    @final
+    class _WS:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent.append(payload)
+
+    return cast("WebSocket", _WS()), sent
+
+
+def _store(tmp_path: Path) -> RecordStore:
+    store = RecordStore(tmp_path / "recordings")
+    store.root.mkdir(parents=True)
+    return store
+
+
+class TestRecList:
+    def test_large_list_streams_bounded_ordered_frames(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        names = [f"scout-{i:06d}.mp3" for i in range(32_000)]
+        snapshot = [RecordingEntry(name, i) for i, name in enumerate(names)]
+
+        def scan(_store: RecordStore) -> Iterator[list[RecordingEntry]]:
+            yield snapshot[::-1]
+
+        monkeypatch.setattr(RecordStore, "entry_batches", scan)
+        ws, sent = _capturing_ws()
+
+        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
+
+        assert all(len(json.dumps(frame).encode()) < 2**20 for frame in sent)
+        assert len(sent) > 1
+        rows: list[object] = []
+        for index, frame in enumerate(sent):
+            assert frame["id"] == "l1"
+            assert frame["type"] == "recordings_page"
+            assert frame["page"] == index
+            assert frame["more"] is (index < len(sent) - 1)
+            entries = frame["entries"]
+            assert isinstance(entries, list)
+            rows.extend(entries)
+        assert rows == [{"name": name, "bytes": i} for i, name in enumerate(names)]
+
+    def test_empty_stream_has_one_terminal_page(self, tmp_path: Path) -> None:
+        ws, sent = _capturing_ws()
+        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
+        assert sent == [
+            {
+                "type": "recordings_page",
+                "page": 0,
+                "more": False,
+                "entries": [],
+                "id": "l1",
+            }
+        ]
+
+    def test_list_scans_outside_event_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        loop_thread = threading.get_ident()
+        scan_threads: list[int] = []
+
+        def scan(_store: RecordStore) -> Iterator[list[RecordingEntry]]:
+            scan_threads.append(threading.get_ident())
+            yield []
+
+        monkeypatch.setattr(RecordStore, "entry_batches", scan)
+        ws, _ = _capturing_ws()
+        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
+        assert len(scan_threads) == 1
+        assert scan_threads[0] != loop_thread
+
+    def test_empty_store_lists_nothing(self, tmp_path: Path) -> None:
+        ws, sent = _capturing_ws()
+        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
+        assert sent[-1]["type"] == "recordings_page"
+        assert sent[-1]["entries"] == []
+
+    def test_lists_immediate_files_with_bytes(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        (store.root / "a.mp3").write_bytes(b"12345")
+        (store.root / "b.mp3").write_bytes(b"12")
+        ws, sent = _capturing_ws()
+        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
+        entries = sent[-1]["entries"]
+        assert isinstance(entries, list)
+        pairs = {(e["name"], e["bytes"]) for e in entries}
+        assert pairs == {("a.mp3", 5), ("b.mp3", 2)}
+
+    def test_listing_io_error_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An OSError enumerating the root is an operational fault, not a rejection.
+
+        Per-entry stat faults are skipped in the store, but a fault reading the
+        root itself is a server-side failure -- it must not escape to the router's
+        broad except (which logs and drops the socket), and it is not a client
+        rejection. The handler routes it through WireReply.fault: an id-stamped
+        clean error frame audited at ERROR "operation failed", never WARNING
+        "rejected op". Reaching the assertions without a raise is the connection-
+        intact check.
+        """
+        store = _store(tmp_path)
+
+        def boom(_self: RecordStore) -> Iterator[list[RecordingEntry]]:
+            raise OSError("permission denied on recordings root")
+
+        monkeypatch.setattr(RecordStore, "entry_batches", boom)
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "l9"
+        # OSError with no in-jail filename -> generic wire verdict, detail to log.
+        assert sent[-1]["message"] == "operation failed"
+        assert any(
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "permission denied on recordings root" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    def test_does_not_recurse_into_subdirs(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        (store.root / "top.mp3").write_bytes(b"1")
+        sub = store.root / "sub"
+        sub.mkdir()
+        (sub / "deep.mp3").write_bytes(b"1")
+        ws, sent = _capturing_ws()
+        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
+        entries = sent[-1]["entries"]
+        assert isinstance(entries, list)
+        assert {e["name"] for e in entries} == {"top.mp3"}  # subdir not listed

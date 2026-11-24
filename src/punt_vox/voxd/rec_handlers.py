@@ -1,13 +1,4 @@
-"""Wire handlers for the recordings-store list and remove verbs.
-
-Both are thin adapters over :class:`RecordStore`, replying through
-:class:`WireReply` so a rejection is id-stamped and audit-logged. ``rec_list``
-takes no input -- it enumerates the immediate in-root recordings, so there is no
-hostile name to reject. ``rec_remove`` runs its bare ``ref`` through the store's
-shared containment validator, so a hostile ref is refused (and audit-logged)
-before any unlink, and a not-found recording is a clean error, never a silent
-success.
-"""
+"""Wire handler for removing one recording by its validated bare name."""
 
 from __future__ import annotations
 
@@ -22,45 +13,7 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.record_store import RecordStore
 
-__all__ = ["RecListHandler", "RecRemoveHandler"]
-
-
-@final
-class RecListHandler:
-    """Handle ``rec_list``: reply with each in-root recording's name and bytes."""
-
-    __slots__ = ("_store",)
-    _store: RecordStore
-
-    def __new__(cls, store: RecordStore) -> Self:
-        """Create a rec list handler."""
-        self = super().__new__(cls)
-        self._store = store
-        return self
-
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Enumerate the store and reply with the recordings list -- or fault.
-
-        Enumeration is best-effort per entry. A root that is missing or has been
-        swapped for a file is simply an empty store -- ``entries`` returns no rows
-        rather than raising -- so only a genuine I/O fault reading a real directory
-        (permissions changed mid-scan) raises ``OSError`` -- an operational fault,
-        so it routes through ``fault`` (ERROR), not ``error``, and never tears down.
-        """
-        reply = WireReply(websocket, str(msg.get("id", "")))
-        try:
-            entries = self._store.entries()
-        except OSError as exc:
-            await reply.fault(SafeFault.from_exception(exc))
-            return
-        await reply.send(
-            {
-                "type": "recordings",
-                "entries": [
-                    {"name": entry.name, "bytes": entry.byte_count} for entry in entries
-                ],
-            }
-        )
+__all__ = ["RecRemoveHandler"]
 
 
 @final

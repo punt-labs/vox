@@ -124,7 +124,7 @@ class VoxdTransport:
         return await self.connect()
 
     @contextlib.asynccontextmanager
-    async def _exchange(self, msg: dict[str, object]) -> AsyncGenerator[VoxdExchange]:
+    async def exchange(self, msg: dict[str, object]) -> AsyncGenerator[VoxdExchange]:
         """Send *msg* and yield the exchange its replies are read through.
 
         If the exchange fails -- the deadline expires, the caller cancels, a
@@ -157,7 +157,7 @@ class VoxdTransport:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        async with self._exchange(msg) as exchange:
+        async with self.exchange(msg) as exchange:
             return await exchange.reply(timeout)
 
     async def fetch_stream(self, msg: dict[str, object], *, timeout: float) -> bytes:
@@ -171,7 +171,7 @@ class VoxdTransport:
         :class:`VoxdRejectionError`, and the partial buffer is discarded.
 
         On ANY mid-stream fault the connection is discarded (see
-        :meth:`_exchange`): the daemon may still be sending this fetch's
+        :meth:`exchange`): the daemon may still be sending this fetch's
         remaining chunk frames, which would otherwise desync the next request
         on the reused connection. A fault leaves no partial file and no stale
         frames behind.
@@ -182,7 +182,7 @@ class VoxdTransport:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        async with self._exchange(msg) as exchange:
+        async with self.exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
             return await exchange.reassemble(deadline)
 
@@ -212,7 +212,7 @@ class VoxdTransport:
         """
         responses: list[dict[str, Any]] = []
         expected = early_terminal or terminal_type
-        async with self._exchange(msg) as exchange:
+        async with self.exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
             while True:
                 resp = await exchange.recv_before(deadline, expected)

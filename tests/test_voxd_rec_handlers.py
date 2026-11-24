@@ -1,12 +1,4 @@
-"""Tests for punt_vox.voxd.rec_handlers -- rec_list and rec_remove.
-
-Each handler runs against a real ``RecordStore`` under ``tmp_path`` with a fake
-WebSocket capturing frames. rec_list enumerates only the immediate in-root files;
-rec_remove reuses the shared containment validator, so the corpus of hostile refs
-is re-asserted here -- each rejection yields an error frame AND a WireReply WARNING
-audit line, and nothing outside the root is deleted (the token-does-not-grant-
-fs-delete trust-model twin).
-"""
+"""Tests for the recording removal handler."""
 
 from __future__ import annotations
 
@@ -16,7 +8,7 @@ from typing import TYPE_CHECKING, cast, final
 
 import pytest
 
-from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
+from punt_vox.voxd.rec_handlers import RecRemoveHandler
 from punt_vox.voxd.record_store import RecordStore
 
 if TYPE_CHECKING:
@@ -49,74 +41,6 @@ def _store(tmp_path: Path) -> RecordStore:
     store = RecordStore(tmp_path / "recordings")
     store.root.mkdir(parents=True)
     return store
-
-
-class TestRecList:
-    def test_empty_store_lists_nothing(self, tmp_path: Path) -> None:
-        ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
-        assert sent[-1]["type"] == "recordings"
-        assert sent[-1]["entries"] == []
-
-    def test_lists_immediate_files_with_bytes(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
-        (store.root / "a.mp3").write_bytes(b"12345")
-        (store.root / "b.mp3").write_bytes(b"12")
-        ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
-        entries = sent[-1]["entries"]
-        assert isinstance(entries, list)
-        pairs = {(e["name"], e["bytes"]) for e in entries}
-        assert pairs == {("a.mp3", 5), ("b.mp3", 2)}
-
-    def test_listing_io_error_is_an_operational_fault(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An OSError enumerating the root is an operational fault, not a rejection.
-
-        Per-entry stat faults are skipped in the store, but a fault reading the
-        root itself is a server-side failure -- it must not escape to the router's
-        broad except (which logs and drops the socket), and it is not a client
-        rejection. The handler routes it through WireReply.fault: an id-stamped
-        clean error frame audited at ERROR "operation failed", never WARNING
-        "rejected op". Reaching the assertions without a raise is the connection-
-        intact check.
-        """
-        store = _store(tmp_path)
-
-        def boom(_self: RecordStore) -> object:
-            raise OSError("permission denied on recordings root")
-
-        monkeypatch.setattr(RecordStore, "entries", boom)
-        ws, sent = _capturing_ws()
-        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
-        assert sent[-1]["type"] == "error"
-        assert sent[-1]["id"] == "l9"
-        # OSError with no in-jail filename -> generic wire verdict, detail to log.
-        assert sent[-1]["message"] == "operation failed"
-        assert any(
-            r.levelno == logging.ERROR
-            and "operation failed" in r.getMessage()
-            and "permission denied on recordings root" in r.getMessage()
-            for r in caplog.records
-        )
-        assert not any("rejected op" in r.getMessage() for r in caplog.records)
-
-    def test_does_not_recurse_into_subdirs(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
-        (store.root / "top.mp3").write_bytes(b"1")
-        sub = store.root / "sub"
-        sub.mkdir()
-        (sub / "deep.mp3").write_bytes(b"1")
-        ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
-        entries = sent[-1]["entries"]
-        assert isinstance(entries, list)
-        assert {e["name"] for e in entries} == {"top.mp3"}  # subdir not listed
 
 
 class TestRecRemove:
