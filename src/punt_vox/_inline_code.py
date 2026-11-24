@@ -11,7 +11,7 @@ from markdown_it.rules_block import fence
 from markdown_it.rules_inline import backtick, image
 
 from punt_vox._backtick_offsets import BacktickOffsets
-from punt_vox._currency_grammar import CurrencyGrammar
+from punt_vox._currency_prose import ProseCurrency
 from punt_vox._speech_punctuation import SpeechPunctuation
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class InlineCode:
             lambda body, in_path: SpeechPunctuation.spell_code_currency(
                 body, in_path=in_path
             ),
-            prose=lambda body: CurrencyGrammar.prefix_suffix_amounts(body, tag=tag),
+            prose=lambda body: ProseCurrency.canonicalize(body, tag=tag),
             vibed=vibed,
         )
 

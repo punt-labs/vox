@@ -1,8 +1,8 @@
-"""Suffix amount recognition before money rendering."""
+"""Prose amount canonicalization before money rendering."""
 
 import pytest
 
-from punt_vox._currency_grammar import CurrencyGrammar
+from punt_vox._currency_prose import ProseCurrency
 
 
 @pytest.mark.parametrize(
@@ -15,4 +15,4 @@ from punt_vox._currency_grammar import CurrencyGrammar
     ],
 )
 def test_prefix_suffix_amounts(prose: str, expected: str) -> None:
-    assert CurrencyGrammar.prefix_suffix_amounts(prose) == expected
+    assert ProseCurrency.canonicalize(prose, tag=None) == expected

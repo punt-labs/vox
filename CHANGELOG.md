@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak spaced currency scales such as `$1 million` as “1 million dollars.”
+
 - A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
   `voice`, or the matching `mic` tool) from a git repo nested in a workspace
   no longer edits the workspace's config. The repo gets its own
