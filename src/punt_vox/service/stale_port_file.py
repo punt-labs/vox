@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Literal, Self, final
 
+from punt_vox.client_port import PortText
 from punt_vox.file_identity import FileIdentity
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
@@ -51,6 +52,15 @@ class StalePortFile:
         return self
 
     @classmethod
+    def read_hint(cls, path: Path) -> int | None:
+        """Observe the atomically published hint without taking a lock.
+
+        An undecodable file is a read error for probes, but cleanup can
+        still discard it once the file has been pinned under the lock.
+        """
+        return cls._read_open(path, decode_errors="strict").port
+
+    @classmethod
     def read(cls, path: Path) -> Self:
         """Read the file at *path* once: its identity and port from one open file.
 
@@ -67,13 +77,15 @@ class StalePortFile:
             return cls(path, None, None)
         try:
             with SiblingLock(path).held():
-                return cls._read_open(path)
+                return cls._read_open(path, decode_errors="replace")
         except OSError as exc:  # TimeoutError: a voxd held the lock throughout
             msg = f"cannot lock {path}: {exc}"
             raise PortProbeError(msg) from exc
 
     @classmethod
-    def _read_open(cls, path: Path) -> Self:
+    def _read_open(
+        cls, path: Path, *, decode_errors: Literal["strict", "replace"]
+    ) -> Self:
         """Open *path*, fstat that descriptor, and read the port from it.
 
         A read failure but "absent" raises ``PortProbeError`` -- never an
@@ -82,13 +94,21 @@ class StalePortFile:
         try:
             with path.open("rb") as handle:
                 st = os.fstat(handle.fileno())
-                text = handle.read().decode("utf-8", "replace").strip()
+                text = handle.read().decode("utf-8", decode_errors).strip()
         except FileNotFoundError:
             return cls(path, None, None)
+        except UnicodeDecodeError:
+            msg = f"cannot read {path}: invalid UTF-8"
+            raise PortProbeError(msg) from None
         except OSError as exc:
             msg = f"cannot read {path}: {exc}"
             raise PortProbeError(msg) from exc
-        port = int(text) if text.isdecimal() else None
+        try:
+            port = PortText.parse(text)
+        except ValueError as exc:
+            if decode_errors == "strict":
+                logger.warning("Ignoring stale %s: %s", path, exc)
+            port = None
         return cls(path, FileIdentity.of(st), port)
 
     @property
