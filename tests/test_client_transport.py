@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import re
 import socket
@@ -122,7 +123,9 @@ def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
 
     async def run() -> object:
         if call == "fetch":
-            return await transport.fetch_stream({"type": "rec_get"}, timeout=0.05)
+            return await transport.fetch_into(
+                {"type": "rec_get"}, io.BytesIO(), timeout=0.05
+            )
         return await transport.send_and_drain(
             {"type": "synthesize"}, timeout=0.05, early_terminal="playing"
         )
