@@ -42,10 +42,10 @@ def find_config_dir(start: Path | None = None) -> Path | None:
 def writable_config_dir(start: Path | None = None) -> Path | None:
     """Return the config directory a setting write from *start* lands in.
 
-    Inside a git repo, reuse an existing config within the repo. If there
-    isn't one, write to the repo root's ``.punt-labs/vox/``, seeding it from
-    any config inherited from above the repo. Outside a git repo, use
-    :func:`find_config_dir` as-is.
+    Inside a git repo, reuse an existing config path as-is, including a
+    symlinked config. If there isn't one, write to the repo root's
+    ``.punt-labs/vox/``, seeding it from any config inherited from above the
+    repo. Outside a git repo, use :func:`find_config_dir` as-is.
 
     Raises:
         PermissionError: A new repository config resolves outside the checkout.

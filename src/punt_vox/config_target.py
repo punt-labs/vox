@@ -41,8 +41,8 @@ class RepoConfigTarget:
 
     def _check_contained(self) -> None:
         """Reject paths that resolve outside the checkout, even if absent."""
-        for relative in (DEFAULT_CONFIG_DIR, *CONFIG_PATHS):
-            path = self._root / relative
+        for rel in (DEFAULT_CONFIG_DIR, *CONFIG_PATHS, Path(".punt-labs/local/vox")):
+            path = self._root / rel
             if not path.resolve().is_relative_to(self._root):
                 msg = "Vox config destination is outside the Git checkout"
                 raise PermissionError(errno.EPERM, msg, path)
