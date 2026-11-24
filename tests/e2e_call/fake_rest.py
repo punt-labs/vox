@@ -7,6 +7,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Self, cast, final
+from urllib.parse import urlsplit
 
 from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
 
@@ -64,7 +65,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._seen()
         if not self._authorized():
             return
-        if self._fake.issued(self.path):
+        if self._fake.issued(urlsplit(self.path).path):
             self._reply({})
         else:
             self._error("unknown id")
@@ -105,7 +106,8 @@ class FakeConvAIRest:
     should never do -- a key other than the override placeholder, a path the
     fake does not serve, a DELETE of an id the fake never issued, a request
     that makes the handler raise -- is recorded in ``errors``, which the
-    fixture asserts is empty.
+    fixture asserts is empty. A query string (the real client deletes with
+    ``?force=true``) never changes which id a DELETE names.
     """
 
     __slots__ = (
@@ -162,7 +164,7 @@ class FakeConvAIRest:
         return resource_id
 
     def issued(self, path: str) -> bool:
-        """Return whether *path* deletes an id this fake handed out."""
+        """Return whether *path* (no query) names an id this fake handed out."""
         prefix, _, resource_id = path.rpartition("/")
         return prefix in {_TOOLS, _AGENTS} and resource_id in self._issued
 

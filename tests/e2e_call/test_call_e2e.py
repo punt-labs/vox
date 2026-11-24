@@ -207,15 +207,30 @@ def _stop_call(env: dict[str, str]) -> None:
     assert stop.returncode == 0 or refused, stop.stdout + stop.stderr
 
 
+def _call_then_teardown(
+    env: dict[str, str], script: Path
+) -> subprocess.CompletedProcess[str]:
+    """Place the call, then delete the agent and tools the daemon provisioned."""
+    result = _vox_call(env, script)
+    teardown = _vox(env, "call", "teardown", timeout=_STOP_TIMEOUT_S)
+    assert teardown.returncode == 0, teardown.stdout + teardown.stderr
+    return result
+
+
 async def _run_call(
     env: dict[str, str], script: Path, steps: tuple[Step, ...]
 ) -> tuple[FakeConvAIAgent, FakeConvAIRest, subprocess.CompletedProcess[str]]:
-    """Start both fakes, then voxd with their addresses, then place the call."""
+    """Start both fakes, then voxd with their addresses, then place the call.
+
+    After the call the daemon tears its agent and tools down through the
+    fake, so every DELETE the real client sends (with its ``?force=true``)
+    is answered by an id the fake issued.
+    """
     async with FakeConvAIAgent(steps) as agent:
         with FakeConvAIRest(agent.signed_url) as rest:
             env = {**env, "VOX_CONVAI_BASE_URL": rest.base_url}
             with _daemon(env):
-                result = await asyncio.to_thread(_vox_call, env, script)
+                result = await asyncio.to_thread(_call_then_teardown, env, script)
             return agent, rest, result
 
 
@@ -246,6 +261,13 @@ def test_scripted_call_reaches_the_tool_result(
     assert rest.errors == []
     assert agent.audio_chunks > 0
     assert ("POST", "/v1/convai/agents/create") in rest.requests
+    # Teardown deleted the agent and every tool with the real client's query;
+    # rest.errors == [] above proves each named an id the fake issued.
+    deletes = [path for method, path in rest.requests if method == "DELETE"]
+    assert deletes, rest.requests
+    assert all(path.endswith("?force=true") for path in deletes), deletes
+    assert any(path.startswith("/v1/convai/agents/") for path in deletes), deletes
+    assert any(path.startswith("/v1/convai/tools/") for path in deletes), deletes
     override = cast(
         "dict[str, object]", agent.initiation["conversation_config_override"]
     )

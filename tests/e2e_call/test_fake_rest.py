@@ -55,6 +55,22 @@ def test_an_unknown_path_is_recorded_as_an_error() -> None:
     assert rest.errors == ["GET /v1/convai/nope: unknown path"]
 
 
+def test_a_forced_delete_of_an_issued_id_is_accepted() -> None:
+    """The real client deletes with ``?force=true``; the query hides no id."""
+    with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
+        tool = http.post("/v1/convai/tools", json={}).json()["id"]
+        agent = http.post("/v1/convai/agents/create", json={}).json()["agent_id"]
+        forced = {"force": "true"}
+        assert http.delete(f"/v1/convai/tools/{tool}", params=forced).status_code == 200
+        agent_delete = http.delete(f"/v1/convai/agents/{agent}", params=forced)
+        assert agent_delete.status_code == 200
+        unissued = http.delete("/v1/convai/agents/agent_other", params=forced)
+        assert unissued.status_code == 404
+    assert rest.errors == [
+        "DELETE /v1/convai/agents/agent_other?force=true: unknown id",
+    ]
+
+
 def test_deleting_an_id_the_fake_never_issued_is_an_error() -> None:
     with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
         assert http.delete("/v1/convai/agents/agent_other").status_code == 404
