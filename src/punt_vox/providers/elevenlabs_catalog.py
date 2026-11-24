@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from threading import Lock
 from typing import TYPE_CHECKING, ClassVar, Self, final
+from weakref import WeakValueDictionary
 
 from punt_vox.providers.elevenlabs_catalog_entry import (
     DEFAULT_NAME,
@@ -27,6 +28,10 @@ class ElevenLabsCatalog:
     _scope: bytes | ElevenLabsCatalogEntry
     _shared: ClassVar[OrderedDict[bytes, ElevenLabsCatalogEntry]] = OrderedDict()
     _shared_lock: ClassVar[Lock] = Lock()
+    # An evicted entry can still coordinate lookups until its callers release it.
+    _live: ClassVar[WeakValueDictionary[bytes, ElevenLabsCatalogEntry]] = (
+        WeakValueDictionary()
+    )
 
     def __new__(cls, client: ElevenLabsClient) -> Self:
         """Select a credential scope or keep an isolated resolver."""
@@ -60,10 +65,11 @@ class ElevenLabsCatalog:
             return scope
 
         with self._shared_lock:
-            entry = self._shared.get(scope)
+            entry = self._live.get(scope)
             if entry is None:
                 entry = ElevenLabsCatalogEntry()
-                self._shared[scope] = entry
+                self._live[scope] = entry
+            self._shared[scope] = entry
             self._shared.move_to_end(scope)
             if len(self._shared) > _MAX_CATALOGS:
                 self._shared.popitem(last=False)

@@ -7,11 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 import pytest
 
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
+from punt_vox.providers.elevenlabs_client import ElevenLabsClient
 from punt_vox.types import SynthesisRequest
 
 
@@ -19,9 +21,13 @@ class TestElevenLabsSharedCatalog:
     @pytest.fixture(autouse=True)
     def _isolate_catalogs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(ElevenLabsCatalog, "_shared", OrderedDict())
+        monkeypatch.setattr(ElevenLabsCatalog, "_live", WeakValueDictionary())
 
     def test_catalog_uses_the_key_captured_by_each_client(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        mock_elevenlabs_client: MagicMock,
     ) -> None:
         first_key, second_key = uuid4().hex, uuid4().hex
         first_id, second_id = "A" * 20, "B" * 20
@@ -31,7 +37,9 @@ class TestElevenLabsSharedCatalog:
             sdk.voices.get_all.return_value = SimpleNamespace(
                 voices=[SimpleNamespace(name="Shared name", voice_id=voice_id)]
             )
-            sdk.text_to_speech.stream.return_value = (b"audio",)
+            sdk.text_to_speech.stream.side_effect = (
+                mock_elevenlabs_client.text_to_speech.stream.side_effect
+            )
 
         request = SynthesisRequest(text="hello", voice="shared name")
 
@@ -73,3 +81,17 @@ class TestElevenLabsSharedCatalog:
             providers[1].resolve_voice("matilda")
 
         assert mock_elevenlabs_client.voices.get_all.call_count == 10
+
+    def test_eviction_preserves_an_entry_held_by_a_lookup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalogs = []
+        for _ in range(9):
+            monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+            catalogs.append(ElevenLabsCatalog(ElevenLabsClient()))
+
+        active = catalogs[0]._catalog()
+        for catalog in catalogs[1:]:
+            catalog._catalog()
+
+        assert catalogs[0]._catalog() is active

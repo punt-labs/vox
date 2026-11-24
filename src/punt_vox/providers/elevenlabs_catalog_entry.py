@@ -25,7 +25,7 @@ _lookup_client: ContextVar[ElevenLabsClient] = ContextVar("elevenlabs_catalog_cl
 class ElevenLabsCatalogEntry:
     """Run one catalog lookup at a time so concurrent misses share a fetch."""
 
-    __slots__ = ("_lock", "_voices")
+    __slots__ = ("__weakref__", "_lock", "_voices")
     _lock: Lock
     _voices: ElevenLabsVoices
 
