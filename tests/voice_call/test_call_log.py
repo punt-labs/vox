@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.voxd.voice_call.call_log import CallLog, CallOutcome
+from punt_vox.voxd.voice_call.call_log import CallLog
+from punt_vox.voxd.voice_call.call_outcome import CallOutcome
 
 _LOGGER = "punt_vox.voxd.voice_call.call_log"
 _TRACE = Path("/traces/call-abc.jsonl")
@@ -29,14 +30,16 @@ class TestStarting:
     def test_a_script_request_logs_the_script_input(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        CallLog.starting({"type": "call_start", "script": []})
+        with CallLog.starting({"type": "call_start", "script": []}):
+            pass
         assert _messages(records) == ["Call starting: input script, echo control none"]
 
     @pytest.mark.parametrize("echo_control", ["headset", "aec"])
     def test_a_mic_request_logs_its_echo_declaration(
         self, records: pytest.LogCaptureFixture, echo_control: str
     ) -> None:
-        CallLog.starting({"type": "call_start", "echo_control": echo_control})
+        with CallLog.starting({"type": "call_start", "echo_control": echo_control}):
+            pass
         assert _messages(records) == [
             f"Call starting: input mic, echo control {echo_control}"
         ]
@@ -44,7 +47,8 @@ class TestStarting:
     def test_a_mic_request_without_a_declaration_logs_none(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        CallLog.starting({"type": "call_start"})
+        with CallLog.starting({"type": "call_start"}):
+            pass
         assert _messages(records) == ["Call starting: input mic, echo control none"]
 
 
@@ -127,3 +131,18 @@ class TestEnded:
         log = CallLog(_TRACE, lambda: CallOutcome("ended", None, 0))
         with log as entered:
             assert entered is log
+
+
+class TestSetup:
+    def test_a_failing_setup_logs_the_exception_type_only_and_propagates(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            pytest.raises(OSError, match="/Users/x/traces"),
+            CallLog.starting({"type": "call_start", "script": []}),
+        ):
+            raise FileExistsError("[Errno 17] File exists: '/Users/x/traces'")
+        assert _messages(records) == [
+            "Call starting: input script, echo control none",
+            "Call not started: FileExistsError",
+        ]

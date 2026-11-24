@@ -23,6 +23,8 @@ import pytest
 from conversation_mode._mic_fakes import FakeBackend
 
 from punt_vox.voxd.voice_agent.events import Metadata
+from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.launcher import CallLauncher
 from punt_vox.voxd.voice_call.progress import ProgressEvents
@@ -133,7 +135,7 @@ def _launcher(
         progress=ProgressEvents(),
         hold_music=hold_music,
         trace_dir=trace_dir,
-        opener=cast("Opener | None", opener),
+        opener=cast("Opener", opener) if opener is not None else Conversation.open,
     )
 
 
@@ -391,3 +393,69 @@ class TestTaskLifecycle:
         launcher = _launcher(tmp_path, connector=connector)
         await launcher.teardown()
         assert connector.teardowns == 1
+
+
+class TestSetupFailure:
+    """A failure between the starting line and the task leaves one end line."""
+
+    @staticmethod
+    def _lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [r.message for r in caplog.records if r.name == _LOG]
+
+    async def test_a_provisioning_failure_logs_not_started_once(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+
+        async def fail(_operations: AgentOperations) -> None:
+            raise ConvAIError("agent provisioning failed")
+
+        monkeypatch.setattr(AgentOperations, "prepare", fail)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        with pytest.raises(ConvAIError, match="agent provisioning failed"):
+            await launcher.launch(
+                uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+            )
+        assert self._lines(caplog) == [
+            "Call starting: input script, echo control none",
+            "Call not started: ConvAIError",
+        ]
+
+    async def test_a_reused_call_id_logs_not_started_without_a_second_end(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+        call_id = uuid4()
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        request: dict[str, object] = {
+            "type": "call_start",
+            "script": _script(tmp_path),
+        }
+        active = await launcher.launch(call_id, request)
+        await asyncio.sleep(0)  # the task enters the log context
+        await active.cancel()
+        with pytest.raises(ValueError, match="call_id has already been used"):
+            await launcher.launch(call_id, request)
+        lines = self._lines(caplog)
+        assert sum(line.startswith("Call ended:") for line in lines) == 1
+        assert lines[-2:] == [
+            "Call starting: input script, echo control none",
+            "Call not started: ValueError",
+        ]
+
+    async def test_an_unusable_trace_dir_logs_the_error_type_without_its_path(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+        trace_dir = tmp_path / "traces"
+        trace_dir.write_text("not a directory")
+        launcher = _launcher(trace_dir, connector=_Connector(), opener=_Opener())
+        with pytest.raises(OSError, match="traces"):
+            await launcher.launch(
+                uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+            )
+        assert self._lines(caplog)[-1] == "Call not started: FileExistsError"
+        assert not any(str(tmp_path) in line for line in self._lines(caplog))

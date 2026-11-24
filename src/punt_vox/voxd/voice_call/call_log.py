@@ -5,27 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self, final
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
-__all__ = ["CallLog", "CallOutcome", "CallState"]
+    from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+
+__all__ = ["CallLog"]
 
 logger = logging.getLogger(__name__)
-
-type CallState = Literal["connecting", "live", "ended", "failed"]
-
-
-@dataclass(frozen=True, slots=True)
-class CallOutcome:
-    """How a call ended."""
-
-    state: CallState
-    error: str | None  # None unless the call failed.
-    tool_calls: int
 
 
 @final
@@ -51,23 +42,32 @@ class CallLog:
         """Log the end, however the call ended: hang-up, failure or cancel."""
         outcome = self._outcome()
         logger.info(
-            "Call ended: %s, %d tool call%s, duration %.1f s%s, trace %s",
-            outcome.state,
-            outcome.tool_calls,
-            "" if outcome.tool_calls == 1 else "s",
+            "Call ended: %s, duration %.1f s%s, trace %s",
+            outcome,
             time.monotonic() - self._started,
-            f", error {outcome.error}" if outcome.error is not None else "",
+            outcome.error_note,
             self._trace,
         )
 
     @staticmethod
-    def starting(msg: dict[str, object]) -> None:
-        """Log a call_start request's input mode and echo declaration."""
+    @contextmanager
+    def starting(msg: dict[str, object]) -> Generator[None]:
+        """Log the request's input mode and echo declaration, then its setup.
+
+        A setup that fails before the call's task exists logs one end line
+        naming the exception type only: a setup failure's message may carry
+        a trace path or provider detail. The exception propagates.
+        """
         logger.info(
             "Call starting: input %s, echo control %s",
             "script" if "script" in msg else "mic",
             msg.get("echo_control", "none"),
         )
+        try:
+            yield
+        except Exception as exc:
+            logger.info("Call not started: %s", type(exc).__name__)
+            raise
 
     @staticmethod
     def live(conversation_id: str) -> None:

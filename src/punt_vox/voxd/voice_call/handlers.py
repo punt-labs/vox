@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import calls_dir
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.launcher import CallLauncher
@@ -50,9 +51,7 @@ class CallHandlers:
     def __new__(cls, launcher: CallLauncher) -> Self:
         """Route the call RPCs to ``launcher``'s calls."""
         self = super().__new__(cls)
-        self._launcher = launcher
-        self._active = None
-        self._lock = asyncio.Lock()
+        self._launcher, self._active, self._lock = launcher, None, asyncio.Lock()
         return self
 
     @classmethod
@@ -74,7 +73,7 @@ class CallHandlers:
             progress=progress,
             hold_music=hold_music,
             trace_dir=calls_dir(),
-            opener=None,
+            opener=Conversation.open,
         )
         return cls(launcher)
 

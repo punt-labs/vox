@@ -16,19 +16,21 @@ from punt_vox.voxd.voice_agent.events import (
     Interruption,
     UserTranscript,
 )
-from punt_vox.voxd.voice_agent.session import Conversation
-from punt_vox.voxd.voice_call.call_log import CallLog, CallOutcome
-from punt_vox.voxd.voice_call.progress import CallProgress, ProgressEvents
+from punt_vox.voxd.voice_call.call_log import CallLog
+from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+from punt_vox.voxd.voice_call.progress import CallProgress
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
+    from punt_vox.voxd.voice_agent.session import Conversation
     from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.boss_tools import BossTools
-    from punt_vox.voxd.voice_call.call_log import CallState
+    from punt_vox.voxd.voice_call.call_outcome import CallState
     from punt_vox.voxd.voice_call.contracts import CallInput
+    from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
     from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
@@ -84,17 +86,14 @@ class VoiceAgentCall:
         speaker: AgentSpeaker,
         *,
         trace: EventTrace,
-        opener: Opener | None = None,
-        progress: ProgressEvents | None = None,  # None creates an unconnected source.
+        opener: Opener,
+        progress: ProgressEvents,
     ) -> Self:
-        """Bind the call's tools, caller audio, speaker and trace."""
+        """Bind the call's tools, caller audio, speaker, trace and peer opener."""
         self = super().__new__(cls)
         self._tools, self._audio, self._speaker = tools, audio, speaker
-        self._progress = CallProgress(
-            progress if progress is not None else ProgressEvents()
-        )
-        self._trace = trace
-        self._opener = opener if opener is not None else Conversation.open
+        self._progress, self._trace = CallProgress(progress), trace
+        self._opener = opener
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
         self._transcript = deque(maxlen=_HISTORY)

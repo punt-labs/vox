@@ -95,7 +95,7 @@ def _handlers(
     *,
     projects: ProjectAllowlist | None = None,  # None: ``workers`` is the allowlist.
     connector: AgentConnector | None = None,  # None: ElevenLabs from the env key.
-    opener: Opener | None = None,  # None: the real conversation opener.
+    opener: Opener = _LOOPBACK,
 ) -> CallHandlers:
     """Build handlers over a launcher wired to the test's fakes."""
     launcher = CallLauncher(

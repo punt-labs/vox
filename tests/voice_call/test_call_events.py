@@ -23,6 +23,7 @@ from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
 from punt_vox.voxd.voice_call.inputs import MicInput
+from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
 from .fakes import FakePlayback, FakeWorkers, payload
@@ -95,6 +96,7 @@ def _call(peer: _Peer, audio: CallInput | None = None) -> VoiceAgentCall:
         AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=cast("EventTrace", None),
         opener=cast("Opener", opener),
+        progress=ProgressEvents(),
     )
 
 
@@ -111,6 +113,8 @@ def _receipt_call() -> tuple[VoiceAgentCall, FakeWorkers, io.StringIO]:
         _Silent(),
         AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=EventTrace(stream),
+        opener=Conversation.open,
+        progress=ProgressEvents(),
     )
     return call, workers, stream
 
@@ -187,6 +191,8 @@ async def test_reissued_steer_ids_share_a_prompt_but_not_the_next_prompt() -> No
         _Silent(),
         AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=MagicMock(spec=EventTrace),
+        opener=Conversation.open,
+        progress=ProgressEvents(),
     )
     conv = AsyncMock(spec=Conversation)
     words: dict[str, object] = {"worker_id": "abcd1234", "words": "Continue."}

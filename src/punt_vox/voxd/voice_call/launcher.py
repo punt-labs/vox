@@ -62,7 +62,7 @@ class CallLauncher:
     _progress: ProgressEvents
     _hold_music: Callable[[], AbstractContextManager[None]]
     _trace_dir: Path
-    _opener: Opener | None  # None: the ElevenLabs conversation opener.
+    _opener: Opener
 
     def __new__(
         cls,
@@ -74,14 +74,13 @@ class CallLauncher:
         progress: ProgressEvents,
         hold_music: Callable[[], AbstractContextManager[None]],
         trace_dir: Path,
-        opener: Opener | None,
+        opener: Opener,
     ) -> Self:
         """Bind what every call this daemon starts has in common."""
         self = super().__new__(cls)
         self._workers, self._projects, self._playback = workers, projects, playback
         self._operations, self._progress = operations, progress
-        self._hold_music, self._trace_dir = hold_music, trace_dir
-        self._opener = opener
+        self._hold_music, self._trace_dir, self._opener = hold_music, trace_dir, opener
         return self
 
     async def launch(self, call_id: UUID, msg: dict[str, object]) -> ActiveCall:
@@ -94,19 +93,21 @@ class CallLauncher:
             ConvAIError: When the agent cannot be provisioned.
         """
         audio = await self._input(msg)
-        CallLog.starting(msg)
-        await self._operations.prepare()
-        await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
-        trace = CallTrace.reserve(self._trace_dir, call_id)
-        returning = ReturnBrief(self._trace_dir / "departure.json")
-        call = VoiceAgentCall(
-            BossTools(self._workers, self._projects, spoken_labels=returning.labels),
-            audio,
-            AgentSpeaker(self._playback),
-            trace=trace.events,
-            opener=self._opener,
-            progress=self._progress,
-        )
+        with CallLog.starting(msg):  # A start line always gets an end line.
+            await self._operations.prepare()
+            await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
+            trace = CallTrace.reserve(self._trace_dir, call_id)
+            returning = ReturnBrief(self._trace_dir / "departure.json")
+            call = VoiceAgentCall(
+                BossTools(
+                    self._workers, self._projects, spoken_labels=returning.labels
+                ),
+                audio,
+                AgentSpeaker(self._playback),
+                trace=trace.events,
+                opener=self._opener,
+                progress=self._progress,
+            )
 
         async def run() -> None:
             with CallLog(trace.path, call.outcome), self._hold_music():
@@ -138,11 +139,8 @@ class CallLauncher:
 
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)
-        workers = await self._workers.workers()
-        options = await asyncio.to_thread(
-            returning.options, workers, self._projects.repos(), tool_ids
-        )
-        return url, options
+        repos, workers = self._projects.repos(), await self._workers.workers()
+        return url, await asyncio.to_thread(returning.options, workers, repos, tool_ids)
 
     @staticmethod
     async def _depart(returning: ReturnBrief, reported: dict[str, int]) -> None:
