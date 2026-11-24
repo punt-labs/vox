@@ -1137,10 +1137,11 @@ class TestVibeCommand:
         result = runner.invoke(app, ["vibe", mood])
         assert result.exit_code == 0, result.output
 
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc")
+
         with patch("punt_vox.__main__.VoxClientSync") as client:
-            client.return_value.synthesize.return_value = SynthesizeResult(
-                request_id="abc"
-            )
+            client.return_value.synthesize.side_effect = synthesize
             result = runner.invoke(app, ["say", "Hello"])
 
         assert result.exit_code == 0, result.output
