@@ -10,6 +10,7 @@ from typing import Self, final
 
 from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
+from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.model import WorkerRecord
 
 logger = logging.getLogger(__name__)
@@ -95,8 +96,13 @@ class WorkerLifecycle:
         )
 
     def rollback(self, record: WorkerRecord, error: Exception) -> WorkerRecord:
-        """Preserve launch failure while attempting termination and trust cleanup."""
-        report = {**record.last_report, "launch_error": type(error).__name__}
+        """Preserve launch failure while attempting termination and trust cleanup.
+
+        The launch error is recorded as ``"<type>: <message>"``, paths
+        scrubbed, so a deadline and an empty task (both ``ValueError``) stay
+        distinguishable on the record.
+        """
+        report = {**record.last_report, "launch_error": str(GitFailure(error))}
         try:
             self._providers[record.provider].stop(record.session)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:

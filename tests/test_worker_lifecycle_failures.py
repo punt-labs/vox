@@ -69,7 +69,7 @@ def test_failed_start_preserves_original_error_and_cleans_trust(tmp_path: Path) 
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
     cleanup.assert_called_once()
     payload = json.loads(next((tmp_path / "workers").glob("*.json")).read_text())
-    assert payload["last_report"]["launch_error"] == "OSError"
+    assert payload["last_report"]["launch_error"] == "OSError: launch failed"
     assert payload["last_report"]["stop_error"] == "RuntimeError"
     retried = registry.stop(registry.list()[0].id)
     assert retried.state == "stopped"
@@ -205,7 +205,9 @@ def test_timed_out_launch_discards_the_worktree_git_finished_anyway(
         registry.start("edit", str(repo), provider="fake", harness="test")
     record = registry.list()[0]
     assert record.state == "stopped"
-    assert record.last_report["launch_error"] == "ValueError"
+    assert record.last_report["launch_error"] == (
+        "ValueError: worker start timed out creating the worktree after 90 s"
+    )
     assert record.last_report["worktree_discarded"] is True
     assert not Path(record.worktree).exists()
     branches = subprocess.run(
@@ -233,7 +235,7 @@ def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="launch failed"):
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
     record = registry.list()[0]
-    assert record.last_report["launch_error"] == "OSError"
+    assert record.last_report["launch_error"] == "OSError: launch failed"
     assert record.last_report["discard_error"] == "rmtree: OSError: busy"
     assert "worktree_discarded" not in record.last_report
 
@@ -266,4 +268,31 @@ def test_failed_stop_keeps_the_worktree_and_says_why(
     assert "worktree_discarded" not in record.last_report
     assert any(
         "worktree kept: provider stop failed" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_launch_error_records_the_message_not_only_the_type(tmp_path: Path) -> None:
+    """The 90 s deadline and an empty task are both ValueError; the record tells."""
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    worktrees.create.side_effect = ValueError(
+        "worker start timed out creating the worktree after 90 s"
+    )
+    registry = _registry(tmp_path, FakeWorkerProvider(), worktrees)
+    with pytest.raises(ValueError, match="timed out"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    record = registry.list()[0]
+    assert record.last_report["launch_error"] == (
+        "ValueError: worker start timed out creating the worktree after 90 s"
+    )
+
+
+def test_launch_error_message_has_its_paths_scrubbed(tmp_path: Path) -> None:
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    worktrees.create.side_effect = OSError(f"[Errno 28] no space: '{tmp_path}'")
+    registry = _registry(tmp_path, FakeWorkerProvider(), worktrees)
+    with pytest.raises(OSError, match="no space"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    record = registry.list()[0]
+    assert (
+        record.last_report["launch_error"] == "OSError: [Errno 28] no space: '<path>'"
     )
