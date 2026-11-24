@@ -34,7 +34,7 @@ class CurrencySpeech:
     @classmethod
     def speak_code(cls, token: str) -> str:
         """Spell code currency signs literally within a token."""
-        return CurrencyGrammar.code_amount.sub(cls._speak_code_sign, token)
+        return CurrencyGrammar.CODE_AMOUNT.sub(cls._speak_code_sign, token)
 
     @classmethod
     def _speak_amount(cls, match: re.Match[str], prefix: str = "") -> str:

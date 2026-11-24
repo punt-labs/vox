@@ -46,14 +46,14 @@ _LETTER = r"[^\W\d_]"
 class CurrencyGrammar:
     """Recognize attached money without guessing a numeric locale."""
 
-    code_amount = re.compile(_PREFIX_AMOUNT.replace("{p}", ""))
+    CODE_AMOUNT = re.compile(_PREFIX_AMOUNT.replace("{p}", ""))
 
     @classmethod
     def prose_pattern(cls, text: str) -> re.Pattern[str]:
         """Build the prose grammar with any combining marks present in *text*."""
         word = cls._word_pattern(text)
         return re.compile(
-            rf"{cls.code_amount.pattern}(?P<word>{word})?"
+            rf"{cls.CODE_AMOUNT.pattern}(?P<word>{word})?"
             rf"(?:[-\u2013]{_PREFIX_AMOUNT.replace('{p}', 'end_')}(?P<end_word>{word})?"
             rf"|\u2013(?P<bare_end>{_NUMBER})(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
             rf"(?P<rates>(?:/{word})*)"
