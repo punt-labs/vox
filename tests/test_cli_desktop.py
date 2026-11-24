@@ -119,6 +119,8 @@ class TestInstallPlatformDispatch:
         payload = json.loads(result.output)
         assert "provider" not in payload
         assert payload["suggested_provider"] == "say"
+        assert "'vox daemon install'" in payload["next_step"]
+        assert "'vox daemon start'" in payload["next_step"]
         assert "Restart Claude Desktop" in payload["next_step"]
         assert "If you want to set or change your provider" in payload["next_step"]
         assert 'provider tool with name="say"' in payload["next_step"]

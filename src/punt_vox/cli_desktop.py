@@ -179,7 +179,9 @@ class DesktopCli:
         config.write(data)
 
         next_step = (
-            "The installer did not set a provider. Restart Claude Desktop. "
+            "The installer did not set a provider. "
+            "If the Vox daemon is not installed, run 'vox daemon install'; "
+            "if it is stopped, run 'vox daemon start'. Restart Claude Desktop. "
             "If you want to set or change your provider, ask Claude to run "
             f'the Vox provider tool with name="{installer.provider}".'
         )
