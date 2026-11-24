@@ -54,33 +54,34 @@ class OutputHealth:
     def _music_dir_missing(self) -> bool:
         try:
             music = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
-            return self._root.resolve().is_relative_to(
-                music.resolve()
-            ) and self._is_missing(music)
+            return (
+                self._root.resolve().is_relative_to(music.resolve())
+                and self._existing_ancestor(music) != music
+            )
         except (OSError, RuntimeError):
             logger.warning("Could not check the music directory", exc_info=True)
             return False
 
     def _output_status(self) -> Literal["absent", "not_writable", "writable"]:
         try:
-            if self._is_missing(self._root):
-                return "absent"
-            with tempfile.TemporaryFile(buffering=0, dir=self._root) as probe:
+            directory = self._existing_ancestor(self._root)
+            with tempfile.TemporaryFile(buffering=0, dir=directory) as probe:
                 probe.write(b"ok")
         except OSError:
             logger.warning(
                 "Could not write to the album output directory", exc_info=True
             )
             return "not_writable"
-        return "writable"
+        return "writable" if directory == self._root else "absent"
 
     @staticmethod
-    def _is_missing(path: Path) -> bool:
-        try:
-            path.stat()
-        except FileNotFoundError:
-            return not any(
-                part.is_symlink() and not part.exists()
-                for part in (path, *path.parents)
-            )
-        return False
+    def _existing_ancestor(path: Path) -> Path:
+        for candidate in (path, *path.parents):
+            try:
+                candidate.stat()
+            except FileNotFoundError:
+                if candidate.is_symlink():
+                    raise
+            else:
+                return candidate
+        raise FileNotFoundError(path)

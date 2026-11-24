@@ -54,6 +54,20 @@ def test_inaccessible_output_root_is_not_reported_as_absent(tmp_path: Path) -> N
     assert verdict == {"output_dir": "not_writable", "music_dir_missing": False}
 
 
+def test_missing_output_beneath_unwritable_ancestor_is_not_creatable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "missing" / "albums"
+    with patch(
+        "punt_vox.voxd.output_health.tempfile.TemporaryFile",
+        side_effect=PermissionError,
+    ) as open_probe:
+        assert OutputHealth(root).probe()["output_dir"] == "not_writable"
+
+    open_probe.assert_called_once_with(buffering=0, dir=tmp_path)
+    assert not root.parent.exists()
+
+
 @pytest.mark.parametrize(
     "obstruction", ["file", "dangling-link", "parent-file", "parent-dangling-link"]
 )
