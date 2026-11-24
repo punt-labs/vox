@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from typing import Self
 
 from punt_vox.types import VoiceNotFoundError
@@ -14,8 +14,8 @@ __all__ = ["VoiceResolver"]
 logger = logging.getLogger(__name__)
 
 
-class VoiceResolver[V]:
-    """Voice name resolution with caching, TTL, and optional fallback."""
+class VoiceResolver[V: Hashable]:
+    """Resolve voice names and aliases to hashable voice identities or configs."""
 
     __slots__ = (
         "_cache",
@@ -65,13 +65,9 @@ class VoiceResolver[V]:
         """
         key = name.lower()
 
-        # Try cache first
         self._ensure_loaded()
-        if key in self._cache:
-            return self._cache[key]
-
-        # Cache miss -- force refresh (rate-limited)
-        self._force_load()
+        if key not in self._cache:
+            self._force_load()
         if key in self._cache:
             return self._cache[key]
 
@@ -86,7 +82,7 @@ class VoiceResolver[V]:
             if self._default_key in self._cache:
                 return self._cache[self._default_key]
 
-        raise VoiceNotFoundError(name, sorted(self._cache))
+        raise VoiceNotFoundError(name, self._available_names())
 
     def list_all(self) -> list[str]:
         """Return sorted voice names."""
@@ -99,6 +95,11 @@ class VoiceResolver[V]:
         return self._default_key
 
     # -- Private ---------------------------------------------------------------
+
+    def _available_names(self) -> list[str]:
+        """Suggest the alphabetically first key for each distinct resolved voice."""
+        names = {self._cache[name]: name for name in sorted(self._cache, reverse=True)}
+        return sorted(names.values())
 
     def _ensure_loaded(self) -> None:
         """Load voices if cache is empty or stale."""
@@ -126,6 +127,4 @@ class VoiceResolver[V]:
 
     def _is_stale(self) -> bool:
         """Check if the cache has exceeded its TTL."""
-        if self._ttl_seconds <= 0:
-            return False  # TTL=0 means load-once, never stale
-        return (time.monotonic() - self._loaded_at) >= self._ttl_seconds
+        return 0 < self._ttl_seconds <= time.monotonic() - self._loaded_at
