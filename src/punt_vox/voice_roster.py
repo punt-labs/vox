@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from functools import partial
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING, TypedDict, cast, final
 
 from punt_vox.cascade import Cascade, RosterError
 from punt_vox.types_errors import VoiceNotFoundError
@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 
 __all__ = ["RosterError", "VoiceRoster"]
 
-_FEATURED_CAP = 6
+
+class _FeaturedVoice(TypedDict):
+    name: str
+    blurb: str
 
 
 @final
@@ -47,10 +50,8 @@ class VoiceRoster:
     @staticmethod
     def selection_error(client: RosterClient, provider: str, name: str) -> str | None:
         """Return a selection error, or None for an advertised name or raw ID."""
-        if (
-            provider.lower() == "elevenlabs"
-            and SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name)
-        ):
+        match_id = SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch
+        if provider.lower() == "elevenlabs" and match_id(name):
             return None
         roster = VoiceRoster.fetch(client, provider)
         if isinstance(roster, RosterError):
@@ -78,11 +79,11 @@ class VoiceRoster:
             raise ValueError(msg)
 
     @staticmethod
-    def featured(provider: str | None, roster: list[str]) -> list[dict[str, str]]:
+    def featured(provider: str | None, roster: list[str]) -> list[_FeaturedVoice]:
         """Sample up to six roster names that have provider-specific blurbs."""
-        featured = [
+        featured: list[_FeaturedVoice] = [
             {"name": name, "blurb": blurb}
             for (prov, name), blurb in VOICE_BLURBS.items()
             if prov == provider and name in roster
         ]
-        return random.sample(featured, min(_FEATURED_CAP, len(featured)))
+        return random.sample(featured, min(6, len(featured)))
