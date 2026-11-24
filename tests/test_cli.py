@@ -2484,6 +2484,34 @@ class TestGlobalFlags:
         assert data["log_level"] == "debug"
 
     @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
+    @patch("punt_vox.desktop_install.platform")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_reports_unsupported_desktop(
+        self,
+        mock_client_cls: MagicMock,
+        mock_platform: MagicMock,
+        json_output: bool,
+    ) -> None:
+        mock_platform.system.return_value = "Windows"
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"log_level": "debug"}
+        )
+        result = CliRunner().invoke(
+            app, ["status", "--json"] if json_output else ["status"]
+        )
+
+        assert result.exit_code == 0, result.exception
+        if json_output:
+            payload = json.loads(result.stdout)
+            assert payload["desktop"] == "platform unsupported"
+            assert payload["daemon"] == "running"
+            assert payload["log_level"] == "debug"
+        else:
+            assert "Desktop:   platform unsupported" in result.stdout
+            assert "Daemon:    running" in result.stdout
+            assert "Log level: debug" in result.stdout
+
+    @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
     @patch(f"{_CLI}.VoxClientSync")
     def test_status_reports_non_utf8_desktop_config(
         self,
