@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
+from punt_vox.models import MODEL_TABLE
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.state import PanelState
 
@@ -113,8 +114,15 @@ class SettingsRefresh:
         before: PanelState, fresh: PanelState, *, external: bool
     ) -> PanelState:
         """Keep the confirmed picker unless the on-disk model needs repair."""
-        if not external or (
-            fresh.provider == before.provider and fresh.model != before.model
+        if not external:
+            return fresh
+        models = MODEL_TABLE.available(fresh.provider)
+        if (
+            fresh.provider == before.provider
+            and fresh.model != before.model
+            and fresh.model is not None
+            and models
+            and fresh.model not in models
         ):
             return fresh
         return before

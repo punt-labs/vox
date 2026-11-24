@@ -405,6 +405,26 @@ class TestRunnerServiceSeam:
         await runner.changed(PanelTopic.MODEL, {"element_id": model_id, "value": 2})
         assert store.read().model == "tts-1-hd"
 
+    async def test_an_external_valid_model_with_a_roster_refusal_keeps_the_picker(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        reason = "OpenAI credentials unavailable"
+        client = MagicMock(spec=VoxClientSync)
+        client.voices.side_effect = [["alloy", "ash"], VoxdRejectionError(reason)]
+        service = VoxPanelService(client, store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+
+        store.write_field("model", "tts-1-hd")
+        assert await service.reconcile()
+        scene = service.scene()
+        assert scene.notice == PanelNotice.voxd_rejected(reason)
+        assert scene.model == "tts-1"
+        assert scene.roster == ("alloy", "ash")
+        assert scene.voice == "alloy"
+
     async def test_an_unreadable_config_and_control_notices_both_show(
         self, tmp_path: Path
     ) -> None:

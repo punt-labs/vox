@@ -1127,7 +1127,7 @@
     "avg_lcom": 0.542
   },
   "src/punt_vox/panel/settings_refresh.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 4.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.667,
