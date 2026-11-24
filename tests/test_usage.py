@@ -209,7 +209,7 @@ async def test_mcp_signal(captured: InMemorySpanExporter, failed: bool) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["say", "espeak"])
-@pytest.mark.parametrize("text", ["", "private local speech"])
+@pytest.mark.parametrize("text", ["x", "private local speech"])
 @pytest.mark.parametrize("failed", [False, True])
 @pytest.mark.parametrize("exit_code", [None, 0, 1])
 async def test_direct_speech_signal(
@@ -368,13 +368,13 @@ async def test_synthesis_failure(
         pytest.raises(ValueError) as raised,
     ):
         await pipeline.synthesize_to_file(
-            "", SynthesisSpec(provider="unregistered-secret")
+            "x", SynthesisSpec(provider="unregistered-secret")
         )
     assert raised.value is error
     [span] = _spans(captured, "vox.daemon.synthesize")
     assert span.attributes == {
         "provider": "other",
-        "text_length": 0,
+        "text_length": usage._usage._open().length("x"),
         "cached": False,
         "outcome": "error",
         "punt.schema_version": 1,

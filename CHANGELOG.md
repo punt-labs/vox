@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SessionEnd resets the auto-vibe counter even when notifications are off
   (`notify=n`), so the count no longer carries into the next session. (PL-1567)
 
+- `vox say` and `vox rec new` report `Error: empty text after normalization`
+  when the requested model leaves nothing to synthesize, without contacting
+  the speech provider. (PL-1566)
+
 - `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
   and `--quiet` (`-q`) after the subcommand. (PL-1560)
 
@@ -242,6 +246,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is evicted from the speech cache. (PL-1191)
 
 ### Added
+
+- `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
+  edit and list the repositories workers may start in, through the daemon;
+  `vox status` shows them on a `Workers:` line, and `--json` carries
+  `worker_repos`. With an empty allowlist, a vox call's `start_worker` names
+  `vox worker allow` instead of a dead end, and the agent says so once and
+  stops offering workers. (PL-1493)
 
 - `vox doctor` reports call prerequisites: the local ElevenLabs key's
   `convai_write` scope, Claude login expiry, tmux, and echo cancellation.

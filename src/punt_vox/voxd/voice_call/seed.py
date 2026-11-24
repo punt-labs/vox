@@ -57,6 +57,13 @@ A heard receipt acknowledges the choice sent, \
 not approval or successful execution.
 """
 
+_NO_REPOS: Final = (
+    "No repository is allowlisted, so no worker can start. If the person asks "
+    "for work, say that once: a repository must be allowlisted first by running "
+    "vox worker allow with its path on the machine that runs vox. Then do not "
+    "offer to start workers."
+)
+
 
 @final
 class CallSeed:
@@ -91,6 +98,8 @@ class CallSeed:
         lines = [_ROLE, f"Repositories a worker may use: {projects}"]
         if len(self._projects) == 1:
             lines.append("start_worker uses that repository when no project is given.")
+        if not self._projects:
+            lines.append(_NO_REPOS)
         if labels:
             lines.append(
                 "Spoken worker labels to worker IDs (JSON): "
