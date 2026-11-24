@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop hashing a download when the daemon receives a WebSocket disconnect,
+  including while the request is still waiting for a digest slot. (PL-1433)
+
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
   credentials, now reports not ready with the provider's reason instead of
