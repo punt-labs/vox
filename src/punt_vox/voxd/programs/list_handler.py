@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from itertools import batched
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
@@ -11,78 +13,63 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.catalog import Album
     from punt_vox.voxd.programs.service import ProgramService
 
-__all__ = ["ListHandler"]
-
-logger = logging.getLogger(__name__)
+type _Read = tuple[Album, dict[str, object] | str]
+_READ_BATCH_SIZE = 64
 
 
 @final
 class ListHandler:
     """Handle ``program_list``: reply with each catalog album's tags and counts."""
 
-    __slots__ = ("_service",)
+    __slots__ = ("_read_lock", "_service")
+    _read_lock: asyncio.Lock
     _service: ProgramService
 
     def __new__(cls, service: ProgramService) -> Self:
         """Create a list handler."""
         self = super().__new__(cls)
+        self._read_lock = asyncio.Lock()
         self._service = service
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Reply with each *readable* catalog album's id, tags, counts, timestamp."""
-        rows = [
-            row
-            for album in self._service.catalog_albums()
-            if (row := self._row_or_skip(album)) is not None
-        ]
-        await websocket.send_json(
-            {
-                "type": "program_list",
-                "id": str(msg.get("id", "")),
-                "programs": rows,
-            }
-        )
+        """Read manifests on a worker, then reconcile removals on the loop."""
+        rows = await self._read_rows(self._service.catalog_albums())
+        reply = {"type": "program_list", "id": str(msg.get("id", "")), "programs": rows}
+        await websocket.send_json(reply)
+
+    async def _read_rows(self, albums: tuple[Album, ...]) -> list[dict[str, object]]:
+        reads: list[_Read] = []
+        # Share one worker among lists; cancellation stops the next batch.
+        async with self._read_lock:
+            for batch in batched(albums, _READ_BATCH_SIZE, strict=False):
+                reads.extend(await asyncio.to_thread(list, map(self._read_row, batch)))
+        catalog = self._service.catalog
+        current = filter(lambda read: catalog.by_id(read[0].id) is read[0], reads)
+        return list(filter(None, map(self._row_or_log, current)))
 
     @staticmethod
-    def _row_or_skip(album: Album) -> dict[str, object] | None:
-        """Return the album's row, or ``None`` to skip one gone unreadable.
-
-        A row reads Parts live from disk, so an album whose directory was deleted
-        or whose manifest became unreadable after startup raises. Isolate per
-        album -- log at ERROR with its id and locator and drop it -- so a single
-        broken entry never tears the socket down; the query returns the healthy
-        rest. ``id`` and ``locator`` are durable metadata, safe to log.
-        """
+    def _read_row(album: Album) -> _Read:
+        # The background fill can add parts after the catalog registers an album.
         try:
-            return ListHandler._row(album)
+            manifest = album.read()
+            return album, {
+                "id": manifest.id.value,
+                "format": manifest.format.label,
+                "style": manifest.tags.style,
+                "vibe": manifest.tags.vibe,
+                "name": manifest.tags.name,
+                "ready": len(manifest.ready_parts()),
+                "total": len(manifest.parts),
+                "created": manifest.created.isoformat(),
+            }
         except (LookupError, OSError, ValueError) as exc:
-            logger.error(
-                "skipping unreadable album %s at %s: %s",
-                album.id.value,
-                album.locator,
-                exc,
-            )
-            return None
+            return album, f"{type(exc).__name__}: {exc}"
 
     @staticmethod
-    def _row(album: Album) -> dict[str, object]:
-        """Return the catalogue row for one album (id, tags, counts, created).
-
-        Part counts are read *live* from the store: the background fill grows the
-        album after the catalog registers it, so a catalog-snapshot count would
-        report ``0/0`` for a pool that has since filled. Metadata (id, tags,
-        format, ``created``) is durable, so it comes from the live manifest too.
-        """
-        manifest = album.read()
-        tags = manifest.tags
-        return {
-            "id": manifest.id.value,
-            "format": manifest.format.label,
-            "style": tags.style,
-            "vibe": tags.vibe,
-            "name": tags.name,
-            "ready": len(manifest.ready_parts()),
-            "total": len(manifest.parts),
-            "created": manifest.created.isoformat(),
-        }
+    def _row_or_log(read: _Read) -> dict[str, object] | None:
+        album, row = read
+        if not isinstance(row, str):
+            return row
+        logging.getLogger(__name__).error("Unreadable %r: %s", album, row)
+        return None

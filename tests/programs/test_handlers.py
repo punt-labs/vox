@@ -9,12 +9,20 @@ applies -- so a rejected or unresolvable command surfaces as a boundary error.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Self, cast, final
+from unittest.mock import AsyncMock
 
 import pytest
 
+from punt_vox.voxd.programs import list_handler
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
@@ -30,6 +38,7 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.programs.manifest import AlbumManifest
     from punt_vox.voxd.programs.service import ProgramService
     from punt_vox.voxd.types import MessageHandler
 
@@ -157,6 +166,26 @@ class TestMutatingHandlers:
 
 
 class TestListHandler:
+    async def test_reads_album_manifests_outside_event_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seed_album(tmp_path / "programs", 1)
+        service = _service(tmp_path)
+        loop_thread = threading.get_ident()
+        read_threads: list[int] = []
+        original_read = Album.read
+
+        def read(album: Album) -> AlbumManifest:
+            read_threads.append(threading.get_ident())
+            return original_read(album)
+
+        monkeypatch.setattr(Album, "read", read)
+        reply = await _reply(ListHandler(service), {"id": "5"})
+
+        assert reply["type"] == "program_list"
+        assert len(read_threads) == 1
+        assert read_threads[0] != loop_thread, "album manifest read on the daemon loop"
+
     async def test_lists_albums_with_tags_and_counts(self, tmp_path: Path) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
@@ -175,8 +204,92 @@ class TestListHandler:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
 
+    async def test_serializes_list_reads_and_stops_after_cancelled_batch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1, album_id="a3f1c9")
+        seed_album(root, 1, album_id="7b2e04")
+        service = _service(tmp_path)
+        handler = ListHandler(service)
+        loop = asyncio.get_running_loop()
+        read_started = asyncio.Event()
+        second_started = asyncio.Event()
+        resume_read = threading.Event()
+        original_read = Album.read
+        to_thread = AsyncMock(wraps=asyncio.to_thread)
+        reads: list[AlbumId] = []
+
+        def read(album: Album) -> AlbumManifest:
+            reads.append(album.id)
+            loop.call_soon_threadsafe(read_started.set)
+            assert resume_read.wait(timeout=5), "listing was not cancelled"
+            return original_read(album)
+
+        async def second_list() -> dict[str, object]:
+            second_started.set()
+            return await _reply(handler, {"id": "8"})
+
+        monkeypatch.setattr(asyncio, "to_thread", to_thread)
+        monkeypatch.setattr(list_handler, "_READ_BATCH_SIZE", 1)
+        monkeypatch.setattr(Album, "read", read)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            loop.set_default_executor(executor)
+            async with asyncio.TaskGroup() as tasks:
+                listing = tasks.create_task(_reply(handler, {"id": "7"}))
+                try:
+                    await asyncio.wait_for(read_started.wait(), timeout=5)
+                    second = tasks.create_task(second_list())
+                    await asyncio.wait_for(second_started.wait(), timeout=5)
+                    to_thread.assert_called_once()
+                    second.cancel()
+                    listing.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await listing
+                finally:
+                    resume_read.set()
+                await asyncio.to_thread(lambda: None)  # drain the in-flight batch
+
+        assert len(reads) == 1
+
+    @pytest.mark.parametrize("read_before_remove", [False, True])
+    async def test_omits_album_removed_during_read_without_logging_a_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        read_before_remove: bool,
+    ) -> None:
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1)
+        service = _service(tmp_path)
+        loop = asyncio.get_running_loop()
+        read_started = asyncio.Event()
+        resume_read = threading.Event()
+        original_read = Album.read
+
+        def read(album: Album) -> AlbumManifest:
+            manifest = original_read(album) if read_before_remove else None
+            loop.call_soon_threadsafe(read_started.set)
+            assert resume_read.wait(timeout=5), "catalog removal did not run"
+            return original_read(album) if manifest is None else manifest
+
+        monkeypatch.setattr(Album, "read", read)
+        async with asyncio.TaskGroup() as tasks:
+            listing = tasks.create_task(_reply(ListHandler(service), {"id": "7"}))
+            try:
+                await asyncio.wait_for(read_started.wait(), timeout=5)
+                shutil.rmtree(root / locator)
+                service.catalog.remove(AlbumId("a3f1c9"))
+            finally:
+                resume_read.set()
+
+        assert listing.result()["programs"] == []
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+    @pytest.mark.parametrize("missing", [False, True])
     async def test_lists_survive_an_album_gone_unreadable(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, missing: bool
     ) -> None:
         # A list row reads Parts live from disk, so an album deleted after startup
         # raises when its row is built. The query isolates per album -- the broken
@@ -186,13 +299,24 @@ class TestListHandler:
         seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
         gone = seed_album(root, 1, style="lofi", vibe="focus", album_id="7b2e04")
         service = _service(tmp_path)  # scans both into the catalog
-        shutil.rmtree(root / gone)  # the album vanishes after startup
+        if missing:
+            shutil.rmtree(root / gone)
+        else:
+            manifest_path = root / gone / "manifest.json"
+            data = json.loads(manifest_path.read_text())
+            data["parts"][0]["index"] = 0
+            manifest_path.write_text(json.dumps(data))
         with caplog.at_level(logging.ERROR):
             reply = await _reply(ListHandler(service), {"id": "5"})
         programs = reply["programs"]
         assert isinstance(programs, list)
         assert {p["id"] for p in programs} == {"a3f1c9"}  # the healthy album remains
-        assert any("7b2e04" in r.getMessage() for r in caplog.records)
+        error_type = "AlbumNotFoundError" if missing else "ValueError"
+        assert any(
+            "Unreadable Album(id=7b2e04" in (message := record.getMessage())
+            and error_type in message
+            for record in caplog.records
+        )
 
 
 @final

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox music list` reads saved album manifests off the daemon event loop, so
+  listing a large catalog does not delay unrelated requests. (PL-1546)
+
 - `vox music get` reads album metadata off the daemon event loop so slow disks
   do not stall other requests. (PL-1539)
 
