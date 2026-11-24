@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
-    from punt_vox.voxd.dedup import DedupHit
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = ["SynthesizeHandler"]
@@ -161,29 +160,6 @@ class _SpeechRequest:
         """
         await self._wire.fault(fault)
 
-    async def reply_to_duplicate(self, hit: DedupHit) -> None:
-        """Validate and reply without touching an existing dedup entry."""
-        try:
-            SynthesisPipeline.normalized_text(self.text, self.spec)
-        except EmptyNormalizedTextError as exc:
-            await self.fail(exc)
-            return
-        logger.info(
-            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
-            self.request_id,
-            len(self.text),
-            hit.original_played_at,
-            hit.ttl_seconds_remaining,
-        )
-        await self.reply(
-            {
-                "type": "done",
-                "deduped": True,
-                "original_played_at": hit.original_played_at,
-                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
-            }
-        )
-
 
 class SynthesizeHandler(MessageHandler):
     """Handle 'synthesize' WebSocket messages: TTS + enqueue playback."""
@@ -229,7 +205,7 @@ class SynthesizeHandler(MessageHandler):
 
     async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
         """Play a local provider directly, else synthesize to a file and enqueue."""
-        local = (req.spec.provider or "") in _LOCAL_PROVIDERS
+        local = req.spec.provider in _LOCAL_PROVIDERS
         if local and await self._play_local(req, dedup_recorded=dedup_recorded):
             return
         await self._synthesize_and_enqueue(req, dedup_recorded=dedup_recorded)
@@ -248,7 +224,30 @@ class SynthesizeHandler(MessageHandler):
         hit = self._once_dedup.check_and_record(req.text, float(once))
         if hit is None:
             return True
-        await req.reply_to_duplicate(hit)
+
+        async def reply_to_duplicate() -> None:
+            try:
+                SynthesisPipeline.normalized_text(req.text, req.spec)
+            except EmptyNormalizedTextError as exc:
+                await req.fail(exc)
+                return
+            logger.info(
+                "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
+                req.request_id,
+                len(req.text),
+                hit.original_played_at,
+                hit.ttl_seconds_remaining,
+            )
+            await req.reply(
+                {
+                    "type": "done",
+                    "deduped": True,
+                    "original_played_at": hit.original_played_at,
+                    "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+                }
+            )
+
+        await reply_to_duplicate()
         return None
 
     async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
