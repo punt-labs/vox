@@ -249,6 +249,33 @@ voice or rate. Use a different `--name` for each take (for example,
 `--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
 `--name` only works for a single text segment.
 
+#### Batch segment output
+
+`vox say --from segments.json` and `vox rec new --from segments.json` read a
+JSON array of strings or objects with a string `text` field. Blank segments
+are skipped. With `--json`, stdout is JSON Lines, not a JSON array: each
+successful segment produces one JSON object per line, in input order.
+
+On the first daemon or connection error while processing a segment, the
+command writes a final `{"error": "..."}` object to stdout, skips the
+remaining segments, and exits nonzero. Earlier results stay in the output.
+An invalid segments file instead produces a single `{"error": "..."}`
+object and exits with status 2 before processing any segments. Successful
+objects do not have an `error` key.
+
+Save stdout before parsing so you can check Vox's exit status separately
+and still read partial results. `jq -c .` reads the objects individually:
+
+```sh
+printf '%s\n' '["First line.", {"text":"Second line."}]' > segments.json
+status=0
+vox rec new --from segments.json --json > results.jsonl || status=$?
+jq -c . results.jsonl
+printf 'Vox exit status: %s\n' "$status" >&2
+```
+
+Use `vox say` in place of `vox rec new` to play the segments instead.
+
 #### Music
 
 | Command | What it does |

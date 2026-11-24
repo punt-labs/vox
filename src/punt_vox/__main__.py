@@ -34,6 +34,7 @@ from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_cli_options import (
     FromOpt,
+    JsonOutput,
     LanguageOpt,
     ModelOpt,
     ProviderOpt,
@@ -42,6 +43,7 @@ from punt_vox.types_cli_options import (
     SpeakerBoostFlag,
     StabilityOpt,
     StyleOpt,
+    TextArg,
     VoiceOpt,
 )
 from punt_vox.types_errors import ConfigValueError
@@ -98,10 +100,6 @@ Verbose = Annotated[
 Quiet = Annotated[
     bool,
     typer.Option("--quiet", "-q", help="Suppress non-JSON output."),
-]
-JsonOutput = Annotated[
-    bool,
-    typer.Option("--json", help="Output JSON."),
 ]
 OnceOpt = Annotated[
     int | None,
@@ -161,11 +159,6 @@ ApiKeyStdinFlag = Annotated[
         ),
     ),
 ]
-TextArg = Annotated[
-    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
-]
-
-
 # ---------------------------------------------------------------------------
 # callback (global flags)
 # ---------------------------------------------------------------------------
@@ -231,6 +224,21 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
+
+    With --from and --json, stdout is JSON Lines: one JSON object per
+    successful segment, in input order. On the first daemon or connection
+    error during a segment, Vox writes a final {"error": "..."} line and
+    exits nonzero. Earlier lines remain; later segments are skipped.
+
+    Save stdout and check Vox's exit status separately from jq:
+
+    status=0
+
+    vox say --from segments.json --json > out.jsonl || status=$?
+
+    jq -c . out.jsonl
+
+    echo "Vox exit status: $status" >&2
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     # Resolve the per-call API key from exactly one of the four

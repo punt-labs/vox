@@ -9,6 +9,7 @@ import typer
 
 __all__ = [
     "FromOpt",
+    "JsonOutput",
     "LanguageOpt",
     "ModelOpt",
     "ProviderOpt",
@@ -17,6 +18,7 @@ __all__ = [
     "SpeakerBoostFlag",
     "StabilityOpt",
     "StyleOpt",
+    "TextArg",
     "VoiceOpt",
 ]
 
@@ -24,6 +26,7 @@ FromOpt = Annotated[
     Path | None,
     typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
+JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
 LanguageOpt = Annotated[
     str | None,  # Omitting --language leaves provider language selection unchanged.
     typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
@@ -66,6 +69,9 @@ StabilityOpt = Annotated[
 StyleOpt = Annotated[
     float | None,
     typer.Option("--style", help="ElevenLabs voice style/expressiveness (0.0-1.0)."),
+]
+TextArg = Annotated[
+    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
 ]
 VoiceOpt = Annotated[
     str | None,

@@ -35,6 +35,7 @@ from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
 from punt_vox.types_cli_options import (
     FromOpt,
+    JsonOutput,
     LanguageOpt,
     ModelOpt,
     ProviderOpt,
@@ -43,6 +44,7 @@ from punt_vox.types_cli_options import (
     SpeakerBoostFlag,
     StabilityOpt,
     StyleOpt,
+    TextArg,
     VoiceOpt,
 )
 from punt_vox.types_synthesis import SynthesisSpec
@@ -116,9 +118,6 @@ class ClientRecordGateway:
 
 
 # Per-verb aliases for options defined by the recording CLI.
-_TextArg = Annotated[
-    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
-]
 _NameOpt = Annotated[
     str | None,
     typer.Option(
@@ -127,7 +126,6 @@ _NameOpt = Annotated[
     ),
 ]
 _RefArg = Annotated[str, typer.Argument(help="Bare store recording id.")]
-_JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
 _Verbose = Annotated[
     bool, typer.Option("--verbose", "-v", help="Enable debug logging.")
 ]
@@ -169,7 +167,7 @@ class RecCli:
 
     def new(
         self,
-        text: _TextArg = None,
+        text: TextArg = None,
         from_file: FromOpt = None,
         voice: VoiceOpt = None,
         language: LanguageOpt = None,
@@ -182,20 +180,35 @@ class RecCli:
         style: StyleOpt = None,
         speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer bool default
         *,
-        json_output: _JsonOutput = False,
+        json_output: JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
         """Synthesize speech into the store and print its bare id.
 
         Reads text from the TEXT argument, ``--from`` (a JSON segments file), or
-        stdin. Prints only the store id -- no path, no host. Act on it with
-        ``rec play``/``rec get``/``rec remove``.
+        stdin. By default, prints only the store id -- no path, no host.
+        Act on it with ``rec play``/``rec get``/``rec remove``.
 
         Without --name, recording the same text reuses the same id and
         silently replaces the earlier take, even if synthesis settings change.
         Pass a different --name for each take to keep them separate.
         --name only works for a single text segment.
+
+        With --from and --json, stdout is JSON Lines: one JSON object per
+        successful segment, in input order. On the first daemon or connection
+        error during a segment, Vox writes a final {"error": "..."} line and
+        exits nonzero. Earlier lines remain; later segments are skipped.
+
+        Save stdout and check Vox's exit status separately from jq:
+
+        status=0
+
+        vox rec new --from segments.json --json > out.jsonl || status=$?
+
+        jq -c . out.jsonl
+
+        echo "Vox exit status: $status" >&2
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         segments, spec = self._synthesis.prepare(
@@ -220,7 +233,7 @@ class RecCli:
     def list_recordings(
         self,
         *,
-        json_output: _JsonOutput = False,
+        json_output: JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -238,7 +251,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: _JsonOutput = False,
+        json_output: JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -253,7 +266,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: _JsonOutput = False,
+        json_output: JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -283,7 +296,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: _JsonOutput = False,
+        json_output: JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
