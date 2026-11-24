@@ -7,6 +7,12 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    NoRegionError,
+)
 
 from punt_vox.providers.polly import (
     PollyProvider,
@@ -159,6 +165,21 @@ class TestPollyProviderSynthesize:
         call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
         assert call_kwargs["TextType"] == "ssml"
         assert '<prosody rate="60%">' in call_kwargs["Text"]
+
+    def test_synthesize_escapes_ssml_text(
+        self,
+        mock_boto_client: MagicMock,
+        polly_provider: PollyProvider,
+        tmp_output_dir: Path,
+    ) -> None:
+        request = SynthesisRequest(text="AT&T <b> >")
+        out = tmp_output_dir / "escaped.mp3"
+        result = polly_provider.synthesize(request, out)
+        call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
+        assert call_kwargs["Text"] == (
+            '<speak><prosody rate="100%">AT&amp;T &lt;b&gt; &gt;</prosody></speak>'
+        )
+        assert result.text == request.text
 
     def test_synthesize_passes_voice_params(
         self,
@@ -324,8 +345,6 @@ class TestPollyProviderCheckHealth:
 
     @patch("punt_vox.providers.polly.boto3")
     def test_no_credentials(self, mock_boto3: MagicMock) -> None:
-        from botocore.exceptions import NoCredentialsError
-
         mock_sts = MagicMock()
         mock_sts.get_caller_identity.side_effect = NoCredentialsError()
 
@@ -339,6 +358,54 @@ class TestPollyProviderCheckHealth:
         checks = provider.check_health()
         assert not checks[0].passed
         assert "not configured" in checks[0].message
+        assert checks[1].passed
+
+    @pytest.mark.parametrize(
+        ("failure", "credentials_detail", "polly_detail"),
+        [
+            (
+                NoRegionError(),
+                "no region set",
+                "skipped (no credentials)",
+            ),
+            (
+                EndpointConnectionError(endpoint_url="https://aws.example"),
+                "cannot reach AWS",
+                "cannot reach AWS",
+            ),
+            (
+                ClientError(
+                    {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                    "CheckHealth",
+                ),
+                "AccessDenied",
+                "AccessDenied",
+            ),
+        ],
+    )
+    @patch("punt_vox.providers.polly.boto3")
+    def test_both_probes_report_failures(
+        self,
+        mock_boto3: MagicMock,
+        failure: Exception,
+        credentials_detail: str,
+        polly_detail: str,
+    ) -> None:
+        mock_boto3.client.side_effect = failure
+        provider = PollyProvider(boto_client=MagicMock())
+
+        credentials, access = provider.check_health()
+
+        assert not credentials.passed
+        assert credentials.message.startswith("AWS credentials: ")
+        assert credentials_detail in credentials.message
+        assert not access.passed
+        assert access.message.startswith("AWS Polly access: ")
+        assert polly_detail in access.message
+        assert [args[0] for args, _ in mock_boto3.client.call_args_list] == [
+            "sts",
+            "polly",
+        ]
 
 
 class TestPollyVoiceLanguageFiltering:
