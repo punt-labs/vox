@@ -9,7 +9,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -243,6 +243,54 @@ class TestSynthesizeParseGuard:
 
         assert sent == [{"type": "error", "id": "1", "message": "empty text"}]
         mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("text", "fields", "dedup_hit"),
+        [
+            ("[warm]", {"provider": "openai"}, False),
+            ("[warm]", {"provider": "espeak"}, False),
+            ("[warm]", {"provider": "openai"}, True),
+            (
+                "_",
+                {
+                    "provider": "elevenlabs",
+                    "model": "eleven_v3",
+                    "vibe_tags": "[warm]",
+                },
+                False,
+            ),
+        ],
+        ids=["file", "direct", "dedup-hit", "expressive-vibe"],
+    )
+    async def test_empty_normalized_text_is_rejected(
+        self, text: str, fields: dict[str, str], dedup_hit: bool
+    ) -> None:
+        """Empty normalized text never reaches the cache or either provider path."""
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        dedup = OnceDedup()
+        handler = _make_synthesize_handler(once_dedup=dedup)
+        msg: dict[str, object] = {"id": "1", "text": text, **fields}
+        if dedup_hit:
+            dedup.check_and_record(text, 60)
+            msg["once"] = 60
+
+        with (
+            patch("punt_vox.voxd.synthesis.SynthesisCache.for_request") as cache_lookup,
+            patch(
+                "punt_vox.voxd.synthesis.get_provider",
+                side_effect=RuntimeError("provider rejected blank text"),
+            ) as provider_factory,
+        ):
+            cache_lookup.side_effect = RuntimeError("unexpected cache lookup")
+            await handler(msg, ws)
+
+        ws.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "1", "message": "empty text after normalization"}
+        )
+        cache_lookup.assert_not_called()
+        provider_factory.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

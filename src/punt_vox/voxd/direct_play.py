@@ -7,7 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.providers.espeak import EspeakProvider
 from punt_vox.providers.local_play import EspeakDirectPlayer, SayDirectPlayer
 from punt_vox.providers.say import SayProvider
@@ -15,18 +14,6 @@ from punt_vox.types import AudioRequest, DirectPlayProvider, TTSProvider
 from punt_vox.voxd.api_key_env import ApiKeyEnv
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class DirectPlayFailure:
-    """A direct-play failure classified for the handler's reply boundary."""
-
-    cause: Exception
-
-    @property
-    def unexpected(self) -> bool:
-        """Whether this failure needs a fault traceback rather than a rejection."""
-        return not isinstance(self.cause, CALLER_ERRORS)
 
 
 @dataclass(frozen=True, slots=True)

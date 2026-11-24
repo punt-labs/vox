@@ -8,11 +8,12 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import Self
+from typing import Final, Self
 
 from punt_vox import usage
 from punt_vox.normalize import SpeechText
 from punt_vox.providers import get_provider
+from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -20,11 +21,7 @@ from punt_vox.types import (
 )
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
-from punt_vox.voxd.direct_play import (
-    DirectPlayFailure,
-    DirectPlayInvocation,
-    DirectPlayResult,
-)
+from punt_vox.voxd.direct_play import DirectPlayInvocation, DirectPlayResult
 from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
@@ -45,6 +42,16 @@ logger = logging.getLogger(__name__)
 # providers are skipped entirely so we don't pay for provider construction
 # only to discover they don't implement play_directly.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
+
+
+class EmptyNormalizedTextError(ValueError):
+    """The requested model leaves no text to synthesize after normalization."""
+
+
+_SYNTHESIS_REJECTIONS: Final[tuple[type[ValueError], ...]] = (
+    *CALLER_ERRORS,
+    EmptyNormalizedTextError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -95,11 +102,11 @@ class SynthesisPipeline:
         return False
 
     @staticmethod
-    def _build_audio_request(normalized_text: str, spec: SynthesisSpec) -> AudioRequest:
-        """Build the provider's AudioRequest: *spec*'s fields over normalized text."""
+    def _prepare_audio_request(text: str, spec: SynthesisSpec) -> AudioRequest:
+        """Normalize and validate text before preparing a provider request."""
         provider_id = spec.provider or ""
         return AudioRequest(
-            text=normalized_text,
+            text=SynthesisPipeline.normalized_text(text, spec),
             voice=spec.voice,
             language=spec.language,
             rate=spec.rate,
@@ -107,9 +114,7 @@ class SynthesisPipeline:
             similarity=spec.similarity,
             style=spec.style,
             speaker_boost=spec.speaker_boost,
-            provider=AudioProviderId(provider_id)
-            if provider_id in AudioProviderId.__members__
-            else None,
+            provider=AudioProviderId.__members__.get(provider_id),
         )
 
     @staticmethod
@@ -124,9 +129,19 @@ class SynthesisPipeline:
             provider_name, model
         )
         body = SpeechText.for_synthesis(raw_text, expressive=expressive)
-        if expressive and vibe_tags:
+        if expressive and vibe_tags and body:
             return " ".join(filter(None, (vibe_tags.strip(), body)))
         return body
+
+    @staticmethod
+    def normalized_text(text: str, spec: SynthesisSpec) -> str:
+        """Return the normalized text, rejecting input that leaves none."""
+        normalized = SynthesisPipeline.apply_vibe_for_synthesis(
+            text, spec.vibe_tags, spec.provider or "", spec.model
+        )
+        if not normalized:
+            raise EmptyNormalizedTextError("empty text after normalization")
+        return normalized
 
     # -- Instance methods --------------------------------------------------
 
@@ -141,15 +156,10 @@ class SynthesisPipeline:
         credentials bypass lookup and store for billing isolation.
         """
         provider_name = spec.provider or ""
-        model = spec.model
-
-        # Normalize around bracket tags so expressive instructions survive.
-        normalized = self.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, provider_name, model
-        )
+        request = self._prepare_audio_request(text, spec)
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
-        lookup = SynthesisCache.for_request(normalized, spec, len(text))
+        lookup = SynthesisCache.for_request(request.text, spec, len(text))
         if (cached := await lookup.outcome()) is not None:
             with usage.span("daemon", provider_name, text=text, cached=True):
                 return cached
@@ -163,8 +173,7 @@ class SynthesisPipeline:
                 if cached is not None:
                     return cached
                 with ApiKeyEnv(provider_name, spec.api_key).applied():
-                    provider = get_provider(provider_name, model=model)
-                    request = self._build_audio_request(normalized, spec)
+                    provider = get_provider(provider_name, model=spec.model)
                     output_path = await TempFileSynthesis(
                         provider, request, len(text)
                     ).run()
@@ -199,25 +208,19 @@ class SynthesisPipeline:
         cross-request blocking. Audio playback never holds the lock.
         """
         provider_name = spec.provider or ""
-        model = spec.model
-
-        normalized = self.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, provider_name, model
-        )
 
         def _factory() -> TTSProvider:
-            return get_provider(provider_name, model=model)
+            return get_provider(provider_name, model=spec.model)
 
         start = time.monotonic()
         try:
+            request = self._prepare_audio_request(text, spec)
             with usage.span("daemon", provider_name, text=text, cached=False):
                 rc = usage.direct_result(
-                    await self._run_direct_play(
-                        spec, _factory, self._build_audio_request(normalized, spec)
-                    )
+                    await self._run_direct_play(spec, _factory, request)
                 )
         except Exception as exc:
-            if DirectPlayFailure(exc).unexpected:
+            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
                 logger.exception("Direct-play raised")
             return exc
 

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Self
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox.providers.api_key import ApiKeyCheck
-from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
@@ -25,6 +24,8 @@ from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
+    _SYNTHESIS_REJECTIONS,
+    EmptyNormalizedTextError,
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
@@ -117,7 +118,7 @@ class _SpeechRequest:
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except Exception as exc:
-            if not isinstance(exc, CALLER_ERRORS):
+            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
                 logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
             await self.fail(exc)
@@ -126,14 +127,14 @@ class _SpeechRequest:
     async def fail(self, result: Exception | int) -> None:
         """Reply to a failed synthesis, or a direct play that exited nonzero.
 
-        A :data:`CALLER_ERRORS` member (F2-F5, or a CA bundle TLS cannot use) is
-        diagnosable and caller-side, so it crosses the wire verbatim through
-        :meth:`reject` rather than getting laundered to "operation failed" by
+        Invalid speech and known provider errors are diagnosable and
+        caller-side, so they cross the wire verbatim through
+        :meth:`WireReply.error` rather than getting laundered to "operation failed" by
         :meth:`fault` (design §3.5). Any other exception, or a nonzero exit
         code, is a daemon-side fault.
         """
-        if isinstance(result, CALLER_ERRORS):
-            await self.reject(result)
+        if isinstance(result, _SYNTHESIS_REJECTIONS):
+            await WireReply(self.websocket, self.request_id).error(result)
         elif isinstance(result, Exception):
             await self.fault(SafeFault.from_exception(result))
         else:
@@ -159,21 +160,6 @@ class _SpeechRequest:
         no absolute prefix reaches the client.
         """
         await WireReply(self.websocket, self.request_id).fault(fault)
-
-    async def reject(self, cause: ValueError) -> None:
-        """Audit a client-side rejection and send the cause's message verbatim.
-
-        A synthesis whose named provider has no credentials, whose voice
-        the provider does not offer, or whose credentials the provider
-        rejects on the wire is a CALLER-side failure: state named
-        something the daemon cannot honour. Routing through
-        :meth:`WireReply.error` (the ``error`` frame + WARNING
-        ``rejected op`` audit line) crosses the sentence verbatim
-        rather than laundering it to ``"operation failed"``. The whole
-        F2/F3/F5 promise (design §3.5) is that a diagnosable failure
-        reaches the caller with a message they can act on.
-        """
-        await WireReply(self.websocket, self.request_id).error(cause)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -243,6 +229,11 @@ class SynthesizeHandler(MessageHandler):
         hit = self._once_dedup.check_and_record(req.text, float(once))
         if hit is None:
             return True
+        try:
+            SynthesisPipeline.normalized_text(req.text, req.spec)
+        except EmptyNormalizedTextError as exc:
+            await req.fail(exc)
+            return None
         logger.info(
             "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
             req.request_id,

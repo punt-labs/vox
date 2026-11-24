@@ -2149,8 +2149,8 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/direct_play.py": {
-    "efferent_coupling": 6.0,
-    "public_names": 4.0,
+    "efferent_coupling": 5.0,
+    "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -3199,14 +3199,14 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/speech_handlers.py": {
-    "efferent_coupling": 10.0,
+    "efferent_coupling": 9.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.714,
     "avg_lcom": 0.714
   },
   "src/punt_vox/voxd/synthesis.py": {
-    "efferent_coupling": 10.0,
+    "efferent_coupling": 11.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.4,
