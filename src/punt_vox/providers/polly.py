@@ -8,8 +8,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
+from xml.sax.saxutils import escape
 
 import boto3
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    NoRegionError,
+)
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
@@ -88,8 +95,6 @@ _AUTH_ERROR_CODES = frozenset(
 @contextmanager
 def _translate_auth_errors() -> Generator[None]:
     """Expose rejected AWS credential chains without masking other SDK faults."""
-    from botocore.exceptions import ClientError, NoCredentialsError
-
     try:
         yield
     except NoCredentialsError as exc:
@@ -212,7 +217,7 @@ class PollyProvider(TTSProvider):
         resolved_voice = request.voice or self.default_voice
         voice_cfg = self._voices.resolve(resolved_voice)
         rate = request.rate if request.rate is not None else 100
-        ssml_text = f'<speak><prosody rate="{rate}%">{text}</prosody></speak>'
+        ssml_text = f'<speak><prosody rate="{rate}%">{escape(text)}</prosody></speak>'
         with _translate_auth_errors():
             response = self._client.synthesize_speech(
                 Text=ssml_text,
@@ -267,51 +272,42 @@ class PollyProvider(TTSProvider):
 
     def check_health(self) -> list[HealthCheck]:
         """Check AWS credentials and Polly API access."""
-        from botocore.exceptions import (
-            ClientError,
-            EndpointConnectionError,
-            NoCredentialsError,
-            NoRegionError,
-        )
+        return [self._check_aws_credentials(), self._check_polly_access()]
 
-        checks: list[HealthCheck] = []
-
-        def _ok(msg: str) -> HealthCheck:
-            return HealthCheck(passed=True, message=msg)
-
-        def _fail(msg: str) -> HealthCheck:
-            return HealthCheck(passed=False, message=msg)
-
-        # AWS credentials (STS)
+    @staticmethod
+    def _check_aws_credentials() -> HealthCheck:
         try:
             sts: Any = boto3.client("sts")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             identity: Any = sts.get_caller_identity()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
             account: str = identity["Account"]  # pyright: ignore[reportUnknownVariableType]
-            checks.append(_ok(f"AWS credentials (account: {account})"))
         except NoCredentialsError:
-            checks.append(
-                _fail("AWS credentials: not configured (run `aws configure`)")
-            )
+            detail = "not configured (run `aws configure`)"
         except NoRegionError:
-            checks.append(_fail("AWS credentials: no region set (run `aws configure`)"))
+            detail = "no region set (run `aws configure`)"
         except EndpointConnectionError:
-            checks.append(_fail("AWS credentials: cannot reach AWS (check network)"))
+            detail = "cannot reach AWS (check network)"
         except ClientError as e:
-            checks.append(_fail(f"AWS credentials: {e}"))
+            detail = str(e)
+        else:
+            return HealthCheck(
+                passed=True, message=f"AWS credentials (account: {account})"
+            )
+        return HealthCheck(passed=False, message=f"AWS credentials: {detail}")
 
-        # AWS Polly access
+    @staticmethod
+    def _check_polly_access() -> HealthCheck:
         try:
             polly: Any = boto3.client("polly")  # pyright: ignore[reportUnknownMemberType]
             polly.describe_voices()
-            checks.append(_ok("AWS Polly access"))
         except (NoCredentialsError, NoRegionError):
-            checks.append(_fail("AWS Polly access: skipped (no credentials)"))
+            detail = "skipped (no credentials)"
         except EndpointConnectionError:
-            checks.append(_fail("AWS Polly access: cannot reach AWS (check network)"))
+            detail = "cannot reach AWS (check network)"
         except ClientError as e:
-            checks.append(_fail(f"AWS Polly access: {e}"))
-
-        return checks
+            detail = str(e)
+        else:
+            return HealthCheck(passed=True, message="AWS Polly access")
+        return HealthCheck(passed=False, message=f"AWS Polly access: {detail}")
 
     def get_default_voice(self, language: str) -> str:
         """Get the default Polly voice for a language.
