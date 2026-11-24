@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `vox enable` adds `.punt-labs/vox/vox.local.md` to the repo's `.gitignore`
   (once, after any existing rules), so machine-local session state is never
-  committed. (PL-818)
+  committed. A symlinked `.gitignore`, which git does not read, stops enable
+  with an error instead of being written through. (PL-818)
 
 - `vox music get` and `mic:music get` now export an album's surviving tracks
   when a track file was deleted out of band, naming each skipped track
