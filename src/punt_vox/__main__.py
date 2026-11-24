@@ -28,8 +28,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
-from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.dirs import find_config_dir, writable_config_dir
+from punt_vox.config import SpeakMode
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.repo_config import RepoConfig
@@ -304,7 +303,7 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     """
     try:
         updates = VibeChange.from_cli(mood).resolve()
-        ConfigStore(writable_config_dir()).write_fields(updates)
+        RepoConfig().write_fields(updates)
     except ConfigValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="mood") from exc
     if updates["vibe_mode"] == "manual":
@@ -359,7 +358,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    ConfigStore(writable_config_dir()).write_field("speak", mode)
+    RepoConfig().write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -546,7 +545,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    cfg = ConfigStore(find_config_dir()).read()
+    cfg = RepoConfig().read()
     StatusCli.emit(_formatter, cfg)
 
 

@@ -1277,10 +1277,8 @@ class TestVibeCommand:
     def test_vibe_rejects_invalid_cue(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, error: str
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
 
         result = CliRunner().invoke(app, ["vibe", mood])
 
@@ -1291,10 +1289,8 @@ class TestVibeCommand:
     def test_vibe_surfaces_unreadable_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         local = tmp_path / "vox.local.md"
         local.write_bytes(b"\xff")
 
@@ -1307,10 +1303,8 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "excited"])
@@ -1322,10 +1316,8 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
@@ -1342,10 +1334,8 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
@@ -1446,7 +1436,6 @@ class TestNotifyCommand:
         monkeypatch.setattr(
             "punt_vox.dirs.writable_config_dir", real_writable_config_dir
         )
-        monkeypatch.setattr(f"{_CLI}.writable_config_dir", real_writable_config_dir)
 
         result = CliRunner().invoke(app, ["provider", "say"])
 
@@ -1489,10 +1478,8 @@ class TestSpeakCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "y"])
@@ -1503,10 +1490,8 @@ class TestSpeakCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "n"])
@@ -1630,10 +1615,8 @@ class TestVoiceCommand:
     def test_voice_set_rejects_unknown_name(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         config = tmp_path / "vox.md"
         original = '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
         config.write_text(original)
@@ -1654,10 +1637,8 @@ class TestVoiceCommand:
     def test_voice_set(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         config = tmp_path / "vox.md"
         config.write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.return_value = ["matilda"]
@@ -1674,10 +1655,8 @@ class TestVoiceCommand:
     def test_voice_set_rejects_provider_change_during_roster_fetch(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         config = tmp_path / "vox.md"
         config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
         switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
@@ -1703,10 +1682,8 @@ class TestVoiceCommand:
         tmp_path: Path,
         monkeypatch: MagicMock,
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         config = tmp_path / "vox.md"
         original = f'---\nprovider: "{provider}"\n---\n'
         config.write_text(original)
@@ -1734,10 +1711,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "@"])
@@ -1747,10 +1722,8 @@ class TestVoiceCommand:
     def test_voice_no_arg_lists_the_roster(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
@@ -1768,10 +1741,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         (tmp_path / "vox.md").write_text(
             '---\nprovider: "elevenlabs"\nvoice: "roger"\n---\n'
         )
@@ -1814,10 +1785,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         (tmp_path / "vox.md").write_text(
             '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
         )
@@ -1837,13 +1806,10 @@ class TestVoiceCommand:
     ) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-
         monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
 
         monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
 
-        monkeypatch.setattr("punt_vox.__main__.writable_config_dir", lambda: tmp_path)
         (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
 

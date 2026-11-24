@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox import dirs
 from punt_vox.config import ConfigStore
@@ -13,7 +13,34 @@ if TYPE_CHECKING:
 
     from punt_vox.config import VoxConfig
 
-__all__ = ["RepoConfig"]
+__all__ = ["CommandStore", "RepoConfig"]
+
+
+class CommandStore(Protocol):
+    """The config reads and writes the command layer makes."""
+
+    def read(self) -> VoxConfig:
+        """Return every config field."""
+        ...
+
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Write one field."""
+        ...
+
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Write several fields in one write."""
+        ...
 
 
 @final

@@ -149,9 +149,7 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
-    monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _resolve)
-    monkeypatch.setattr("punt_vox.__main__.writable_config_dir", _resolve)
     # SessionSpec.for_repo() is the config-lookup path shared by vox say,
     # vox rec new, and vox call. Patch the binding in session_spec itself.
     monkeypatch.setattr("punt_vox.session_spec.find_config_dir", _resolve)

@@ -147,10 +147,8 @@ def test_model_list_reports_the_same_fields(
     tool_payload = _tool_list_payload(model_tool.dispatch())
 
     # CLI surface: run `vox model --json` against the same config dir.
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["model", "--json"])
     assert result.exit_code == 0
@@ -186,10 +184,8 @@ def test_model_shorthand_resolves_identically(
 
     # Reset config for the CLI leg.
     (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
         result = runner.invoke(app, ["model", "v3", "--json"])
@@ -220,13 +216,10 @@ def test_provider_list_reports_the_same_fields(
     )
     tool_payload = _tool_list_payload(provider_tool.dispatch())
 
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
-
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
 
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
 
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["provider", "--json"])
     assert result.exit_code == 0
@@ -254,10 +247,8 @@ def test_provider_set_writes_the_same_field(
 
     # Reset the file and drive the CLI.
     (tmp_path / "vox.md").unlink(missing_ok=True)
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
         result = runner.invoke(app, ["provider", "openai", "--json"])
@@ -302,13 +293,10 @@ def test_voice_list_reports_the_same_names_and_current(
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch()))
 
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
-
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
 
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
 
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     with patch(f"{_CLI}.VoxClientSync") as cli_client_cls:
         cli_client_cls.return_value.voices.return_value = roster
         runner = CliRunner()
@@ -336,10 +324,8 @@ def test_voice_set_writes_the_same_field(
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
     store.write_field("voice", "")
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "matilda", "--json"])
@@ -369,10 +355,8 @@ def test_voice_set_strips_leading_at_on_both_surfaces(
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
     store.write_field("voice", "")
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
-    monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "@sarah", "--json"])
