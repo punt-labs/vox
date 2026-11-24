@@ -224,6 +224,22 @@ class TestHealthReply:
         assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
 
     @pytest.mark.asyncio
+    async def test_output_probe_exception_preserves_base_health(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def broken_probe(_probe: OutputHealth) -> None:
+            raise RuntimeError("output probe failed")
+
+        monkeypatch.setattr(OutputHealth, "probe", broken_probe)
+        health = DaemonHealth(PlaybackQueue(), lambda: 0, 0)
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
+
+    @pytest.mark.asyncio
     async def test_gone_peer_during_health_send_does_not_raise(self) -> None:
         """A peer gone while health replies is absorbed instead of tearing down.
 
