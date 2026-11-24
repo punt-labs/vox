@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import hashlib
+import io
 import json
 import sys
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 import websockets
 
 from punt_vox.client_errors import (
+    FetchWriteError,
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
@@ -134,21 +137,51 @@ def test_a_passed_deadline_times_out_without_reading_a_frame() -> None:
     ws.recv.assert_not_awaited()
 
 
-def test_a_chunk_stream_is_reassembled_in_order() -> None:
+def test_a_chunk_stream_is_written_one_chunk_at_a_time() -> None:
     exchange, _ = _exchange(*_fetch_frames(b"abcdefg", chunk=3))
+    sink = MagicMock(spec=io.BytesIO)
+    sink.write.side_effect = len
 
-    async def run() -> bytes:
-        return await exchange.reassemble(_later(1))
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), sink)
 
-    assert asyncio.run(run()) == b"abcdefg"
+    assert asyncio.run(run()) == 7
+    assert sink.write.call_args_list == [call(b"abc"), call(b"def"), call(b"g")]
+
+
+def test_a_short_sink_write_stops_the_fetch() -> None:
+    exchange, ws = _exchange(*_fetch_frames(b"abcdef", chunk=3))
+    sink = MagicMock(spec=io.BytesIO)
+    sink.write.return_value = 2
+
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), sink)
+
+    with pytest.raises(OSError, match="incomplete write for fetch chunk 0"):
+        asyncio.run(run())
+    assert ws.recv.await_count == 2  # no read after the failed write
+
+
+def test_sink_os_error_keeps_its_errno() -> None:
+    exchange, ws = _exchange(*_fetch_frames(b"abcdef", chunk=3))
+    sink = MagicMock(spec=io.BytesIO)
+    sink.write.side_effect = OSError(errno.ENOSPC, "disk full")
+
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), sink)
+
+    with pytest.raises(FetchWriteError) as caught:
+        asyncio.run(run())
+    assert caught.value.errno == errno.ENOSPC
+    assert ws.recv.await_count == 2
 
 
 def test_a_non_object_fetch_frame_is_a_protocol_error() -> None:
     begin, _, end = _fetch_frames(b"abc", chunk=3)
     exchange, _ = _exchange(begin, [], end)
 
-    async def run() -> bytes:
-        return await exchange.reassemble(_later(1))
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), io.BytesIO())
 
     with pytest.raises(VoxdProtocolError, match="expected a JSON object from voxd"):
         asyncio.run(run())
@@ -158,8 +191,8 @@ def test_an_out_of_order_chunk_is_a_protocol_error() -> None:
     begin, first, second, end = _fetch_frames(b"abcdef", chunk=3)
     exchange, _ = _exchange(begin, second, first, end)
 
-    async def run() -> bytes:
-        return await exchange.reassemble(_later(1))
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), io.BytesIO())
 
     with pytest.raises(VoxdProtocolError, match="expected chunk seq 0"):
         asyncio.run(run())

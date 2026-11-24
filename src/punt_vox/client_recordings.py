@@ -3,24 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.client_results import RecordingSummary
 from punt_vox.types_programs import JsonObject
 
 if TYPE_CHECKING:
     from punt_vox.client_exchange import VoxdExchange
 
-__all__ = ["RecordingListing", "RecordingSummary"]
-
-
-@dataclass(frozen=True, slots=True)
-class RecordingSummary:
-    """One recording in the store's list: its bare name and byte count."""
-
-    name: str
-    byte_count: int
+__all__ = ["RecordingListing"]
 
 
 @final
@@ -49,7 +41,4 @@ class RecordingListing:
 
     @staticmethod
     def _row(item: object) -> RecordingSummary:
-        row = JsonObject.coerce(item, "rec_list.entries")
-        return RecordingSummary(
-            name=row.require_str("name"), byte_count=row.require_int("bytes")
-        )
+        return RecordingSummary.from_wire(JsonObject.coerce(item, "rec_list.entries"))

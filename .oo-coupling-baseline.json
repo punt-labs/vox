@@ -196,11 +196,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/cli_rec.py": {
-    "efferent_coupling": 8.0,
+    "efferent_coupling": 9.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.727,
-    "avg_lcom": 0.363
+    "max_lcom": 0.773,
+    "avg_lcom": 0.387
   },
   "src/punt_vox/cli_status.py": {
     "efferent_coupling": 3.0,
@@ -217,11 +217,11 @@
     "avg_lcom": 0.5
   },
   "src/punt_vox/client.py": {
-    "efferent_coupling": 8.0,
-    "public_names": 3.0,
+    "efferent_coupling": 9.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.788,
-    "avg_lcom": 0.788
+    "max_lcom": 0.773,
+    "avg_lcom": 0.773
   },
   "src/punt_vox/client_call.py": {
     "efferent_coupling": 1.0,
@@ -276,8 +276,8 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.333,
-    "avg_lcom": 0.333
+    "max_lcom": 0.3,
+    "avg_lcom": 0.3
   },
   "src/punt_vox/client_gateway.py": {
     "efferent_coupling": 1.0,
@@ -294,15 +294,15 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/client_recordings.py": {
-    "efferent_coupling": 2.0,
-    "public_names": 2.0,
+    "efferent_coupling": 3.0,
+    "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
   "src/punt_vox/client_results.py": {
     "efferent_coupling": 1.0,
-    "public_names": 2.0,
+    "public_names": 4.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -1308,6 +1308,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/recording_download.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/resolve.py": {
     "efferent_coupling": 1.0,
     "public_names": 3.0,
@@ -1818,6 +1825,13 @@
     "circular_imports": 0.0,
     "max_lcom": 0.333,
     "avg_lcom": 0.222
+  },
+  "src/punt_vox/types_recording.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/types_synthesis.py": {
     "efferent_coupling": 0.0,
