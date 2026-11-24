@@ -1247,7 +1247,7 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited it
 
 A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and Linux), with mode 0600.
 
-**Write path:** `vox daemon install` runs as the installing user, not under `sudo`. [`KeysEnvWriter.write()`](src/punt_vox/service/keys_env.py) atomically merges allowed shell values into the file. [`PROVIDER_KEY_NAMES`](src/punt_vox/providers/credentials.py) lists the accepted inputs: API keys, selected AWS credential and configuration variables, and `TTS_PROVIDER`. An absent, blank, or rejected shell value leaves any stored value intact.
+**Write path:** `vox daemon install` calls [`KeysEnvWriter.write()`](src/punt_vox/service/keys_env.py) to atomically merge allowed shell values into the file. The file write runs as the installing user, without `sudo`. [`PROVIDER_KEY_NAMES`](src/punt_vox/providers/credentials.py) lists the accepted inputs: API keys, selected AWS credential and configuration variables, and `TTS_PROVIDER`. An absent, blank, or rejected shell value leaves any stored value intact.
 
 **Read path:** At startup, [`DaemonConfig.load_keys()`](src/punt_vox/voxd/config.py) fills in allowed, non-empty values from `keys.env` only for variables absent from the daemon's environment. A value already in that environment wins, including when `voxd` is started manually from a shell.
 
