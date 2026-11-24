@@ -1439,6 +1439,12 @@ class TestApplyVibeForSynthesis:
     ) -> None:
         assert self._apply(source, None, "elevenlabs", model) == expected
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    def test_currency_range_with_slash_before_sign(self, model: str) -> None:
+        assert self._apply("¥140\u2013150/$", None, "elevenlabs", model) == (
+            "140 to 150 yen"
+        )
+
     @pytest.mark.parametrize(
         ("model", "expected"),
         [
