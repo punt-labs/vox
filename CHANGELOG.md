@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox say` and `vox rec new` share how they prepare synthesis settings and
+  text segments. Command behavior is unchanged.
+
 - `vox music get` reads album metadata off the daemon event loop so slow disks
   do not stall other requests. (PL-1539)
 
@@ -57,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
+
+- `vox say` and `vox rec new` reject whitespace-only text with `empty text`,
+  like `''`, instead of sending it to the provider and failing with
+  `operation failed`. (PL-1547)
 
 - `vox say --from` and `vox rec new --from` now reject a segments file with
   no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
