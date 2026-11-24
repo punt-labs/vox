@@ -2907,3 +2907,5 @@
 {"ts":"2026-11-24T22:06:43Z","commit":"348afef","source":null,"files_scored":554,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-24T22:08:00Z","commit":"348afef","source":null,"files_scored":554,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Declare the source walker state types used by __new__.","deltas":{"src/punt_vox/_link_labels.py":{"module_size":[41.0,44.0]}},"removed":[]}
 {"ts":"2026-11-24T22:08:02Z","commit":"348afef","source":null,"files_scored":554,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
+{"ts":"2026-11-24T22:16:54Z","commit":"d9e5b03","source":null,"files_scored":554,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Check raw-source coordinates explicitly without catching missing parser-token metadata.","deltas":{"src/punt_vox/_speech_markdown.py":{"avg_params":[2.22,2.3],"module_size":[141.0,142.0]}},"removed":[]}
+{"ts":"2026-11-24T22:16:56Z","commit":"d9e5b03","source":null,"files_scored":554,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}

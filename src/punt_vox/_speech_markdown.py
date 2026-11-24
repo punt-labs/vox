@@ -52,32 +52,34 @@ class SpeechMarkdown:
         for token, lines in cls._inline_sources(text, vibed=vibed):
             offsets = MarkdownOffsets.from_content(text, lines, token.content)
             for child, relative in cls._source_tokens(token.children or ()):
-                try:
-                    span = cls._source_span(child, relative, offsets)
-                except KeyError:
-                    continue
-                if span is not None:
+                if span := cls._source_span(child, relative, offsets):
                     yield span
 
-    @staticmethod
+    @classmethod
     def _source_span(
-        token: Token, offset: int, positions: dict[int, int]
+        cls, token: Token, offset: int, positions: dict[int, int]
     ) -> CodeSpan | LinkSpan | None:
         if token.type == "code_inline":
             opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
             width = len(token.markup)
-            start = positions[offset + opening]
-            return CodeSpan(start, start + width, positions[offset + end - width])
-        if token.type == "link_open" and _SOURCE_OFFSET in token.meta:
+            if mapped := cls._project(positions, offset, (opening, end - width)):
+                start, close = mapped
+                return CodeSpan(start, start + width, close)
+        elif token.type == "link_open" and _SOURCE_OFFSET in token.meta:
             opening, label_end, end = cast(
                 "tuple[int, int, int]", token.meta[_SOURCE_OFFSET]
             )
-            return LinkSpan(
-                positions[offset + opening],
-                positions[offset + label_end],
-                positions[offset + end] + 1,
-            )
+            if mapped := cls._project(positions, offset, (opening, label_end, end)):
+                start, label_stop, close = mapped
+                return LinkSpan(start, label_stop, close + 1)
         return None
+
+    @staticmethod
+    def _project(
+        positions: dict[int, int], offset: int, marks: tuple[int, ...]
+    ) -> list[int] | None:
+        mapped = [positions.get(offset + mark, -1) for mark in marks]
+        return None if -1 in mapped else mapped
 
     @classmethod
     def _inline_sources(

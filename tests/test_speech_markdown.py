@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from markdown_it.rules_inline import backtick
 
 from punt_vox._inline_code import InlineCode
 from punt_vox._markdown_offsets import MarkdownOffsets
+from punt_vox._speech_markdown import SpeechMarkdown
 
 
 @pytest.mark.parametrize(
@@ -32,12 +34,20 @@ def test_link_labels(raw: str, expected: str) -> None:
     assert InlineCode.rewrite_currency(raw, vibed=True) == expected
 
 
-def test_leaves_link_intact_if_source_offsets_are_missing(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("raw", ["Read [the guide](/help).", "Use `$5`."])
+def test_leaves_markup_intact_if_source_offsets_are_missing(
+    raw: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def missing_offsets(*_: object) -> dict[int, int]:
         return {}
 
     monkeypatch.setattr(MarkdownOffsets, "from_content", missing_offsets)
-    raw = "Read [the guide](/help)."
     assert InlineCode.rewrite_currency(raw) == raw
+
+
+def test_missing_code_token_metadata_is_not_an_offset_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(SpeechMarkdown, "_code_rule", staticmethod(backtick))
+    with pytest.raises(KeyError, match="vox_source_offset"):
+        InlineCode.rewrite_currency("Use `$5`.")
