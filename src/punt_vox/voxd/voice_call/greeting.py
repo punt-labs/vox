@@ -23,9 +23,7 @@ class CallGreeting:
     def __new__(cls, projects: tuple[str, ...]) -> Self:
         """Name each repository by its last path segment, qualified when shared."""
         self = super().__new__(cls)
-        paths = tuple(PurePath(project) for project in projects)
-        shared = Counter(path.name for path in paths)
-        self._names = tuple(cls._spoken(path, shared) for path in paths)
+        self._names = cls._unique(tuple(PurePath(project) for project in projects))
         return self
 
     def spoken(self) -> str:
@@ -37,12 +35,33 @@ class CallGreeting:
             )
         return f"{_INTRO} in {self._listed()}."
 
+    @classmethod
+    def _unique(cls, paths: tuple[PurePath, ...]) -> tuple[str, ...]:
+        """Grow each shared name by one parent segment until every name is unique.
+
+        A name stops growing at its root: the policy resolves and de-duplicates
+        the allowlist, so two entries never share every segment.
+        """
+        segments = tuple(cls._segments(path) for path in paths)
+        depths = [1] * len(paths)
+        while True:
+            names = tuple(
+                " ".join(parts[-depth:])
+                for parts, depth in zip(segments, depths, strict=True)
+            )
+            shared = Counter(names)
+            grown = [
+                depth + 1 if shared[name] > 1 and depth < len(parts) else depth
+                for parts, depth, name in zip(segments, depths, names, strict=True)
+            ]
+            if grown == depths:
+                return names
+            depths = grown
+
     @staticmethod
-    def _spoken(path: PurePath, shared: Counter[str]) -> str:
-        """Return the last segment, with its parent in front when another shares it."""
-        if shared[path.name] > 1:
-            return f"{path.parent.name} {path.name}".strip()
-        return path.name or str(path)
+    def _segments(path: PurePath) -> tuple[str, ...]:
+        """Return the spoken segments of a path, without its root."""
+        return tuple(part for part in path.parts if part != path.anchor) or (str(path),)
 
     def _listed(self) -> str:
         if len(self._names) == 1:
