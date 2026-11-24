@@ -100,17 +100,18 @@ class PortAudio:
         try:
             return stream.__enter__()
         except PortAudioError as exc:
-            PortAudio._close_unstarted(stream)
+            PortAudio._close_unstarted(device, stream)
             raise PortAudio._refused(device, exc) from exc
 
     @staticmethod
-    def _close_unstarted(stream: RawInputStream) -> None:
+    def _close_unstarted(device: InputDevice, stream: RawInputStream) -> None:
         """Release a stream that would not start; a close that fails is logged.
 
         The start failure is the error the caller must see: it names the
         device and is the OSError the launcher releases the call ID on. A
         second PortAudio error, from the close, would replace it, so that
-        one is a warning only.
+        one is a warning only, and it names the device whose stream stayed
+        open.
         """
         from sounddevice import PortAudioError
 
@@ -118,7 +119,8 @@ class PortAudio:
             stream.close()
         except PortAudioError as exc:
             logger.warning(
-                "Input stream not closed after a start failure (%s)",
+                "Input stream on %s not closed after a start failure (%s)",
+                device.name,
                 LogText.failure(exc),
             )
 

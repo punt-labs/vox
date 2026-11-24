@@ -193,7 +193,7 @@ def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
     assert "starting stream" in str(failure.value.__cause__)
     (line,) = [r.message for r in caplog.records if r.name == _MODULE]
     assert line == (
-        "Input stream not closed after a start failure "
+        "Input stream on USB Audio not closed after a start failure "
         "(_FakePortAudioError: Error closing stream: Device unavailable [-9985])"
     )
 
