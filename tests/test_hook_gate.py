@@ -724,6 +724,74 @@ class TestPanelSpawn:
         assert log.exists(), "no reason was logged for the missing vox-panel"
         assert "not found on PATH" in log.read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize(
+        "lookup",
+        [
+            "path",
+            "failure",
+            "empty",
+            "invalid",
+            "multiline",
+            "outside",
+            "traversal",
+            "nested",
+            "missing",
+        ],
+    )
+    def test_panel_uses_cli_log_dir_or_legacy_fallback(
+        self, tmp_path: Path, lookup: str
+    ) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        env = self._base_env(tmp_path)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        path = [
+            entry
+            for entry in _path_without_vox_panel().split(os.pathsep)
+            if entry and not (Path(entry) / "vox").exists()
+        ]
+        env["PATH"] = os.pathsep.join([str(bin_dir), *path])
+        log_dir = Path(env["HOME"]) / "private state" / "vox-state" / "logs"
+        env["CLI_LOG_DIR"] = str(log_dir)
+        outside = tmp_path / "outside" / "vox-state" / "logs"
+        env["OUTSIDE_LOG_DIR"] = str(outside)
+        nested = log_dir.parent / "extra" / "logs"
+        env["NESTED_LOG_DIR"] = str(nested)
+        if lookup != "missing":
+            vox = bin_dir / "vox"
+            action = {
+                "path": 'printf "%s\\n" "$CLI_LOG_DIR"',
+                "failure": 'printf "%s\\n" "$CLI_LOG_DIR"; exit 1',
+                "empty": ":",
+                "invalid": 'printf "relative/path/logs\\n"',
+                "multiline": 'printf "%s\\n%s\\n" "$CLI_LOG_DIR" "$CLI_LOG_DIR"',
+                "outside": 'printf "%s\\n" "$OUTSIDE_LOG_DIR"',
+                "traversal": 'printf "%s\\n" "$HOME/../outside/vox-state/logs"',
+                "nested": 'printf "%s\\n" "$NESTED_LOG_DIR"',
+            }[lookup]
+            vox.write_text(
+                f'#!/bin/bash\n[[ "$*" == "hook _log-dir" ]] || exit 1\n{action}\n',
+                encoding="utf-8",
+            )
+            vox.chmod(0o700)
+
+        assert self._run_session_start(repo, env) == 0
+        legacy = self._panel_log(env)
+        if lookup == "path":
+            assert "not found on PATH" in (log_dir / legacy.name).read_text(
+                encoding="utf-8"
+            )
+            assert not legacy.exists()
+            for directory in (log_dir, log_dir.parent, log_dir.parent.parent):
+                assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+        else:
+            assert "not found on PATH" in legacy.read_text(encoding="utf-8")
+            assert not log_dir.exists()
+            assert not outside.exists()
+            assert not nested.exists()
+            assert not (repo / "relative").exists()
+
     def test_panel_log_avoids_the_world_writable_temp_dir(self, tmp_path: Path) -> None:
         """The panel log belongs under `$HOME`, in a 0700 directory.
 
