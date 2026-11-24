@@ -12,7 +12,8 @@ from click import unstyle
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
-from punt_vox.cli_io import OutputFlags, TextInput
+from punt_vox.cli_io import OutputFlags
+from punt_vox.cli_text_input import TextInput
 from punt_vox.output_formatter import OutputFormatter
 
 
