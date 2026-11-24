@@ -60,8 +60,8 @@ def test_batch_json_lines_help_preserves_shell_example(
         env={
             **os.environ,
             "TYPER_USE_RICH": rich,
-            "TERMINAL_WIDTH": "100",
-            "COLUMNS": "100",
+            "TERMINAL_WIDTH": "55",
+            "COLUMNS": "55",
         },
         capture_output=True,
         text=True,
@@ -74,9 +74,10 @@ def test_batch_json_lines_help_preserves_shell_example(
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     assert "status=0" in lines, result.stdout
     start = lines.index("status=0")
-    assert lines[start : start + 4] == [
+    assert lines[start : start + 5] == [
         "status=0",
-        f"vox {' '.join(command)} --from segments.json --json > out.jsonl || status=$?",
+        f"vox {' '.join(command)} --from in.json --json >out.jsonl ||",
+        "status=$?",
         "jq -c . out.jsonl",
         'echo "Vox exit status: $status" >&2',
     ]

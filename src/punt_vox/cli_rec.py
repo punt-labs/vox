@@ -203,11 +203,13 @@ class RecCli:
         {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
         are skipped. An invalid segments file produces one error object and exits 2.
 
-        Save stdout and check Vox's exit status separately from jq:
+        With a segments file named in.json, save stdout before running jq:
 
         status=0
 
-        vox rec new --from segments.json --json > out.jsonl || status=$?
+        vox rec new --from in.json --json >out.jsonl ||
+
+        status=$?
 
         jq -c . out.jsonl
 

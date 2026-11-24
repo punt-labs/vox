@@ -99,7 +99,10 @@ Quiet = Annotated[
     bool,
     typer.Option("--quiet", "-q", help="Suppress non-JSON output."),
 ]
-JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
+JsonOutput = Annotated[
+    bool,
+    typer.Option("--json", help="Output JSON."),
+]
 OnceOpt = Annotated[
     int | None,
     typer.Option(
@@ -235,11 +238,13 @@ def say(  # pyright: ignore[reportUnusedFunction]
     {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
     are skipped. An invalid segments file produces one error object and exits 2.
 
-    Save stdout and check Vox's exit status separately from jq:
+    With a segments file named in.json, save stdout before running jq:
 
     status=0
 
-    vox say --from segments.json --json > out.jsonl || status=$?
+    vox say --from in.json --json >out.jsonl ||
+
+    status=$?
 
     jq -c . out.jsonl
 
