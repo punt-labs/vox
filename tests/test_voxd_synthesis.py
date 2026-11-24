@@ -1645,36 +1645,26 @@ class TestApplyVibeForSynthesis:
             self._apply("5€[pause]10 years ago", None, "elevenlabs", model) == expected
         )
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
     @pytest.mark.parametrize(
-        ("model", "expected"),
+        ("spaced", "attached"),
         [
-            ("eleven_v3", "1 million dollars{punct} [pause] 10 years ago"),
-            ("eleven_multilingual_v2", "1 million dollars{punct} 10 years ago"),
+            ("$1 million[pause]10 years ago", "$1million[pause]10 years ago"),
+            ("$1 million,[pause]10 years ago", "$1million,[pause]10 years ago"),
+            (
+                "We saved $1 million—enough to retire",
+                "We saved $1million—enough to retire",
+            ),
+            ("$1 million[pause]€2 million", "$1million[pause]€2million"),
+            ("$1 million-[pause]$2 million", "$1million-[pause]$2million"),
+            ("$1 million—€2 billion", "$1million—€2billion"),
         ],
     )
-    @pytest.mark.parametrize(
-        ("amount", "punct"), [("$1 million", ""), ("$1million", ",")]
-    )
-    def test_keeps_tag_boundary_after_scaled_amount(
-        self, model: str, expected: str, amount: str, punct: str
+    def test_spaced_currency_scale_matches_attached(
+        self, model: str, spaced: str, attached: str
     ) -> None:
-        assert self._apply(
-            f"{amount}{punct}[pause]10 years ago", None, "elevenlabs", model
-        ) == expected.format(punct=punct)
-
-    @pytest.mark.parametrize(
-        ("model", "expected"),
-        [
-            ("eleven_v3", "1 million dollars [pause] 2 million euros"),
-            ("eleven_multilingual_v2", "1 million dollars 2 million euros"),
-        ],
-    )
-    def test_keeps_tag_boundary_between_currency_amounts(
-        self, model: str, expected: str
-    ) -> None:
-        assert (
-            self._apply("$1 million[pause]€2 million", None, "elevenlabs", model)
-            == expected
+        assert self._apply(spaced, None, "elevenlabs", model) == self._apply(
+            attached, None, "elevenlabs", model
         )
 
     def test_inline_tags_stripped_non_expressive(self) -> None:

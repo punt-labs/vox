@@ -30,39 +30,32 @@ class ProseCurrency:
             return prose
         tag_pattern = tag.pattern if tag is not None else r"(?!)"
         boundary = rf"(?P<boundary>(?<!\S)|{tag_pattern})"
-        end = (
-            rf"(?:(?P<separator>{_TRAILING_PUNCTUATION}"
-            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d|[-+\u2212]?[{_SYMBOLS}]))"
-            rf"|\u2014(?=\S))"
-            rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))"
-        )
-        joined = cls._attach_scale(prose, boundary, end)
         return re.sub(
-            rf"{boundary}{_SUFFIX_AMOUNT}{end}",
+            rf"{boundary}{_SUFFIX_AMOUNT}"
+            rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
+            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d))"
+            rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))",
             cls._prefix_amount,
-            joined,
+            cls._attach_scale(prose, tag_pattern),
         )
 
-    @classmethod
-    def _attach_scale(cls, prose: str, boundary: str, end: str) -> str:
+    @staticmethod
+    def _attach_scale(prose: str, tag_pattern: str) -> str:
+        boundary = rf"(?P<boundary>(?<![^\s\u2014])|{tag_pattern})"
         leading = rf"[^\w\s~/.,`{_SYMBOLS}]*"
         currency = CurrencyGrammar.spaced_prose_pattern(prose).pattern
+        end = r"(?![^\W_]|-[^\W\d_])"
         return re.sub(
             rf"{boundary}(?P<price>_*{leading}{currency}){end}",
             lambda match: (
                 match["boundary"]
                 + CurrencyGrammar.HORIZONTAL_GAP.sub("", match["price"])
-                + cls._separator(match)
             ),
             prose,
         )
 
-    @classmethod
-    def _prefix_amount(cls, match: re.Match[str]) -> str:
-        amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
-        return amount + cls._separator(match)
-
     @staticmethod
-    def _separator(match: re.Match[str]) -> str:
-        punctuation = match["separator"]
-        return "" if punctuation is None else f"{punctuation} "
+    def _prefix_amount(match: re.Match[str]) -> str:
+        amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
+        before_tag = match["before_tag"]
+        return amount if before_tag is None else f"{amount}{before_tag} "
