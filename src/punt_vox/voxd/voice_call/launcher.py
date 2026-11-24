@@ -98,6 +98,11 @@ class CallLauncher:
             await self._operations.prepare()
             await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
             trace = CallTrace.reserve(self._trace_dir, call_id)
+            try:
+                audio.open()  # A mic that cannot open refuses the call, undialled.
+            except OSError:
+                trace.release()  # The ID was never used: a retry may reuse it.
+                raise
             returning = ReturnBrief(self._trace_dir / "departure.json")
             call = VoiceAgentCall(
                 BossTools(
@@ -109,7 +114,6 @@ class CallLauncher:
                 opener=self._opener,
                 progress=self._progress,
             )
-            audio.open()  # A mic that cannot open refuses the call, undialled.
 
         async def run() -> None:
             with CallLog(trace.path, call.outcome):

@@ -35,3 +35,11 @@ class CallTrace:
         except FileExistsError:
             raise ValueError("call_id has already been used") from None
         return cls(path, stream, EventTrace(stream))
+
+    def release(self) -> None:
+        """Undo a reservation no call used: close the stream, delete the file.
+
+        The ID is free again, so the caller may retry with it.
+        """
+        self.stream.close()
+        self.path.unlink()

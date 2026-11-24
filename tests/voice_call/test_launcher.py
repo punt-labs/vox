@@ -536,6 +536,36 @@ class TestMicrophoneBeforeDial:
         lines = [r.message for r in caplog.records if r.name == _LOG]
         assert lines[-1] == "Call not started: OSError"
 
+    async def test_a_refused_microphone_gives_the_call_id_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The trace reserved for a call that never dialled is released.
+
+        A retry with the same explicit call ID, once the microphone is free,
+        must reach the connector instead of being refused as already used.
+        """
+        attempts: list[int] = []
+
+        def refuse_once(**kwargs: object) -> FakeInputStream:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise FakePortAudioError("Error opening RawInputStream: Device busy")
+            return FakeInputStream(**kwargs)
+
+        fake_sounddevice(monkeypatch, FakeBackend(open_stream=refuse_once))
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        call_id = uuid4()
+        request: dict[str, object] = {"type": "call_start", "echo_control": "headset"}
+        with pytest.raises(OSError, match="cannot open input device"):
+            await launcher.launch(call_id, request)
+        assert list(tmp_path.iterdir()) == []  # the reservation was undone
+        active = await launcher.launch(call_id, request)
+        await active.wait_connected(5)
+        await active.cancel()
+        assert len(connector.connections) == 1
+        assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
+
     async def test_the_microphone_is_open_before_the_agent_answers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

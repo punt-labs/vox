@@ -30,3 +30,13 @@ def test_a_reused_call_id_is_refused(tmp_path: Path) -> None:
     CallTrace.reserve(tmp_path, call_id).stream.close()
     with pytest.raises(ValueError, match="call_id has already been used"):
         CallTrace.reserve(tmp_path, call_id)
+
+
+def test_release_gives_the_call_id_back(tmp_path: Path) -> None:
+    """A reservation a call never used is undone: no file, and the ID is free."""
+    call_id = uuid4()
+    trace = CallTrace.reserve(tmp_path, call_id)
+    trace.release()
+    assert trace.stream.closed
+    assert not trace.path.exists()
+    CallTrace.reserve(tmp_path, call_id).release()
