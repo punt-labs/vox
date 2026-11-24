@@ -24,12 +24,25 @@ def test_read_takes_the_port_from_the_file_it_pins(tmp_path: Path) -> None:
     assert StalePortFile.read(port_file).port == 9000
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"84x",
+        b"0",
+        b"65536",
+        b"+8422",
+        b"8_422",
+        b"\xff",
+        pytest.param(b"9" * 4301, id="oversized-decimal"),
+    ],
+)
 def test_read_of_an_unparseable_file_has_no_port_and_still_clears_it(
     tmp_path: Path,
+    content: bytes,
 ) -> None:
     """A crash leftover is stale whoever wrote it."""
     port_file = tmp_path / "serve.port"
-    port_file.write_text("84x")
+    port_file.write_bytes(content)
     stale = StalePortFile.read(port_file)
     assert stale.port is None
     assert stale.discard(8421) is PortFileCleanup.REMOVED
