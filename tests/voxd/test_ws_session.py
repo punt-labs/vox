@@ -206,7 +206,7 @@ async def test_fetch_read_ahead_pauses_at_32_and_drains_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "r.mp3").write_bytes(b"data")
-    full, resume = asyncio.Event(), asyncio.Event()
+    full, overflow, resume = (asyncio.Event() for _ in range(3))
     original_measure = FetchDigest.measure
     sent: list[dict[str, object]] = []
     socket = AsyncMock(spec=WebSocket)
@@ -227,6 +227,8 @@ async def test_fetch_read_ahead_pauses_at_32_and_drains_in_order(
             raise WebSocketDisconnect(1000)
         if socket.receive_text.await_count == 33:
             full.set()
+        elif socket.receive_text.await_count == 34:
+            overflow.set()
         return frame
 
     async def measure(digest: FetchDigest, path: Path) -> object:
@@ -245,6 +247,8 @@ async def test_fetch_read_ahead_pauses_at_32_and_drains_in_order(
     try:
         async with asyncio.timeout(2):
             await full.wait()
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(overflow.wait(), timeout=0.05)
             assert not sent
             resume.set()
             await asyncio.shield(task)
@@ -326,7 +330,7 @@ async def test_fetch_teardown_failure_is_logged_on_disconnect(
     async def measure(_digest: FetchDigest, _path: Path) -> object:
         started.set()
         try:
-            await asyncio.Future[None]()
+            return await asyncio.Future[object]()
         except asyncio.CancelledError as exc:
             raise RuntimeError("digest teardown failed") from exc
 
