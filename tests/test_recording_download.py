@@ -136,6 +136,34 @@ def test_failed_staging_directory_open_leaves_no_directory(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_cleanup_tolerates_a_vanished_staging_path(tmp_path: Path) -> None:
+    dest = tmp_path / "rec.mp3"
+    moved = tmp_path / "renamed"
+
+    def fetch(sink: IO[bytes]) -> int:
+        next(tmp_path.iterdir()).rename(moved)
+        return _fetch(sink)
+
+    assert RecordingDownload(dest).save(fetch) == 4
+    assert dest.read_bytes() == b"DATA"
+    assert list(moved.iterdir()) == []
+
+
+def test_cleanup_reports_a_real_remove_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error = PermissionError(errno.EACCES, "permission denied")
+
+    def failed_rmdir(_path: Path) -> NoReturn:
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rmdir", failed_rmdir)
+        with pytest.raises(PermissionError) as caught:
+            RecordingDownload(tmp_path / "rec.mp3").save(_fetch)
+    assert caught.value is error
+
+
 @pytest.mark.parametrize("replacement_has_contents", [False, True])
 def test_cleanup_leaves_replacement_directories_alone(
     tmp_path: Path, replacement_has_contents: bool
