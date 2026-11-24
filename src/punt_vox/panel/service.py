@@ -35,7 +35,7 @@ from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.panel.panel_settings import PanelSettings
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
-from punt_vox.panel.settings_refresh import SettingsRefresh
+from punt_vox.panel.settings_refresh import RefreshNotices, SettingsRefresh
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.panel.voice_preview import VoicePreview
@@ -143,7 +143,7 @@ class VoxPanelService:
 
     def recover_from_write_failure(self, field: str) -> None:
         """Re-sync from the real settings after a failed persist, and flag the scene."""
-        self._refresh.recover(self._settings, field)
+        self._refresh.refresh(self._settings, RefreshNotices.write_failure(field))
 
     def note_rejection(self, detail: str) -> None:
         """Flag the scene with voxd's refusal, keeping the last-known settings.

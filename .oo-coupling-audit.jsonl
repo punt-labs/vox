@@ -908,3 +908,5 @@
 {"ts":"2026-11-24T17:18:45Z","commit":"4767c85","source":null,"files_scored":545,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-11-24T17:18:58Z","commit":"4767c85","source":null,"files_scored":545,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Account for the notice-policy value object introduced inside the extracted reader.","deltas":{"src/punt_vox/panel/settings_refresh.py":{"public_names":[2.0,3.0],"max_lcom":[0.833,0.9],"avg_lcom":[0.833,0.9]}}}
 {"ts":"2026-11-24T17:18:59Z","commit":"4767c85","source":null,"files_scored":545,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-11-24T17:25:35Z","commit":"edf81c5","source":null,"files_scored":545,"files_improved":1,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{"src/punt_vox/panel/settings_refresh.py":{"max_lcom":[0.9,0.667],"avg_lcom":[0.9,0.667]}}}
+{"ts":"2026-11-24T17:26:04Z","commit":"edf81c5","source":null,"files_scored":545,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}

@@ -27,6 +27,22 @@ class RefreshNotices:
     unavailable: PanelNotice
     rejected: Callable[[str], PanelNotice]
 
+    @classmethod
+    def write_failure(cls, field: str) -> Self:
+        """Keep the write failure visible alongside any daemon failure."""
+        return cls(
+            PanelNotice.write_failed(field),
+            PanelNotice.write_failed_and_voxd_unavailable(field),
+            lambda detail: PanelNotice.write_failed_and_voxd_rejected(field, detail),
+        )
+
+
+_NORMAL_NOTICES = RefreshNotices(
+    PanelNotice.silent(),
+    PanelNotice.voxd_unavailable(),
+    PanelNotice.voxd_rejected,
+)
+
 
 @final
 class SettingsRefresh:
@@ -43,38 +59,14 @@ class SettingsRefresh:
         self._store = store
         return self
 
-    def refresh(self, settings: PanelSettings, *, external: bool) -> bool:
-        """Re-read current settings, reporting stale data on failure."""
-        return self._resync(
-            settings,
-            RefreshNotices(
-                PanelNotice.silent(),
-                PanelNotice.voxd_unavailable(),
-                PanelNotice.voxd_rejected,
-            ),
-            external=external,
-        )
-
-    def recover(self, settings: PanelSettings, field: str) -> None:
-        """Confirm the reverted values while keeping the write failure visible."""
-        self._resync(
-            settings,
-            RefreshNotices(
-                PanelNotice.write_failed(field),
-                PanelNotice.write_failed_and_voxd_unavailable(field),
-                lambda detail: PanelNotice.write_failed_and_voxd_rejected(
-                    field, detail
-                ),
-            ),
-        )
-
-    def _resync(
+    def refresh(
         self,
         settings: PanelSettings,
-        notices: RefreshNotices,
+        notices: RefreshNotices = _NORMAL_NOTICES,
         *,
         external: bool = False,
     ) -> bool:
+        """Read and compare-and-replace a snapshot using the caller's notices."""
         before = settings.snapshot()
         fresh, notice, failure = self._read(before, notices, external=external)
         changed = settings.replace_if_current(
