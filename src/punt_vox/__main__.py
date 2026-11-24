@@ -29,7 +29,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
 from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.dirs import find_config_dir, writable_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_cli_options import (
@@ -285,7 +285,7 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     """
     try:
         updates = VibeChange.from_cli(mood).resolve()
-        ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(updates)
+        ConfigStore(writable_config_dir()).write_fields(updates)
     except ConfigValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="mood") from exc
     if updates["vibe_mode"] == "manual":
@@ -340,7 +340,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("speak", mode)
+    ConfigStore(writable_config_dir()).write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -418,9 +418,14 @@ _VoiceName = Annotated[
 ]
 
 
-def _ctx() -> Ctx:
-    """Wire the collaborators the command layer needs."""
-    return Ctx(ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR), VoxClientSync())
+def _ctx(*, writes: bool) -> Ctx:
+    """Wire the collaborators the command layer needs.
+
+    A command that *writes* resolves its config the way a write lands, so a
+    repo inheriting a workspace config gets its own instead of editing it.
+    """
+    config_dir = writable_config_dir() if writes else find_config_dir()
+    return Ctx(ConfigStore(config_dir), VoxClientSync())
 
 
 def _run(coro: Coroutine[object, object, CommandResult]) -> None:
@@ -453,7 +458,7 @@ def model_cmd(  # pyright: ignore[reportUnusedFunction]
     (``v3`` -> ``eleven_v3``, etc.) and writes it to ``.punt-labs/vox/vox.md``.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.model(_ctx(), name))
+    _run(cmds.model(_ctx(writes=name is not None), name))
 
 
 @app.command("provider")
@@ -473,7 +478,7 @@ def provider_cmd(  # pyright: ignore[reportUnusedFunction]
     request is an invalid API call.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.provider(_ctx(), name))
+    _run(cmds.provider(_ctx(writes=name is not None), name))
 
 
 @app.command("voice")
@@ -493,7 +498,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     voice it must match the active provider.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.voice(_ctx(), name, provider))
+    _run(cmds.voice(_ctx(writes=name is not None), name, provider))
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +532,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+    cfg = ConfigStore(find_config_dir()).read()
     StatusCli.emit(_formatter, cfg)
 
 

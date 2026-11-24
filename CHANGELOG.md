@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
+  `voice`, or the matching `mic` tool) from a git repo nested in a workspace
+  no longer edits the workspace's config. The repo gets its own
+  `.punt-labs/vox/` config, seeded from the inherited one so only the
+  written setting differs, and reads it from then on. A nested repo with no
+  config of its own still reads the workspace's. (PL-1598)
+
 - ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
   Inline cues stay where they were written. (PL-1577)
 
