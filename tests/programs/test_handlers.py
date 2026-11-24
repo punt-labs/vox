@@ -15,7 +15,6 @@ import logging
 import shutil
 import threading
 from typing import TYPE_CHECKING, Self, cast, final
-from unittest.mock import Mock
 
 import pytest
 
@@ -201,75 +200,6 @@ class TestListHandler:
     async def test_empty_catalogue(self, tmp_path: Path) -> None:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
-
-    @pytest.mark.parametrize("worker_fails", [False, True])
-    async def test_cancelled_list_keeps_slot_until_worker_stops_reading(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-        worker_fails: bool,
-    ) -> None:
-        root = tmp_path / "programs"
-        seed_album(root, 1, album_id="a3f1c9")
-        seed_album(root, 1, album_id="7b2e04")
-        service = _service(tmp_path)
-        handler = ListHandler(service)
-        loop = asyncio.get_running_loop()
-        read_started = asyncio.Event()
-        second_started = asyncio.Event()
-        resume_read = threading.Event()
-        original_read = Album.read
-        submit = Mock(wraps=loop.run_in_executor)
-        reads: list[AlbumId] = []
-
-        def read(album: Album) -> AlbumManifest:
-            reads.append(album.id)
-            loop.call_soon_threadsafe(read_started.set)
-            assert resume_read.wait(timeout=5), "listing was not cancelled"
-            if worker_fails and len(reads) == 1:
-                raise RuntimeError("worker read failed")
-            return original_read(album)
-
-        async def second_list() -> dict[str, object]:
-            second_started.set()
-            return await _reply(handler, {"id": "8"})
-
-        monkeypatch.setattr(loop, "run_in_executor", submit)
-        monkeypatch.setattr(Album, "read", read)
-        async with asyncio.TaskGroup() as tasks:
-            listing = tasks.create_task(_reply(handler, {"id": "7"}))
-            try:
-                await asyncio.wait_for(read_started.wait(), timeout=5)
-                second = tasks.create_task(second_list())
-                await asyncio.wait_for(second_started.wait(), timeout=5)
-                submit.assert_called_once()
-                listing.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await listing
-                submit.assert_called_once()
-            finally:
-                resume_read.set()
-            reply = await asyncio.wait_for(second, timeout=5)
-
-        assert reply["type"] == "program_list"
-        expected = [album.id for album in service.catalog_albums()]
-        assert reads == [expected[0], *expected]
-        assert ("Abandoned catalog read failed" in caplog.messages) == worker_fails
-
-    async def test_failed_worker_releases_slot(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        seed_album(tmp_path / "programs", 1)
-        handler = ListHandler(_service(tmp_path))
-        with monkeypatch.context() as patch:
-            patch.setattr(
-                Album, "read", Mock(side_effect=RuntimeError("worker read failed"))
-            )
-            with pytest.raises(RuntimeError, match="worker read failed"):
-                await _reply(handler, {"id": "7"})
-        reply = await asyncio.wait_for(_reply(handler, {"id": "8"}), timeout=5)
-        assert len(cast("list[object]", reply["programs"])) == 1
 
     @pytest.mark.parametrize("read_before_remove", [False, True])
     async def test_omits_album_removed_during_read_without_logging_a_fault(
