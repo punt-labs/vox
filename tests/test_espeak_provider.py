@@ -179,6 +179,22 @@ class TestEspeakDefaultVoiceDynamic:
         cache.clear()
         assert espeak_provider.default_voice == "en"
 
+    @pytest.mark.parametrize("voice_output", ["", "Unrecognized roster header\n"])
+    def test_unusable_system_roster_keeps_english_default(
+        self, voice_output: str
+    ) -> None:
+        with (
+            patch(
+                "punt_vox.providers.espeak._find_espeak_binary",
+                return_value="/usr/bin/espeak-ng",
+            ),
+            patch("punt_vox.providers.espeak.subprocess.run") as run,
+        ):
+            run.return_value = subprocess.CompletedProcess(
+                ["espeak-ng", "--voices"], 0, stdout=voice_output
+            )
+            assert EspeakProvider().default_voice == "en"
+
 
 class TestEspeakProviderResolveVoice:
     def test_resolve_cached(self, espeak_provider: EspeakProvider) -> None:
