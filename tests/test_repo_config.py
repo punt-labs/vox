@@ -39,20 +39,21 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def inner(workspace: Path) -> Path:
-    """A git repo nested in *workspace*, with no vox config of its own."""
+def inner(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The working directory: a git repo nested in *workspace*, no config of its own."""
     root = workspace / "inner"
     (root / ".git").mkdir(parents=True)
+    monkeypatch.chdir(root)
     return root
 
 
 class TestRepoConfig:
     def test_read_inherits_without_seeding(self, workspace: Path, inner: Path) -> None:
-        assert RepoConfig(inner).read().voice == "roger"
+        assert RepoConfig().read().voice == "roger"
         assert not (inner / ".punt-labs").exists()
 
     def test_write_lands_in_the_inner_repo(self, workspace: Path, inner: Path) -> None:
-        RepoConfig(inner).write_field("voice", "matilda")
+        RepoConfig().write_field("voice", "matilda")
         assert (workspace / ".punt-labs" / "vox" / "vox.md").read_text() == _INHERITED
         own = ConfigStore(inner / ".punt-labs" / "vox")
         assert own.read_field("voice") == "matilda"
@@ -60,12 +61,12 @@ class TestRepoConfig:
 
     def test_one_holder_reads_its_own_write(self, workspace: Path, inner: Path) -> None:
         """A long-lived holder (the panel) sees the seeded copy after writing."""
-        config = RepoConfig(inner)
+        config = RepoConfig()
         config.write_fields({"voice": "matilda"})
         assert config.read().voice == "matilda"
 
     def test_durable_only_reaches_the_store(self, workspace: Path, inner: Path) -> None:
         local = workspace / ".punt-labs" / "vox" / "vox.local.md"
         local.write_text('---\nvibe_mode: "off"\n---\n')
-        assert RepoConfig(inner, durable_only=True).read().vibe_mode != "off"
-        assert RepoConfig(inner).read().vibe_mode == "off"
+        assert RepoConfig(durable_only=True).read().vibe_mode != "off"
+        assert RepoConfig().read().vibe_mode == "off"

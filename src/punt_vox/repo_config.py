@@ -54,21 +54,19 @@ class RepoConfig:
     means a holder that outlives a write (the panel) reads the new copy next.
     """
 
-    __slots__ = ("_durable_only", "_start")
+    __slots__ = ("_durable_only",)
 
-    _start: Path | None
     _durable_only: bool
 
-    def __new__(cls, start: Path | None = None, *, durable_only: bool = False) -> Self:
-        """Resolve from *start* (default: cwd at each access)."""
+    def __new__(cls, *, durable_only: bool = False) -> Self:
+        """Resolve from the working directory at each access."""
         self = super().__new__(cls)
-        self._start = start
         self._durable_only = durable_only
         return self
 
     def read(self) -> VoxConfig:
         """Return the config this directory reads."""
-        return self._store(dirs.find_config_dir(self._start)).read()
+        return self._store(dirs.find_config_dir()).read()
 
     def write_field(
         self,
@@ -90,7 +88,7 @@ class RepoConfig:
         self._writable().write_fields(updates, check=check)
 
     def _writable(self) -> ConfigStore:
-        return self._store(dirs.writable_config_dir(self._start))
+        return self._store(dirs.writable_config_dir())
 
     def _store(self, config_dir: Path | None) -> ConfigStore:
         return ConfigStore(config_dir, durable_only=self._durable_only)
