@@ -116,6 +116,11 @@ class WorkerWorktrees:
 
     @staticmethod
     def _has_branch(project: Path, branch: str) -> bool:
+        """Probe the branch: exit 1 is absent; any other failure is an error.
+
+        Reading a broken probe as absent would leave the branch behind while
+        the record still said the discard succeeded.
+        """
         probe = subprocess.run(
             [
                 "git",
@@ -131,6 +136,10 @@ class WorkerWorktrees:
             text=True,
             timeout=20,
         )
+        if probe.returncode not in (0, 1):
+            raise subprocess.CalledProcessError(
+                probe.returncode, probe.args, probe.stdout, probe.stderr
+            )
         return probe.returncode == 0
 
     @staticmethod

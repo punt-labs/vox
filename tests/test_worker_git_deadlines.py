@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 import pytest
 
 from punt_vox.config import ConfigStore
+from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
@@ -94,3 +97,69 @@ def test_direct_worker_rpc_requires_an_absolute_project(
         pytest.raises(ValueError, match="absolute"),
     ):
         WorkerRepoPolicy(config).resolve("repo")
+
+
+def _record(tmp_path: Path, worker_id: str) -> WorkerRecord:
+    return WorkerRecord(
+        id=worker_id,
+        provider="fake",
+        harness="test",
+        session=f"vox-worker-{worker_id}",
+        project=str(tmp_path / "repo"),
+        worktree=str(tmp_path / "workers" / worker_id / "worktree"),
+        branch=f"vox-worker/{worker_id}",
+        task="edit",
+        state="stopped",
+        created_at="2026-11-24T00:00:00+00:00",
+        last_report={"launch_error": "OSError"},
+    )
+
+
+def _git_answering(
+    show_ref: int,
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Fake git: no worktree is registered and ``show-ref`` exits *show_ref*."""
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "show-ref" in argv:
+            return subprocess.CompletedProcess(argv, show_ref, "", "")
+        if kwargs.get("check") and argv[3:5] == ["branch", "-D"]:
+            raise AssertionError("branch -D must not run")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    return run
+
+
+def test_branch_probe_exit_one_means_absent(tmp_path: Path) -> None:
+    worker_id = str(uuid4())
+    with patch("subprocess.run", side_effect=_git_answering(1)) as run:
+        WorkerWorktrees().discard(
+            tmp_path, tmp_path / worker_id / "worktree", worker_id
+        )
+    verbs = [call.args[0][3:5] for call in run.call_args_list]
+    assert ["branch", "-D"] not in verbs
+
+
+def test_branch_probe_failure_raises_instead_of_reading_absent(
+    tmp_path: Path,
+) -> None:
+    worker_id = str(uuid4())
+    with (
+        patch("subprocess.run", side_effect=_git_answering(128)),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        WorkerWorktrees().discard(
+            tmp_path, tmp_path / worker_id / "worktree", worker_id
+        )
+
+
+def test_branch_probe_failure_is_recorded_as_a_discard_error(
+    tmp_path: Path,
+) -> None:
+    worker_id = str(uuid4())
+    with patch("subprocess.run", side_effect=_git_answering(128)):
+        record = WorkerWorktrees().discard_recorded(_record(tmp_path, worker_id))
+    error = record.last_report["discard_error"]
+    assert isinstance(error, str)
+    assert error.startswith("CalledProcessError")
+    assert "worktree_discarded" not in record.last_report
