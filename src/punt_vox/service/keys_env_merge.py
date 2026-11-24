@@ -49,12 +49,11 @@ class KeysEnvMerge:
     noted. A setting (profile, region, provider) still follows the shell.
     """
 
-    __slots__ = ("_held", "_merged", "_notices", "_rotate", "_rotated")
+    __slots__ = ("_held", "_merged", "_notices", "_rotated")
 
     _held: frozenset[str]
     _merged: dict[str, str]
     _notices: list[KeyNotice]
-    _rotate: bool
     _rotated: list[str]
 
     def __new__(
@@ -64,10 +63,9 @@ class KeysEnvMerge:
         self = super().__new__(cls)
         self._merged = {key: value for key, value in stored.items() if value}
         self._notices = []
-        self._rotate = rotate
         self._rotated = []
         taken = {key: env[key].strip() for key in PROVIDER_KEY_NAMES & env.keys()}
-        self._held = frozenset() if rotate else self._held_over(taken)
+        self._held = self._held_over(self._merged, taken, rotate=rotate)
         for key in sorted(taken):
             self._take(key, taken[key])
         return self
@@ -111,27 +109,39 @@ class KeysEnvMerge:
         else:
             self._notices.append(KeyNotice(key, reason, key in self._merged))
 
-    def _held_over(self, taken: Mapping[str, str]) -> frozenset[str]:
-        """Return the credentials whose stored values stay over *taken* ones."""
-        differing = {key for key, value in taken.items() if self._differs(key, value)}
-        if differing & _AWS_SET:
-            differing |= _AWS_SET
-        return frozenset(differing)
+    @staticmethod
+    def _held_over(
+        stored: Mapping[str, str], taken: Mapping[str, str], *, rotate: bool
+    ) -> frozenset[str]:
+        """Return the *taken* credentials kept off the file unless *rotate*."""
+        if rotate:
+            return frozenset()
+        differing = {k for k, v in taken.items() if KeysEnvMerge._differs(stored, k, v)}
+        return frozenset(differing | KeysEnvMerge._aws_drift(stored, taken, differing))
 
-    def _differs(self, key: str, value: str) -> bool:
-        """Return whether writable *value* would replace a stored credential."""
-        stored = self._merged.get(key, value)
+    @staticmethod
+    def _aws_drift(
+        stored: Mapping[str, str], taken: Mapping[str, str], differing: set[str]
+    ) -> set[str]:
+        """Return the AWS values in *taken* not stored, once any of them differs."""
+        if not differing & _AWS_SET:
+            return set()
+        return {key for key in _AWS_SET & taken.keys() if stored.get(key) != taken[key]}
+
+    @staticmethod
+    def _differs(stored: Mapping[str, str], key: str, value: str) -> bool:
+        """Return whether writable *value* would replace a *stored* credential."""
         return (
             key in _CREDENTIALS
-            and stored != value
-            and not self._reason_to_skip(key, value)
+            and stored.get(key, value) != value
+            and not KeysEnvMerge._reason_to_skip(key, value)
         )
 
     def _kept_over(self, key: str, value: str) -> str | None:
         """Return why a differing stored credential stays; record it when rotated."""
-        if key in self._held and self._merged.get(key) != value:
+        if key in self._held:
             return _DIFFERS
-        if self._rotate and self._differs(key, value):
+        if self._differs(self._merged, key, value):
             self._rotated.append(key)
         return None
 
