@@ -20,12 +20,15 @@ same path a panel control's own event handler would.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast, final
+from unittest.mock import MagicMock
 
+import pytest
 from punt_lux.operations import Ok
 
 from panel.doubles import PANEL_LOGGER
 from punt_vox.client_errors import VoxdConnectionError
-from punt_vox.config import VoxConfig
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.panel.panel_guard import PanelGuard
 from punt_vox.panel.panel_runner import PanelRunner
 from punt_vox.panel.service import VoxPanelService
@@ -34,6 +37,7 @@ from punt_vox.server_switches import PROVIDER_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
@@ -167,6 +171,47 @@ def _selected(request: RenderRequest, element_id: str) -> object:
 
 class TestRunnerServiceSeam:
     """A real ``VoxPanelService`` driven through a real ``PanelRunner``."""
+
+    @pytest.mark.parametrize("topic", [PanelTopic.VOICE, PanelTopic.MODEL])
+    async def test_stale_openai_click_preserves_and_restores_espeak(
+        self, tmp_path: Path, topic: PanelTopic
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        client = MagicMock(spec=VoxClientSync)
+        rosters = {"openai": ["alloy", "ash"], "espeak": ["af"]}
+
+        def voices(target: VoiceTarget) -> list[str]:
+            return rosters[target.provider]
+
+        client.voices.side_effect = voices
+        service = VoxPanelService(client, store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        guard = PanelGuard(service, rest_factory, PANEL_LOGGER)
+        runner = PanelRunner(service, rest_factory, guard, PANEL_LOGGER)
+        await runner.warmed()
+        await service.push_scene(rest_factory())
+        assert len(rest.rendered) == 1
+        assert _selected(rest.rendered[0], "vox.panel.provider") == (
+            PROVIDER_NAMES.index("openai") + 1
+        )
+
+        store.write_fields({"provider": "espeak", "model": "", "voice": "af"})
+        expected = store.read()
+        await runner.changed(topic.value, {"value": 2})
+
+        assert store.read() == expected
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.provider") == (
+            PROVIDER_NAMES.index("espeak") + 1
+        )
+        assert service.scene().model is None
+        assert service.scene().voice == "af"
 
     async def test_a_roster_fetch_failure_during_a_provider_commit_corrects(
         self,
