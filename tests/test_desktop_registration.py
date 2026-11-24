@@ -29,3 +29,12 @@ def test_desktop_registration_readback(
         path.write_text(contents, encoding="utf-8")
     with patch.object(DesktopInstaller, "config_path", return_value=path):
         assert DesktopRegistration.read() == expected
+
+
+def test_desktop_registration_reports_config_read_denied(tmp_path: Path) -> None:
+    path = tmp_path / "desktop.json"
+    with (
+        patch.object(DesktopInstaller, "config_path", return_value=path),
+        patch.object(Path, "read_text", side_effect=PermissionError),
+    ):
+        assert DesktopRegistration.read() == "config unreadable"

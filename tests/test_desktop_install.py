@@ -212,6 +212,14 @@ class TestDaemonCanAuthenticate:
             installer = DesktopInstaller("elevenlabs", tmp_path)
             assert not installer.daemon_can_authenticate()
 
+    def test_non_utf8_keys_env_is_not_authenticated(self, tmp_path: Path) -> None:
+        keys_file = tmp_path / "keys.env"
+        keys_file.write_bytes(b"\xff")
+        with patch(f"{_MOD}.keys_env_file", return_value=keys_file):
+            assert not DesktopInstaller(
+                "elevenlabs", tmp_path
+            ).daemon_can_authenticate()
+
 
 class TestCredentialGuidance:
     def test_names_variable_and_keys_env_without_secret(

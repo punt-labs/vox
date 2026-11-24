@@ -35,9 +35,9 @@ class DesktopRegistration:
     def _read_config(config_path: Path) -> str:
         try:
             data: object = json.loads(config_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return "no config"
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            if isinstance(exc, FileNotFoundError):
+                return "no config"
             return "config unreadable"
         match data:
             case {"mcpServers": {"vox": object()}}:
