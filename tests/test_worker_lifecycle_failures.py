@@ -242,6 +242,7 @@ def _raise(exc: Exception) -> None:
 
 
 def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
+    """DiscardComplete (Z): a failed discard records its error, not done."""
     provider = FakeWorkerProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
@@ -269,7 +270,7 @@ class _StopRefusingProvider(FakeWorkerProvider):
 def test_failed_stop_keeps_the_worktree_and_says_why(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A pane that may still be live keeps its checkout; the record says so."""
+    """Rollback (Z): a pane that may still be live keeps its checkout."""
     provider = _StopRefusingProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
