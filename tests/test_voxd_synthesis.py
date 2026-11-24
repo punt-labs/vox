@@ -1354,6 +1354,18 @@ class TestApplyVibeForSynthesis:
         result = self._apply("[whisper] 5€ or `5€`.", None, "elevenlabs", "eleven_v3")
         assert result == "[whisper] 5 euros or 5."
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("eleven_v3", "[whisper] 5 euros."),
+            ("eleven_multilingual_v2", "5 euros."),
+        ],
+    )
+    def test_speaks_suffix_amount_adjacent_to_tag(
+        self, model: str, expected: str
+    ) -> None:
+        assert self._apply("[whisper]5€.", None, "elevenlabs", model) == expected
+
     def test_trailing_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [alert] [serious]", None, "polly", None)
         assert result == "hello"

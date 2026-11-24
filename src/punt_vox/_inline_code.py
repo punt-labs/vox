@@ -38,12 +38,13 @@ class InlineCode:
     @classmethod
     def rewrite_currency(cls, text: str, *, vibed: bool = False) -> str:
         """Canonicalize prose amounts and spell code signs literally outside paths."""
+        after = VIBE_TAG_RE if vibed else None
         return cls._rewrite(
             text,
             lambda body, in_path: SpeechPunctuation.spell_code_currency(
                 body, in_path=in_path
             ),
-            prose=CurrencyGrammar.prefix_suffix_amounts,
+            prose=lambda body: CurrencyGrammar.prefix_suffix_amounts(body, after=after),
             vibed=vibed,
         )
 
