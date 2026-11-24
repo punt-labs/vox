@@ -480,7 +480,11 @@ def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None
 def test_disallow_removes_a_stored_relative_entry_and_keeps_the_rest(
     tmp_path: Path,
 ) -> None:
-    """An entry stored before validation existed can still be taken out."""
+    """A hand-edited entry that does not validate is still removable by its text.
+
+    Left in place it would block every strict read; disallow is the one
+    lenient door out.
+    """
     config = ConfigStore(tmp_path / "config")
     kept = tmp_path / "kept"
     config.write_field("worker_repos", repr(["relative/repo", str(kept)]))
