@@ -1614,6 +1614,23 @@ class TestApplyVibeForSynthesis:
             self._apply("5€[pause]10 years ago", None, "elevenlabs", model) == expected
         )
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("eleven_v3", "1 million dollars{punct} [pause] 10 years ago"),
+            ("eleven_multilingual_v2", "1 million dollars{punct} 10 years ago"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("amount", "punct"), [("$1 million", ""), ("$1million", ",")]
+    )
+    def test_keeps_tag_boundary_after_scaled_amount(
+        self, model: str, expected: str, amount: str, punct: str
+    ) -> None:
+        assert self._apply(
+            f"{amount}{punct}[pause]10 years ago", None, "elevenlabs", model
+        ) == expected.format(punct=punct)
+
     def test_inline_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [serious] world", None, "polly", None)
         assert result == "hello world"
