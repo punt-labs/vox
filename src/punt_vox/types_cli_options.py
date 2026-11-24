@@ -69,5 +69,11 @@ StyleOpt = Annotated[
 ]
 VoiceOpt = Annotated[
     str | None,
-    typer.Option("--voice", help="Voice name. Default: provider-specific."),
+    typer.Option(
+        "--voice",
+        help=(
+            "Voice name. Default: this repo's vox.md voice (vox voice <name>) "
+            "when using the configured provider, otherwise the provider's default."
+        ),
+    ),
 ]
