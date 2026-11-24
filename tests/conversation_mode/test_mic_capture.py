@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -45,5 +46,43 @@ async def test_chunks_yield_fed_pcm_with_the_configured_duration() -> None:
     chunk = await task
     assert chunk.pcm == b"\x01\x00"
     assert chunk.duration_s == pytest.approx(0.05)
+    await gen.aclose()
+    capture.close()
+
+
+async def test_blocks_captured_before_the_reader_starts_are_discarded() -> None:
+    """The device is held from open(); what it heard before pickup is not sent."""
+    created: list[FakeInputStream] = []
+    capture = MicCapture.open(FakeBackend(created), sample_rate_hz=16_000, chunk_s=0.02)
+    created[0].feed(b"stale")
+    await asyncio.sleep(0)  # the callback's put reaches the loop
+    gen = capture.chunks()
+    task = asyncio.ensure_future(gen.__anext__())
+    await asyncio.sleep(0)
+    assert not task.done()
+    created[0].feed(b"fresh")
+    assert (await task).pcm == b"fresh"
+    await gen.aclose()
+    capture.close()
+
+
+async def test_a_reader_that_falls_behind_sees_only_the_newest_second(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """At 20 ms blocks the queue holds one second: 50 blocks, oldest dropped."""
+    created: list[FakeInputStream] = []
+    capture = MicCapture.open(FakeBackend(created), sample_rate_hz=16_000, chunk_s=0.02)
+    gen = capture.chunks()
+    task = asyncio.ensure_future(gen.__anext__())
+    await asyncio.sleep(0)
+    created[0].feed(b"first")
+    assert (await task).pcm == b"first"
+    for index in range(60):
+        created[0].feed(str(index).encode())
+    with caplog.at_level(logging.WARNING):
+        chunk = await gen.__anext__()
+    assert chunk.pcm == b"10"
+    lines = [r.message for r in caplog.records if "dropped" in r.message]
+    assert lines == ["mic capture: dropped 10 blocks the reader had not taken"]
     await gen.aclose()
     capture.close()

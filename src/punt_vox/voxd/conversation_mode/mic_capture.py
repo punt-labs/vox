@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Buffer
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.conversation_mode.block_queue import BlockQueue
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -31,17 +32,21 @@ class MicCapture:
     """A started capture: the device is held from :meth:`open` to :meth:`close`.
 
     The backend's callback runs on its own audio thread, never the event
-    loop's; it is bridged with ``loop.call_soon_threadsafe`` onto an
-    :class:`asyncio.Queue` the consuming coroutine reads.
+    loop's; it is bridged with ``loop.call_soon_threadsafe`` onto a
+    :class:`BlockQueue` the consuming coroutine reads. The queue holds
+    :data:`BUFFER_S` of audio: a reader that falls further behind loses the
+    oldest blocks rather than sending the agent audio that is already stale.
     """
 
     __slots__ = ("_chunk_s", "_queue", "_stream")
     _stream: InputStreamHandle
-    _queue: asyncio.Queue[bytes]
+    _queue: BlockQueue
     _chunk_s: float
+    # How much audio may wait for the reader before the oldest block is dropped.
+    BUFFER_S: ClassVar[float] = 1.0
 
     def __new__(
-        cls, stream: InputStreamHandle, queue: asyncio.Queue[bytes], chunk_s: float
+        cls, stream: InputStreamHandle, queue: BlockQueue, chunk_s: float
     ) -> Self:
         """Hold an entered ``stream`` whose callback feeds ``queue``."""
         self = super().__new__(cls)
@@ -67,14 +72,14 @@ class MicCapture:
             sample_rate_hz,
         )
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[bytes] = asyncio.Queue()
+        queue = BlockQueue(max(1, round(cls.BUFFER_S / chunk_s)))
 
         def _callback(
             indata: Buffer, _frames: int, _time: object, status: CallbackFlags
         ) -> None:
             if status.input_overflow:
                 logger.warning("mic capture: input overflow (callback ran late)")
-            loop.call_soon_threadsafe(queue.put_nowait, bytes(indata))
+            loop.call_soon_threadsafe(queue.put, bytes(indata))
 
         stream = backend.open(
             samplerate=float(sample_rate_hz), blocksize=block_frames, callback=_callback
@@ -88,7 +93,12 @@ class MicCapture:
         wall-clock arrival: the block size is fixed and PortAudio delivers it
         at a steady cadence. A late callback (``status.input_overflow``) is
         logged, not measured into a corrected duration.
+
+        Whatever the device captured before this reader started is discarded:
+        the device is held from :meth:`open`, which may be well before the
+        call is live, and that audio was never meant for the agent.
         """
+        self._queue.discard()
         while True:
             pcm = await self._queue.get()
             yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
