@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from punt_vox.album_export import AlbumExport
 from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.types_programs.prompts import PromptSet
 
@@ -27,15 +28,16 @@ def test_new_delegates_to_music_new_and_returns_the_id() -> None:
     assert album_id == "7f3a91"
 
 
-def test_get_delegates_to_music_get_and_stringifies_the_path() -> None:
-    """get() forwards a Path dest and returns the written directory as a str."""
+def test_get_delegates_to_music_get_and_returns_the_export() -> None:
+    """get() forwards a Path dest and returns the client's export unchanged."""
     client = MagicMock()
-    client.music_get.return_value = Path("/tmp/out/warm-pads-7f3a91")
+    export = AlbumExport(Path("/tmp/out/warm-pads-7f3a91"), ("002.mp3",))
+    client.music_get.return_value = export
 
-    target = ClientCatalogGateway(client).get("7f3a91", "/tmp/out")
+    result = ClientCatalogGateway(client).get("7f3a91", "/tmp/out")
 
     client.music_get.assert_called_once_with("7f3a91", Path("/tmp/out"))
-    assert target == "/tmp/out/warm-pads-7f3a91"
+    assert result is export
 
 
 def test_remove_delegates_to_music_remove() -> None:

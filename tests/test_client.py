@@ -1156,6 +1156,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                    "missing": [],
                 }
             ),
             *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
@@ -1165,7 +1166,7 @@ class TestVoxClientRecMusic:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        target = await client.music_get("7f3a91", tmp_path)
+        target = (await client.music_get("7f3a91", tmp_path)).path
         assert target == tmp_path / "warm-pads-7f3a91"
         assert (target / "001.mp3").read_bytes() == part
 
@@ -1181,6 +1182,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "001.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1201,6 +1203,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "../escape.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1222,6 +1225,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "/etc/pwned",
                     "parts": [{"part": "001.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1250,6 +1254,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [],
+                    "missing": [],
                 }
             )
         )
@@ -1257,6 +1262,58 @@ class TestVoxClientRecMusic:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ValueError, match="no ready parts"):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_exports_survivors_and_reports_missing_parts(
+        self, tmp_path: Path
+    ) -> None:
+        """A part the daemon reports missing is skipped; survivors still export."""
+        part = b"track-bytes"
+        frames = [
+            json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                    "missing": [{"part": "002.mp3"}],
+                }
+            ),
+            *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
+        ]
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=frames)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        export = await client.music_get("7f3a91", tmp_path)
+        assert export.path == tmp_path / "warm-pads-7f3a91"
+        assert export.missing == ("002.mp3",)
+        assert sorted(p.name for p in export.path.iterdir()) == ["001.mp3"]
+
+    @pytest.mark.asyncio
+    async def test_music_get_all_parts_missing_raises_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """Every track file gone is a clear error naming them, before any mkdir."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [],
+                    "missing": [{"part": "001.mp3"}, {"part": "002.mp3"}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match=r"missing on disk: 001\.mp3, 002\.mp3"):
             await client.music_get("7f3a91", tmp_path)
         assert list(tmp_path.iterdir()) == []
 
@@ -1273,6 +1330,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [],
+                    "missing": [],
                 }
             )
         )
@@ -1291,6 +1349,7 @@ class TestVoxClientRecMusic:
                         "id": "m2",
                         "album": "warm-pads-7f3a91",
                         "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                        "missing": [],
                     }
                 ),
                 *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
@@ -1298,7 +1357,7 @@ class TestVoxClientRecMusic:
         )
         client._transport._ws = ready_ws  # pyright: ignore[reportPrivateUsage]
 
-        target = await client.music_get("7f3a91", tmp_path)
+        target = (await client.music_get("7f3a91", tmp_path)).path
         assert target == tmp_path / "warm-pads-7f3a91"
         assert (target / "001.mp3").read_bytes() == part
 
@@ -1320,6 +1379,7 @@ class TestVoxClientRecMusic:
                             {"part": "001.mp3", "bytes": len(first)},
                             {"part": "002.mp3", "bytes": len(second)},
                         ],
+                        "missing": [],
                     }
                 ),
                 *[json.dumps(f) for f in _fetch_frames(first, chunk=4)],
@@ -1329,7 +1389,7 @@ class TestVoxClientRecMusic:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        target = await client.music_get("7f3a91", tmp_path)
+        target = (await client.music_get("7f3a91", tmp_path)).path
         assert (target / "001.mp3").read_bytes() == first
         assert (target / "002.mp3").read_bytes() == second
 
@@ -2033,7 +2093,7 @@ class TestVoxClientSyncFrameDispatch:
         # test in test_client for a real manifest covers that path.
         sync = self._sync()
         mock_ws = self._mock_ws_yielding(
-            {"type": "music_manifest", "album": "alb-3", "parts": []}
+            {"type": "music_manifest", "album": "alb-3", "parts": [], "missing": []}
         )
         with (
             patch(

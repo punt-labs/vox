@@ -138,6 +138,8 @@ class MusicLibrary:
 
         The id is a catalog key, never a path; the per-part containment (a corrupt
         manifest entry can never stat outside the album dir) lives on ``AlbumContents``.
+        A ready part whose file was deleted out of band is listed as missing, not
+        raised, so the surviving parts stay exportable.
 
         Raises:
             ValueError: If the album is missing or a part path is unsafe.
