@@ -23,7 +23,7 @@ from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.cli_status import StatusCli
-from punt_vox.cli_synthesis import CliSynthesis
+from punt_vox.cli_synthesis import CliSynthesis, LanguageOpt, RateOpt
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
@@ -113,14 +113,6 @@ ModelOpt = Annotated[
 VoiceOpt = Annotated[
     str | None,
     typer.Option("--voice", help="Voice name. Default: provider-specific."),
-]
-LanguageOpt = Annotated[
-    str | None,
-    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
-]
-RateOpt = Annotated[
-    int,
-    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
 ]
 StabilityOpt = Annotated[
     float | None,

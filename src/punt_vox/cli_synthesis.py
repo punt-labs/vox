@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, Unpack, final
+from typing import TYPE_CHECKING, Annotated, Self, Unpack, final
 
 import typer
 
@@ -20,6 +20,18 @@ if TYPE_CHECKING:
 
     from punt_vox.output_formatter import OutputFormatter
     from punt_vox.types_cli_synthesis import SynthesisOptions
+
+
+LanguageOpt = Annotated[
+    str | None,
+    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
+]
+RateOpt = Annotated[
+    int,
+    typer.Option(
+        "--rate", help="Positive speech rate percentage (e.g. 90 = 90% speed)."
+    ),
+]
 
 
 @final

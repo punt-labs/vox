@@ -28,7 +28,7 @@ import typer
 from punt_vox.bare_name import BareName
 from punt_vox.cli_guard import GATEWAY_ERRORS, CliGuard
 from punt_vox.cli_io import OutputFlags
-from punt_vox.cli_synthesis import CliSynthesis
+from punt_vox.cli_synthesis import CliSynthesis, LanguageOpt, RateOpt
 from punt_vox.client_errors import FetchWriteError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
@@ -103,8 +103,7 @@ class ClientRecordGateway:
         self._client.rec_remove(ref)
 
 
-# Per-verb option aliases. These are ``rec new``'s own parameters (synthesis
-# flags + the bare store name), not module-global aliases shared with ``say``.
+# Per-verb aliases for options defined by the recording CLI.
 _TextArg = Annotated[
     str | None, typer.Argument(help="Text to synthesize.", show_default=False)
 ]
@@ -113,10 +112,6 @@ _FromOpt = Annotated[
     typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
 _VoiceOpt = Annotated[str | None, typer.Option("--voice", help="Voice name.")]
-_LanguageOpt = Annotated[
-    str | None, typer.Option("--language", "--lang", help="ISO 639-1 code (e.g. de).")
-]
-_RateOpt = Annotated[int, typer.Option("--rate", help="Speech rate percentage.")]
 _NameOpt = Annotated[
     str | None,
     typer.Option(
@@ -187,8 +182,8 @@ class RecCli:
         text: _TextArg = None,
         from_file: _FromOpt = None,
         voice: _VoiceOpt = None,
-        language: _LanguageOpt = None,
-        rate: _RateOpt = 90,
+        language: LanguageOpt = None,
+        rate: RateOpt = 90,
         name: _NameOpt = None,
         provider: _ProviderOpt = None,
         model: _ModelOpt = None,
