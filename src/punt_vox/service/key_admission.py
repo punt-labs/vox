@@ -59,8 +59,9 @@ class AwsCredentials:
     """The stored and shell AWS key id, secret and session token of one merge.
 
     AWS signs with all three together, so a merge keeps or replaces them as
-    one set: a kept pair never takes the shell's session token, and a pair the
-    shell replaces never keeps the stored token beside it.
+    one set: a kept pair never takes the shell's session token, a pair the
+    shell replaces never keeps the stored token beside it, and rotation needs
+    a whole new pair from the shell.
     """
 
     __slots__ = ("_stored", "_taken")
@@ -85,14 +86,15 @@ class AwsCredentials:
             return set()
         return {k for k, v in self._taken.items() if self._stored.get(k) != v}
 
-    def stale(self, merged: Mapping[str, str]) -> tuple[str, ...]:
-        """Return the stored AWS keys left behind once *merged* replaced the pair.
+    def unpaired(self) -> bool:
+        """Return whether a stored set has no whole writable shell pair."""
+        return bool(self._stored) and any(
+            KeyAdmission.refusal(k, self._taken.get(k, "")) for k in _AWS_PAIR
+        )
 
-        Only a whole pair written from the shell drops them: a lone new key id
-        or secret leaves every stored AWS key where it is.
-        """
-        written = {k for k, v in self._taken.items() if merged.get(k) == v}
-        kept = all(self._stored.get(k) == merged.get(k) for k in _AWS_PAIR)
-        if kept or not written >= _AWS_PAIR:
+    def stale(self, merged: Mapping[str, str]) -> tuple[str, ...]:
+        """Return the stored AWS keys left behind once *merged* replaced the pair."""
+        if all(self._stored.get(k, merged.get(k)) == merged.get(k) for k in _AWS_PAIR):
             return ()
+        written = {k for k, v in self._taken.items() if merged.get(k) == v}
         return tuple(sorted(self._stored.keys() - written))

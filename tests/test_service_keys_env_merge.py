@@ -69,16 +69,38 @@ def test_rotate_to_a_static_pair_drops_the_stored_session_token() -> None:
         {"AWS_ACCESS_KEY_ID": "AKIANEW", "AWS_SECRET_ACCESS_KEY": "bad\nline"},
     ],
 )
-def test_rotate_without_a_whole_shell_pair_removes_nothing(
+def test_rotate_without_a_whole_shell_pair_keeps_the_stored_aws_set(
     shell: dict[str, str],
 ) -> None:
     merge = KeysEnvMerge(_TEMPORARY_SET, shell, rotate=True)
-    assert merge.merged == _TEMPORARY_SET | {"AWS_ACCESS_KEY_ID": "AKIANEW"}
-    assert merge.removed == ()
+    assert merge.merged == _TEMPORARY_SET
+    assert (merge.rotated, merge.removed) == ((), ())
+    unpaired = (
+        "AWS_ACCESS_KEY_ID: the environment has no whole AWS key pair to rotate "
+        "to; kept the stored value"
+    )
+    assert unpaired in [str(n) for n in merge.notices]
 
 
 def test_a_matching_pair_keeps_its_stored_session_token() -> None:
     merge = KeysEnvMerge(_TEMPORARY_SET, _STATIC_PAIR | _TEMPORARY_SET)
+    assert merge.merged == _TEMPORARY_SET
+    assert merge.removed == ()
+
+
+def test_a_matching_pair_keeps_the_stored_token_the_shell_omits() -> None:
+    pair = {
+        k: _TEMPORARY_SET[k] for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+    }
+    merge = KeysEnvMerge(_TEMPORARY_SET, pair, rotate=True)
+    assert merge.merged == _TEMPORARY_SET
+    assert merge.removed == ()
+
+
+def test_completing_a_stored_pair_keeps_its_session_token() -> None:
+    stored = {"AWS_ACCESS_KEY_ID": "ASIASHELL", "AWS_SESSION_TOKEN": "token"}
+    shell = {"AWS_ACCESS_KEY_ID": "ASIASHELL", "AWS_SECRET_ACCESS_KEY": "shell"}
+    merge = KeysEnvMerge(stored, shell)
     assert merge.merged == _TEMPORARY_SET
     assert merge.removed == ()
 

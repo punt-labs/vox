@@ -12,6 +12,7 @@ from punt_vox.service.keys_env_report import KeyNotice, KeysEnvReport
 
 _DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
 _AWS_DIFFERS = "the stored AWS key pair differs (--rotate-keys replaces it)"
+_AWS_UNPAIRED = "the environment has no whole AWS key pair to rotate to"
 _HEADER = (
     "# vox provider keys — loaded by voxd at startup\n"
     "# Written by: vox daemon install\n"
@@ -37,7 +38,7 @@ class KeysEnvMerge:
     __slots__ = ("_aws", "_held", "_merged", "_notices", "_removed", "_rotated")
 
     _aws: AwsCredentials
-    _held: frozenset[str]
+    _held: dict[str, str]
     _merged: dict[str, str]
     _notices: list[KeyNotice]
     _removed: tuple[str, ...]
@@ -108,23 +109,26 @@ class KeysEnvMerge:
             aws_stay = not kept and self._aws.covers(key)
             self._notices.append(KeyNotice(key, reason, kept, aws_stay))
 
-    def _held_over(self, taken: Mapping[str, str], *, rotate: bool) -> frozenset[str]:
-        """Return the *taken* credentials kept off the file unless *rotate*."""
+    def _held_over(self, taken: Mapping[str, str], *, rotate: bool) -> dict[str, str]:
+        """Return the *taken* credentials kept off the file, each with why."""
+        differing = self._differing(self._merged, taken)
         if rotate:
-            return frozenset()
-        differing = {
-            k for k, v in taken.items() if KeyAdmission.replaces(self._merged, k, v)
-        }
-        return frozenset(differing | self._aws.drift(differing))
+            unpaired = self._aws.drift(differing) if self._aws.unpaired() else ()
+            return dict.fromkeys(unpaired, _AWS_UNPAIRED)
+        held = dict.fromkeys(self._aws.drift(differing), _AWS_DIFFERS)
+        return held | dict.fromkeys(differing, _DIFFERS)
+
+    @staticmethod
+    def _differing(stored: Mapping[str, str], taken: Mapping[str, str]) -> set[str]:
+        """Return the *taken* credentials whose value would replace a *stored* one."""
+        return {k for k, v in taken.items() if KeyAdmission.replaces(stored, k, v)}
 
     def _kept_over(self, key: str, value: str) -> str | None:
         """Return why a differing stored credential stays; record it when rotated."""
-        replaces = KeyAdmission.replaces(self._merged, key, value)
-        if key in self._held:
-            return _DIFFERS if replaces else _AWS_DIFFERS
-        if replaces:
+        reason = self._held.get(key)
+        if reason is None and KeyAdmission.replaces(self._merged, key, value):
             self._rotated.append(key)
-        return None
+        return reason
 
     def _drop(self, keys: tuple[str, ...]) -> None:
         """Remove *keys* from the merged keys."""
