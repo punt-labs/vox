@@ -272,7 +272,7 @@ class TestRecMusicCatalogVerbs:
         assert "/dest/warm-7f3a91" in out["additionalContext"]  # the path reaches back
         assert out["updatedMCPToolOutput"] == "♪ exported 7f3a91"
 
-    def test_music_get_panel_names_skipped_missing_parts(self) -> None:
+    def test_music_get_panel_counts_skipped_missing_parts(self) -> None:
         out = _run_hook(
             "music",
             {
@@ -283,10 +283,19 @@ class TestRecMusicCatalogVerbs:
             subcommand="get",
         )
         assert "002.mp3" in out["additionalContext"]
-        assert (
-            out["updatedMCPToolOutput"]
-            == "♪ exported 7f3a91 (skipped missing: 002.mp3, 004.mp3)"
-        )
+        assert out["updatedMCPToolOutput"] == "♪ exported 7f3a91 (skipped 2 missing)"
+
+    def test_music_get_many_skipped_parts_fit_the_panel(self) -> None:
+        result = {
+            "album_id": "7f3a91",
+            "path": "/dest/warm-7f3a91",
+            "missing": [f"{part:03}.mp3" for part in range(2, 13)],
+        }
+        out = _run_hook("music", result, subcommand="get")
+        summary = out["updatedMCPToolOutput"]
+        assert len(summary) <= 80
+        assert summary == "♪ exported 7f3a91 (skipped 11 missing)"
+        assert json.loads(out["additionalContext"]) == result
 
     def test_music_remove_panel_names_album(self) -> None:
         out = _run_hook("music", {"removed": "7f3a91"}, subcommand="remove")
