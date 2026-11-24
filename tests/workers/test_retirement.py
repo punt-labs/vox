@@ -11,8 +11,10 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.inventory import WorkerInventory
+from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.retirement import WorkerRetirement
+from punt_vox.voxd.workers.settlement import WorkerSettlement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,7 +69,9 @@ def test_terminal_cleanup_does_not_block_status_or_replace_late_report(
         updated.set()
 
     inventory.update.side_effect = publish
-    retirement = WorkerRetirement({"test": profile}, inventory)
+    retirement = WorkerRetirement(
+        WorkerSettlement({"test": profile}, Mock(spec=WorkerRepoPolicy)), inventory
+    )
     retirement.schedule(record.id)
     try:
         assert started.wait(1)

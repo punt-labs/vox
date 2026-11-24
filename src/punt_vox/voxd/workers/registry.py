@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import unicodedata
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self, cast, final
@@ -60,7 +59,9 @@ class WorkerRegistry:
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
         self._inventory = WorkerInventory(records)
-        self._retirement = WorkerRetirement(profiles, self._inventory)
+        self._retirement = WorkerRetirement.for_registry(
+            profiles, policy, self._inventory
+        )
         return self
 
     def restore(
@@ -142,12 +143,14 @@ class WorkerRegistry:
         return observed
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
-        record = self._policy.discard_recorded(self._lifecycle.rollback(record, error))
+        """Record the failure now; the worktree discard runs off the lock."""
+        record = self._lifecycle.rollback(record, error)
         try:
             self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
             self._inventory.remember(record)
             logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
+        self._retirement.schedule(record.id)
 
     def list(self) -> list[WorkerRecord]:
         """Report current state and close hook admission for confirmed exits."""
@@ -203,12 +206,7 @@ class WorkerRegistry:
         | None = None,  # None is ordinary text, not a permission answer.
     ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
-        if not words.strip():
-            raise ValueError("Worker words must not be empty or whitespace")
-        if any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in words):
-            raise ValueError(
-                "Worker words must not contain control characters or newlines"
-            )
+        SteerDelivery.validate(words)
         record = self._retirement.observe(
             self._inventory.get(worker_id), self._lifecycle
         )
@@ -224,14 +222,9 @@ class WorkerRegistry:
                 "Worker has a new prompt; read worker_status and ask the person "
                 "again before steering"
             )
-        profile = self._profiles[record.harness]
-        if len(words) > profile.input_limit:
-            raise ValueError(
-                f"Words exceed receipt limit of {profile.input_limit} characters"
-            )
-        return SteerDelivery(profile, self._providers[record.provider]).send(
-            record, words, urgent=urgent, choice=choice
-        )
+        return SteerDelivery(
+            self._profiles[record.harness], self._providers[record.provider]
+        ).send(record, words, urgent=urgent, choice=choice)
 
     @staticmethod
     def _question(

@@ -6,7 +6,9 @@ import logging
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, ClassVar, final
+
+from punt_vox.voxd.workers.markers import ReportMarkers
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.contracts import HarnessProfile
@@ -19,15 +21,18 @@ logger = logging.getLogger(__name__)
 class WorkerCleanup:
     """Manage pending and failed cleanup markers for a terminal worktree."""
 
+    MARKERS: ClassVar[ReportMarkers] = ReportMarkers("cleanup_pending", "cleanup_error")
     __slots__ = ()
 
-    @staticmethod
-    def pending(record: WorkerRecord) -> bool:
+    @classmethod
+    def pending(cls, record: WorkerRecord) -> bool:
         """Check whether explicit stop still owes harness cleanup."""
-        return bool({"cleanup_error", "cleanup_pending"} & record.last_report.keys())
+        return cls.MARKERS.present(record)
 
-    @staticmethod
-    def run(record: WorkerRecord, profiles: dict[str, HarnessProfile]) -> WorkerRecord:
+    @classmethod
+    def run(
+        cls, record: WorkerRecord, profiles: dict[str, HarnessProfile]
+    ) -> WorkerRecord:
         """Remove temporary harness state while keeping the worktree."""
         try:
             profiles[record.harness].cleanup(Path(record.worktree))
@@ -43,11 +48,4 @@ class WorkerCleanup:
                 record,
                 last_report={**record.last_report, "cleanup_error": type(exc).__name__},
             )
-        return replace(
-            record,
-            last_report={
-                k: v
-                for k, v in record.last_report.items()
-                if k not in ("cleanup_error", "cleanup_pending")
-            },
-        )
+        return cls.MARKERS.strip(record)

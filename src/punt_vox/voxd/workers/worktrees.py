@@ -117,22 +117,11 @@ class WorkerWorktrees:
     def discard_recorded(self, record: WorkerRecord) -> WorkerRecord:
         """Discard a failed launch's worktree and note the outcome on its record.
 
-        A launch whose provider could not be stopped is not terminal: its pane
-        may still be live, so the checkout is kept and ``discard_skipped``
-        says why. A discard that fails is logged with the git command and its
-        stderr, paths scrubbed, and recorded as ``discard_error``; the
-        rollback itself still completes, since the record's failure is the
-        fact that matters to the caller.
+        A discard that fails is logged with the git command and its stderr,
+        paths scrubbed, and recorded as ``discard_error``; the record's
+        launch failure is the fact that matters to the caller, so the error
+        is not raised.
         """
-        if record.state != "stopped":
-            logger.warning("Worker %s worktree kept: provider stop failed", record.id)
-            return replace(
-                record,
-                last_report={
-                    **record.last_report,
-                    "discard_skipped": "provider stop failed",
-                },
-            )
         note: dict[str, object] = {"worktree_discarded": True}
         try:
             self.discard(Path(record.project), Path(record.worktree), record.id)

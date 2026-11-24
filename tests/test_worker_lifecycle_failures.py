@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -156,6 +158,14 @@ async def test_allowlist_routes_stay_live_when_worker_recovery_fails(
     assert "recovery failed" in str(reply["message"])
 
 
+def _settled(registry: WorkerRegistry) -> None:
+    """Wait for the background discard job to finish."""
+    deadline = time.monotonic() + 30
+    while not registry.cleanup_idle():
+        assert time.monotonic() < deadline, f"never settled: {registry.list()}"
+        time.sleep(0.01)
+
+
 def _git_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -209,6 +219,7 @@ def test_timed_out_launch_discards_the_worktree_git_finished_anyway(
         ),
     ):
         registry.start("edit", str(repo), provider="fake", harness="test")
+    _settled(registry)
     record = registry.list()[0]
     assert record.state == "stopped"
     assert record.last_report["launch_error"] == (
@@ -240,9 +251,11 @@ def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
     registry = _registry(tmp_path, provider, worktrees)
     with pytest.raises(OSError, match="launch failed"):
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    _settled(registry)
     record = registry.list()[0]
     assert record.last_report["launch_error"] == "OSError: launch failed"
     assert record.last_report["discard_error"] == "rmtree: OSError: busy"
+    assert "discard_pending" not in record.last_report
     assert "worktree_discarded" not in record.last_report
 
 
@@ -332,3 +345,33 @@ def test_tmux_kill_failure_on_rollback_keeps_the_worktree(tmp_path: Path) -> Non
     assert record.state == "starting"
     assert record.last_report["stop_error"] == "RuntimeError"
     assert record.last_report["discard_skipped"] == "provider stop failed"
+
+
+def test_failed_launch_discards_its_worktree_in_the_background(
+    tmp_path: Path,
+) -> None:
+    """Rollback (Z): the launch error returns before the discard runs."""
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    release = Event()
+
+    def blocking_discard(project: Path, worktree: Path, worker_id: str) -> None:
+        if not release.wait(2):
+            raise TimeoutError("discard ran before the launch error returned")
+
+    worktrees.discard.side_effect = blocking_discard
+    registry = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    pending = registry.list()[0]
+    assert pending.state == "stopped"
+    assert pending.last_report["launch_error"] == "OSError: launch failed"
+    assert pending.last_report["discard_pending"] is True
+    assert "worktree_discarded" not in pending.last_report
+    release.set()
+    _settled(registry)
+    done = registry.list()[0]
+    assert done.last_report["worktree_discarded"] is True
+    assert "discard_pending" not in done.last_report
+    worktrees.discard.assert_called_once()

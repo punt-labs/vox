@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
+from punt_vox.voxd.workers.settlement import WorkerSettlement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.workers.inventory import WorkerInventory
     from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
     from punt_vox.voxd.workers.model import WorkerRecord
+    from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +26,30 @@ logger = logging.getLogger(__name__)
 class WorkerRetirement:
     """Run terminal cleanup once per worker and checkpoint its outcome."""
 
-    __slots__ = ("_executor", "_inventory", "_profiles", "_release")
+    __slots__ = ("_executor", "_inventory", "_release", "_settlement")
     _executor: WorkerCleanupQueue
     _inventory: WorkerInventory
-    _profiles: dict[str, HarnessProfile]
     _release: Callable[[str], None]
+    _settlement: WorkerSettlement
 
-    def __new__(
-        cls, profiles: dict[str, HarnessProfile], inventory: WorkerInventory
-    ) -> Self:
-        """Use one background writer for harness cleanup."""
+    def __new__(cls, settlement: WorkerSettlement, inventory: WorkerInventory) -> Self:
+        """Use one background writer for harness cleanup and worktree discard."""
         self = super().__new__(cls)
-        self._profiles = profiles
+        self._settlement = settlement
         self._inventory = inventory
         self._executor = WorkerCleanupQueue()
         self._release = lambda _worker: None
         return self
+
+    @classmethod
+    def for_registry(
+        cls,
+        profiles: dict[str, HarnessProfile],
+        policy: WorkerRepoPolicy,
+        inventory: WorkerInventory,
+    ) -> Self:
+        """Build the retirement over the debts the registry's catalogs settle."""
+        return cls(WorkerSettlement(profiles, policy), inventory)
 
     def release_with(self, release: Callable[[str], None]) -> None:
         """Bind the actor-owned retention transition, not a cleanup job."""
@@ -52,7 +60,7 @@ class WorkerRetirement:
     ) -> Future[None] | None:  # PY-TS-14: no future without a newly queued job.
         """Queue terminal cleanup without waiting for a config file lease."""
         record = self._inventory.get(worker_id)
-        if record.state not in ("exited", "stopped") or not WorkerCleanup.pending(
+        if record.state not in ("exited", "stopped") or not self._settlement.owed(
             record
         ):
             return None
@@ -103,23 +111,11 @@ class WorkerRetirement:
     def _cleanup(self, worker_id: str) -> None:
         try:
             record = self._inventory.get(worker_id)
-            if not WorkerCleanup.pending(record):
+            if not self._settlement.owed(record):
                 return
-            result = WorkerCleanup.run(record, self._profiles)
+            result = self._settlement.settle(record)
             self._inventory.update(
-                record.id, lambda current: self._merge(current, result)
+                record.id, lambda current: self._settlement.fold(current, result)
             )
         except (OSError, ValueError) as exc:
             logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)
-
-    @staticmethod
-    def _merge(record: WorkerRecord, result: WorkerRecord) -> WorkerRecord:
-        """Fold cleanup markers only, preserving any late worker reports."""
-        keys = ("cleanup_pending", "cleanup_error")
-        return replace(
-            record,
-            last_report={
-                **{k: v for k, v in record.last_report.items() if k not in keys},
-                **{k: result.last_report[k] for k in keys if k in result.last_report},
-            },
-        )

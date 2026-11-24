@@ -10,6 +10,7 @@ from typing import Self, final
 
 from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
+from punt_vox.voxd.workers.discard import WorkerDiscard
 from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.model import WorkerRecord
 
@@ -100,7 +101,8 @@ class WorkerLifecycle:
 
         The launch error is recorded as ``"<type>: <message>"``, paths
         scrubbed, so a deadline and an empty task (both ``ValueError``) stay
-        distinguishable on the record.
+        distinguishable on the record. The worktree discard is only marked
+        here; it runs later, off the actor lock.
         """
         report = {**record.last_report, "launch_error": str(GitFailure(error))}
         try:
@@ -112,7 +114,8 @@ class WorkerLifecycle:
             )
         else:
             record = replace(record, state="stopped")
-        return WorkerCleanup.run(replace(record, last_report=report), self._profiles)
+        cleaned = WorkerCleanup.run(replace(record, last_report=report), self._profiles)
+        return WorkerDiscard.mark(cleaned)
 
     def terminate(self, record: WorkerRecord) -> WorkerRecord:
         """Stop the provider without performing harness cleanup."""
