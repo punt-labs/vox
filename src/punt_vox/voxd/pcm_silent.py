@@ -91,15 +91,32 @@ class SilentOutputStream:
         """Release the device: the thread is already joined by stop or abort."""
 
     def _end(self) -> None:
+        """Stop the device thread and wait for it; a thread that died has already left.
+
+        Called off the device thread, as PortAudio requires of stop and abort,
+        and only after :meth:`start` succeeded.
+        """
         self._stop.set()
-        if self._thread.is_alive() and threading.current_thread() is not self._thread:
-            self._thread.join()
+        self._thread.join()
 
     def _run(self) -> None:
+        """Device thread: pull blocks until stopped, then report the stream ended.
+
+        A callback that raises ends the stream, as it does under PortAudio:
+        the error is logged and the finished callback still runs, so the
+        sink learns the device stopped instead of waiting for it forever.
+        """
+        try:
+            self._drain()
+        except Exception:
+            logger.exception("silent output device stopped: the callback raised")
+        finally:
+            self._finished()
+
+    def _drain(self) -> None:
         out = bytearray(self._blocksize * BYTES_PER_FRAME)
         due = time.monotonic()
         while not self._stop.is_set():
             self._callback(out, self._blocksize, None, None)
             due += self._period_s
             self._stop.wait(max(0.0, due - time.monotonic()))
-        self._finished()

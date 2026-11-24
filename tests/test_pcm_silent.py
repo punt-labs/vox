@@ -5,14 +5,18 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import pytest
+
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
-from punt_vox.voxd.pcm_output import sounddevice_output_stream
+from punt_vox.voxd.pcm_output import OutputDeviceLostError, sounddevice_output_stream
 from punt_vox.voxd.pcm_silent import SilentOutputStream
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Buffer, Callable
+
+    from punt_vox.voxd.pcm_output import OutputCallback
 
 
 def _ms(ms: int) -> bytes:
@@ -72,3 +76,40 @@ def test_env_var_unset_keeps_the_default(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_the_playback_queue_reads_the_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOX_PCM_OUTPUT", "silent")
     assert PlaybackQueue()._output_stream is SilentOutputStream
+
+
+def _crashing_device(
+    *,
+    samplerate: int,
+    blocksize: int,
+    callback: OutputCallback,
+    finished_callback: Callable[[], None],
+) -> SilentOutputStream:
+    """Open the silent device on a callback that raises on its first block."""
+    del callback
+
+    def boom(_out: Buffer, _frames: int, _time: object, _status: object) -> None:
+        msg = "the sink's callback crashed"
+        raise ValueError(msg)
+
+    return SilentOutputStream(
+        samplerate=samplerate,
+        blocksize=blocksize,
+        callback=boom,
+        finished_callback=finished_callback,
+    )
+
+
+async def test_a_crashing_callback_stops_the_device_and_fails_the_wait(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A callback error ends the stream as PortAudio's would: wait() raises."""
+    sink = PcmStreamSink(asyncio.get_running_loop())
+    with caplog.at_level("ERROR", logger="punt_vox.voxd.pcm_silent"):
+        await sink.open(_crashing_device)
+        with pytest.raises(OutputDeviceLostError):
+            async with asyncio.timeout(2):
+                await sink.wait()
+    report = await sink.close()
+    assert report.device_lost
+    assert "the sink's callback crashed" in caplog.text
