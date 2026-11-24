@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox desktop install --provider` rejects unknown providers and shows how to
+  set the suggested provider in Claude Desktop instead of claiming it was set.
+  (PL-1594)
+
 - Warn when ElevenLabs ignores a non-default speech rate in `vox say`,
   `vox rec new`, and the corresponding MCP and daemon replies. (PL-1570)
 

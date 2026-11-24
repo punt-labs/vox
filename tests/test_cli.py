@@ -2661,7 +2661,6 @@ class TestDesktopInstallCommand:
         assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
         assert server["env"] == {
             "VOX_OUTPUT_DIR": str(audio_dir),
-            "TTS_PROVIDER": "say",
         }
         # PL-PP-4: no provider secret ever lands in the config.
         assert "ELEVENLABS_API_KEY" not in raw
@@ -2734,7 +2733,6 @@ class TestDesktopInstallCommand:
         server = json.loads(raw)["mcpServers"]["vox"]
         assert server["env"] == {
             "VOX_OUTPUT_DIR": str(audio_dir),
-            "TTS_PROVIDER": "elevenlabs",
         }
 
     def test_missing_key_warns_without_leaking(
