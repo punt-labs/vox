@@ -41,7 +41,7 @@ class TestPanelSettings:
         )
         assert settings.replace_if_current(before, current, PanelNotice.silent())
         assert not settings.replace_if_current(
-            before, stale, PanelNotice.voxd_unavailable(), external=True
+            before, stale, PanelNotice.voxd_unavailable(), refresh_notice=True
         )
         assert settings.snapshot() is current
         assert settings.scene().notice == PanelNotice.silent()
