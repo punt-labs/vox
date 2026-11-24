@@ -103,7 +103,9 @@ class TestSayCommand:
         say_client: MagicMock,
         rec_client: MagicMock,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
         segment_results: tuple[
             Callable[[str, SynthesisSpec, int | None], SynthesizeResult],
             Callable[[str, SynthesisSpec, str | None], RecordResult],

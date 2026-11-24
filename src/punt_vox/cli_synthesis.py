@@ -39,11 +39,11 @@ class CliSynthesis:
 
     def prepare(
         self,
-        text: str | None,
-        from_file: Path | None,
+        text: str | None,  # File and stdin inputs do not require positional text.
+        from_file: Path | None,  # Absent without --from.
         *,
         speaker_boost: bool,
-        api_key: str | None = None,
+        api_key: str | None = None,  # No per-request credential override.
         **options: Unpack[SynthesisOptions],
     ) -> tuple[list[str], SynthesisSpec]:
         """Resolve segments first, then validate options and fill repo defaults."""
