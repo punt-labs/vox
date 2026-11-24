@@ -1,16 +1,16 @@
 """Unit tests for :mod:`punt_vox.provider_proposal`.
 
-The enable-flow behavior of the proposal (writing the daemon's pick,
-reporting a down daemon) is covered end to end in ``test_enablement.py``.
+The daemon-facing behavior of the proposal (writing the daemon's pick,
+reporting a down daemon) is covered end to end in ``test_enablement.py``
+with its shared client doubles.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING
 
 import pytest
 
-from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.provider_proposal import (
     ENABLE_OUTCOME_REASONS,
@@ -22,39 +22,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.client_sync import VoxClientSync
-    from punt_vox.types_provider import ProviderStatusPayload
 
 
-@final
-class _DownClient:
-    """A :class:`VoxClientSync` stand-in whose daemon is unreachable."""
-
-    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
-        _ = provider
-        msg = "connection refused"
-        raise VoxdConnectionError(msg)
-
-
-def _down_factory() -> VoxClientSync:
-    return cast("VoxClientSync", _DownClient())
+def _no_daemon() -> VoxClientSync:
+    msg = "a declared provider must not reach the daemon"
+    raise AssertionError(msg)
 
 
 def _store(tmp_path: Path) -> ConfigStore:
     return ConfigStore(tmp_path / ".punt-labs" / "vox")
 
 
-def test_proposal_reports_an_unreachable_daemon_without_writing(
-    tmp_path: Path,
-) -> None:
-    outcome = ProviderProposal(_store(tmp_path), _down_factory).propose_and_write()
-    assert outcome.reason == "voxd_unavailable"
-    assert outcome.provider_written is None
-    assert _store(tmp_path).read().provider is None
-
-
 def test_proposal_keeps_a_declared_provider(tmp_path: Path) -> None:
     _store(tmp_path).write_field("provider", "polly")
-    outcome = ProviderProposal(_store(tmp_path), _down_factory).propose_and_write()
+    outcome = ProviderProposal(_store(tmp_path), _no_daemon).propose_and_write()
     assert outcome.reason == "already_set"
     assert _store(tmp_path).read().provider == "polly"
 
