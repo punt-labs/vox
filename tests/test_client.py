@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import socket
 import time
@@ -849,13 +850,13 @@ class TestVoxClientPlayFetch:
         captured: dict[str, float] = {}
 
         async def fake_stream(
-            _self: object, _msg: dict[str, object], *, timeout: float
-        ) -> bytes:
+            _self: object, _msg: dict[str, object], _sink: object, *, timeout: float
+        ) -> int:
             captured["timeout"] = timeout
-            return b""
+            return 0
 
         monkeypatch.setattr(
-            "punt_vox.client_transport.VoxdTransport.fetch_stream", fake_stream
+            "punt_vox.client_transport.VoxdTransport.fetch_into", fake_stream
         )
         client = VoxClient(port=8421, token="tok")
 
@@ -1914,6 +1915,18 @@ class TestVoxClientSyncFrameDispatch:
         result, sent = self._run(lambda s: s.fetch("greeting.mp3"), chunks)
         assert result == blob
         assert len(sent) == 1
+        assert sent[0]["type"] == "fetch"
+        assert sent[0]["ref"] == "greeting.mp3"
+
+    def test_fetch_into_writes_all_frames_and_leaves_the_sink_open(self) -> None:
+        blob = b"payload"
+        with io.BytesIO() as sink:
+            result, sent = self._run(
+                lambda s: s.fetch_into("greeting.mp3", sink),
+                _fetch_frames(blob, chunk=3),
+            )
+            assert sink.getvalue() == blob
+        assert result == len(blob)
         assert sent[0]["type"] == "fetch"
         assert sent[0]["ref"] == "greeting.mp3"
 

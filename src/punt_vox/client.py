@@ -7,24 +7,27 @@ Used by the MCP server, hook handlers, and CLI commands.
 from __future__ import annotations
 
 import contextlib
+import io
 import logging
 import os
 import shutil
 import tempfile
 import uuid
 from collections.abc import Generator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
+    from typing import IO
 
 from punt_vox.bare_name import BareName
 from punt_vox.client_errors import (
     VoxdProtocolError,
 )
 from punt_vox.client_results import (
+    CacheStatus as CacheStatus,
+    RecordingSummary as RecordingSummary,
     RecordResult as RecordResult,
     SynthesizeResult as SynthesizeResult,
 )
@@ -41,49 +44,6 @@ from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Result types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class RecordingSummary:
-    """One recording in the store's list: its bare name and byte count."""
-
-    name: str
-    byte_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class CacheStatus:
-    """The daemon cache's size, described to a client.
-
-    ``path`` is the daemon cache directory relativized to its data root
-    (``cache``) -- a logical name with no absolute prefix, so a remote client
-    learns the location, never the daemon's home or username. ``entries`` and
-    ``size_bytes`` count the ``.mp3`` and orphaned ``.tmp`` files there, mirroring
-    the daemon's own ``cache_status`` return.
-    """
-
-    entries: int
-    size_bytes: int
-    path: Path
-
-    @classmethod
-    def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a cache status from a ``cache_status`` reply, raising on a bad row.
-
-        Raises:
-            ValueError: If a supplied wire field is missing, malformed, or has the wrong
-                type.
-        """
-        return cls(
-            entries=obj.require_int("entries"),
-            size_bytes=obj.require_int("size_bytes"),
-            path=Path(obj.require_str("path")),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -353,12 +313,30 @@ class VoxClient:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        msg: dict[str, object] = {
+        with io.BytesIO() as sink:
+            await self._transport.fetch_into(
+                self._fetch_message(ref), sink, timeout=_TIMEOUT_FETCH
+            )
+            return sink.getvalue()
+
+    async def fetch_into(self, ref: str, sink: IO[bytes]) -> int:
+        """Copy a stored recording to *sink* and return its verified byte count.
+
+        The caller owns *sink*, including flushing it and discarding partial
+        data on failure.
+        """
+        return await self._transport.fetch_into(
+            self._fetch_message(ref), sink, timeout=_TIMEOUT_FETCH
+        )
+
+    @staticmethod
+    def _fetch_message(ref: str) -> dict[str, object]:
+        """Build the recording request shared by both fetch APIs."""
+        return {
             "type": "fetch",
             "id": uuid.uuid4().hex[:12],
             "ref": ref,
         }
-        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
 
     async def fetch_part(self, album_id: str, part: str) -> bytes:
         """Return one album part's bytes, reassembled from the chunked stream.
@@ -379,7 +357,9 @@ class VoxClient:
             "album": album_id,
             "part": part,
         }
-        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
+        with io.BytesIO() as sink:
+            await self._transport.fetch_into(msg, sink, timeout=_TIMEOUT_FETCH)
+            return sink.getvalue()
 
     # -- recordings store (rec group) ---------------------------------------
 
@@ -396,16 +376,9 @@ class VoxClient:
         with self._wire_guard():
             obj = JsonObject.coerce(resp, "rec_list")
             return tuple(
-                self._recording_row(JsonObject.coerce(item, "rec_list.entries"))
+                RecordingSummary.from_wire(JsonObject.coerce(item, "rec_list.entries"))
                 for item in obj.require_list("entries")
             )
-
-    @staticmethod
-    def _recording_row(row: JsonObject) -> RecordingSummary:
-        """Parse one ``rec_list`` entry (name + bytes) from the wire."""
-        return RecordingSummary(
-            name=row.require_str("name"), byte_count=row.require_int("bytes")
-        )
 
     async def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store (a hostile/absent ref raises).

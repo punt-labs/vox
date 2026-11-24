@@ -12,7 +12,6 @@ from __future__ import annotations
 import errno
 import io
 import json
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Self, final
@@ -32,6 +31,8 @@ from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
+    from typing import IO
+
     from punt_vox.types_synthesis import SynthesisSpec
 
 
@@ -72,11 +73,11 @@ class InMemoryRecordGateway:
         if ref not in self._store:
             raise VoxdProtocolError(f"no recording named '{ref}'")
 
-    def get(self, ref: str) -> bytes:
+    def get_into(self, ref: str, sink: IO[bytes]) -> int:
         self.calls.append(("get", ref))
         if ref not in self._store:
             raise VoxdProtocolError(f"no recording named '{ref}'")
-        return self._store[ref]
+        return sink.write(self._store[ref])
 
     def remove(self, ref: str) -> None:
         self.calls.append(("remove", ref))
@@ -374,21 +375,41 @@ def test_get_writes_into_cwd_under_store_name(
 
     written = tmp_path / "rec.mp3"
     assert written.read_bytes() == payload_bytes
+    assert list(tmp_path.iterdir()) == [written]
     assert _text(formatter) == "./rec.mp3"
     assert _payload(formatter) == {"path": str(written), "bytes": len(payload_bytes)}
 
 
-def test_get_large_multichunk_roundtrips_byte_correct(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [
+        (VoxdProtocolError("fetch sha256 mismatch"), typer.Exit),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+def test_get_cleans_up_a_failed_staging_write(
+    error: BaseException,
+    raised: type[BaseException],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A large recording (many client-side chunks) reassembles byte-correct."""
     monkeypatch.chdir(tmp_path)
-    big = bytes(range(256)) * 4000  # ~1 MB, spans many FETCH_CHUNK_BYTES chunks
-    cli, _ = _cli(InMemoryRecordGateway({"big.mp3": big}))
 
-    cli.get("big.mp3")
+    def failed_fetch(_ref: str, sink: IO[bytes]) -> NoReturn:
+        sink.write(b"unverified partial recording")
+        assert not (tmp_path / "rec.mp3").exists()
+        raise error
 
-    assert (tmp_path / "big.mp3").read_bytes() == big
+    gateway = MagicMock(spec=RecordGateway)
+    gateway.get_into.side_effect = failed_fetch
+    cli, formatter = _cli(gateway)
+
+    with pytest.raises(raised):
+        cli.get("rec.mp3")
+
+    assert gateway.get_into.call_args.args[1].closed
+    assert list(tmp_path.iterdir()) == []
+    formatter.emit.assert_not_called()
 
 
 def test_get_collision_errors_and_leaves_existing_file(
@@ -423,82 +444,73 @@ def test_get_file_racing_in_mid_fetch_is_not_clobbered(
     """A file that appears at ./<id> after the absence check is not overwritten.
 
     The gateway lands ./rec.mp3 during the fetch (a second process writing the
-    name), so the exclusive-link landing must refuse rather than clobber it --
+    name), so exclusive creation must refuse rather than clobber it --
     closing the TOCTOU gap between the check and the write.
     """
     monkeypatch.chdir(tmp_path)
     raced = tmp_path / "rec.mp3"
 
-    def racing_get(ref: str) -> bytes:
+    def racing_get(_ref: str, sink: IO[bytes]) -> int:
         raced.write_bytes(b"RACED-IN")  # appears after get()'s absence check
-        return b"DAEMON-BYTES"
+        return sink.write(b"DAEMON-BYTES")
 
-    gateway = MagicMock()
-    gateway.get.side_effect = racing_get
+    gateway = MagicMock(spec=RecordGateway)
+    gateway.get_into.side_effect = racing_get
     cli = RecCli(MagicMock(spec=OutputFormatter), lambda: gateway)
 
     with pytest.raises(typer.Exit):
         cli.get("rec.mp3")
-    assert raced.read_bytes() == b"RACED-IN"  # exclusive link refused to clobber
+    assert raced.read_bytes() == b"RACED-IN"
+    assert list(tmp_path.iterdir()) == [raced]
 
 
-def test_get_interrupt_mid_write_leaves_no_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [
+        (OSError(errno.ENOSPC, "disk full"), typer.Exit),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+def test_get_publish_failure_removes_partial_output(
+    error: BaseException,
+    raised: type[BaseException],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A KeyboardInterrupt mid-write strands no file, so a retry is not blocked.
-
-    O_EXCL reserves the final path before the write, so a non-OSError interrupt
-    (SIGINT) partway through would otherwise leave a truncated file that the
-    guard reads as an existing target -- a retry then fails "exists". The
-    BaseException cleanup unlinks *dest* on ANY interruption, so nothing is left
-    and the guard stays honest.
-    """
     monkeypatch.chdir(tmp_path)
 
-    class _Interrupting:
-        def __enter__(self) -> Self:
-            return self
+    def failed_copy(staged: IO[bytes], dest: IO[bytes]) -> NoReturn:
+        dest.write(staged.read(2))
+        raise error
 
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-        def write(self, _data: bytes) -> int:
-            raise KeyboardInterrupt
-
-    def fake_fdopen(fd: int, *_args: object, **_kwargs: object) -> _Interrupting:
-        os.close(fd)  # release the real descriptor the O_EXCL open reserved
-        return _Interrupting()
-
-    monkeypatch.setattr("punt_vox.cli_rec.os.fdopen", fake_fdopen)
+    monkeypatch.setattr("os.link", _no_hardlinks)
+    monkeypatch.setattr("punt_vox.recording_download.shutil.copyfileobj", failed_copy)
     cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": b"DATA"}))
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(raised):
         cli.get("rec.mp3")
-    # The interrupt left nothing at the final path -- the O_EXCL guard is clear.
-    assert not (tmp_path / "rec.mp3").exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_get_does_not_require_hardlink_support(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The landing uses O_EXCL, not os.link, so it works on FAT/network mounts.
-
-    ``os.link`` raises ENOTSUP/EPERM on filesystems without hard-link support.
-    Poisoning it proves the no-clobber landing never reaches for a hard link.
-    """
+    """The landing can fall back to O_EXCL on FAT/network mounts."""
     monkeypatch.chdir(tmp_path)
 
-    def no_hardlinks(*_args: object, **_kwargs: object) -> NoReturn:
-        raise OSError(errno.ENOTSUP, "hard links unsupported")
-
-    monkeypatch.setattr("punt_vox.cli_rec.os.link", no_hardlinks)
+    monkeypatch.setattr("os.link", _no_hardlinks)
     payload_bytes = b"\xff\xfb\x90\x00" * 5
     cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": payload_bytes}))
 
     cli.get("rec.mp3")
 
     assert (tmp_path / "rec.mp3").read_bytes() == payload_bytes
+    assert list(tmp_path.iterdir()) == [tmp_path / "rec.mp3"]
+
+
+def _no_hardlinks(*_args: object, **_kwargs: object) -> NoReturn:
+    raise OSError(errno.ENOTSUP, "hard links unsupported")
 
 
 @pytest.mark.parametrize(
