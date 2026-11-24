@@ -255,9 +255,9 @@ if [[ "$TOOL_NAME" == "music" ]]; then
       ;;
     get)
       ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "the album"' 2>/dev/null)
-      MISSING=$(printf '%s' "$RESULT" | jq -r '(.missing // []) | join(", ")' 2>/dev/null)
-      if [[ -n "$MISSING" ]]; then
-        emit "♪ exported ${ALBUM} (skipped missing: ${MISSING})" "$RESULT"
+      MISSING_COUNT=$(printf '%s' "$RESULT" | jq -r '.missing | arrays | length' 2>/dev/null)
+      if [[ "$MISSING_COUNT" -gt 0 ]]; then
+        emit "♪ exported ${ALBUM} (skipped ${MISSING_COUNT} missing)" "$RESULT"
       else
         emit "♪ exported ${ALBUM}" "$RESULT"
       fi
