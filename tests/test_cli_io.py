@@ -215,6 +215,14 @@ class TestTextInputFromFile:
         with pytest.raises(typer.BadParameter, match="valid JSON"):
             TextInput(OutputFormatter()).resolve(None, path)
 
+    def test_invalid_json_crlf_reports_line_and_column_only(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "segs.json"
+        path.write_bytes(b'[\r\n  "ok",\r\n  nope\r\n]\r\n')
+        with pytest.raises(typer.BadParameter, match=r"line 3 column 3$"):
+            TextInput(OutputFormatter()).resolve(None, path)
+
     @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
     def test_invalid_json_precedes_provider_resolution(
         self,
