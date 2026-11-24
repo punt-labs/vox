@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
     from pathlib import Path
+    from typing import TextIO
     from uuid import UUID
 
     from punt_vox.voxd.playback import PlaybackQueue
@@ -133,8 +134,20 @@ class CallLauncher:
                     audio.close()
 
         task = asyncio.create_task(run())
-        task.add_done_callback(lambda _: trace.stream.close())
+        task.add_done_callback(lambda done: self._finished(done, trace.stream))
         return ActiveCall(call_id, call, task, trace.path)
+
+    @staticmethod
+    def _finished(task: asyncio.Task[None], stream: TextIO) -> None:
+        """Close the trace and take the task's exception, so asyncio never does.
+
+        The status already carries the failure; this is the one log line for
+        it, and reading the exception here keeps a task nobody awaits from
+        reporting "exception was never retrieved" when it is collected.
+        """
+        stream.close()
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger.warning("Call task ended with %s", LogText.failure(exc))
 
     async def teardown(self) -> None:
         """Delete the agent registration once outstanding operations settle."""

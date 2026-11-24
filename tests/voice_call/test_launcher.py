@@ -10,6 +10,7 @@ the trace it reserved, the log lines it emitted, and the call it returned.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 from contextlib import asynccontextmanager, nullcontext
@@ -484,10 +485,11 @@ class TestTaskFailure:
             ended
         )
 
-    async def test_cancel_logs_an_exception_the_task_ended_with(
+    async def test_the_exception_the_task_ended_with_is_logged_once(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        caplog.set_level(logging.WARNING, logger="punt_vox.voxd.voice_call.active_call")
+        """The done callback logs it; a later cancel does not log it again."""
+        caplog.set_level(logging.WARNING, logger="punt_vox.voxd.voice_call")
         launcher = _launcher(
             tmp_path,
             connector=_Connector(),
@@ -499,15 +501,46 @@ class TestTaskFailure:
         )
         await asyncio.sleep(0.05)
         await active.cancel()
-        (line,) = [
-            r.message
+        lines = [
+            (r.name, r.message)
             for r in caplog.records
-            if r.name == "punt_vox.voxd.voice_call.active_call"
+            if r.message.startswith("Call task ended with")
         ]
-        assert line == (
+        ended = (
             "Call task ended with RuntimeError: hold music player is not installed "
             "at <path>"
         )
+        assert lines == [("punt_vox.voxd.voice_call.launcher", ended)]
+
+    async def test_a_failed_task_nobody_awaits_never_reports_an_unretrieved_exception(
+        self, tmp_path: Path
+    ) -> None:
+        """wait_connected returns the failed status; the task is then dropped.
+
+        asyncio reports "Task exception was never retrieved" through the
+        loop's exception handler when such a task is collected, so the done
+        callback must have read the exception already.
+        """
+        reported: list[dict[str, object]] = []
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda _loop, context: reported.append(context))
+        launcher = _launcher(
+            tmp_path,
+            connector=_Connector(),
+            opener=_Opener(),
+            hold_music=self._BrokenMusic(),
+        )
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+        )
+        async with asyncio.timeout(2):
+            await active.wait_connected(30)
+        assert active.status()["state"] == "failed"
+        assert not active.running
+        del active
+        gc.collect()
+        await asyncio.sleep(0)
+        assert reported == []
 
 
 class TestMicrophoneBeforeDial:

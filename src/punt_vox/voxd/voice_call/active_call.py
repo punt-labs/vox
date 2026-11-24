@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING, Self, final
-
-from punt_vox.voxd.log_text import LogText
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -15,8 +12,6 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_call.call import VoiceAgentCall
 
 __all__ = ["ActiveCall"]
-
-logger = logging.getLogger(__name__)
 
 
 @final
@@ -79,6 +74,6 @@ class ActiveCall:
         if call_id is not None and call_id != self._call_id:
             raise ValueError("the requested call is no longer current")
         self._task.cancel()
-        (ending,) = await asyncio.gather(self._task, return_exceptions=True)
-        if isinstance(ending, Exception):
-            logger.warning("Call task ended with %s", LogText.failure(ending))
+        # The task's done callback has already logged any exception it ended
+        # with, so this only waits for it to finish.
+        await asyncio.gather(self._task, return_exceptions=True)
