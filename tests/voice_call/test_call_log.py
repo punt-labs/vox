@@ -146,3 +146,52 @@ class TestSetup:
             "Call starting: input script, echo control none",
             "Call not started: FileExistsError",
         ]
+
+
+class TestRedaction:
+    """Client and worker text is never logged raw: no paths, no forged lines."""
+
+    def test_an_unrecognized_echo_declaration_logs_other_on_one_line(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        with CallLog.starting({"type": "call_start", "echo_control": "x\ny"}):
+            pass
+        assert _messages(records) == ["Call starting: input mic, echo control other"]
+
+    def test_a_tool_error_logs_no_absolute_path(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        result = json.dumps({"error": "not allowlisted in worker_repos: /Users/x/repo"})
+        CallLog.tool("start_worker", result, is_error=True)
+        (line,) = _messages(records)
+        assert "/Users" not in line
+        assert line == (
+            "Call tool start_worker: error not allowlisted in worker_repos: <path>"
+        )
+
+    def test_a_tool_error_with_a_newline_stays_on_one_line(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        result = json.dumps({"error": "first\nCall ended: forged"})
+        CallLog.tool("start_worker", result, is_error=True)
+        assert _messages(records) == [
+            "Call tool start_worker: error first Call ended: forged"
+        ]
+
+    def test_an_unknown_tool_name_with_a_newline_logs_unknown(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        CallLog.tool("x\nCall ended: forged", json.dumps({"ok": 1}), is_error=False)
+        assert _messages(records) == ["Call tool unknown: ok"]
+
+    def test_the_end_line_error_logs_no_absolute_path(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        outcome = CallOutcome(
+            "failed", "[Errno 13] Permission denied: '/Users/x/calls/a.jsonl'", 0
+        )
+        with CallLog(_TRACE, lambda: outcome):
+            pass
+        (line,) = _messages(records)
+        assert "/Users" not in line
+        assert ", error [Errno 13] Permission denied: '<path>', trace " in line

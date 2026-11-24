@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Self, cast, final
+from typing import TYPE_CHECKING, ClassVar, Final, Self, cast, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
 from punt_vox.voxd.voice_call.capture_probe import CaptureProbe
@@ -31,6 +31,9 @@ class MicInput:
 
     __slots__ = ("_source",)
     _source: MicAudioSource
+    # The echo declarations a live call accepts: the caller wears a headset,
+    # or the system cancels the speaker's echo before it reaches the mic.
+    ECHO_CONTROL: ClassVar[frozenset[str]] = frozenset({"headset", "aec"})
 
     def __new__(cls, source: MicAudioSource) -> Self:
         """Bind the microphone source the call captures from."""
@@ -86,11 +89,10 @@ class ScriptInput:
             raise ValueError("each script turn must be an object")
         turn = cast("dict[str, object]", item)
         path, pause = turn.get("pcm_path"), turn.get("pause_s", 0.0)
-        if not isinstance(path, str) or not Path(path).is_absolute():
+        if not isinstance(path, str) or not (file := Path(path)).is_absolute():
             raise ValueError("pcm_path must be an absolute path")
         if not isinstance(pause, int | float) or not 0 <= pause <= _MAX_PAUSE_S:
             raise ValueError(f"pause_s must be between 0 and {_MAX_PAUSE_S:.0f}")
-        file = Path(path)
         if not file.is_file():
             raise ValueError("pcm_path must name a regular file")
         if file.stat().st_size > _MAX_TURN_BYTES:

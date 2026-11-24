@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.input_device import PortAudio
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
@@ -37,8 +37,6 @@ if TYPE_CHECKING:
 __all__ = ["CallLauncher"]
 
 logger = logging.getLogger(__name__)
-
-_ECHO_CONTROL: Final = ("headset", "aec")  # The declarations a live call accepts.
 
 
 @final
@@ -129,7 +127,7 @@ class CallLauncher:
     async def _input(msg: dict[str, object]) -> CallInput:
         if "script" in msg:
             return await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
-        if msg.get("echo_control") not in _ECHO_CONTROL:
+        if msg.get("echo_control") not in MicInput.ECHO_CONTROL:
             raise ValueError(
                 "Live calls require echo protection: wear a headset and use "
                 "'vox call --headset', or configure system echo cancellation "

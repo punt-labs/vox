@@ -280,7 +280,7 @@ async def test_each_tool_call_is_logged_with_its_outcome(
     assert lines == [
         "Call tool list_workers: ok",
         "Call tool start_worker: error task must be a non-empty string",
-        "Call tool no_such_tool: error unknown tool no_such_tool",
+        "Call tool unknown: error unknown tool no_such_tool",
     ]
     assert call.outcome().tool_calls == 3
 

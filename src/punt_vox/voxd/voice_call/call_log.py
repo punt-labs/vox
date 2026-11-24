@@ -8,6 +8,8 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.voice_call.log_text import LogText
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
@@ -40,14 +42,10 @@ class CallLog:
 
     def __exit__(self, *exc_info: object) -> None:
         """Log the end, however the call ended: hang-up, failure or cancel."""
-        outcome = self._outcome()
-        logger.info(
-            "Call ended: %s, duration %.1f s%s, trace %s",
-            outcome,
-            time.monotonic() - self._started,
-            outcome.error_note,
-            self._trace,
-        )
+        outcome, elapsed = self._outcome(), time.monotonic() - self._started
+        note = LogText.reason(outcome.error_note)
+        ending = f"{outcome}, duration {elapsed:.1f} s{note}, trace {self._trace}"
+        logger.info("Call ended: %s", ending)
 
     @staticmethod
     @contextmanager
@@ -61,7 +59,7 @@ class CallLog:
         logger.info(
             "Call starting: input %s, echo control %s",
             "script" if "script" in msg else "mic",
-            msg.get("echo_control", "none"),
+            LogText.echo_control(msg.get("echo_control", "none")),
         )
         try:
             yield
@@ -76,9 +74,10 @@ class CallLog:
 
     @staticmethod
     def tool(name: str, result: str, *, is_error: bool) -> None:
-        """Log one answered client tool call; an error names its text."""
+        """Log one answered client tool call; an error names its redacted text."""
         if is_error:
             error: str = json.loads(result)["error"]
-            logger.info("Call tool %s: error %s", name, error)
+            verdict = f"error {LogText.reason(error)}"
         else:
-            logger.info("Call tool %s: ok", name)
+            verdict = "ok"
+        logger.info("Call tool %s: %s", LogText.tool_name(name), verdict)
