@@ -37,6 +37,8 @@ from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from typer.testing import Result
 
 
@@ -102,14 +104,18 @@ class TestSayCommand:
         rec_client: MagicMock,
         tmp_path: Path,
     ) -> None:
+        segment_results: tuple[
+            Callable[[str, SynthesisSpec, int | None], SynthesizeResult],
+            Callable[[str, SynthesisSpec, str | None], RecordResult],
+        ] = (
+            lambda _text, _spec, once: SynthesizeResult(request_id="abc123"),
+            lambda _text, _spec, name: RecordResult(
+                "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+            ),
+        )
         say_call = say_client.return_value.synthesize
-        say_call.side_effect = lambda *_, **_kwargs: SynthesizeResult(
-            request_id="abc123"
-        )
         rec_call = rec_client.return_value.record
-        rec_call.side_effect = lambda *_, **_kwargs: RecordResult(
-            "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
-        )
+        say_call.side_effect, rec_call.side_effect = segment_results
         source = tmp_path / "segments.json"
         source.write_text('["first", {"text": "second"}]', encoding="utf-8")
         options = [
