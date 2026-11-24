@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Speak spaced currency scales such as `$1 million` as “1 million dollars.”
 
+- The first setting written from a Git repo's subdirectory now goes to the
+  repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
+
 - A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
   `voice`, or the matching `mic` tool) from a git repo nested in a workspace
   no longer edits the workspace's config. The repo gets its own
