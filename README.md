@@ -310,7 +310,7 @@ voice or rate. Use a different `--name` for each take (for example,
 vox is also a Python library. It talks to the same `voxd` daemon as the plugin and the CLI; `vox install` is the only setup.
 
 ```python
-from punt_vox import VoxClientSync, SynthesisSpec, VoxError
+from punt_vox import SynthesisSpec, VoiceTarget, VoxClientSync, VoxError
 
 vox = VoxClientSync()  # connects per call — no setup, no teardown
 
@@ -321,8 +321,8 @@ try:
     # ...or get the MP3 bytes to save or stream yourself:
     audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
 
-    # List the voices the active provider offers:
-    print(vox.voices())
+    # List voices for a provider and model (omit the model for its default):
+    print(vox.voices(VoiceTarget("openai", "gpt-4o-mini-tts")))
 except VoxError as exc:  # VoxdConnectionError, VoxdProtocolError, or VoxdRejectionError
     print(f"vox failed: {exc}")
 ```

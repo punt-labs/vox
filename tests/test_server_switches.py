@@ -26,6 +26,7 @@ import pytest
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.config import ConfigStore
 from punt_vox.server_switches import ModelTool, ProviderTool, VoiceTool
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -92,9 +93,9 @@ def _tools(
     """
     client = MagicMock()
 
-    def _voices_side_effect(provider: str | None = None) -> list[str]:
-        if voices_by_provider is not None and provider in voices_by_provider:
-            return voices_by_provider[provider]
+    def _voices_side_effect(provider: VoiceTarget) -> list[str]:
+        if voices_by_provider is not None and provider.provider in voices_by_provider:
+            return voices_by_provider[provider.provider]
         return voices if voices is not None else []
 
     client.voices.side_effect = _voices_side_effect
@@ -517,8 +518,8 @@ def test_voice_set_rejects_provider_change_during_roster_fetch(
     )
     client = MagicMock()
 
-    def switch_provider(*, provider: str) -> list[str]:
-        assert provider == "elevenlabs"
+    def switch_provider(provider: VoiceTarget) -> list[str]:
+        assert provider.provider == "elevenlabs"
         config.write_text(switched)
         return ["roger"]
 
@@ -776,11 +777,12 @@ def test_provider_set_fires_exactly_one_voices_call(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "provider_name", ["elevenlabs", "openai", "polly", "say", "espeak"]
 )
-def test_voice_carries_provider_name_from_session(
+def test_voice_carries_provider_and_model_from_session(
     tmp_path: Path, provider_name: str
 ) -> None:
-    """The voice roster is fetched per the session's current provider."""
-    session = _FakeSession(provider=provider_name)
+    """The voice roster is fetched for the selected provider and model."""
+    model = "gpt-4o-mini-tts" if provider_name == "openai" else None
+    session = _FakeSession(provider=provider_name, model=model)
     client = MagicMock()
     client.voices.return_value = ["a", "b"]
 
@@ -792,4 +794,4 @@ def test_voice_carries_provider_name_from_session(
 
     voice.dispatch()
 
-    client.voices.assert_called_once_with(provider=provider_name)
+    client.voices.assert_called_once_with(VoiceTarget(provider_name, model))

@@ -200,9 +200,7 @@ class VoxPanelService:
             self._settings.commit("speak", code, PanelState.with_speak)
             return ControlPush.REFRESH
         if topic == PanelTopic.VOICE:
-            voice = self._target().voice(self._index(payload))
-            self._settings.commit("voice", voice, PanelState.with_voice)
-            return ControlPush.REFRESH
+            return self._commit_voice(self._index(payload))
         if topic == PanelTopic.PROVIDER:
             return self._settings.commit_provider(
                 self._target().provider(self._index(payload))
@@ -215,6 +213,10 @@ class VoxPanelService:
             return self._preview()
         logger.warning("vox-panel: no handler for topic %r", topic)
         return ControlPush.NONE
+
+    def _commit_voice(self, index: int) -> ControlPush:
+        state = self._settings.snapshot()
+        return self._settings.commit_voice(state, ClickTarget(state).voice(index))
 
     def _target(self) -> ClickTarget:
         """Snapshot the held settings as the thing a click's index names."""
@@ -243,12 +245,15 @@ class VoxPanelService:
 
     def _resync(
         self,
-        notice_on_success: PanelNotice,
+        notice: PanelNotice,
         *,
         on_read_failure: PanelNotice,
         on_rejection: Callable[[str], PanelNotice],
     ) -> None:
-        """Re-read settings fresh, holding the last-known ones if voxd is down.
+        """Read fresh settings, retaining the last-known state if voxd is down.
+
+        A rejected roster still leaves the config available so the panel
+        can show the model picker and let the user choose a supported model.
 
         *on_read_failure* and *on_rejection* are the caller's choice, not
         hardcoded generic notices: ``recover_from_write_failure`` already
@@ -258,23 +263,23 @@ class VoxPanelService:
         silently replaced by a generic one blaming an unrelated
         subsystem -- the caller supplies a composed notice for each.
         """
+        before = self._settings.snapshot()
+        fresh = PanelState.read(self._store)
         try:
-            fresh = PanelState.read(self._client, self._store)
+            fresh = fresh.with_roster(self._client)
         except VoxdRejectionError as exc:
             # Daemon was reached and refused the roster fetch. The caller
             # supplies the composition so a write-failure in flight is not
             # dropped when the confirming read also hits a rejection.
             logger.warning("vox-panel: voxd refused the resync: %s", exc)
-            self._settings.note(on_rejection(str(exc)))
-            return
+            notice = on_rejection(str(exc))
         except VoxdConnectionError:
             logger.warning(
                 "vox-panel: voxd unreachable during resync: %s",
                 on_read_failure.message,
             )
-            self._settings.note(on_read_failure)
-            return
-        self._settings.replace(fresh, notice_on_success)
+            fresh, notice = before, on_read_failure
+        self._settings.replace_if_current(before, fresh, notice)
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:

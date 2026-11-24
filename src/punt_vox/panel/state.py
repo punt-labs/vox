@@ -11,9 +11,11 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.panel.panel_scene import PanelScene
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
-    from punt_vox.panel.ports import SettingsSource, VoiceRoster
+    from punt_vox.panel.ports import SettingsSource
+    from punt_vox.voice_target import RosterClient
 
 __all__ = ["PanelState"]
 
@@ -32,24 +34,8 @@ class PanelState:
 
     @staticmethod
     def _normalise(raw: str | None) -> str | None:
-        """Return ``raw`` stripped, or ``None`` if the result is empty.
-
-        Panel state is the panel's single normalisation point for the
-        provider and model fields. Every downstream site (the panel's
-        commit paths, the scene projection, the daemon roster fetch)
-        then trusts one invariant: the stored value is either a
-        non-empty stripped string OR ``None``.
-
-        Without this normalisation, a hand-edited ``provider: "   "``
-        in ``vox.md`` is truthy and slips every ``if provider:`` guard
-        the panel holds, re-triggering the daemon-side guessing this
-        method exists to remove. Stripping at the boundary means one
-        guard rather than three.
-        """
-        if raw is None:
-            return None
-        stripped = raw.strip()
-        return stripped if stripped else None
+        """Return a stripped provider or model, treating blanks as absent."""
+        return (raw or "").strip() or None
 
     @classmethod
     def empty(cls) -> Self:
@@ -57,35 +43,24 @@ class PanelState:
         return cls(notify="n", speak="y", voice=None, roster=())
 
     @classmethod
-    def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
-        """Read the config fields fresh from disk and the voice roster from voxd.
-
-        Provider and model are normalised at this boundary: a raw
-        ``cfg.provider`` of ``""`` or ``"   "`` becomes ``None``, and a
-        padded ``"elevenlabs "`` becomes ``"elevenlabs"``. Every downstream
-        panel site then trusts the invariant that ``state.provider`` is
-        either a non-empty stripped string or ``None`` -- no ``if provider:``
-        guard needs to re-strip, and the daemon never sees a whitespace
-        provider on the roster wire.
-
-        The roster is fetched for the normalised provider only. An unset or
-        whitespace-only ``cfg.provider`` returns an empty roster rather
-        than borrowing a different provider's voices; the panel does not
-        display any roster at all until the caller has chosen a real
-        provider.
-        """
+    def read(cls, store: SettingsSource) -> Self:
+        """Read the config independently of the daemon's voice roster."""
         cfg = store.read()
-        provider = cls._normalise(cfg.provider)
-        model = cls._normalise(cfg.model)
-        roster = tuple(client.voices(provider)) if provider else ()
         return cls(
             notify=cfg.notify,
             speak=cfg.speak,
             voice=cfg.voice,
-            roster=roster,
-            provider=provider,
-            model=model,
+            roster=(),
+            provider=cls._normalise(cfg.provider),
+            model=cls._normalise(cfg.model),
         )
+
+    def with_roster(self, client: RosterClient) -> Self:
+        """Read the voice roster for the configured provider and model."""
+        if self.provider is None:
+            return self
+        roster = client.voices(VoiceTarget(self.provider, self.model))
+        return replace(self, roster=tuple(roster))
 
     def with_notify(self, code: str) -> Self:
         """Return a copy with ``notify`` set to ``code``."""
@@ -114,15 +89,6 @@ class PanelState:
         provider; None means no model or no available voice.
         """
         return replace(self, provider=provider, model=model, roster=roster, voice=voice)
-
-    def with_model(self, model: str, *, voice: str | None) -> Self:
-        """Return a copy with ``model`` set + cascaded ``voice`` from the caller.
-
-        The cascade is computed by the caller (``VoxPanelService``) so
-        this method is a pure setter. ``voice=None`` means the roster
-        the caller fetched was empty.
-        """
-        return replace(self, model=model, voice=voice)
 
     def scene(self) -> PanelScene:
         """Return this state as the scene it projects onto."""
