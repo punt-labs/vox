@@ -6,6 +6,7 @@ from typing import cast, final
 
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.daemon_control import DaemonControl
+from punt_vox.voxd.workers.types import WorkerDeadlines
 
 
 @final
@@ -18,7 +19,7 @@ class WorkerClient:
     async def request(operation: str, **fields: str | bool | int) -> object:
         """Return a registry result or surface the daemon's refusal."""
         return await DaemonControl("worker").request(
-            operation, timeout=90 if operation == "start" else 30, **fields
+            operation, timeout=WorkerDeadlines.budget(operation), **fields
         )
 
     @staticmethod

@@ -8,16 +8,18 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
 
 from punt_vox.config import ConfigStore
+from punt_vox.daemon_control import DaemonControl
 from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
+from punt_vox.worker_client import WorkerClient
 
 POPEN = "punt_vox.voxd.workers.worktrees.subprocess.Popen"
 
@@ -437,3 +439,14 @@ def test_worktree_create_failure_reports_the_fatal_line_not_the_progress_line(
         ),
     ):
         WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+
+
+@pytest.mark.asyncio
+async def test_client_start_budget_outlives_the_daemon_create_deadline() -> None:
+    """A start that hits the 90 s deadline must still answer, not time out."""
+    with patch.object(DaemonControl, "request", new=AsyncMock(return_value={})) as rpc:
+        await WorkerClient.request("start", project="/repo", task="edit")
+        await WorkerClient.request("stop", worker_id="w")
+    start, stop = (c.kwargs["timeout"] for c in rpc.call_args_list)
+    assert start == WorkerWorktrees.CREATE_DEADLINE + 30
+    assert stop < WorkerWorktrees.CREATE_DEADLINE

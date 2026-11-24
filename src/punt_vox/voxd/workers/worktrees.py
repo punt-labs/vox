@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, ClassVar, Final, final
 from uuid import UUID
 
 from punt_vox.voxd.workers.git_failure import DiscardError, GitFailure
+from punt_vox.voxd.workers.types import WorkerDeadlines
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.model import WorkerRecord
@@ -28,8 +29,7 @@ _WORKTREE_LEAF: Final = "worktree"
 class WorkerWorktrees:
     """Own the git commands that make and unmake a worker's checkout."""
 
-    # Seconds: `git worktree add` on a loaded machine has taken over 20.
-    CREATE_DEADLINE: ClassVar[int] = 90
+    CREATE_DEADLINE: ClassVar[int] = WorkerDeadlines.CREATE
     __slots__ = ()
 
     def create(self, project: Path, worktree: Path, branch: str) -> None:
