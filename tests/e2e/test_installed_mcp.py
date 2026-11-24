@@ -244,12 +244,35 @@ def desktop_sandbox() -> Iterator[Path]:
         yield Path(path)
 
 
+def _desktop_stdio(
+    binary: Path, command: str, args: list[str], env: dict[str, str], cwd: Path
+) -> StdioServerParameters:
+    tool_env = binary.resolve().parent.parent
+    if (tool_env / "uv-receipt.toml").is_file():
+        env = {**env, "UV_TOOL_DIR": str(tool_env.parent), "UV_OFFLINE": "1"}
+    else:
+        # Release-candidate validation installs into a regular venv. Preserve
+        # the registered working-directory flags, but run the candidate wheel.
+        uv = shutil.which("uv")
+        assert uv is not None, "The Desktop packaging test requires uv"
+        command = uv
+        package = args.index("--from")
+        args = [
+            "run",
+            "--no-project",
+            *args[:package],
+            "--",
+            str(binary),
+            *args[package + 3 :],
+        ]
+    return StdioServerParameters(command=command, args=args, env=env, cwd=cwd)
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="uses Linux Desktop and espeak")
 async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> None:
     binary = _installed_binary()
     uvx = shutil.which("uvx")
     assert uvx is not None, "The Desktop packaging test requires uvx"
-    tool_dir = binary.resolve().parents[2]
     home, first, restarted = (
         desktop_sandbox / name for name in ("home", "first", "restart")
     )
@@ -260,12 +283,14 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
         "PATH": os.environ["PATH"],
         "XDG_CONFIG_HOME": str(home / ".config"),
         "AWS_EC2_METADATA_DISABLED": "true",
-        "UV_TOOL_DIR": str(tool_dir),
-        "UV_OFFLINE": "1",
     }
     for key in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
         if key in os.environ:
             env[key] = os.environ[key]
+    home_config = home / DEFAULT_CONFIG_DIR / "vox.md"
+    home_config.parent.mkdir(parents=True)
+    ancestor_state = '---\nprovider: "openai"\n---\n'
+    home_config.write_text(ancestor_state, encoding="utf-8")
     subprocess.run(
         [binary, "desktop", "install", "--provider", "espeak", "--uvx-path", uvx],
         cwd=first,
@@ -286,8 +311,8 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
             while not port.exists():
                 assert daemon.poll() is None, "voxd exited before binding a port"
                 await asyncio.sleep(0.05)
-            params = StdioServerParameters(
-                command=cast("str", entry["command"]), args=args, env=env, cwd=first
+            params = _desktop_stdio(
+                binary, cast("str", entry["command"]), args, env, first
             )
             async with (
                 stdio_client(params) as (rx, tx),
@@ -305,6 +330,8 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
                 assert choice.type == "text"
                 assert json.loads(choice.text)["provider"] == "espeak"
 
+            assert home_config.read_text(encoding="utf-8") == ancestor_state
+            home_config.unlink()
             repo = home / "project"
             subprocess.run(["git", "init", "--quiet", repo], env=env, check=True)
             repo_provider = subprocess.check_output(
