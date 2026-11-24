@@ -22,6 +22,7 @@ from punt_vox.voxd.programs.filesystem_store import (
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.store import PartStore, ProgramStore
+from punt_vox.voxd.programs.store_errors import AlbumNotFoundError
 
 from .conftest import InMemoryProgramStore, make_manifest
 
@@ -277,7 +278,7 @@ class TestOpen:
 
     def test_open_absent_raises(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
-        with pytest.raises(LookupError, match="no saved album"):
+        with pytest.raises(AlbumNotFoundError, match="no saved album"):
             store.open("ghost-000000")
 
     def test_open_access_fault_propagates_not_lookup(

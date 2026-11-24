@@ -16,7 +16,7 @@ import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.types_programs.identifiers import ProgramName
@@ -25,7 +25,10 @@ from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
-from punt_vox.voxd.programs.part import Part
+from punt_vox.voxd.programs.store_errors import AlbumNotFoundError
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.part import Part
 
 __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 
@@ -135,22 +138,22 @@ class FilesystemProgramStore:
     def open(self, directory: str) -> FilesystemPartStore:
         """Return the PartStore for a scan/create-validated directory, else raise.
 
-        A missing manifest is a clean ``LookupError`` (the album was deleted); a
-        manifest that exists but cannot be stat'd raises the underlying ``OSError``,
+        A missing manifest raises ``AlbumNotFoundError``. A manifest that exists
+        but cannot be stat'd raises the underlying ``OSError``,
         so an access fault surfaces as a server-side fault rather than a false
         "no saved album". A symlinked manifest still classifies as a regular file
         when following links and is refused later by the
         ``O_NOFOLLOW`` read.
 
         Raises:
-            LookupError: If the album has no regular manifest file.
+            AlbumNotFoundError: If the album has no regular manifest file.
             OSError: If the manifest cannot be inspected or read safely.
         """
         path = self._contained_dir(directory)
         manifest_path = path / _MANIFEST_NAME
         if not PathStatus.of(manifest_path).is_regular_file:
             msg = f"no saved album at directory {directory!r}"
-            raise LookupError(msg)
+            raise AlbumNotFoundError(msg)
         manifest = AlbumManifest.from_json(self._read_manifest_text(manifest_path))
         return FilesystemPartStore(path, manifest)
 
@@ -262,6 +265,4 @@ class FilesystemProgramStore:
 
     def _is_contained(self, directory: Path) -> bool:
         """Return whether ``directory`` resolves to a path under the root."""
-        root = self._root.resolve()
-        resolved = directory.resolve()
-        return resolved == root or root in resolved.parents
+        return directory.resolve().is_relative_to(self._root.resolve())

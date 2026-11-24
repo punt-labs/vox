@@ -69,6 +69,9 @@ class ProgramStore(Protocol):
         The ``open``-guard invariant: ``directory`` is only ever a
         locator produced by :meth:`scan` or :meth:`create`, so no wire/CLI path
         can hand this a directory that resolves outside the root.
+
+        Raises:
+            AlbumNotFoundError: If the album no longer has a manifest.
         """
         ...
 

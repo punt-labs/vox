@@ -38,6 +38,7 @@ from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEn
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.producer import PartSpec
 from punt_vox.voxd.programs.service import ProgramService
+from punt_vox.voxd.programs.store_errors import AlbumNotFoundError
 
 _EPOCH = datetime(2026, 7, 8, 2, 0, 0, tzinfo=UTC)
 _FINGERPRINT = PromptFingerprint("deadbeef")
@@ -252,7 +253,7 @@ class InMemoryProgramStore:
         store = self._stores.get(directory)
         if store is None:
             msg = f"no saved album at directory {directory!r}"
-            raise LookupError(msg)
+            raise AlbumNotFoundError(msg)
         return store
 
     def create(self, draft: ManifestDraft) -> InMemoryPartStore:

@@ -11,18 +11,18 @@ owns the mint *side-effect* (a domain object must not call ``store.create``).
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_reservation import NameReservations
-from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
-from punt_vox.voxd.programs.selection import Selection
+from punt_vox.voxd.programs.album_tag_matches import AlbumTagMatches
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
     from punt_vox.voxd.programs.change_signal import ChangeSignal
     from punt_vox.voxd.programs.manifest import AlbumManifest
     from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.selection import Selection
     from punt_vox.voxd.programs.store import ProgramStore
 
 __all__ = ["Album", "Catalog"]
@@ -184,20 +184,14 @@ class Catalog:
 
     def by_tags(self, query: TagQuery) -> tuple[Album, ...]:
         """Return every album matching ``query``, newest ``created`` first."""
-        matches = [
-            album
-            for album in self._by_id.values()
-            if query.matches(album.manifest.tags)
-        ]
-        return tuple(sorted(matches, key=self._recency, reverse=True))
+        return AlbumTagMatches(self._by_id.values(), query).albums
 
     def newest(self, query: TagQuery) -> Album | None:
         """Return the most recent album matching ``query``, or ``None``.
 
         ``None`` is the documented "no match" contract -- the caller mints fresh.
         """
-        matches = self.by_tags(query)
-        return matches[0] if matches else None
+        return AlbumTagMatches(self._by_id.values(), query).newest()
 
     def resume(self, query: TagQuery, fingerprint: PromptFingerprint) -> Album | None:
         """Return the newest album matching ``query`` and sharing ``fingerprint``.
@@ -206,18 +200,8 @@ class Catalog:
         a fresh album rather than filling a foreign prompt-set's pool. ``None`` is
         the documented "no resumable pool" contract.
         """
-        for album in self.by_tags(query):
-            if album.manifest.prompt_fingerprint == fingerprint:
-                return album
-        return None
+        return AlbumTagMatches(self._by_id.values(), query).resume(fingerprint)
 
     def select(self, query: TagQuery) -> Selection:
-        """Return the union Selection of albums matching ``query`` (newest-first)."""
-        return Selection.from_albums(
-            (album.locator, album.ready_parts()) for album in self.by_tags(query)
-        )
-
-    @staticmethod
-    def _recency(album: Album) -> tuple[datetime, str]:
-        """Return the sort key ranking albums by ``created`` then id (deterministic)."""
-        return (album.manifest.created, album.id.value)
+        """Return a newest-first union of playable parts, skipping deleted albums."""
+        return AlbumTagMatches(self._by_id.values(), query).select()
