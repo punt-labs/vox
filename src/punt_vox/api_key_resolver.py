@@ -68,6 +68,11 @@ class ApiKeyResolver:
             return self._api_key
         return None
 
+    @property
+    def uses_stdin(self) -> bool:
+        """Return whether the caller selected stdin for the API key."""
+        return self._api_key_stdin
+
     def _check_mutual_exclusion(self) -> None:
         """Raise if more than one source is set."""
         file_set = self._api_key_file is not None

@@ -113,6 +113,14 @@ class TextInput:
         return [text]
 
     @staticmethod
+    def prepare_shared_stdin(
+        text: str | None, from_file: Path | None, *, api_key_stdin: bool
+    ) -> None:
+        """Set up speech stdin before a piped API key reads from it."""
+        if api_key_stdin and from_file is None and TextInput._should_read_stdin(text):
+            SpeechStdin.prepare()
+
+    @staticmethod
     def _should_read_stdin(text: str | None) -> bool:
         """Return whether text should be read from stdin.
 

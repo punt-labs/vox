@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+from io import TextIOWrapper
 from typing import TYPE_CHECKING, NoReturn, Self, final
 
 import typer
@@ -25,15 +27,26 @@ class SpeechStdin:
         return self
 
     def read(self) -> str:
-        """Read strict UTF-8 and strip surrounding whitespace."""
-        stream = typer.get_text_stream("stdin", encoding="utf-8", errors="strict")
+        """Read the current stdin buffer and reject text that is not UTF-8."""
+        self.prepare()
         try:
-            text = stream.read().strip()
-        except UnicodeDecodeError:
+            text = sys.stdin.read().strip()
+            text.encode("utf-8")
+        except UnicodeError:
             self._reject("speech stdin must be valid UTF-8")
         if not text:
             self._reject("no text on stdin")
         return text
+
+    @staticmethod
+    def prepare() -> None:
+        """Set the UTF-8 decoder in place before the first stdin read."""
+        stream = sys.stdin
+        if isinstance(stream, TextIOWrapper) and (stream.encoding, stream.errors) != (
+            "utf-8",
+            "surrogateescape",
+        ):
+            stream.reconfigure(encoding="utf-8", errors="surrogateescape")
 
     def _reject(self, message: str) -> NoReturn:
         """Report an input error and stop the CLI."""
