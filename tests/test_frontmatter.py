@@ -169,6 +169,23 @@ class TestRead:
             assert Frontmatter(path).read_field("voice") is None
         assert any(str(path) in r.getMessage() for r in caplog.records)
 
+    def test_strict_read_refuses_an_unclosed_fence_as_the_writer_does(
+        self, tmp_path: Path
+    ) -> None:
+        """One rule for reader and writer: an unclosed file is not frontmatter."""
+        path = tmp_path / "vox.md"
+        path.write_text('---\nvoice: "fin"\n', encoding="utf-8")
+        with pytest.raises(OSError, match="no closing ---") as refused:
+            Frontmatter(path).read_field("voice", strict=True)
+        assert not isinstance(refused.value, ValueError)
+        assert refused.value.errno == errno.EBADMSG
+        assert refused.value.filename == str(path)
+        # The default read stays lenient: a hook subprocess reads what it can.
+        assert Frontmatter(path).read_field("voice") == "fin"
+
+    def test_strict_read_of_a_missing_file_is_absent(self, tmp_path: Path) -> None:
+        assert Frontmatter(tmp_path / "vox.md").read_field("voice", strict=True) is None
+
 
 class TestWrite:
     def test_read_only_config_fails_the_write(self, tmp_path: Path) -> None:

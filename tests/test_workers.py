@@ -553,3 +553,29 @@ async def test_allowlist_rpcs_fault_without_the_path_on_a_malformed_config(
         ):
             await handlers[str(request["type"])](request, ws)
         _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+
+@pytest.mark.asyncio
+async def test_repos_faults_on_an_unclosed_config_as_every_edit_does(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A vox.md with an opening --- and no closing fence is not a valid policy.
+
+    Every edit of such a file faults, so listing it as a policy would show
+    entries no edit could ever touch. The read faults the same way, naming
+    no path on the wire, while a missing file still lists empty.
+    """
+    config_dir = _broken_config(tmp_path, b"---\nworker_repos: \"['/repo']\"\n")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+        await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+    _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+    (config_dir / "vox.md").unlink()
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "m"}, ws)
+    assert ws.send_json.call_args.args[0] == {
+        "type": "worker_result",
+        "id": "m",
+        "result": [],
+    }

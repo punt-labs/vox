@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from pathlib import Path
@@ -79,3 +80,24 @@ def test_an_edit_names_this_file_in_its_fence_refusal(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="no closing ---") as refused:
         edit.admit(FrontmatterBlock('---\nvoice: "charlie"\n'))
     assert refused.value.filename == str(path)
+
+
+def test_the_fenced_read_refuses_an_unclosed_file_as_the_writer_does(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "vox.md"
+    path.write_text('---\nvoice: "charlie"\n', encoding="utf-8")
+    with pytest.raises(OSError, match="no closing ---") as refused:
+        ConfigFile(path).fenced_block()
+    assert not isinstance(refused.value, ValueError)
+    assert refused.value.errno == errno.EBADMSG
+    assert refused.value.filename == str(path)
+
+
+def test_the_fenced_read_passes_a_fenced_or_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "vox.md"
+    assert ConfigFile(path).fenced_block() is None
+    path.write_text(_FENCED, encoding="utf-8")
+    block = ConfigFile(path).fenced_block()
+    assert block is not None
+    assert block.fields() == {"voice": "charlie"}

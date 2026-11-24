@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from typing import TYPE_CHECKING, Self, final
@@ -24,10 +25,11 @@ __all__ = ["ConfigFile"]
 class ConfigFile:
     """The bytes of one config file, and nothing about what they mean.
 
-    Two reads: a strict one for a writer or a policy reader, which must not
-    mistake an unreadable file for an empty one, and a lenient one for a hook
-    subprocess, which must not crash on it. One write, which lands whole or
-    not at all.
+    Three reads: a strict one for a writer, which must not mistake an
+    unreadable file for an empty one; a fenced one for a policy reader,
+    which also refuses a file no edit could land in; and a lenient one for a
+    hook subprocess, which must not crash on either. One write, which lands
+    whole or not at all.
     """
 
     __slots__ = ("_path",)
@@ -65,6 +67,23 @@ class ConfigFile:
         except FileNotFoundError:
             return None
         return FrontmatterBlock(text)
+
+    def fenced_block(self) -> FrontmatterBlock | None:  # None when absent.
+        """Parse the file strictly, refusing one with no closing fence.
+
+        Every edit of such a file faults, so a policy read from it would list
+        entries no edit could ever touch. The refusal is the same ``OSError``
+        the writer raises, naming the file for the log alone.
+
+        Raises:
+            OSError: If the file exists but cannot be read, or has an opening
+                fence and no closing one.
+            UnicodeDecodeError: If the file is not UTF-8.
+        """
+        block = self.block()
+        if block is not None and not block.fenced:
+            raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
+        return block
 
     def readable_block(self) -> FrontmatterBlock | None:
         """Return the file's frontmatter, or ``None`` if absent or unreadable.

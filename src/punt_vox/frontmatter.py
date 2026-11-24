@@ -61,14 +61,17 @@ class Frontmatter:
         """Return a single frontmatter field, or ``None`` if absent.
 
         By default an unreadable file reads as absent. With *strict*, a file
-        that exists but cannot be read or decoded raises, so a policy reader
-        never takes a fault for an empty policy.
+        that exists but cannot be read or decoded raises, and so does one
+        with an opening fence and no closing one: every edit of that file
+        faults, so a policy read from it would list entries no edit could
+        ever touch. A missing file is a valid, empty policy either way.
 
         Raises:
-            OSError: If *strict* and the file exists but cannot be read.
+            OSError: If *strict* and the file exists but cannot be read, or
+                has no closing fence.
             UnicodeDecodeError: If *strict* and the file is not UTF-8.
         """
-        block = self._file.block() if strict else self._file.readable_block()
+        block = self._file.fenced_block() if strict else self._file.readable_block()
         return None if block is None else block.field(field)
 
     def write_field(self, key: str, value: str) -> None:
