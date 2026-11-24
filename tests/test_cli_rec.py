@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
-from _cli_introspect import app_help_texts, command_opts
+from _cli_introspect import app_help_texts, command_opts, option_help
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
@@ -615,6 +615,20 @@ def test_rec_help_carries_no_internal_labels() -> None:
     """No group/verb/option help leaks a design label."""
     for text in app_help_texts(_build_rec_app()):
         assert not _INTERNAL_LABEL.search(text), text
+
+
+def test_rec_new_help_explains_unnamed_overwrite() -> None:
+    help_texts = [" ".join(text.split()) for text in app_help_texts(_build_rec_app())]
+    assert any(
+        "Without --name, recording the same text reuses the same id and "
+        "silently replaces the earlier take, even if synthesis settings change. "
+        "Pass a different --name for each take to keep them separate. "
+        "--name only works for a single text segment." in text
+        for text in help_texts
+    )
+    assert "Unnamed same-text takes overwrite. Use distinct names." in option_help(
+        "rec", "new", option="--name"
+    )
 
 
 def test_list_accepts_json_flag_after_the_subcommand() -> None:
