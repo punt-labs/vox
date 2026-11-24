@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Buffer, Callable
-from typing import Self
+from typing import Literal, Self, TypedDict
+
+class PortAudioError(Exception):
+    """Raised by sounddevice when PortAudio reports an error."""
+
+# The two keys of ``query_devices``'s per-device dict this project reads;
+# the real dict carries index, hostapi, channel counts and latencies too.
+class DeviceInfo(TypedDict):
+    name: str
+    default_samplerate: float
+
+def query_devices(kind: Literal["input", "output"]) -> DeviceInfo: ...
 
 # The subset of PortAudio's ``CallbackFlags`` this project inspects: whether
 # capture overran the buffer between two callback invocations, which is a
