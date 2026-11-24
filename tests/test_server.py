@@ -666,8 +666,10 @@ class TestMcpSegmentValidation:
         message: str,
     ) -> None:
         client = MagicMock()
-        client.synthesize.return_value = SynthesizeResult(request_id="req")
-        client.record.return_value = RecordResult(
+        client.synthesize.side_effect = lambda *args, **kwargs: SynthesizeResult(
+            request_id="req"
+        )
+        client.record.side_effect = lambda *args, **kwargs: RecordResult(
             id="test.mp3", name="test.mp3", store_path=Path("test.mp3"), byte_count=1
         )
         client_factory = MagicMock(return_value=client)
