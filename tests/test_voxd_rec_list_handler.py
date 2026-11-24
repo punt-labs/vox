@@ -7,7 +7,11 @@ import json
 import logging
 import threading
 from typing import TYPE_CHECKING, cast, final
+from unittest.mock import AsyncMock, patch
 
+from starlette.websockets import WebSocketDisconnect
+
+from punt_vox.client import VoxClient
 from punt_vox.voxd.rec_list_handler import RecListHandler
 from punt_vox.voxd.record_store import RecordingEntry, RecordStore
 
@@ -63,6 +67,49 @@ class TestRecList:
             assert isinstance(entries, list)
             rows.extend(entries)
         assert rows == [{"name": name, "bytes": i} for i, name in enumerate(names)]
+
+    async def test_client_reassembles_pages_from_a_real_store(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path)
+        expected = [(f"{i:04d}.mp3", i) for i in range(257)]
+        for name, size in reversed(expected):
+            (store.root / name).write_bytes(b"x" * size)
+        handler = RecListHandler(store)
+        websocket, sent = _capturing_ws()
+
+        async def send(raw: str) -> None:
+            await handler(json.loads(raw), websocket)
+
+        async def receive() -> str:
+            return json.dumps(sent.pop(0))
+
+        peer = AsyncMock()
+        peer.send.side_effect = send
+        peer.recv.side_effect = receive
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=peer,
+        ):
+            rows = await VoxClient(port=8421, token="tok").rec_list()
+
+        assert peer.recv.await_count > 1
+        assert not sent
+        assert [(row.name, row.byte_count) for row in rows] == expected
+
+    async def test_stops_sending_pages_when_peer_disconnects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def scan(_store: RecordStore) -> Iterator[list[RecordingEntry]]:
+            yield [RecordingEntry(f"{i:04d}.mp3", 0) for i in range(257)]
+
+        monkeypatch.setattr(RecordStore, "entry_batches", scan)
+        peer = AsyncMock()
+        peer.send_json.side_effect = WebSocketDisconnect(1000)
+        await RecListHandler(_store(tmp_path))({"id": "l1"}, peer)
+
+        peer.send_json.assert_awaited_once()
 
     def test_empty_stream_has_one_terminal_page(self, tmp_path: Path) -> None:
         ws, sent = _capturing_ws()
