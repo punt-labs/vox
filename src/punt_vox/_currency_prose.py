@@ -32,7 +32,7 @@ class ProseCurrency:
         boundary = rf"(?P<boundary>(?<!\S)|{tag_pattern})"
         end = (
             rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
-            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d))"
+            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d|[-+\u2212]?[{_SYMBOLS}]))"
             rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))"
         )
         joined = cls._attach_scale(prose, boundary, end)
