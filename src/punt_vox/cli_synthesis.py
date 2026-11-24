@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Self, Unpack, final
 import typer
 
 from punt_vox.cli_guard import CliGuard
-from punt_vox.cli_io import TextInput
+from punt_vox.cli_text_input import TextInput
 from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import (

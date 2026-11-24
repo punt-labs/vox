@@ -157,7 +157,8 @@ tests/
 
   # CLI
   test_cli.py                # Typer CLI invocations via CliRunner
-  test_cli_io.py             # CLI stdin/stdout plumbing
+  test_cli_io.py             # CLI output flag routing
+  test_cli_text_input.py     # CLI argument, file, and stdin resolution
   test_cli_music.py          # vox music subcommands
   test_cli_rec.py            # vox rec subcommands
   test_cli_enablement.py     # vox enable / disable

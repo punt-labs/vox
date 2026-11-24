@@ -211,6 +211,42 @@ class TestSayCommand:
         say_client.assert_not_called()
         rec_client.assert_not_called()
 
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
+    @pytest.mark.parametrize("text", ["positional speech", "-", ""])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_text_and_from_are_mutually_exclusive(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        tmp_path: Path,
+        command: list[str],
+        flags: list[str],
+        text: str,
+    ) -> None:
+        source = tmp_path / "segments.json"
+        source.write_text('["file speech"]', encoding="utf-8")
+        say_client.return_value.synthesize.return_value = SynthesizeResult("abc123")
+        rec_client.return_value.record.return_value = RecordResult(
+            "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+        )
+
+        result = CliRunner().invoke(
+            app, [*flags, *command, text, "--from", str(source), "--provider", "espeak"]
+        )
+
+        message = "Invalid value: TEXT and --from are mutually exclusive."
+        assert result.exit_code == 2, result.output
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert message in click.unstyle(result.stderr)
+        say_client.assert_not_called()
+        rec_client.assert_not_called()
+
     @patch("punt_vox.cli_rec.VoxClientSync")
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_and_rec_new_forward_the_same_segments_and_settings(
