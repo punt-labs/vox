@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Partial album export confirmations in Claude Code show the number of skipped
+  tracks instead of listing every filename. Export details still include the
+  filenames. (PL-1540)
+
 - `vox enable` ignores untracked runtime locks in the host repo. Existing
   tracked lock files stay tracked. (PL-1489)
 
