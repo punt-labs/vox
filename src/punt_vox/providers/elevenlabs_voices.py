@@ -17,16 +17,16 @@ class ElevenLabsVoices(VoiceResolver[str]):
 
     __slots__ = ()
 
-    @staticmethod
-    def is_id(name: str) -> bool:
-        """Return whether a name is accepted directly as a voice ID."""
-        return SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name) is not None
+    def refresh_list(self) -> list[str]:
+        """Reload the catalog and return sorted voice names."""
+        self._do_load()
+        return sorted(self._cache)
 
     def _available_names(self) -> list[str]:
         colliding_aliases = self._colliding_aliases()
         names = {voice_id: voice_id for voice_id in self._cache.values()}
-        for name in sorted(self._cache, reverse=True):
-            if name not in colliding_aliases and not self.is_id(name):
+        for name in sorted(self._cache.keys() - colliding_aliases, reverse=True):
+            if not SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name):
                 names[self._cache[name]] = name
         return sorted(names.values())
 

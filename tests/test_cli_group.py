@@ -139,7 +139,7 @@ def test_root_separator_keeps_child_json_option() -> None:
 
 
 def test_global_json_option_on_command_without_local_flag() -> None:
-    result = CliRunner().invoke(app, ["cache", "status", "--json"])
+    result = CliRunner().invoke(app, ["mcp", "--json"])
     assert result.exit_code == 2
     assert json.loads(result.stdout) == {"error": "No such option: --json"}
     assert result.stderr == ""

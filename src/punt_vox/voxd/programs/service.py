@@ -338,23 +338,24 @@ class ProgramService:
         """
         self.replay_album(self._last_played.require())
 
-    def advance(self) -> None:
+    def advance(self) -> bool:
         """User transport next: step a replay forward, or skip a generate Program.
 
         The user's next (Z ``Next``) is distinct from the loop's end-of-part
         auto-advance (Z ``AutoAdvance``, which the loop posts as its own ``Rotate``):
         on a single-album replay it walks the ordered pool by one and stalls at the
-        last part, rather than wrapping.
+        last part, rather than wrapping. Return False if the queue tail is off.
         """
-        self._channel.post(StepForward())
+        return self._channel.post(StepForward())
 
-    def prev(self) -> None:
+    def prev(self) -> bool:
         """User transport prev: step a replay cursor back, floored at the first part.
 
         Only a replay Selection has an ordered position; a generate Program has no
         previous, so the signal is rejected as a lost race there (Z ``Prev``).
+        Return False if the queue tail is off.
         """
-        self._channel.post(StepBack())
+        return self._channel.post(StepBack())
 
     def pause(self) -> bool:
         """Suspend the active source in place, or return False when off."""

@@ -368,19 +368,7 @@ def mock_elevenlabs_client() -> MagicMock:
 @pytest.fixture
 def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
     """Create an ElevenLabsProvider with a mocked client."""
-    provider = ElevenLabsProvider(client=mock_elevenlabs_client)
-    # Pre-populate the VoiceResolver cache for tests.
-    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
-        {
-            "matilda": "XrExE9yKIg1WjnnlVkGX",
-            "drew": "29vD33N1CtxCmqQRPOHJ",
-        }
-    )
-    # Mark cache as loaded so TTL checks work.
-    import time
-
-    provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
-    return provider
+    return ElevenLabsProvider(client=mock_elevenlabs_client)
 
 
 # ---------------------------------------------------------------------------

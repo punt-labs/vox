@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
 import pytest
 import typer
 from _cli_introspect import command_opts, option_help
@@ -361,6 +362,29 @@ class TestSayCommand:
         assert result.exit_code == 0, result.output
         synthesize.assert_called_once()
         assert synthesize.call_args.kwargs["once"] == expected_ttl
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_once_json_reports_deduplicated_playback(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.synthesize.return_value = SynthesizeResult(
+            request_id="abc123",
+            deduped=True,
+            original_played_at=1700000000.0,
+            ttl_seconds_remaining=42.0,
+        )
+
+        result = CliRunner().invoke(
+            app, ["say", "hello", "--provider", "espeak", "--once", "60", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {
+            "id": "abc123",
+            "deduped": True,
+            "original_played_at": 1700000000.0,
+            "ttl_seconds_remaining": 42.0,
+        }
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
@@ -1728,6 +1752,7 @@ class TestDoctorCommand:
         self,
         tmp_path: Path,
         *,
+        args: tuple[str, ...] = ("doctor",),
         ffmpeg_found: bool = True,
         mpv_found: bool = True,
         mpv_version: str = "0.38.0",
@@ -1809,7 +1834,7 @@ class TestDoctorCommand:
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
         ):
             worker_path.return_value.is_dir.return_value = False
-            return runner.invoke(app, ["doctor"])
+            return runner.invoke(app, args)
 
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)
@@ -1826,6 +1851,39 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
         assert "\u2717 ffmpeg" in result.output
+
+    @pytest.mark.parametrize("args", [("--json", "doctor"), ("doctor", "--json")])
+    def test_json_reports_failed_checks(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        payload = json.loads(result.stdout)
+        assert payload["failed"] == 1
+        assert any(
+            check["message"].startswith("ffmpeg:") and not check["passed"]
+            for check in payload["checks"]
+        )
+
+    @pytest.mark.parametrize("args", [("-q", "doctor"), ("doctor", "-q")])
+    def test_quiet_suppresses_text_but_preserves_failure(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert result.output == ""
+
+    def test_verbose_enables_debug_logging(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cli_io.configure_client_logging") as configure:
+            result = self._run_doctor(tmp_path, args=("doctor", "--verbose"))
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        assert "Daemon: running" in result.stdout
+        configure.assert_called_with(role="cli", verbose=True)
+
+    def test_verbose_and_quiet_are_mutually_exclusive(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, args=("doctor", "--verbose", "--quiet"))
+        assert result.exit_code == 2
+        assert "mutually exclusive" in click.unstyle(result.stderr)
 
     def test_mpv_missing_fails(self, tmp_path: Path) -> None:
         # mpv is a hard dependency: absence is a red \u2717 and a non-zero exit.
@@ -3106,6 +3164,61 @@ class TestCacheCommands:
     client honors ``VOXD_HOST`` / ``VOXD_PORT`` /
     ``VOXD_TOKEN`` like ``vox status`` and ``vox voices``.
     """
+
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @pytest.mark.parametrize("flag", ["--json", "-q", "--quiet", "-v", "--verbose"])
+    @pytest.mark.parametrize("global_flag", [False, True])
+    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_io.configure_client_logging")
+    def test_output_flags(
+        self,
+        mock_logging: MagicMock,
+        mock_client_cls: MagicMock,
+        command: str,
+        flag: str,
+        global_flag: bool,
+    ) -> None:
+        from punt_vox.client import CacheStatus
+
+        cache_path = Path("/daemon/cache")
+        mock_client_cls.return_value.cache_status.return_value = CacheStatus(
+            entries=4, size_bytes=8192, path=cache_path
+        )
+        mock_client_cls.return_value.cache_clear.return_value = 9
+        args = ["cache", command]
+        args.insert(0 if global_flag else len(args), flag)
+
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        if flag == "--json":
+            expected = (
+                {"entries": 4, "size_bytes": 8192, "path": str(cache_path)}
+                if command == "status"
+                else {"cleared": 9}
+            )
+            assert json.loads(result.stdout) == expected
+        elif flag in ("-q", "--quiet"):
+            assert result.stdout == ""
+        else:
+            mock_logging.assert_called_with(role="cli", verbose=True)
+            expected_text = "Entries: 4" if command == "status" else "Cleared 9"
+            assert expected_text in result.stdout
+
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_trailing_json_reports_daemon_connection_error(
+        self, mock_client_cls: MagicMock, command: str
+    ) -> None:
+        rpc = getattr(mock_client_cls.return_value, f"cache_{command}")
+        rpc.side_effect = VoxdConnectionError("refused")
+
+        result = CliRunner().invoke(app, ["cache", command, "--json"])
+
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert json.loads(result.stdout) == {"error": "refused"}
+        assert result.stderr == ""
+        rpc.assert_called_once_with()
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_status_routes_through_client(self, mock_client_cls: MagicMock) -> None:
