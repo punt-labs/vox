@@ -248,7 +248,10 @@ class VoxPanelService:
         on_read_failure: PanelNotice,
         on_rejection: Callable[[str], PanelNotice],
     ) -> None:
-        """Re-read settings fresh, holding the last-known ones if voxd is down.
+        """Read fresh settings, retaining the last-known state if voxd is down.
+
+        A rejected roster still leaves the config available so the panel
+        can show the model picker and let the user choose a supported model.
 
         *on_read_failure* and *on_rejection* are the caller's choice, not
         hardcoded generic notices: ``recover_from_write_failure`` already
@@ -258,23 +261,23 @@ class VoxPanelService:
         silently replaced by a generic one blaming an unrelated
         subsystem -- the caller supplies a composed notice for each.
         """
+        fresh = PanelState.read(self._store)
         try:
-            fresh = PanelState.read(self._client, self._store)
+            fresh = fresh.with_roster(self._client)
         except VoxdRejectionError as exc:
             # Daemon was reached and refused the roster fetch. The caller
             # supplies the composition so a write-failure in flight is not
             # dropped when the confirming read also hits a rejection.
             logger.warning("vox-panel: voxd refused the resync: %s", exc)
-            self._settings.note(on_rejection(str(exc)))
-            return
+            self._settings.replace(fresh, on_rejection(str(exc)))
         except VoxdConnectionError:
             logger.warning(
                 "vox-panel: voxd unreachable during resync: %s",
                 on_read_failure.message,
             )
             self._settings.note(on_read_failure)
-            return
-        self._settings.replace(fresh, notice_on_success)
+        else:
+            self._settings.replace(fresh, notice_on_success)
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:

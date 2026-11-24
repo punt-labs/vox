@@ -71,9 +71,8 @@ class TestEmpty:
 
 class TestRead:
     def test_reads_config_and_roster(self) -> None:
-        state = PanelState.read(
-            _FakeClient(["aria", "roger"]),
-            _FakeStore(_config(provider="elevenlabs")),
+        state = PanelState.read(_FakeStore(_config(provider="elevenlabs"))).with_roster(
+            _FakeClient(["aria", "roger"])
         )
         assert state.notify == "y"
         assert state.speak == "y"
@@ -83,9 +82,8 @@ class TestRead:
     def test_reads_provider_and_model_from_config(self) -> None:
         client = _FakeClient(["marin"])
         state = PanelState.read(
-            client,
-            _FakeStore(_config(provider="openai", model="gpt-4o-mini-tts")),
-        )
+            _FakeStore(_config(provider="openai", model="gpt-4o-mini-tts"))
+        ).with_roster(client)
         assert state.provider == "openai"
         assert state.model == "gpt-4o-mini-tts"
         assert client.last_model_arg == state.model
@@ -98,7 +96,7 @@ class TestRead:
         the previous roster until voxd restarts.
         """
         client = _FakeClient(["en", "en-us"])
-        PanelState.read(client, _FakeStore(_config(provider="espeak")))
+        PanelState.read(_FakeStore(_config(provider="espeak"))).with_roster(client)
         assert client.last_provider_arg == "espeak"
 
     def test_roster_fetch_skipped_when_provider_unset(self) -> None:
@@ -108,7 +106,7 @@ class TestRead:
         daemon is not asked to guess a provider.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config()))
+        state = PanelState.read(_FakeStore(_config())).with_roster(client)
         assert client.call_count == 0
         assert state.roster == ()
 
@@ -120,7 +118,7 @@ class TestRead:
         the voice-roster request.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config(provider="   ")))
+        state = PanelState.read(_FakeStore(_config(provider="   "))).with_roster(client)
         assert state.provider is None
         assert state.roster == ()
         assert client.call_count == 0
@@ -132,7 +130,7 @@ class TestRead:
         crosses the boundary.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config(provider="")))
+        state = PanelState.read(_FakeStore(_config(provider=""))).with_roster(client)
         assert state.provider is None
         assert client.call_count == 0
 
@@ -144,7 +142,9 @@ class TestRead:
         return an empty roster for a name the user typed correctly.
         """
         client = _FakeClient(["aria", "roger"])
-        state = PanelState.read(client, _FakeStore(_config(provider="  elevenlabs  ")))
+        state = PanelState.read(
+            _FakeStore(_config(provider="  elevenlabs  "))
+        ).with_roster(client)
         assert state.provider == "elevenlabs"
         assert client.last_provider_arg == "elevenlabs"
 
@@ -160,8 +160,8 @@ class TestRead:
         """
         client = _FakeClient(["aria"])
         state = PanelState.read(
-            client, _FakeStore(_config(provider="elevenlabs", model="   "))
-        )
+            _FakeStore(_config(provider="elevenlabs", model="   "))
+        ).with_roster(client)
         assert state.model is None
 
 

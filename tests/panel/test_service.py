@@ -23,6 +23,7 @@ from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
     from punt_vox.panel.ports import HubListener
-    from punt_vox.voice_target import VoiceTarget
 
 
 @final
@@ -561,29 +561,35 @@ class TestApplyEvent:
         assert notice == PanelNotice.voxd_rejected(detail)
         assert detail in notice.message
 
-    def test_prefetch_wire_rejection_surfaces_notice_not_empty_state(self) -> None:
-        """A wire rejection during the roster read now sets the rejection notice.
-
-        Regression: a ``VoxdRejectionError`` propagating out of the resync
-        left the panel at ``PanelState.empty()`` (``roster=()``), rendering
-        ``Voice: (empty)`` with no explanation. The rejection is caught at
-        the service boundary now and surfaced via ``PanelNotice.voxd_rejected``.
-        """
-        detail = "Unknown provider ''. Available: elevenlabs, say"
+    def test_prefetch_rejected_model_keeps_model_picker_available(self) -> None:
+        detail = "Model 'tts-2' is not available for provider 'openai'"
 
         class _RejectingClient:
             def voices(self, provider: VoiceTarget) -> list[str]:
-                raise VoxdRejectionError(detail)
+                if provider.model == "tts-2":
+                    raise VoxdRejectionError(detail)
+                assert provider == VoiceTarget("openai", "gpt-4o-mini-tts")
+                return ["alloy", "marin"]
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
                 raise NotImplementedError
 
-        service = VoxPanelService(_RejectingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        store = _FakeStore(_config(provider="openai", model="tts-2", voice="nova"))
+        service = VoxPanelService(_RejectingClient(), store)  # type: ignore[arg-type]
         service.refresh()
-        notice = service.scene().notice
-        assert notice == PanelNotice.voxd_rejected(detail)
-        assert detail in notice.message
-        assert service.scene().voice == PanelState.empty().voice
+        scene = service.scene()
+        assert scene.notice == PanelNotice.voxd_rejected(detail)
+        assert scene.provider == "openai"
+        assert scene.roster == ()
+        model_combo = next(
+            element
+            for element in scene.render_request().elements
+            if element["id"] == "vox.panel.model"
+        )
+        items = model_combo["items"]
+        assert isinstance(items, list)
+        service.apply_event(PanelTopic.MODEL, {"value": items.index("gpt-4o-mini-tts")})
+        assert store.written == {"model": "gpt-4o-mini-tts", "voice": "alloy"}
 
     def test_provider_roster_fetch_error_aborts_the_write(self) -> None:
         """VoxdConnectionError on the roster fetch surfaces a notice, no disk write.
