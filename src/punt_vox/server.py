@@ -517,13 +517,10 @@ def unmute(
             "voice": seg_spec.voice,
             "provider": seg_spec.provider,
             "cached": result.cached,
+            **result.dedup_fields(),
         }
-        if result.deduped:
-            entry["deduped"] = True
-            if result.original_played_at is not None:
-                entry["original_played_at"] = result.original_played_at
-            if result.ttl_seconds_remaining is not None:
-                entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+        if result.warning is not None:
+            entry["warning"] = result.warning
         return entry
 
     return batch.render(defaults, handler=_synth_handler, error_label="Synthesis")

@@ -243,11 +243,7 @@ class RecTool:
         def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
             # The daemon validates explicit names, including "".
             result = client.record(seg_text, seg_spec, name=args.name)
-            return {
-                "id": result.name,
-                "bytes": result.byte_count,
-                "cached": result.cached,
-            }
+            return result.metadata(include_warning=True)
 
         return batch.render(defaults, handler=_handler, error_label="Record")
 

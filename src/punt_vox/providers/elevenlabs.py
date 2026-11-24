@@ -143,15 +143,6 @@ class ElevenLabsProvider(TTSProvider):
         display_voice, voice_id = self._voices.resolve(
             request.voice or self.default_voice
         )
-        rate = request.rate if request.rate is not None else 100
-
-        if rate != 100:
-            logger.debug(
-                "ElevenLabs does not support rate adjustment (got rate=%d). "
-                "Audio will be at normal speed.",
-                rate,
-            )
-
         self._synthesize_text(request, output_path, voice_id)
 
         logger.info("Wrote %s", output_path)

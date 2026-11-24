@@ -100,6 +100,52 @@ finally:
 
 class TestSayCommand:
     @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("quiet_position", [None, "global", "command"])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_ignored_rate_warning_goes_to_stderr_with_json_output(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        command: list[str],
+        quiet_position: str | None,
+    ) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult("r1", "r1", Path("recordings/r1"), 100, warning=warning)
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
+
+        args = [
+            *command,
+            "hello",
+            "--provider",
+            "elevenlabs",
+            "--rate",
+            "120",
+            "--json",
+        ]
+        if quiet_position == "global":
+            args.insert(0, "--quiet")
+        elif quiet_position == "command":
+            args.append("--quiet")
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        stdout = json.loads(result.stdout)
+        assert stdout["id"] == "r1"
+        assert "warning" not in stdout
+        if quiet_position is None:
+            assert result.stderr == f"Warning: {warning}\n"
+        else:
+            assert result.stderr == ""
+
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
     @pytest.mark.parametrize("rate", ["0", "-1"])
     @patch("punt_vox.cli_rec.VoxClientSync")
     @patch(f"{_CLI}.VoxClientSync")
