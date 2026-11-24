@@ -55,6 +55,7 @@ class FakeConvAIAgent:
         "_audio_chunks",
         "_changed",
         "_closed",
+        "_cut_short",
         "_fault",
         "_initiation",
         "_port",
@@ -72,6 +73,7 @@ class FakeConvAIAgent:
     _audio_chunks: int
     _closed: bool
     _fault: BaseException | None  # None until the reader or player fails.
+    _cut_short: Step | None  # None unless a client close ended a wait step.
     _changed: asyncio.Condition
 
     def __new__(cls, steps: Iterable[Step]) -> Self:
@@ -85,6 +87,7 @@ class FakeConvAIAgent:
         self._audio_chunks = 0
         self._closed = False
         self._fault = None
+        self._cut_short = None
         self._changed = asyncio.Condition()
         return self
 
@@ -111,6 +114,10 @@ class FakeConvAIAgent:
     @property
     def fault(self) -> BaseException | None:  # None while the fake has not failed.
         return self._fault
+
+    @property
+    def cut_short(self) -> Step | None:  # None when every wait step was satisfied.
+        return self._cut_short
 
     async def __aenter__(self) -> Self:
         server = await self._stack.enter_async_context(
@@ -192,13 +199,9 @@ class FakeConvAIAgent:
                     json.dumps({"type": "interruption", "interruption_event": body})
                 )
             case WaitForToolResult(tool_call_id):
-                await self._wait_until(
-                    lambda: tool_call_id in self._tool_results or self._closed
-                )
+                await self._wait_for(step, lambda: tool_call_id in self._tool_results)
             case ExpectAudioChunks(count):
-                await self._wait_until(
-                    lambda: self._audio_chunks >= count or self._closed
-                )
+                await self._wait_for(step, lambda: self._audio_chunks >= count)
             case HangUp():
                 await socket.close()
                 return True
@@ -242,6 +245,12 @@ class FakeConvAIAgent:
     async def _wait_until(self, predicate: Callable[[], bool]) -> None:
         async with self._changed:
             await self._changed.wait_for(predicate)
+
+    async def _wait_for(self, step: Step, satisfied: Callable[[], bool]) -> None:
+        """Wait for a step's condition; a client close first is a cut-short script."""
+        await self._wait_until(lambda: satisfied() or self._closed)
+        if not satisfied() and self._cut_short is None:
+            self._cut_short = step
 
     @staticmethod
     async def _stop(task: asyncio.Task[None]) -> None:

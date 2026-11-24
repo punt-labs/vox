@@ -192,3 +192,24 @@ async def test_player_error_surfaces_as_a_fault() -> None:
             assert closed.value.rcvd is not None
             assert closed.value.rcvd.code == 1011
     assert isinstance(agent.fault, TypeError)
+
+
+async def test_client_close_during_a_wait_is_recorded_as_cut_short() -> None:
+    """A wait step the client's close ends is not a success; the fake says which."""
+    steps: tuple[Step, ...] = (WaitForToolResult("never"), HangUp())
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        await socket.close()
+    assert agent.cut_short == WaitForToolResult("never")
+
+
+async def test_a_completed_script_is_not_cut_short() -> None:
+    steps: tuple[Step, ...] = (ExpectAudioChunks(1), HangUp())
+    chunk = json.dumps({"user_audio_chunk": base64.b64encode(b"\x00\x01").decode()})
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        await socket.send(chunk)
+        await socket.wait_closed()
+    assert agent.cut_short is None
