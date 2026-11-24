@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import errno
 import logging
-import os
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.atomic_file import AtomicFile
+from punt_vox.config_text import ConfigText
 from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.frontmatter_edit import FrontmatterEdit
 
@@ -32,20 +31,20 @@ class ConfigFile:
     whole or not at all.
     """
 
-    __slots__ = ("_path",)
+    __slots__ = ("_text",)
 
-    _path: Path
+    _text: ConfigText
 
     def __new__(cls, path: Path) -> Self:
         """Bind the file's path; nothing is read until asked."""
         self = super().__new__(cls)
-        self._path = path
+        self._text = ConfigText(path)
         return self
 
     @property
     def path(self) -> Path:
         """Return the file's path."""
-        return self._path
+        return self._text.path
 
     def edit(
         self,
@@ -53,7 +52,7 @@ class ConfigFile:
         check: FieldCheck | None,  # None: plain edit.
     ) -> FrontmatterEdit:
         """Return an edit of this file, named after it in any refusal or warning."""
-        return FrontmatterEdit(self._path, updates, check)
+        return FrontmatterEdit(self._text.path, updates, check)
 
     def block(self) -> FrontmatterBlock | None:  # None when absent.
         """Parse the file as UTF-8, or ``None`` if absent.
@@ -62,11 +61,8 @@ class ConfigFile:
             OSError: If the file exists but cannot be read.
             UnicodeDecodeError: If the file is not UTF-8.
         """
-        try:
-            text = self._path.read_text(encoding="utf-8", newline="")
-        except FileNotFoundError:
-            return None
-        return FrontmatterBlock(text)
+        text = self._text.read()
+        return None if text is None else FrontmatterBlock(text)
 
     def fenced_block(self) -> FrontmatterBlock | None:  # None when absent.
         """Parse the file strictly, refusing one with no closing fence.
@@ -82,7 +78,7 @@ class ConfigFile:
         """
         block = self.block()
         if block is not None and block.unclosed:
-            raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
+            raise OSError(errno.EBADMSG, "no closing ---", str(self._text.path))
         return block
 
     def readable_block(self) -> FrontmatterBlock | None:
@@ -95,7 +91,7 @@ class ConfigFile:
             return self.block()
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
-                "Config unreadable, using defaults: %s (%s)", self._path, exc
+                "Config unreadable, using defaults: %s (%s)", self._text.path, exc
             )
             return None
 
@@ -113,13 +109,4 @@ class ConfigFile:
         Raises:
             OSError: If the file or its directory cannot be written.
         """
-        if self._path.exists():
-            os.close(os.open(self._path, os.O_WRONLY | os.O_CLOEXEC))
-            AtomicFile(self._path).replace(block.text)
-            return
-        # A new file lands as a plain create would: the umask, read at call
-        # time since it can change, decides whether session state stays
-        # private, not a fixed mode.
-        umask = os.umask(0)
-        os.umask(umask)
-        AtomicFile(self._path).replace(block.text, mode=0o666 & ~umask)
+        self._text.replace(block.text)
