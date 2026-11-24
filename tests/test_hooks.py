@@ -591,7 +591,7 @@ class TestHandleSessionEnd:
         handle_session_end(config, Path("/fake/.punt-labs/vox"))
         mock_speak.assert_called_once()
 
-    @patch("punt_vox.hooks.ConfigStore")
+    @patch("punt_vox.nudge_hook.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_resets_nudge_cadence(
         self, _mock_run: MagicMock, mock_cs: MagicMock
@@ -605,7 +605,26 @@ class TestHandleSessionEnd:
             "vibe_nudge_turns", "0"
         )
 
-    @patch("punt_vox.hooks.ConfigStore")
+    @patch("punt_vox.hooks._chime_via_voxd")
+    @patch("punt_vox.hooks._speak_via_voxd")
+    def test_resets_nudge_cadence_when_notify_n(
+        self, mock_speak: MagicMock, mock_chime: MagicMock, tmp_path: Path
+    ) -> None:
+        """notify=n skips the farewell but still resets the cadence.
+
+        The vibe-nudge hook advances the counter whatever notify is, so a
+        skipped reset would leak the count into the next session.
+        """
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"notify": "n", "vibe_mode": "auto", "vibe_nudge_turns": "3"}
+        )
+        handle_session_end(store.read(), tmp_path)
+        mock_speak.assert_not_called()
+        mock_chime.assert_not_called()
+        assert store.read().vibe_nudge_turns == 0
+
+    @patch("punt_vox.nudge_hook.ConfigStore")
     @patch("punt_vox.hooks._speak_via_voxd")
     def test_no_write_when_cadence_at_zero(
         self, _mock_run: MagicMock, mock_cs: MagicMock
@@ -625,10 +644,10 @@ class TestHandleSessionEnd:
             patch.object(
                 ConfigStore, "write_field", side_effect=OSError("read-only fs")
             ),
-            caplog.at_level(logging.WARNING, logger="punt_vox.hooks"),
+            caplog.at_level(logging.WARNING, logger="punt_vox.nudge_hook"),
         ):
             handle_session_end(config, Path("/fake/.punt-labs/vox"))  # must not raise
-        assert any("session-end" in r.getMessage() for r in caplog.records)
+        assert any("cannot persist cadence" in r.getMessage() for r in caplog.records)
 
     @patch("punt_vox.hooks._speak_phrase")
     def test_session_end_config_becomes_non_utf8(
@@ -642,7 +661,7 @@ class TestHandleSessionEnd:
 
         handle_session_end(config, tmp_path)
 
-        assert "session-end: cannot reset cadence" in caplog.text
+        assert "vibe-nudge: cannot persist cadence" in caplog.text
         assert path.read_bytes() == b"\xff"
 
 

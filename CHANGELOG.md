@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SessionEnd resets the auto-vibe counter even when notifications are off
+  (`notify=n`), so the count no longer carries into the next session. (PL-1567)
+
 - `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
   and `--quiet` (`-q`) after the subcommand. (PL-1560)
 
