@@ -12,7 +12,7 @@ from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.voice_call.capture_probe import CaptureProbe
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
 _LOGGER = "punt_vox.voxd.voice_call.capture_probe"
 _LEVEL_LOGGER = "punt_vox.voxd.voice_call.capture_level"
@@ -155,7 +155,7 @@ async def test_a_stream_that_never_delivers_fails_within_the_limit(
 ) -> None:
     monkeypatch.setattr("punt_vox.voxd.voice_call.capture_probe._SILENCE_LIMIT_S", 0.05)
 
-    async def never() -> AsyncIterator[AudioChunk]:
+    async def never() -> AsyncGenerator[AudioChunk]:
         await asyncio.sleep(3600)
         yield AudioChunk(pcm=_VOICE, duration_s=_FRAME_S)
 
@@ -164,3 +164,22 @@ async def test_a_stream_that_never_delivers_fails_within_the_limit(
             async for _ in CaptureProbe().watch(never()):
                 pass
     assert "System Settings > Privacy & Security > Microphone" in str(failure.value)
+
+
+async def test_a_silence_failure_closes_the_source_before_it_reaches_the_caller() -> (
+    None
+):
+    """The device is released by the probe, not later by garbage collection."""
+    closed_at: list[bool] = []
+
+    async def dead() -> AsyncGenerator[AudioChunk]:
+        try:
+            while True:
+                yield AudioChunk(pcm=_SILENCE, duration_s=1.0)
+        finally:
+            closed_at.append(True)
+
+    with pytest.raises(ValueError, match="no microphone signal"):
+        async for _ in CaptureProbe().watch(dead()):
+            pass
+    assert closed_at == [True]

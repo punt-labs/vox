@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncGenerator, Sequence
 
 __all__ = ["SAMPLE_RATE_HZ", "AudioChunk"]
 
@@ -35,7 +35,7 @@ class AudioChunk:
     @classmethod
     async def as_async_iter(
         cls, chunks: Sequence[AudioChunk]
-    ) -> AsyncIterator[AudioChunk]:
-        """Return an async iterator over *chunks*."""
+    ) -> AsyncGenerator[AudioChunk]:
+        """Return an async generator over *chunks*."""
         for chunk in chunks:
             yield chunk

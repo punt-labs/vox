@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 from punt_vox.voxd.voice_call.capture_level import CaptureLevel
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
     from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 
@@ -55,19 +55,24 @@ class CaptureProbe:
         self._heard, self._seen_s, self._level = False, 0.0, CaptureLevel()
         return self
 
-    async def watch(self, chunks: AsyncIterator[AudioChunk]) -> AsyncIterator[bytes]:
+    async def watch(self, chunks: AsyncGenerator[AudioChunk]) -> AsyncIterator[bytes]:
         """Forward each captured block's PCM, failing a capture that stays silent.
 
         A stream that opens but never calls back is as dead as one that
         delivers zeros, so every wait for a block is bounded by the same limit.
+        The source is closed on the way out, however the watch ends, so the
+        device is released by the probe and not later by garbage collection.
 
         Raises:
             ValueError: When the first seconds hold only zero samples, or a
                 block does not arrive within the limit.
         """
-        while (chunk := await self._next(chunks)) is not None:
-            self.observe(chunk.pcm, chunk.duration_s)
-            yield chunk.pcm
+        try:
+            while (chunk := await self._next(chunks)) is not None:
+                self.observe(chunk.pcm, chunk.duration_s)
+                yield chunk.pcm
+        finally:
+            await chunks.aclose()
 
     @staticmethod
     async def _next(chunks: AsyncIterator[AudioChunk]) -> AudioChunk | None:

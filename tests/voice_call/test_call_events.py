@@ -58,7 +58,7 @@ class _DeadMicSource:
     def open(self) -> _DeadMicSource:
         return self
 
-    async def chunks(self) -> AsyncIterator[AudioChunk]:
+    async def chunks(self) -> AsyncGenerator[AudioChunk]:
         while True:
             await asyncio.sleep(0)
             yield AudioChunk(pcm=bytes(640), duration_s=0.02)

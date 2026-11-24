@@ -10,7 +10,7 @@ from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.voice_call.mic_input import MicInput
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 
@@ -27,7 +27,7 @@ class _FakeMicSource:
     def open(self) -> _FakeMicSource:
         return self
 
-    async def chunks(self) -> AsyncIterator[AudioChunk]:
+    async def chunks(self) -> AsyncGenerator[AudioChunk]:
         for pcm in self._chunks:
             yield AudioChunk(pcm=pcm, duration_s=0.02)
 
