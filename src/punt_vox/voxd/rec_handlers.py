@@ -39,15 +39,19 @@ class RecRemoveHandler:
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            ref = parse_optional_str(msg, "ref")
-            if not ref:
-                await reply.error("rec remove requires a ref")
-                return
+            ref = self._require_ref(msg)
             self._store.remove(ref)
         except (ValueError, OSError) as exc:
             await self._reply_failure(reply, exc)
             return
         await reply.send({"type": "removed", "removed": ref})
+
+    @staticmethod
+    def _require_ref(msg: dict[str, object]) -> str:
+        ref = parse_optional_str(msg, "ref")
+        if not ref:
+            raise ValueError("rec remove requires a ref")
+        return ref
 
     @staticmethod
     async def _reply_failure(reply: WireReply, exc: ValueError | OSError) -> None:
@@ -62,9 +66,8 @@ class RecRemoveHandler:
         server-side fault routed through :class:`SafeFault`, so no absolute prefix
         (host recon) ever crosses the wire while the raw detail stays in the log.
         """
-        if isinstance(exc, ValueError) or (
-            isinstance(exc, FileNotFoundError) and exc.filename is None
-        ):
-            await reply.error(str(exc))
-        else:
-            await reply.fault(SafeFault.from_exception(exc))
+        match exc:
+            case ValueError() | FileNotFoundError(filename=None):
+                await reply.error(str(exc))
+            case _:
+                await reply.fault(SafeFault.from_exception(exc))
