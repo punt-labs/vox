@@ -152,13 +152,13 @@ def test_allow_stores_the_resolved_top_level(
     repo.mkdir()
     alias = tmp_path / "alias"
     alias.symlink_to(repo, target_is_directory=True)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
     with patch(
         "punt_vox.voxd.workers.policy.subprocess.run",
         return_value=_git_toplevel(repo.resolve()),
     ):
-        assert policy.allow("alias") == (str(repo.resolve()),)
+        assert policy.allow("~/alias") == (str(repo.resolve()),)
         assert policy.allow(str(repo)) == (str(repo.resolve()),)
     assert policy.repos() == (str(repo.resolve()),)
 
@@ -206,3 +206,45 @@ def test_disallow_removes_by_resolved_path_even_when_gone(tmp_path: Path) -> Non
     assert policy.repos() == (str(kept),)
     with pytest.raises(ValueError, match="not allowlisted"):
         policy.disallow(str(gone))
+
+
+@pytest.mark.parametrize(
+    ("entry", "reason"),
+    [
+        ("   ", "blank"),
+        ("", "blank"),
+        ("relative/repo", "not absolute"),
+        ("/", "the filesystem root"),
+        ("/../", "the filesystem root"),
+    ],
+)
+def test_bad_allowlist_entries_are_rejected_by_name(
+    tmp_path: Path, entry: str, reason: str
+) -> None:
+    """A blank, relative or root entry never becomes a repository."""
+    config = ConfigStore(tmp_path / "config")
+    config.write_field("worker_repos", repr([entry]))
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
+        policy.repos()
+    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
+        policy.resolve(str(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("entry", "reason"),
+    [("   ", "blank"), ("relative/repo", "not absolute"), ("/", "the filesystem root")],
+)
+def test_allow_and_disallow_refuse_bad_entries_before_git(
+    tmp_path: Path, entry: str, reason: str
+) -> None:
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run") as git,
+        pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"),
+    ):
+        policy.allow(entry)
+    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
+        policy.disallow(entry)
+    git.assert_not_called()
+    assert policy.repos() == ()

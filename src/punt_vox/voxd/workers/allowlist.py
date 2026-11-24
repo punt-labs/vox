@@ -41,7 +41,25 @@ class RepoAllowlist:
         items = cast("list[object]", repos)
         if not all(isinstance(p, str) for p in items):
             raise ValueError(_SHAPE)
-        return {Path(str(p)).expanduser().resolve() for p in items}
+        return {self.entry(str(p)) for p in items}
+
+    @staticmethod
+    def entry(raw: str) -> Path:
+        """Resolve one entry, refusing a blank, relative or root path by name.
+
+        Raises:
+            ValueError: If *raw* is blank after strip, relative after
+                expanduser, or resolves to the filesystem root.
+        """
+        if not raw.strip():
+            raise ValueError(f"worker_repos entry blank: {raw!r}")
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"worker_repos entry not absolute: {raw!r}")
+        path = path.resolve()
+        if path.parent == path:
+            raise ValueError(f"worker_repos entry the filesystem root: {raw!r}")
+        return path
 
     def save(self, paths: set[Path]) -> tuple[str, ...]:
         """Write *paths* sorted and return them as strings."""

@@ -49,7 +49,7 @@ class WorkerRepoPolicy:
             ValueError: If *project* is not a directory, not inside a git
                 repository, or not that repository's top level.
         """
-        path = Path(project).expanduser().resolve()
+        path = RepoAllowlist.entry(project)
         if not path.is_dir():
             raise ValueError(f"not a directory: {path}")
         if self._top_level(path) != path:
@@ -62,7 +62,7 @@ class WorkerRepoPolicy:
         Raises:
             ValueError: If the resolved path is not allowlisted.
         """
-        path = Path(project).expanduser().resolve()
+        path = RepoAllowlist.entry(project)
         allowed = self._allowlist.paths()
         if path not in allowed:
             raise ValueError(f"not allowlisted: {path}")
