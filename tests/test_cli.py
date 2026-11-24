@@ -62,7 +62,6 @@ def test_batch_json_lines_help_preserves_shell_example(
             "TYPER_USE_RICH": rich,
             "TERMINAL_WIDTH": "100",
             "COLUMNS": "100",
-            "NO_COLOR": "1",
         },
         capture_output=True,
         text=True,
@@ -71,7 +70,7 @@ def test_batch_json_lines_help_preserves_shell_example(
 
     assert result.returncode == 0, result.stderr
     assert "\b" not in result.stdout
-    lines = [line.strip() for line in result.stdout.splitlines()]
+    lines = [line.strip() for line in click.unstyle(result.stdout).splitlines()]
     assert "status=0" in lines, result.stdout
     start = lines.index("status=0")
     assert lines[start : start + 4] == [
