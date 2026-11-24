@@ -26,6 +26,16 @@ class TestSynthesisSpecValidate:
         spec = SynthesisSpec(stability=1.0, similarity=1.0, style=1.0)
         spec.validate()
 
+    def test_valid_minimum_rate(self) -> None:
+        SynthesisSpec(rate=1).validate()
+
+    @pytest.mark.parametrize("rate", [0, -1])
+    def test_nonpositive_rate(self, rate: int) -> None:
+        with pytest.raises(
+            ValueError, match=f"rate must be greater than 0, got {rate}"
+        ):
+            SynthesisSpec(rate=rate).validate()
+
     def test_stability_too_high(self) -> None:
         spec = SynthesisSpec(stability=1.5)
         with pytest.raises(ValueError, match="stability"):
