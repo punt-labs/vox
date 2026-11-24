@@ -33,23 +33,30 @@ def router(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WebSocketRouter:
 class _FetchPeer:
     """Drive the router's receive and send sides independently."""
 
-    __slots__ = ("_inbox", "sent", "task")
+    __slots__ = ("_inbox", "_sent", "_task")
 
     _inbox: asyncio.Queue[str | Exception]
-    sent: list[dict[str, object]]
-    task: asyncio.Task[None]
+    _sent: list[dict[str, object]]
+    _task: asyncio.Task[None]
 
     def __new__(cls, router: WebSocketRouter) -> _FetchPeer:
         self = super().__new__(cls)
         self._inbox = asyncio.Queue()
-        self.sent = []
+        self._sent = []
         socket = AsyncMock(spec=WebSocket)
         socket.headers = {}
         socket.application_state = WebSocketState.CONNECTED
         socket.receive_text.side_effect = self._receive
-        socket.send_json.side_effect = self.sent.append
-        self.task = asyncio.create_task(router.handle_connection(socket))
+        socket.send_json.side_effect = self._sent.append
+        self._task = asyncio.create_task(router.handle_connection(socket))
         return self
+
+    @property
+    def sent(self) -> tuple[dict[str, object], ...]:
+        return tuple(frame.copy() for frame in self._sent)
+
+    async def wait_closed(self) -> None:
+        await self._task
 
     def send(self, kind: str, label: str) -> None:
         self._inbox.put_nowait(json.dumps({"type": kind, "id": label, "ref": label}))
@@ -125,14 +132,17 @@ async def test_fetch_peer_disconnect_stops_measurement(
             if pipelined:
                 abandoned.send("fetch", waiting)
             abandoned.disconnect()
-            await asyncio.shield(abandoned.task)
+            await asyncio.shield(abandoned.wait_closed())
         assert not abandoned.sent
     finally:
         release.set()
         for connection in (first, second, peer):
             connection.disconnect()
         await asyncio.wait_for(
-            asyncio.gather(first.task, second.task, peer.task), timeout=5
+            asyncio.gather(
+                first.wait_closed(), second.wait_closed(), peer.wait_closed()
+            ),
+            timeout=5,
         )
         # Keep the loop alive until the off-loop digest workers exit.
         await loop.shutdown_default_executor()
@@ -179,7 +189,7 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
     finally:
         resume.set()
         peer.disconnect()
-        await asyncio.wait_for(peer.task, timeout=5)
+        await asyncio.wait_for(peer.wait_closed(), timeout=5)
 
     assert [frame["type"] for frame in peer.sent] == [
         "fetch_begin",
