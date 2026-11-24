@@ -90,13 +90,24 @@ def test_missing_output_beneath_unwritable_ancestor_is_not_creatable(
 ) -> None:
     root = tmp_path / "missing" / "albums"
     with patch(
-        "punt_vox.voxd.output_health.tempfile.TemporaryFile",
+        "punt_vox.voxd.output_health.tempfile.TemporaryDirectory",
         side_effect=PermissionError,
     ) as open_probe:
         assert OutputHealth(root).probe()["output_dir"] == "not_writable"
 
-    open_probe.assert_called_once_with(buffering=0, dir=tmp_path)
+    open_probe.assert_called_once_with(dir=tmp_path)
     assert not root.parent.exists()
+
+
+def test_missing_output_requires_directory_creation_not_just_file_creation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "albums"
+    with patch(
+        "punt_vox.voxd.output_health.tempfile.TemporaryDirectory",
+        side_effect=PermissionError,
+    ):
+        assert OutputHealth(root).probe()["output_dir"] == "not_writable"
 
 
 @pytest.mark.parametrize(

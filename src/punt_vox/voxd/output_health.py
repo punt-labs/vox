@@ -92,6 +92,9 @@ class OutputHealth:
     def _output_status(self) -> OutputVerdict:
         try:
             directory = self._existing_ancestor(self._root)
+            if directory != self._root:
+                with tempfile.TemporaryDirectory(dir=directory):
+                    return "absent"
             with tempfile.TemporaryFile(buffering=0, dir=directory) as probe:
                 probe.write(b"ok")
         except OSError:
@@ -99,7 +102,7 @@ class OutputHealth:
                 "Could not write to the album output directory", exc_info=True
             )
             return "not_writable"
-        return "writable" if directory == self._root else "absent"
+        return "writable"
 
     @staticmethod
     def _existing_ancestor(path: Path) -> Path:
