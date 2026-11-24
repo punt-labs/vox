@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.allowlist import RepoAllowlist
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +68,13 @@ class WorkerRepoPolicy:
             raise ValueError(f"not a git repository top level: {path}")
         return self._allowlist.edit(lambda allowed: allowed | {path})
 
-    def disallow(self, project: str) -> tuple[str, ...]:
-        """Remove *project* by stored text or resolved path; lenient, unlike allow.
+    def disallow(self, named: RepoSpellings) -> tuple[str, ...]:
+        """Remove the entry *named* names; lenient, unlike allow.
 
         Raises:
-            ValueError: If *project* is blank or matches no stored entry.
+            ValueError: If no stored entry is named.
         """
-        return self._allowlist.remove(project)
+        return self._allowlist.remove(named)
 
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""

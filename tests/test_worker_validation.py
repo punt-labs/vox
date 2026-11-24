@@ -18,6 +18,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 from punt_vox.voxd.workers.trust import ClaudeTrust
@@ -206,10 +207,12 @@ def test_disallow_removes_by_resolved_path_even_when_gone(tmp_path: Path) -> Non
     kept = tmp_path / "kept"
     config.write_field("worker_repos", repr([str(gone), str(kept)]))
     policy = WorkerRepoPolicy(config)
-    assert policy.disallow(str(tmp_path / "x" / ".." / "gone")) == (str(kept),)
+    assert policy.disallow(RepoSpellings(str(tmp_path / "x" / ".." / "gone"))) == (
+        str(kept),
+    )
     assert policy.repos() == (str(kept),)
     with pytest.raises(ValueError, match="not allowlisted"):
-        policy.disallow(str(gone))
+        policy.disallow(RepoSpellings(str(gone)))
 
 
 @pytest.mark.parametrize(
@@ -257,9 +260,7 @@ def test_disallow_refuses_only_what_is_not_stored(tmp_path: Path, entry: str) ->
     """Disallow validates nothing but blankness: an unstored entry is the refusal."""
     policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
     with pytest.raises(ValueError, match=f"not allowlisted: {entry}"):
-        policy.disallow(entry)
-    with pytest.raises(ValueError, match="worker_repos entry blank"):
-        policy.disallow("   ")
+        policy.disallow(RepoSpellings(entry))
     assert policy.repos() == ()
 
 
@@ -278,7 +279,7 @@ def test_allow_round_trips_a_path_with_an_apostrophe(tmp_path: Path) -> None:
     assert stored is not None
     assert '"' not in stored
     assert WorkerRepoPolicy(config).repos() == (str(repo.resolve()),)
-    assert policy.disallow(str(repo)) == ()
+    assert policy.disallow(RepoSpellings(str(repo))) == ()
 
 
 def test_allow_refuses_a_path_with_a_double_quote_by_name(tmp_path: Path) -> None:
@@ -319,7 +320,7 @@ def test_an_unreadable_allowlist_file_raises_instead_of_reading_as_empty(
         with pytest.raises(PermissionError):
             policy.repos()
         with pytest.raises(PermissionError):
-            policy.disallow(str(tmp_path))
+            policy.disallow(RepoSpellings(str(tmp_path)))
         with (
             patch(
                 "punt_vox.voxd.workers.policy.subprocess.run",
@@ -341,7 +342,7 @@ def test_a_non_utf8_allowlist_file_raises_instead_of_reading_as_empty(
     with pytest.raises(UnicodeDecodeError):
         policy.repos()
     with pytest.raises(UnicodeDecodeError):
-        policy.disallow("/repo")
+        policy.disallow(RepoSpellings("/repo"))
 
 
 def test_allow_refuses_a_file_without_a_closing_fence_and_leaves_it_intact(
@@ -486,7 +487,7 @@ def test_disallow_removes_a_stored_relative_entry_and_keeps_the_rest(
     policy = WorkerRepoPolicy(config)
     with pytest.raises(ValueError, match="not absolute"):
         policy.repos()
-    assert policy.disallow("relative/repo") == (str(kept),)
+    assert policy.disallow(RepoSpellings("relative/repo")) == (str(kept),)
     assert policy.repos() == (str(kept),)
 
 
@@ -499,8 +500,6 @@ def test_disallow_matches_a_stored_entry_by_resolved_path(tmp_path: Path) -> Non
     alias.symlink_to(repo, target_is_directory=True)
     config.write_field("worker_repos", repr([str(alias), "   ", str(tmp_path / "x")]))
     policy = WorkerRepoPolicy(config)
-    assert policy.disallow(str(repo)) == ("   ", str(tmp_path / "x"))
+    assert policy.disallow(RepoSpellings(str(repo))) == ("   ", str(tmp_path / "x"))
     with pytest.raises(ValueError, match="not allowlisted"):
-        policy.disallow(str(repo))
-    with pytest.raises(ValueError, match="blank"):
-        policy.disallow(" ")
+        policy.disallow(RepoSpellings(str(repo)))

@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
-from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd._parse import parse_optional_str, parse_required_str
 from punt_vox.voxd.wire_reply import WireReply
+from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -49,19 +50,23 @@ class AllowlistHandlers:
             raise ValueError("project is required")
         return project
 
+    async def _edited(self, operation: Callable[[], tuple[str, ...]]) -> list[str]:
+        """Run one policy edit off the loop, under the lock, as a list reply."""
+        async with self._lock:
+            return list(await asyncio.to_thread(operation))
+
     async def _allow(self, msg: dict[str, object]) -> list[str]:
         project = self._project(msg)
-        async with self._lock:
-            return list(await asyncio.to_thread(self._policy.allow, project))
+        return await self._edited(lambda: self._policy.allow(project))
 
     async def _disallow(self, msg: dict[str, object]) -> list[str]:
-        project = self._project(msg)
-        async with self._lock:
-            return list(await asyncio.to_thread(self._policy.disallow, project))
+        # ``spelling`` is the path as the operator typed it, sent only when
+        # the client could not resolve it to the same text.
+        named = RepoSpellings(self._project(msg), parse_optional_str(msg, "spelling"))
+        return await self._edited(lambda: self._policy.disallow(named))
 
     async def _repos(self, _msg: dict[str, object]) -> list[str]:
-        async with self._lock:
-            return list(await asyncio.to_thread(self._policy.repos))
+        return await self._edited(self._policy.repos)
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Answer with the new allowlist, a refusal, or a path-free fault."""

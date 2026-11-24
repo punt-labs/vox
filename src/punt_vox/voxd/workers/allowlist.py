@@ -11,6 +11,8 @@ from punt_vox.config import ConfigStore
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_vox.voxd.workers.repo_spellings import RepoSpellings
+
 _FIELD = "worker_repos"
 _SHAPE = "worker_repos must be a list of repository paths"
 
@@ -65,28 +67,26 @@ class RepoAllowlist:
 
         return self._rewrite(changed)
 
-    def remove(self, raw: str) -> tuple[str, ...]:
-        """Drop every stored entry matching *raw* and return the rest, in order.
+    def remove(self, named: RepoSpellings) -> tuple[str, ...]:
+        """Drop every stored entry *named* names and return the rest, in order.
 
-        Lenient on purpose: an entry stored before validation existed (a
-        relative path) can still be taken out, so the strict readers stop
-        refusing. An entry matches by string equality, or by resolving to
-        the same path when both are absolute. Only a blank *raw* is refused.
+        Lenient on purpose, unlike :meth:`edit`: a stored entry that does
+        not validate is matched by its text, so an operator can delete a
+        hand-edited entry that would otherwise block every strict read.
+        Every spelling is matched in the same locked update.
 
         Raises:
-            ValueError: If *raw* is blank, matches no stored entry, or the
-                field is not a list of strings.
+            ValueError: If no stored entry is named, or the field is not a
+                list of strings.
             OSError: If the file cannot be read or written, or has no closing
                 fence.
             UnicodeDecodeError: If the config file is not UTF-8.
         """
-        if not raw.strip():
-            raise ValueError(f"worker_repos entry blank: {raw!r}")
 
         def dropped(entries: list[str]) -> list[str]:
-            remaining = [e for e in entries if not self._same(e, raw)]
+            remaining = [e for e in entries if not named.names(e)]
             if len(remaining) == len(entries):
-                raise ValueError(f"not allowlisted: {raw}")
+                raise ValueError(f"not allowlisted: {named.resolved}")
             return remaining
 
         return self._rewrite(dropped)
@@ -108,20 +108,6 @@ class RepoAllowlist:
         # the policy itself has no precondition, so the check is a no-op.
         self._config.update_field(_FIELD, transform, check=lambda _fields: None)
         return written
-
-    @staticmethod
-    def _same(stored: str, raw: str) -> bool:
-        """Return whether *stored* names *raw*, by text or by resolved path."""
-        if stored == raw:
-            return True
-        resolved = RepoAllowlist._resolved(raw)
-        return resolved is not None and RepoAllowlist._resolved(stored) == resolved
-
-    @staticmethod
-    def _resolved(text: str) -> Path | None:
-        """Resolve an absolute spelling; a relative one has no resolved form."""
-        path = Path(text).expanduser()
-        return path.resolve() if path.is_absolute() else None
 
     @staticmethod
     def _parse(raw: str | None) -> list[str]:

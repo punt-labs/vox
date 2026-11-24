@@ -105,16 +105,19 @@ def test_worker_cli_reports_daemon_refusal() -> None:
 
 
 @pytest.mark.parametrize(
-    ("operation", "sent"),
-    [("allow", "{tmp}/repo"), ("disallow", "repo")],
+    ("operation", "extra"),
+    [("allow", {}), ("disallow", {"spelling": "repo"})],
 )
-def test_allow_sends_the_resolved_path_and_disallow_the_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, sent: str
+def test_allow_and_disallow_send_the_resolved_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    extra: dict[str, str],
 ) -> None:
-    """allow resolves before sending; disallow sends the spelling as written.
+    """Both resolve PATH before sending, so one spelling allows and disallows.
 
-    A stored entry that predates validation (a relative path) matches only by
-    its text, so a resolved disallow argument could never remove it.
+    disallow also sends the spelling as written when it differs, so a stored
+    entry that does not resolve can still be removed by typing it exactly.
     """
     monkeypatch.chdir(tmp_path)
     with patch(
@@ -124,8 +127,21 @@ def test_allow_sends_the_resolved_path_and_disallow_the_text(
     ) as request:
         result = CliRunner().invoke(app, ["worker", operation, "repo"])
     assert result.exit_code == 0, result.output
-    request.assert_awaited_once_with(operation, project=sent.format(tmp=tmp_path))
+    request.assert_awaited_once_with(operation, project=str(tmp_path / "repo"), **extra)
     assert result.output == f"{tmp_path / 'repo'}\n"
+
+
+def test_disallow_sends_one_spelling_when_the_path_is_already_resolved(
+    tmp_path: Path,
+) -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "disallow", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with("disallow", project=str(tmp_path.resolve()))
 
 
 def test_repos_lists_one_path_per_line_or_a_json_array() -> None:
