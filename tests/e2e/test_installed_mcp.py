@@ -247,8 +247,9 @@ def desktop_sandbox() -> Iterator[Path]:
 @pytest.mark.skipif(sys.platform != "linux", reason="uses Linux Desktop and espeak")
 async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> None:
     binary = _installed_binary()
-    uv = shutil.which("uv")
-    assert uv is not None, "The Desktop packaging test requires uv"
+    uvx = shutil.which("uvx")
+    assert uvx is not None, "The Desktop packaging test requires uvx"
+    tool_dir = binary.resolve().parents[2]
     home, first, restarted = (
         desktop_sandbox / name for name in ("home", "first", "restart")
     )
@@ -259,12 +260,14 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
         "PATH": os.environ["PATH"],
         "XDG_CONFIG_HOME": str(home / ".config"),
         "AWS_EC2_METADATA_DISABLED": "true",
+        "UV_TOOL_DIR": str(tool_dir),
+        "UV_OFFLINE": "1",
     }
     for key in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
         if key in os.environ:
             env[key] = os.environ[key]
     subprocess.run(
-        [binary, "desktop", "install", "--provider", "espeak", "--uvx-path", uv],
+        [binary, "desktop", "install", "--provider", "espeak", "--uvx-path", uvx],
         cwd=first,
         env=env,
         check=True,
@@ -274,9 +277,6 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
     entry = json.loads(desktop.read_text(encoding="utf-8"))["mcpServers"]["vox"]
     args = cast("list[str]", entry["args"])
     env.update(cast("dict[str, str]", entry["env"]))
-    # Preserve the registered uv working-directory flags but run the installed
-    # wheel rather than fetching the released punt-vox from PyPI.
-    launch = [*args[: args.index("--from")], "--", str(binary), *args[-1:]]
     daemon = subprocess.Popen(
         [binary.with_name("voxd"), "--port", "0"], cwd=home, env=env
     )
@@ -287,7 +287,7 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
                 assert daemon.poll() is None, "voxd exited before binding a port"
                 await asyncio.sleep(0.05)
             params = StdioServerParameters(
-                command=uv, args=["run", "--no-project", *launch], env=env, cwd=first
+                command=cast("str", entry["command"]), args=args, env=env, cwd=first
             )
             async with (
                 stdio_client(params) as (rx, tx),
