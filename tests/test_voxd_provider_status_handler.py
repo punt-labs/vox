@@ -229,3 +229,16 @@ class TestVerify:
             handler({"type": "provider_status", "id": "v3", "verify": "yes"}, ws)
         )
         assert sent[0]["type"] == "error"
+
+    def test_verify_with_a_named_provider_is_rejected(self) -> None:
+        # preferred would otherwise name a provider this reply never checked.
+        handler = ProviderStatusHandler(_fixed_credentials())
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {
+            "type": "provider_status",
+            "id": "v4",
+            "provider": "openai",
+            "verify": True,
+        }
+        asyncio.run(handler(msg, ws))
+        assert sent[0]["type"] == "error"

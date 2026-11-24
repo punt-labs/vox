@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.providers import get_provider
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 # Each probe is one or two small HTTPS calls; an answer slower than this is a
 # network problem worth reporting, not one worth making doctor wait out.
 _DEFAULT_DEADLINE_S: Final = 10.0
+# One worker per registered provider. A probe that outlives its deadline keeps
+# its thread until the SDK's own timeout, so the probes get their own pool
+# rather than the loop's default executor that synthesis also uses.
+_WORKERS: Final = 5
 
 
 @final
@@ -40,13 +45,15 @@ class LiveCheck:
 
     *build* constructs the provider by name (production: the default
     registry); it is injected so tests substitute stub providers rather than
-    patching SDKs.  Probes run concurrently in worker threads, each bounded by
-    *deadline_s*, so one slow provider cannot stall the whole report.
+    patching SDKs.  Probes run concurrently on a dedicated thread pool, each
+    bounded by *deadline_s*, so one slow provider cannot stall the whole report
+    and a hung one cannot starve the daemon's shared executor.
     """
 
-    __slots__ = ("_build", "_deadline_s")
+    __slots__ = ("_build", "_deadline_s", "_pool")
     _build: Callable[[str], TTSProvider]
     _deadline_s: float
+    _pool: ThreadPoolExecutor
 
     def __new__(
         cls,
@@ -57,6 +64,7 @@ class LiveCheck:
         self = super().__new__(cls)
         self._build = build if build is not None else get_provider
         self._deadline_s = deadline_s
+        self._pool = ThreadPoolExecutor(_WORKERS, thread_name_prefix="live-check")
         return self
 
     async def confirm_all(
@@ -76,9 +84,10 @@ class LiveCheck:
         if not row.ready:
             return row
         try:
-            checks = await asyncio.wait_for(
-                asyncio.to_thread(self._health, row.name), self._deadline_s
+            probe = asyncio.get_running_loop().run_in_executor(
+                self._pool, self._health, row.name
             )
+            checks = await asyncio.wait_for(probe, self._deadline_s)
         except TimeoutError:
             return self._failed(
                 row, f"live check got no answer within {self._deadline_s:g}s"

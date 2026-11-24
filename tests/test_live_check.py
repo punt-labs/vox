@@ -125,3 +125,16 @@ class TestLiveCheck:
         rows = asyncio.run(check.confirm_all((_ready("elevenlabs"), _ready("openai"))))
         assert [r.name for r in rows] == ["elevenlabs", "openai"]
         assert [r.ready for r in rows] == [False, True]
+
+    def test_probe_runs_on_its_own_pool(self) -> None:
+        # A hung probe holds its thread past the deadline, so it must not sit
+        # in the loop's default executor that synthesis also uses.
+        names: list[str] = []
+
+        def record_thread() -> list[HealthCheck]:
+            names.append(threading.current_thread().name)
+            return _accepted()
+
+        check = LiveCheck(build=_builder({"openai": record_thread}))
+        asyncio.run(check.confirm_all((_ready("openai"),)))
+        assert names[0].startswith("live-check")

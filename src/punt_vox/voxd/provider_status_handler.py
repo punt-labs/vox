@@ -7,8 +7,8 @@ Design §3.6.  Two request shapes fold through one handler:
 * Without, the reply carries every registered provider's verdict and
   the daemon's ``preferred`` proposal -- the name a fresh repo should
   adopt, per :meth:`ProviderCredentials.preferred`.
-* With ``verify: true`` (``vox doctor``), each ready row is confirmed by
-  the provider's authenticated health check through
+* With ``verify: true`` (``vox doctor``; full report only), each ready
+  row is confirmed by the provider's authenticated health check through
   :class:`~punt_vox.providers.live_check.LiveCheck`, so a present but
   rejected key reports ``check_failed`` instead of ``ready``.
 
@@ -120,6 +120,10 @@ class ProviderStatusHandler:
             return
         if not isinstance(verify, bool):
             await reply.error("field 'verify' must be a boolean")
+            return
+        if verify and requested is not None:
+            # preferred would name providers this reply never checked.
+            await reply.error("field 'verify' applies to the full report only")
             return
 
         await reply.send(await self._payload(requested, verify=verify))
