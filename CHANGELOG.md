@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox voice <name> --provider <provider>` rejects an inactive provider
+  without changing the active provider or saved voice. (PL-1487)
+
 - `vox music get` and `mic:music get` now export an album's surviving tracks
   when a track file was deleted out of band, naming each skipped track
   instead of failing the whole export. (PL-1476)
