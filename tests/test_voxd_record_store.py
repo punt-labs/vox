@@ -87,6 +87,22 @@ class TestContainment:
         # None still content-addresses (the daemon-generated no-name path).
         assert store.resolve(None, "some text").name.endswith(".mp3")
 
+    @pytest.mark.parametrize("name", ["  ", " \t ", "\u3000"])
+    def test_whitespace_name_rejected_by_store(
+        self, store: RecordStore, name: str
+    ) -> None:
+        """A whitespace-only name would land a recording whose id reads as blank."""
+        with pytest.raises(ValueError, match="empty or whitespace"):
+            store.resolve(name, "some text")
+
+    def test_existing_whitespace_take_stays_removable(self, store: RecordStore) -> None:
+        """A blank-named take recorded before the rule can still be removed."""
+        store.root.mkdir(parents=True)
+        (store.root / "  ").write_bytes(b"x")
+        assert store.resolve_ref("  ") == store.root / "  "
+        store.remove("  ")
+        assert not (store.root / "  ").exists()
+
     @pytest.mark.parametrize("hostile", _HOSTILE_NAMES)
     def test_write_cannot_escape_root(self, store: RecordStore, hostile: str) -> None:
         """Property: every hostile name is rejected; none resolves outside root."""
