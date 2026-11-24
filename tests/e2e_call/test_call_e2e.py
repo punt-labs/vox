@@ -88,10 +88,14 @@ def _git_repo(path: Path) -> Path:
 
 
 def _tail(path: Path, lines: int = 40) -> str:
-    """Return the last *lines* of *path*, or a note when it does not exist yet."""
+    """Return the last *lines* of *path*, or a note when it does not exist yet.
+
+    A daemon that crashed may have written bytes that are not UTF-8; they are
+    replaced, so the failure message is never itself a decode error.
+    """
     if not path.is_file():
         return f"({path.name} was not written)"
-    return "\n".join(path.read_text().splitlines()[-lines:])
+    return "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
 
 
 def _daemon_detail(home: Path, stderr: Path) -> str:
@@ -278,6 +282,13 @@ def _trace_events(report: str) -> list[str]:
     trace = Path(trace_line.removeprefix("trace: "))
     assert trace.is_file(), report
     return [json.loads(line)["type"] for line in trace.read_text().splitlines()]
+
+
+def test_tail_survives_bytes_that_are_not_utf8(tmp_path: Path) -> None:
+    """A daemon's stderr with an invalid byte still tails into the failure message."""
+    stderr = tmp_path / "voxd.stderr"
+    stderr.write_bytes(b"first line\nTraceback \xff here\n")
+    assert _tail(stderr) == "first line\nTraceback \ufffd here"
 
 
 def _hang(
