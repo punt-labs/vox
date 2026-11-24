@@ -2660,7 +2660,7 @@ class TestDesktopInstallCommand:
         assert server["command"] == _UVX
         assert server["args"] == [
             "--directory",
-            str(Path.home()),
+            str(config_path.parent / "vox"),
             "--from",
             "punt-vox",
             "vox",

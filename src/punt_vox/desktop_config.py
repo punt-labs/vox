@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from typing import TYPE_CHECKING, ClassVar, Self, cast, final
 
 import typer
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.dirs import DEFAULT_CONFIG_DIR
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,6 +74,18 @@ class DesktopConfig:
                 f'{self._path} must have a JSON object under "mcpServers".'
             )
         return servers
+
+    def create_workspace(self) -> Path:
+        """Anchor Desktop's Vox state before ancestor config discovery can run."""
+        workspace = self._path.parent / "vox"
+        marker = workspace / DEFAULT_CONFIG_DIR / "vox.md"
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with suppress(FileExistsError):
+                marker.touch(mode=self._CONFIG_MODE, exist_ok=False)
+        except OSError as exc:
+            raise self._error(f"Could not initialize Desktop Vox state: {exc}") from exc
+        return workspace
 
     def write(self, data: _JsonObject) -> None:
         """Replace the config atomically, or refuse with a clean error.

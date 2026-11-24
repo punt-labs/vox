@@ -107,7 +107,7 @@ class TestInstallPlatformDispatch:
         assert entry["command"] == "/usr/bin/uvx"
         assert entry["args"] == [
             "--directory",
-            str(tmp_path),
+            str(config_path.parent / "vox"),
             "--from",
             "punt-vox",
             "vox",
@@ -585,7 +585,7 @@ class TestConfigWriteIsAtomicAndPrivate:
         installed = json.loads(real.read_text(encoding="utf-8"))
         assert installed["mcpServers"]["vox"]["args"] == [
             "--directory",
-            str(Path.home()),
+            str(config_path.parent / "vox"),
             "--from",
             "punt-vox",
             "vox",

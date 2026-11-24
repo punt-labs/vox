@@ -305,6 +305,17 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
                 assert choice.type == "text"
                 assert json.loads(choice.text)["provider"] == "espeak"
 
+            repo = home / "project"
+            subprocess.run(["git", "init", "--quiet", repo], env=env, check=True)
+            repo_provider = subprocess.check_output(
+                [binary, "provider", "--json"], cwd=repo, env=env, text=True
+            )
+            assert json.loads(repo_provider)["current"] is None
+            subprocess.run(
+                [binary, "provider", "espeak"], cwd=repo, env=env, check=True
+            )
+            assert (repo / DEFAULT_CONFIG_DIR / "vox.md").is_file()
+
             params.cwd = restarted
             async with (
                 stdio_client(params) as (rx, tx),
@@ -319,7 +330,8 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
                 audio = speech.content[0]
                 assert audio.type == "text"
                 assert json.loads(audio.text)[0]["provider"] == "espeak"
-        assert (home / DEFAULT_CONFIG_DIR / "vox.md").is_file()
+        assert (desktop.parent / "vox" / DEFAULT_CONFIG_DIR / "vox.md").is_file()
+        assert not (home / DEFAULT_CONFIG_DIR / "vox.md").exists()
         assert not (first / DEFAULT_CONFIG_DIR / "vox.md").exists()
     finally:
         daemon.terminate()
