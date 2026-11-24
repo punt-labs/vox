@@ -166,7 +166,7 @@ class TestTextInputFromFile:
 
     @pytest.mark.parametrize("flags", [[], ["--json"]])
     @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
-    @pytest.mark.parametrize("raw", ["[]", '["", {"text": ""}]'])
+    @pytest.mark.parametrize("raw", ["[]", '["", {"text": ""}]', '["  ", "\\n"]'])
     def test_no_text_is_usage_error(
         self, tmp_path: Path, flags: list[str], command: list[str], raw: str
     ) -> None:
@@ -193,6 +193,7 @@ class TestTextInputFromFile:
         [
             (["héllo", {"text": "世界"}], ["héllo", "世界"]),
             ([{"text": ""}, "last"], ["last"]),
+            (["  ", {"text": "\n"}, "spoken"], ["spoken"]),
         ],
     )
     def test_segment_values(

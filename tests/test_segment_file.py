@@ -16,7 +16,7 @@ class TestSegmentFile:
         ("raw", "expected"),
         [
             (["héllo", {"text": "世界"}], ["héllo", "世界"]),
-            (["", "kept"], ["kept"]),
+            (["", " \n", "kept"], ["kept"]),
         ],
     )
     def test_segments(
@@ -27,7 +27,9 @@ class TestSegmentFile:
         assert SegmentFile(path).segments() == expected
 
     @pytest.mark.parametrize(
-        "raw", [[], [""], ["", {"text": ""}]], ids=["empty", "blank", "mixed-blank"]
+        "raw",
+        [[], [""], ["", {"text": ""}], [" ", {"text": "\n\t"}]],
+        ids=["empty", "blank", "mixed-blank", "whitespace"],
     )
     def test_no_text_is_usage_error(self, tmp_path: Path, raw: list[object]) -> None:
         path = tmp_path / "segments.json"

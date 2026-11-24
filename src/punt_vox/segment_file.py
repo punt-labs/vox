@@ -26,9 +26,9 @@ class SegmentFile:
         return self
 
     def segments(self) -> list[str]:
-        """Parse a JSON segments file into its non-empty text strings."""
+        """Parse a JSON segments file into its non-blank text strings."""
         texts = starmap(self._segment_text, enumerate(self._items()))
-        if segments := list(filter(bool, texts)):
+        if segments := list(filter(str.strip, texts)):
             return segments
         raise typer.BadParameter("--from file has no text to speak.")
 
