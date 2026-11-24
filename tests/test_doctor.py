@@ -403,6 +403,36 @@ class TestCheckOutputDir:
         assert results[0].message == "output: writable"
         assert str(tmp_path) not in results[0].message  # no absolute path
 
+    def test_probe_leaves_existing_files_untouched(self, tmp_path: Path) -> None:
+        existing = tmp_path / ".doctor_test"
+        existing.write_text("user data")
+        with patch("punt_vox.doctor.default_output_dir", return_value=tmp_path):
+            results = DoctorCheck().check_output_dir()
+        assert results[0].passed is True
+        assert existing.read_text() == "user data"
+        assert sorted(p.name for p in tmp_path.iterdir()) == [".doctor_test"]
+
+    def test_probe_does_not_write_through_symlink(self, tmp_path: Path) -> None:
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("keep me")
+        (out_dir / ".doctor_test").symlink_to(target)
+        with patch("punt_vox.doctor.default_output_dir", return_value=out_dir):
+            results = DoctorCheck().check_output_dir()
+        assert results[0].passed is True
+        assert target.read_text() == "keep me"
+        assert (out_dir / ".doctor_test").is_symlink()
+
+    def test_unwritable_dir_reports_failure(self, tmp_path: Path) -> None:
+        with (
+            patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
+            patch("punt_vox.doctor.tempfile.TemporaryFile", side_effect=OSError),
+        ):
+            results = DoctorCheck().check_output_dir()
+        assert results[0].passed is False
+        assert results[0].message == "output: not writable — check permissions"
+
     def test_missing_dir(self, tmp_path: Path) -> None:
         missing = tmp_path / "nonexistent"
         with patch("punt_vox.doctor.default_output_dir", return_value=missing):
