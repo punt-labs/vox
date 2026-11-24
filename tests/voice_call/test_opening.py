@@ -1,3 +1,5 @@
+"""Tests for the session options built from one worker snapshot."""
+
 from __future__ import annotations
 
 from punt_vox.voxd.voice_call.greeting import CallGreeting

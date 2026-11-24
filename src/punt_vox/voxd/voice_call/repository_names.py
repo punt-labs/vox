@@ -40,7 +40,14 @@ class RepositoryNames:
         return iter(self._names)
 
     def listed(self) -> str:
-        """Return the names as one spoken list: "a", "a and b", "a, b and c"."""
+        """Return the names as one spoken list: "a", "a and b", "a, b and c".
+
+        Raises:
+            ValueError: If there are no names; an empty allowlist has its own
+                spoken form, which the greeting chooses before calling this.
+        """
+        if not self._names:
+            raise ValueError("no repositories to list")
         if len(self._names) == 1:
             return self._names[0]
         return f"{', '.join(self._names[:-1])} and {self._names[-1]}"

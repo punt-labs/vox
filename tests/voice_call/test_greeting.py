@@ -1,3 +1,5 @@
+"""Tests for the spoken opener that names Vox and the allowlisted repositories."""
+
 from __future__ import annotations
 
 from punt_vox.voxd.voice_call.greeting import CallGreeting

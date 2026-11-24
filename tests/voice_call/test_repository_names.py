@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from punt_vox.voxd.voice_call.repository_names import RepositoryNames
 
 
@@ -32,3 +34,8 @@ def test_empty_names_are_falsy_and_listed_joins_with_and() -> None:
     assert RepositoryNames(("/a/one", "/b/two", "/c/three")).listed() == (
         "one, two and three"
     )
+
+
+def test_listing_no_names_is_refused() -> None:
+    with pytest.raises(ValueError, match="no repositories"):
+        RepositoryNames(()).listed()
