@@ -70,31 +70,15 @@ class ProcessManager:
         """Read the daemon port from ``serve.port``.
 
         ``None`` is the documented answer when the file does not exist, and
-        when its content does not parse: voxd publishes it by atomic rename,
-        so an empty or partial file is a leftover from something else -- a
-        stale hint, warned about and ignored. A read error other than
-        not-found, and bytes that are not UTF-8, raise ``PortProbeError``
-        without quoting the file's content.
+        when its content is not a valid TCP port: voxd publishes it by
+        atomic rename, so a malformed hint is stale, warned about and
+        ignored. A read error other than not-found, and bytes that are not
+        UTF-8, raise ``PortProbeError`` without quoting the file's content.
 
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        port_file = self._run_dir() / "serve.port"
-        try:
-            text = port_file.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return None
-        except UnicodeDecodeError:
-            msg = f"cannot read {port_file}: invalid UTF-8"
-            raise PortProbeError(msg) from None
-        except OSError as exc:
-            msg = f"cannot read {port_file}: {exc}"
-            raise PortProbeError(msg) from exc
-        try:
-            return int(text.strip())
-        except ValueError:
-            logger.warning("Ignoring stale %s: unparseable %r", port_file, text)
-            return None
+        return StalePortFile.read_hint(self._run_dir() / "serve.port")
 
     def discard_port_file(self, port: int) -> PortFileCleanup:
         """Remove ``serve.port`` when it names *port* or does not parse.
