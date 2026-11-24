@@ -7,10 +7,11 @@ import logging
 from threading import Event
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.programs.types import AlbumListRow, ListRead
+
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.catalog import Album, Catalog
     from punt_vox.voxd.programs.service import ProgramService
-    from punt_vox.voxd.programs.types import AlbumListRow, ListRead
 
 __all__ = ["AlbumListReader"]
 
@@ -41,7 +42,6 @@ class AlbumListReader:
         except BaseException:
             self._slot.release()
             raise
-        # Keep the slot until the thread exits, even if its caller goes away.
         work.add_done_callback(self._release_slot)
         try:
             reads = await asyncio.shield(work)
@@ -81,16 +81,16 @@ class AlbumListReader:
         """Count Parts from the live manifest; fill can add them after startup."""
         manifest = album.read()
         tags = manifest.tags
-        return {
-            "id": manifest.id.value,
-            "format": manifest.format.label,
-            "style": tags.style,
-            "vibe": tags.vibe,
-            "name": tags.name,
-            "ready": len(manifest.ready_parts()),
-            "total": len(manifest.parts),
-            "created": manifest.created.isoformat(),
-        }
+        return AlbumListRow(
+            id=manifest.id.value,
+            format=manifest.format.label,
+            style=tags.style,
+            vibe=tags.vibe,
+            name=tags.name,
+            ready=len(manifest.ready_parts()),
+            total=len(manifest.parts),
+            created=manifest.created.isoformat(),
+        )
 
     @staticmethod
     def _current_rows(catalog: Catalog, reads: list[ListRead]) -> list[AlbumListRow]:

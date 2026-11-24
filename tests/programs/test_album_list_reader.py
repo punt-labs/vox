@@ -92,3 +92,22 @@ async def test_failed_worker_releases_slot(
             await reader.read(service)
     rows = await asyncio.wait_for(reader.read(service), timeout=5)
     assert [row["id"] for row in rows] == ["a3f1c9"]
+
+
+async def test_failed_worker_submission_releases_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "programs"
+    seed_album(root, 1)
+    service = make_service(root)
+    reader = AlbumListReader()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            asyncio.get_running_loop(),
+            "run_in_executor",
+            Mock(side_effect=RuntimeError("executor rejected the scan")),
+        )
+        with pytest.raises(RuntimeError, match="executor rejected the scan"):
+            await reader.read(service)
+    rows = await asyncio.wait_for(reader.read(service), timeout=5)
+    assert [row["id"] for row in rows] == ["a3f1c9"]
