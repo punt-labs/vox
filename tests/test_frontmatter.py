@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from punt_vox.frontmatter import Frontmatter
+from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.sibling_lock import SiblingLock
 from punt_vox.types_errors import ConfigValueError
 
@@ -299,6 +300,26 @@ class TestWrite:
         lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
         lock.parent.mkdir(parents=True)
         lock.touch()
+        seen: list[dict[str, str]] = []
+
+        Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
+        assert seen == [{}]
+
+    def test_lock_taken_during_the_early_read_defers_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A first writer may take the lock while the early read runs, so the
+        # read must come before the lock-file test, not after it.
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        read_block = Frontmatter._read_block
+
+        def read_while_a_writer_starts(fm: Frontmatter) -> FrontmatterBlock | None:
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.touch()
+            return read_block(fm)
+
+        monkeypatch.setattr(Frontmatter, "_read_block", read_while_a_writer_starts)
         seen: list[dict[str, str]] = []
 
         Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
