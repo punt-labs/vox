@@ -161,5 +161,30 @@ def test_branch_probe_failure_is_recorded_as_a_discard_error(
         record = WorkerWorktrees().discard_recorded(_record(tmp_path, worker_id))
     error = record.last_report["discard_error"]
     assert isinstance(error, str)
-    assert error.startswith("CalledProcessError")
+    assert error.startswith("CalledProcessError: git -C <path> show-ref ")
     assert "worktree_discarded" not in record.last_report
+
+
+def test_discard_failure_logs_the_command_and_scrubbed_stderr(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    worker_id = str(uuid4())
+    failure = subprocess.CalledProcessError(
+        128,
+        ["git", "-C", "/Users/x/repo", "worktree", "remove", "--force", "/Users/x/y"],
+        stderr="fatal: /Users/x/y\nhint: is it locked?\n",
+    )
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
+        patch.object(WorkerWorktrees, "discard", side_effect=failure),
+    ):
+        record = WorkerWorktrees().discard_recorded(_record(tmp_path, worker_id))
+    line = next(r.getMessage() for r in caplog.records if worker_id in r.getMessage())
+    assert "git -C <path> worktree remove --force <path>" in line
+    assert "fatal: <path> hint: is it locked?" in line
+    assert "/Users" not in line
+    error = record.last_report["discard_error"]
+    assert error == (
+        "CalledProcessError: git -C <path> worktree remove --force <path>: "
+        "fatal: <path> hint: is it locked?"
+    )

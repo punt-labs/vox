@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, final
 from uuid import UUID
 
+from punt_vox.voxd.workers.git_failure import GitFailure
+
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.model import WorkerRecord
 
@@ -63,9 +65,10 @@ class WorkerWorktrees:
 
         A launch whose provider could not be stopped is not terminal: its pane
         may still be live, so the checkout is kept and ``discard_skipped``
-        says why. A discard that fails is logged by exception type and
-        recorded as ``discard_error``; the rollback itself still completes,
-        since the record's failure is the fact that matters to the caller.
+        says why. A discard that fails is logged with the git command and its
+        stderr, paths scrubbed, and recorded as ``discard_error``; the
+        rollback itself still completes, since the record's failure is the
+        fact that matters to the caller.
         """
         if record.state != "stopped":
             logger.warning("Worker %s worktree kept: provider stop failed", record.id)
@@ -80,8 +83,9 @@ class WorkerWorktrees:
         try:
             self.discard(Path(record.project), Path(record.worktree), record.id)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            logger.warning("Worker worktree discard failed (%s)", type(exc).__name__)
-            note = {"discard_error": type(exc).__name__}
+            failure = GitFailure(exc)
+            logger.warning("Worker %s worktree discard failed: %s", record.id, failure)
+            note = {"discard_error": str(failure)}
         return replace(record, last_report={**record.last_report, **note})
 
     def discard(self, project: Path, worktree: Path, worker_id: str) -> None:

@@ -227,7 +227,7 @@ def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
     record = registry.list()[0]
     assert record.last_report["launch_error"] == "OSError"
-    assert record.last_report["discard_error"] == "OSError"
+    assert record.last_report["discard_error"] == "OSError: busy"
     assert "worktree_discarded" not in record.last_report
 
 
