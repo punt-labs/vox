@@ -21,7 +21,7 @@ from punt_vox.voxd.conversation_mode.input_device import InputDevice
 if TYPE_CHECKING:
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
     # for the type checkers; the stub-free runtime module has no such attribute.
-    from sounddevice import RawInputCallback
+    from sounddevice import DeviceInfo, RawInputCallback
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
 
@@ -50,9 +50,18 @@ class PortAudio:
         from sounddevice import PortAudioError, query_devices
 
         try:
-            info = query_devices(kind="input")
+            return PortAudio._reported(query_devices(kind="input"))
         except PortAudioError as exc:
             raise OSError(f"no default input device: {exc}") from exc
+
+    @staticmethod
+    def _reported(info: DeviceInfo) -> InputDevice:
+        """Build the device PortAudio reported, refusing one it cannot describe.
+
+        Raises:
+            OSError: When the reported name is empty or the sample rate is
+                not positive.
+        """
         try:
             return InputDevice(str(info["name"]), float(info["default_samplerate"]))
         except ValueError as exc:
