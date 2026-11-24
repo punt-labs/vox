@@ -1923,6 +1923,19 @@ class TestRefreshFromConfig:
         assert srv._session.provider == "polly"
         assert srv._session.model is None
 
+    def test_model_loads_when_provider_is_a_session_override(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        ConfigStore(_refresh_config).write_field("model", "gpt-4o-mini-tts")
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "openai"
+        assert srv._session.model == "gpt-4o-mini-tts"
+
 
 class TestRefreshIntegrationWithTools:
     """Verify tool calls pick up external config writes via refresh."""
