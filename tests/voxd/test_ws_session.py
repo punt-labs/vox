@@ -15,10 +15,12 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from punt_vox.types_audio import FETCH_CHUNK_BYTES
 from punt_vox.voxd import recording_handlers
 from punt_vox.voxd.fetch_digest import FetchDigest
+from punt_vox.voxd.record_store import RecordingEntry, RecordStore
 from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.router import WebSocketRouter
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -150,6 +152,38 @@ async def test_fetch_peer_disconnect_stops_measurement(
     assert waiting not in opened
     if not queued:
         assert reads.count(active) == 1
+
+
+async def test_rec_list_peer_disconnect_stops_scan_between_batches(
+    router: WebSocketRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = Event()
+    batches: list[int] = []
+
+    def scan(_store: RecordStore) -> Iterator[list[RecordingEntry]]:
+        batches.append(1)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(5), "test did not release the scan"
+        yield [RecordingEntry("first.mp3", 0)]
+        batches.append(2)
+        yield [RecordingEntry("second.mp3", 0)]
+
+    monkeypatch.setattr(RecordStore, "entry_batches", scan)
+    peer = _FetchPeer(router)
+    peer.send("rec_list", "r")
+    try:
+        async with asyncio.timeout(2):
+            await entered.wait()
+            peer.disconnect()
+            await asyncio.shield(peer.wait_closed())
+        assert not peer.sent
+    finally:
+        release.set()
+        await asyncio.wait_for(peer.wait_closed(), timeout=5)
+        await loop.shutdown_default_executor()
+    assert batches == [1]
 
 
 @pytest.mark.parametrize("broken_receive", [False, True])
