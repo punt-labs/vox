@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Self
 
+from punt_vox.logging_config import daemon_log_level
 from punt_vox.paths import installed_version
 from punt_vox.voxd.playback import PlaybackQueue
 
@@ -90,12 +91,13 @@ class DaemonHealth:
         daemon_version supports installation checks.
         """
         payload = self.minimal_payload()
-        if result := self._playback.last_result:
-            payload["last_playback"] = result.to_health_dict()
-        else:
-            payload["last_playback"] = None
-        payload["pid"] = os.getpid()
-        payload["daemon_version"] = self._daemon_version
+        result = self._playback.last_result
+        payload.update(
+            last_playback=result.to_health_dict() if result else None,
+            pid=os.getpid(),
+            daemon_version=self._daemon_version,
+            log_level=daemon_log_level(),
+        )
         return payload
 
     def set_daemon_version(self, val: str) -> None:
