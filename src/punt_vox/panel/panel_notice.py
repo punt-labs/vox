@@ -61,11 +61,6 @@ class PanelNotice(LuxNotice):
         return cls("⚠ pick a voice first -- there is nothing to preview yet")
 
     @classmethod
-    def no_provider_selected(cls) -> Self:
-        """Return the warning shown when a preview has no provider."""
-        return cls("⚠ pick a provider from the Provider menu to preview a voice")
-
-    @classmethod
     def write_failed(cls, field: str) -> Self:
         """Return the warning shown when persisting *field* could not be saved."""
         return cls(f"⚠ couldn't save {field} -- reverted to the last saved value")

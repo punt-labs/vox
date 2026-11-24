@@ -18,12 +18,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.panel.panel_notice import PanelNotice
-from punt_vox.session_spec import SessionSpec
-from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
-)
+from punt_vox.panel.preview_request import PreviewRequest
 
 if TYPE_CHECKING:
     import logging
@@ -57,21 +52,14 @@ class VoicePreview:
     def play(self, voice: str) -> PanelNotice:
         """Play *voice* back; a silent notice means the caller just heard it.
 
-        Builds the wire spec through :class:`SessionSpec` off a fresh read of
-        the config store, so the preview sends the provider state declares
-        rather than letting voxd guess. Missing providers get panel guidance;
-        invalid models and connection failures keep their existing warnings.
+        A :class:`PreviewRequest` resolves the wire spec from the current
+        settings or returns a notice. Only a resolved request reaches voxd.
         """
+        request = PreviewRequest.resolve(self._store, voice, self._logger)
+        if isinstance(request, PanelNotice):
+            return request
         try:
-            spec = SessionSpec(self._store.read()).fill(SynthesisSpec(voice=voice))
-        except ProviderNotConfiguredError:
-            self._logger.warning("vox-panel: voice preview refused: no provider set")
-            return PanelNotice.no_provider_selected()
-        except ModelNotAvailableError as exc:
-            self._logger.warning("vox-panel: voice preview refused: %s", exc)
-            return PanelNotice.voxd_rejected(str(exc))
-        try:
-            self._client.synthesize(_PREVIEW_TEXT, spec)
+            self._client.synthesize(_PREVIEW_TEXT, request)
         except VoxdConnectionError:
             self._logger.warning(
                 "vox-panel: voice preview failed -- voxd is not reachable"
