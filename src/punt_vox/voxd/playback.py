@@ -28,21 +28,16 @@ logger = logging.getLogger(__name__)
 
 _PLAYBACK_TIMEOUT_DEFAULT_S = 120.0
 _PLAYBACK_TIMEOUT_PADDING_S = 10.0
-
-
-# ---------------------------------------------------------------------------
-# PlaybackItem dataclass
-# ---------------------------------------------------------------------------
+_PLAYBACK_INTERRUPTED = "playback interrupted (daemon shutting down)"
 
 
 @dataclass(frozen=True, slots=True)
 class PlaybackItem:
-    """An item in the playback queue.
+    """A queued file and the resources to release when playback settles.
 
-    ``outcome``, when set, is resolved by the consumer with this item's
-    :class:`PlaybackResult` the moment its playback finishes -- letting a
-    user-invoked ``play`` await the real host-side result rather than returning
-    at enqueue. Fire-and-forget callers (say/chime/music) leave it ``None``.
+    ``outcome`` lets ``play`` await the host-side result. Fire-and-forget
+    callers (say/chime) leave it unset. ``on_failure`` runs before waiters
+    are notified, even if the enqueueing client has disconnected.
     """
 
     path: Path
@@ -50,17 +45,27 @@ class PlaybackItem:
     notify: asyncio.Event
     outcome: asyncio.Future[PlaybackResult] | None = None
     discard: Callable[[], None] | None = None
+    on_failure: Callable[[], None] | None = None
 
-    def resolve(self, result: PlaybackResult | str) -> None:
-        """Complete a waiting client with a result or an interruption reason."""
-        future = self.outcome
-        if future is None or future.done():
-            return
+    def finish(self, result: PlaybackResult | str) -> None:
+        """Release the item and complete any waiters."""
+        try:
+            self._resolve(result)
+        finally:
+            try:
+                if self.discard is not None:
+                    self.discard()
+            finally:
+                self.notify.set()
+
+    def _resolve(self, result: PlaybackResult | str) -> None:
+        """Publish a playback outcome or an interruption reason."""
         if isinstance(result, str):
-            result = PlaybackResult(
-                path=self.path, rc=-1, elapsed_s=0.0, stderr=result, ts=time.time()
-            )
-        future.set_result(result)
+            result = PlaybackResult(self.path, -1, 0.0, result, time.time())
+        if not result.ok and self.on_failure is not None:
+            self.on_failure()
+        if self.outcome is not None and not self.outcome.done():
+            self.outcome.set_result(result)
 
 
 # ---------------------------------------------------------------------------
@@ -316,25 +321,27 @@ class PlaybackQueue:
     async def _play_item(self, item: PlaybackItem) -> None:
         """Resolve this item's outcome before dequeuing the next one."""
         logger.debug("Playback start: %s", item.path.name)
+        result: PlaybackResult | str = _PLAYBACK_INTERRUPTED
         try:
             async with self._mutex:
                 await self.play_audio(item.path)
+                result = self._last_result or "no playback result recorded"
             logger.debug("Playback done: %s", item.path.name)
-            item.resolve(self._last_result or "no playback result recorded")
         except Exception:
             logger.exception("Playback consumer error for %s", item.path.name)
-            item.resolve("playback failed unexpectedly")
+            result = "playback failed unexpectedly"
         finally:
-            self._finish_item(item)
+            self._finish_item(item, result)
 
-    def _finish_item(self, item: PlaybackItem) -> None:
+    def _finish_item(
+        self,
+        item: PlaybackItem,
+        result: PlaybackResult | str = _PLAYBACK_INTERRUPTED,
+    ) -> None:
         """Settle and release an item even if playback did not finish."""
-        item.resolve("playback interrupted (daemon shutting down)")
         try:
-            if item.discard is not None:
-                item.discard()
+            item.finish(result)
         finally:
-            item.notify.set()
             self._queue.task_done()
 
     def record_result(

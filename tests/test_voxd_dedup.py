@@ -148,14 +148,16 @@ class TestOnceDedup:
         assert len(dedup._seen) == 1
 
     def test_rollback_removes_entry(self) -> None:
-        """rollback(text) drops the entry so a subsequent call plays again."""
+        """The rollback action drops the entry so a subsequent call plays again."""
         dedup = OnceDedup()
         first = dedup.check_and_record("wall msg", ttl_seconds=600)
         assert first is None
 
         # Simulate a failed synthesis --- the dedup entry was recorded
         # but the audio never actually played. Rollback must remove it.
-        dedup.rollback("wall msg")
+        rollback = dedup.rollback_for("wall msg")
+        dedup.check_and_record("unrelated text", ttl_seconds=600)
+        rollback()
 
         # A retry should NOT be deduped.
         retry = dedup.check_and_record("wall msg", ttl_seconds=600)
@@ -165,7 +167,21 @@ class TestOnceDedup:
         """rollback on an unrecorded text is a no-op, not an error."""
         dedup = OnceDedup()
         # Never called check_and_record for this text.
-        dedup.rollback("unknown text")  # Must not raise.
+        dedup.rollback_for("unknown text")()  # Must not raise.
+
+    def test_old_rollback_cannot_remove_new_reservation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Failure from an older playback cannot clear a replacement entry."""
+        clock = [1000.0]
+        monkeypatch.setattr("punt_vox.voxd.dedup.time.monotonic", lambda: clock[0])
+        dedup = OnceDedup()
+        assert dedup.check_and_record("text", ttl_seconds=60) is None
+        rollback = dedup.rollback_for("text")
+        clock[0] += 1.0
+        assert dedup.check_and_record("text", ttl_seconds=1) is None
+        rollback()
+        assert dedup.check_and_record("text", ttl_seconds=60) is not None
 
     def test_per_caller_ttl_shrinks_effective_window(
         self, monkeypatch: pytest.MonkeyPatch
