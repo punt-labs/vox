@@ -93,8 +93,9 @@ class CacheStatus:
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
 # provider_status with verify runs each provider's live check in parallel,
-# each bounded by LiveCheck's 10s deadline on the daemon; leave headroom.
-_TIMEOUT_PROVIDER_CHECK = 20.0
+# each bounded by LiveCheck's 10s deadline on the daemon, after waiting out any
+# synthesis holding the env lock; leave headroom for both.
+_TIMEOUT_PROVIDER_CHECK = 30.0
 # play waits for the host-side playback to FINISH (not just enqueue) so a
 # failure surfaces, so its deadline must cover a full track. Bounded like the
 # record cap so a wedged daemon is still detected within ten minutes.
