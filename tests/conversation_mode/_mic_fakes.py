@@ -8,6 +8,8 @@ would invoke it, but synchronously and under the test's control.
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
@@ -17,10 +19,15 @@ __all__ = [
     "FakeBackend",
     "FakeCallbackFlags",
     "FakeInputStream",
+    "FakePortAudioError",
+    "fake_sounddevice",
 ]
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import pytest
+    from sounddevice import DeviceInfo
 
 FAKE_DEVICE = InputDevice("Fake Microphone", 48_000.0)
 
@@ -118,3 +125,30 @@ class FakeBackend:
         stream = self._open(**kwargs)
         self._created.append(stream)
         return stream
+
+
+class FakePortAudioError(Exception):
+    """Stand-in for :class:`sounddevice.PortAudioError`."""
+
+
+def fake_sounddevice(
+    monkeypatch: pytest.MonkeyPatch,
+    backend: FakeBackend | None = None,  # None: a backend that opens fake streams.
+) -> FakeBackend:
+    """Install a ``sounddevice`` module whose streams are ``backend``'s fakes."""
+    backend = backend if backend is not None else FakeBackend()
+
+    def query_devices(kind: str) -> DeviceInfo:
+        del kind
+        return {
+            "name": FAKE_DEVICE.name,
+            "default_samplerate": FAKE_DEVICE.default_samplerate_hz,
+        }
+
+    module = SimpleNamespace(
+        RawInputStream=backend.open,
+        PortAudioError=FakePortAudioError,
+        query_devices=query_devices,
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", module)
+    return backend

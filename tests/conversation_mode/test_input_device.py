@@ -106,8 +106,12 @@ def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy
         RawInputStream=refuse,
         query_devices=_device_info("USB Audio", 48000.0),
     )
+
+    def callback(*_args: object) -> None:
+        pass
+
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio().open(samplerate=16000.0, blocksize=320, callback=lambda *_: None)
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
     message = str(failure.value)
     assert "Invalid number of channels" in message
     assert "another application" in message

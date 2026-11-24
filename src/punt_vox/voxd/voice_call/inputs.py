@@ -71,6 +71,14 @@ class ScriptInput:
             raise ValueError("a script turn holds at most one minute of PCM")
         return ScriptTurn(file.read_bytes(), float(pause))
 
+    @staticmethod
+    def open() -> None:
+        """A script needs no device: the turns were read at construction."""
+
+    @staticmethod
+    def close() -> None:
+        """A script holds nothing to release."""
+
     async def chunks(self) -> AsyncIterator[bytes]:
         """Yield 20 ms frames on a real-time schedule that does not drift."""
         loop = asyncio.get_running_loop()

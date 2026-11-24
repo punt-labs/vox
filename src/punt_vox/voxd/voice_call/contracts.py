@@ -52,8 +52,21 @@ class ProjectAllowlist(Protocol):
 
 
 class CallInput(Protocol):
-    """A source of 16 kHz mono S16LE chunks paced at real time."""
+    """A source of 16 kHz mono S16LE chunks paced at real time.
+
+    ``open`` acquires whatever the source needs before the call is dialled,
+    so a source that cannot deliver refuses the call; ``close`` releases it
+    however the call ended.
+    """
+
+    def open(self) -> None:
+        """Acquire the source, or raise so the call never starts."""
+        ...
 
     def chunks(self) -> AsyncIterator[bytes]:
         """Yield caller audio until the call stops consuming."""
+        ...
+
+    def close(self) -> None:
+        """Release the source; safe after a failed or skipped open."""
         ...

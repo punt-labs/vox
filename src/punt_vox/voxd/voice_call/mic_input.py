@@ -10,16 +10,23 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+    from punt_vox.voxd.conversation_mode.mic_capture import MicCapture
 
 __all__ = ["MicInput"]
 
 
 @final
 class MicInput:
-    """Stream the microphone for as long as the call consumes it."""
+    """Hold the microphone from :meth:`open` until :meth:`close`.
 
-    __slots__ = ("_source",)
+    The device is opened before the agent is dialled so a microphone that
+    cannot open refuses the call outright, instead of failing a call the
+    caller was already told is live.
+    """
+
+    __slots__ = ("_capture", "_source")
     _source: MicAudioSource
+    _capture: MicCapture | None  # None until open(), and again after close().
     # The echo declarations a live call accepts: the caller wears a headset,
     # or the system cancels the speaker's echo before it reaches the mic.
     ECHO_CONTROL: ClassVar[frozenset[str]] = frozenset({"headset", "aec"})
@@ -27,7 +34,7 @@ class MicInput:
     def __new__(cls, source: MicAudioSource) -> Self:
         """Bind the microphone source the call captures from."""
         self = super().__new__(cls)
-        self._source = source
+        self._source, self._capture = source, None
         return self
 
     @classmethod
@@ -51,10 +58,28 @@ class MicInput:
             )
         return cls(source)
 
+    def open(self) -> None:
+        """Query the device and start capturing; the device is now held.
+
+        Raises:
+            OSError: When there is no default input device or it refuses
+                the stream.
+        """
+        self._capture = self._source.open()
+
     def chunks(self) -> AsyncIterator[bytes]:
         """Yield each captured block's PCM, failing a capture that stays silent.
 
         Raises:
-            ValueError: When the first seconds hold only zero samples.
+            ValueError: When the capture was never opened, or the first
+                seconds hold only zero samples.
         """
-        return CaptureProbe().watch(self._source.chunks())
+        if self._capture is None:
+            raise ValueError("the microphone is not open")
+        return CaptureProbe().watch(self._capture.chunks())
+
+    def close(self) -> None:
+        """Release the device; a never-opened input has nothing to release."""
+        if self._capture is not None:
+            self._capture.close()
+            self._capture = None

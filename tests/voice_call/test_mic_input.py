@@ -16,14 +16,23 @@ if TYPE_CHECKING:
 
 
 class _FakeMicSource:
-    """A MicAudioSource double that yields a fixed run of 20 ms chunks."""
+    """A MicAudioSource double whose capture yields a fixed run of 20 ms chunks."""
+
+    closed: bool
 
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks
+        self.closed = False
+
+    def open(self) -> _FakeMicSource:
+        return self
 
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         for pcm in self._chunks:
             yield AudioChunk(pcm=pcm, duration_s=0.02)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _source(chunks: list[bytes]) -> MicAudioSource:
@@ -33,6 +42,7 @@ def _source(chunks: list[bytes]) -> MicAudioSource:
 @pytest.mark.parametrize("echo_control", ["headset", "aec"])
 async def test_from_wire_accepts_a_declared_echo_protection(echo_control: str) -> None:
     mic = MicInput.from_wire({"echo_control": echo_control}, _source([b"a\x00"]))
+    mic.open()
     assert [pcm async for pcm in mic.chunks()] == [b"a\x00"]
 
 
@@ -56,3 +66,24 @@ def test_echo_label_keeps_an_accepted_declaration(value: str) -> None:
 @pytest.mark.parametrize("value", ["speakers", "head\nset", True, None, 3])
 def test_echo_label_replaces_anything_else(value: object) -> None:
     assert MicInput.echo_label(value) == "other"
+
+
+def test_chunks_before_open_is_refused() -> None:
+    with pytest.raises(ValueError, match="not open"):
+        MicInput(_source([])).chunks()
+
+
+def test_close_before_open_releases_nothing() -> None:
+    source = _FakeMicSource([])
+    mic = MicInput(cast("MicAudioSource", source))
+    mic.close()
+    assert not source.closed
+
+
+def test_close_releases_the_capture_and_is_safe_twice() -> None:
+    source = _FakeMicSource([])
+    mic = MicInput(cast("MicAudioSource", source))
+    mic.open()
+    mic.close()
+    mic.close()
+    assert source.closed

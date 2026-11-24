@@ -109,6 +109,7 @@ class CallLauncher:
                 opener=self._opener,
                 progress=self._progress,
             )
+            audio.open()  # A mic that cannot open refuses the call, undialled.
 
         async def run() -> None:
             with CallLog(trace.path, call.outcome):
@@ -124,6 +125,8 @@ class CallLauncher:
                     # waiting to connect would otherwise time out on a false message.
                     call.mark_failed(LogText.failure(exc))
                     raise
+                finally:
+                    audio.close()
 
         task = asyncio.create_task(run())
         task.add_done_callback(lambda _: trace.stream.close())

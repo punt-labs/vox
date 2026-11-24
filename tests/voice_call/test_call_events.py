@@ -40,19 +40,37 @@ if TYPE_CHECKING:
 
 
 class _Silent:
+    def open(self) -> None:
+        pass
+
     async def chunks(self) -> AsyncIterator[bytes]:
         silence: tuple[bytes, ...] = ()
         for pcm in silence:
             yield pcm
 
+    def close(self) -> None:
+        pass
+
 
 class _DeadMicSource:
     """A MicAudioSource double: the macOS denied capture, zeros without end."""
+
+    def open(self) -> _DeadMicSource:
+        return self
 
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         while True:
             await asyncio.sleep(0)
             yield AudioChunk(pcm=bytes(640), duration_s=0.02)
+
+    def close(self) -> None:
+        pass
+
+
+def _dead_mic() -> MicInput:
+    mic = MicInput(cast("MicAudioSource", _DeadMicSource()))
+    mic.open()
+    return mic
 
 
 class _Peer:
@@ -299,7 +317,7 @@ async def test_a_silent_microphone_fails_the_live_call_naming_the_remedies(
             await asyncio.sleep(3600)
             raise EOFError
 
-    call = _call(_OpenLine([]), MicInput(cast("MicAudioSource", _DeadMicSource())))
+    call = _call(_OpenLine([]), _dead_mic())
     with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.voice_call"):
         async with asyncio.timeout(10):
             await call.run(_dial)
@@ -327,7 +345,7 @@ async def test_a_silence_failure_still_closes_the_speaker_and_departs() -> None:
 
     call = _call(
         _OpenLine([]),
-        MicInput(cast("MicAudioSource", _DeadMicSource())),
+        _dead_mic(),
         speaker=speaker,
     )
     async with asyncio.timeout(10):

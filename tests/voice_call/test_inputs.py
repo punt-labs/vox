@@ -80,14 +80,23 @@ async def test_mic_yields_each_captured_block() -> None:
 
 
 class _FakeMicSource:
-    """A MicAudioSource double that yields a fixed run of 20 ms chunks."""
+    """A MicAudioSource double whose capture yields a fixed run of 20 ms chunks."""
+
+    closed: bool
 
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks
+        self.closed = False
+
+    def open(self) -> _FakeMicSource:
+        return self
 
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         for pcm in self._chunks:
             yield AudioChunk(pcm=pcm, duration_s=0.02)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 _FRAME = bytes(640)  # 20 ms of 16 kHz mono S16LE silence
@@ -96,7 +105,9 @@ _THREE_SECONDS = 150
 
 
 def _mic(chunks: list[bytes]) -> MicInput:
-    return MicInput(cast("MicAudioSource", _FakeMicSource(chunks)))
+    mic = MicInput(cast("MicAudioSource", _FakeMicSource(chunks)))
+    mic.open()
+    return mic
 
 
 async def test_mic_silent_for_three_seconds_fails_naming_the_remedies(

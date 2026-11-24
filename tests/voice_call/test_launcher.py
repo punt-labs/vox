@@ -12,15 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import pytest
-from conversation_mode._mic_fakes import FakeBackend
+from conversation_mode._mic_fakes import (
+    FakeBackend,
+    FakeInputStream,
+    FakePortAudioError,
+    fake_sounddevice,
+)
 
 from punt_vox.voxd.voice_agent.events import Metadata
 from punt_vox.voxd.voice_agent.fault import ConvAIError
@@ -34,8 +37,6 @@ from .fakes import FakePlayback, FakeWorkers
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
     from contextlib import AbstractContextManager
-
-    from sounddevice import DeviceInfo
 
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
@@ -145,25 +146,6 @@ def _script(tmp_path: Path) -> list[dict[str, object]]:
     return [{"pcm_path": str(pcm), "pause_s": 0.0}]
 
 
-def _query_devices(kind: str) -> DeviceInfo:
-    del kind
-    return {"name": "Fake", "default_samplerate": 48000.0}
-
-
-def _fake_microphone(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
-    backend = FakeBackend()
-    monkeypatch.setitem(
-        sys.modules,
-        "sounddevice",
-        SimpleNamespace(
-            RawInputStream=backend.open,
-            PortAudioError=OSError,
-            query_devices=_query_devices,
-        ),
-    )
-    return backend
-
-
 class TestEchoGuard:
     @pytest.mark.parametrize(
         "declaration", [{}, {"echo_control": True}, {"echo_control": "speakers"}]
@@ -227,7 +209,7 @@ class TestInputSelection:
     async def test_a_mic_request_captures_through_portaudio(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, echo_control: str
     ) -> None:
-        backend = _fake_microphone(monkeypatch)
+        backend = fake_sounddevice(monkeypatch)
         opener = _Opener()
         launcher = _launcher(tmp_path, connector=_Connector(), opener=opener)
         active = await launcher.launch(
@@ -525,3 +507,45 @@ class TestTaskFailure:
             "Call task ended with RuntimeError: hold music player is not installed "
             "at <path>"
         )
+
+
+class TestMicrophoneBeforeDial:
+    """The microphone is opened before the agent is dialled, never after."""
+
+    async def test_a_microphone_that_cannot_open_refuses_the_call_without_a_dial(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+
+        def refuse(**_kwargs: object) -> FakeInputStream:
+            raise FakePortAudioError("Error opening RawInputStream: Device unavailable")
+
+        fake_sounddevice(monkeypatch, FakeBackend(open_stream=refuse))
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        with pytest.raises(OSError, match="cannot open input device Fake Microphone"):
+            await launcher.launch(
+                uuid4(), {"type": "call_start", "echo_control": "headset"}
+            )
+        assert connector.connections == []
+        assert not (tmp_path / "departure.json").exists()
+        lines = [r.message for r in caplog.records if r.name == _LOG]
+        assert lines[-1] == "Call not started: OSError"
+
+    async def test_the_microphone_is_open_before_the_agent_answers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = fake_sounddevice(monkeypatch)
+        opener = _Opener()
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=opener)
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "echo_control": "aec"}
+        )
+        (stream,) = backend.created  # opened by launch itself, before any dial
+        assert not stream.closed
+        await active.wait_connected(5)
+        await active.cancel()
+        assert stream.closed
