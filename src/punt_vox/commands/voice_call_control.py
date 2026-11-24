@@ -56,10 +56,9 @@ class CallControl:
             )
         return view
 
-    async def display_status(self) -> CallStatusView:
-        """Read the status for display without requiring an identity."""
-        result = await self._rpc.request("status", timeout=self._TIMEOUTS["status"])
-        return CallStatusView(result)
+    async def status_snapshot(self) -> object:
+        """Return the daemon's status payload for observation, not call control."""
+        return await self._rpc.request("status", timeout=self._TIMEOUTS["status"])
 
     async def teardown(self) -> None:
         """Remove the managed agent without interpreting the unused call status."""
