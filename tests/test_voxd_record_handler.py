@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -38,25 +39,67 @@ def _store(tmp_path: Path) -> RecordStore:
     return RecordStore(tmp_path / "recordings")
 
 
-def _shortest_overlong_name(directory: Path) -> str:
-    """Return the shortest multibyte name *directory*'s filesystem refuses.
+class OverlongNameProbe:
+    """Find the shortest multibyte name a directory's filesystem refuses.
 
     ``PC_NAME_MAX`` is 255 on both ext4 and APFS, but ext4 counts bytes and
     APFS counts characters, so a name of 128 two-byte characters overflows
-    the one and is legal on the other. Ask the filesystem rather than assume:
-    the name is one character past the limit only where that limit is in
-    characters.
+    the one and is legal on the other. Ask the filesystem rather than assume,
+    and refuse to guess: a candidate is returned only once the filesystem has
+    actually rejected it with ``ENAMETOOLONG``.
     """
-    limit = os.pathconf(directory, "PC_NAME_MAX")
-    by_bytes = "é" * (limit // len(os.fsencode("é")) + 1)
-    try:
-        (directory / by_bytes).touch()
-    except OSError as exc:
-        if exc.errno != errno.ENAMETOOLONG:
-            raise
-        return by_bytes
-    (directory / by_bytes).unlink()
-    return "é" * (limit + 1)
+
+    _CHAR = "\u00e9"
+    _directory: Path
+    _limit: int
+
+    def __new__(cls, directory: Path) -> Self:
+        self = super().__new__(cls)
+        self._directory = directory
+        self._limit = os.pathconf(directory, "PC_NAME_MAX")
+        return self
+
+    def shortest(self) -> str:
+        """Return the first candidate the filesystem refuses, or raise."""
+        for candidate in self._candidates():
+            if self._is_refused(candidate):
+                return candidate
+        msg = (
+            f"{self._directory} accepted every overlong name probed "
+            f"(PC_NAME_MAX={self._limit}); the too-long test cannot run here"
+        )
+        raise RuntimeError(msg)
+
+    def _candidates(self) -> tuple[str, str]:
+        by_bytes = self._CHAR * (self._limit // len(os.fsencode(self._CHAR)) + 1)
+        by_chars = self._CHAR * (self._limit + 1)
+        return by_bytes, by_chars
+
+    def _is_refused(self, name: str) -> bool:
+        path = self._directory / name
+        try:
+            path.touch()
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            return True
+        path.unlink()
+        return False
+
+
+class TestOverlongNameProbe:
+    def test_raises_when_the_filesystem_refuses_neither_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A probe that finds no refused name must fail loudly, not guess."""
+
+        def accept(path: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
+            """Stand in for touch and unlink on a filesystem that refuses nothing."""
+
+        monkeypatch.setattr(Path, "touch", accept)
+        monkeypatch.setattr(Path, "unlink", accept)
+        with pytest.raises(RuntimeError, match="accepted every overlong name"):
+            OverlongNameProbe(tmp_path).shortest()
 
 
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
@@ -584,7 +627,7 @@ class TestRecordHandler:
         )
         handler = RecordHandler(synthesis=synth, store=store)
         ws, sent = _capturing_ws()
-        name = _shortest_overlong_name(tmp_path)
+        name = OverlongNameProbe(tmp_path).shortest()
 
         msg: dict[str, object] = {
             "type": "record",
