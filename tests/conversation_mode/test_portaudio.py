@@ -1,0 +1,234 @@
+"""Tests for :mod:`punt_vox.voxd.conversation_mode.portaudio`.
+
+No real audio hardware: a fake ``sounddevice`` module is installed in
+``sys.modules`` so the on-demand imports inside :class:`PortAudio` resolve
+to the test's doubles.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+import pytest
+
+from conversation_mode._mic_fakes import FakeInputStream
+from punt_vox.voxd.conversation_mode.input_device import InputDevice
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sounddevice import DeviceInfo
+
+# The close-after-start-failure warning is logged by the device, not the backend.
+_DEVICE_MODULE = "punt_vox.voxd.conversation_mode.input_device"
+
+
+class _FakePortAudioError(Exception):
+    pass
+
+
+def _device_info(name: str, default_samplerate: float) -> Callable[[str], DeviceInfo]:
+    def query_devices(kind: str) -> DeviceInfo:
+        assert kind == "input"
+        return {"name": name, "default_samplerate": default_samplerate}
+
+    return query_devices
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, **members: object) -> None:
+    fake = SimpleNamespace(PortAudioError=_FakePortAudioError, **members)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+
+
+def test_the_default_device_is_reported_by_name_and_sample_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(monkeypatch, query_devices=_device_info("MacBook Air Microphone", 48000.0))
+    assert PortAudio().device() == InputDevice("MacBook Air Microphone", 48000.0)
+
+
+def test_an_integer_sample_rate_is_reported_as_a_float(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def query_devices(kind: str) -> DeviceInfo:
+        del kind
+        return {"name": "Built-in", "default_samplerate": 44100}
+
+    _install(monkeypatch, query_devices=query_devices)
+    device = PortAudio().device()
+    assert device.default_samplerate_hz == 44100.0
+    assert type(device.default_samplerate_hz) is float
+
+
+def test_no_default_device_is_an_oserror_carrying_portaudios_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_device(kind: str) -> DeviceInfo:
+        raise _FakePortAudioError(f"Error querying device {kind}")
+
+    _install(monkeypatch, query_devices=no_device)
+    with pytest.raises(OSError, match="no default input device") as failure:
+        PortAudio().device()
+    assert "Error querying device input" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+
+
+def test_open_requests_a_raw_mono_int16_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(
+        monkeypatch,
+        RawInputStream=FakeInputStream,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    stream = PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert isinstance(stream, FakeInputStream)
+    assert stream.kwargs == {
+        "samplerate": 16000.0,
+        "blocksize": 320,
+        "channels": 1,
+        "dtype": "int16",
+        "callback": callback,
+    }
+
+
+def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy, zero-channel or invalid device is an OSError, not a code bug."""
+
+    def refuse(**_kwargs: object) -> FakeInputStream:
+        raise _FakePortAudioError(
+            "Error opening RawInputStream: Invalid number of channels [-9998]"
+        )
+
+    _install(
+        monkeypatch,
+        RawInputStream=refuse,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    message = str(failure.value)
+    assert "Invalid number of channels" in message
+    assert "another application" in message
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+
+
+def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sounddevice opens in the constructor and starts in __enter__.
+
+    A start failure is a PortAudioError, not an OSError; left unconverted it
+    would reach the launcher as neither a refused device nor a known RPC
+    error, with the device handle still open.
+    """
+    created: list[FakeInputStream] = []
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("Error starting stream: Device unavailable [-9985]")
+        stream = FakeInputStream.unstartable(error, **kwargs)
+        created.append(stream)
+        return stream
+
+    _install(
+        monkeypatch,
+        RawInputStream=construct,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "Device unavailable" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    (stream,) = created
+    assert stream.closed
+
+
+def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A close that fails after a start failure must not hide the device error.
+
+    The caller releases the call ID and names the device on an OSError; a
+    raw PortAudioError from close would reach it as neither.
+    """
+    caplog.set_level(logging.WARNING, logger=_DEVICE_MODULE)
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("Error starting stream: Device unavailable [-9985]")
+        return FakeInputStream.unstartable(error, **kwargs)
+
+    def refuse_close(_stream: FakeInputStream) -> None:
+        raise _FakePortAudioError("Error closing stream: Device unavailable [-9985]")
+
+    monkeypatch.setattr(FakeInputStream, "close", refuse_close)
+    _install(
+        monkeypatch,
+        RawInputStream=construct,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "Device unavailable" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    assert "starting stream" in str(failure.value.__cause__)
+    (line,) = [r.message for r in caplog.records if r.name == _DEVICE_MODULE]
+    assert line == (
+        "Input stream on USB Audio not closed after a start failure "
+        "(_FakePortAudioError: Error closing stream: Device unavailable [-9985])"
+    )
+
+
+def test_a_device_query_that_fails_after_the_open_does_not_hide_the_start_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The device is read once, before the stream; the error path never asks.
+
+    A device that was unplugged or grabbed is exactly when a second query
+    fails, and the caller would otherwise be told "no default input device"
+    with the real start error demoted to __context__.
+    """
+    constructed: list[FakeInputStream] = []
+
+    def query_devices(kind: str) -> DeviceInfo:
+        if constructed:  # The device went away once the stream existed.
+            raise _FakePortAudioError("Error querying device input")
+        return {"name": "USB Audio", "default_samplerate": 48000.0}
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("start failed")
+        stream = FakeInputStream.unstartable(error, **kwargs)
+        constructed.append(stream)
+        return stream
+
+    _install(monkeypatch, RawInputStream=construct, query_devices=query_devices)
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "start failed" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    assert str(failure.value.__cause__) == "start failed"

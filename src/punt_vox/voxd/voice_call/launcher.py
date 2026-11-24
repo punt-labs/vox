@@ -6,8 +6,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.conversation_mode.input_device import PortAudio
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools

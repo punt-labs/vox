@@ -253,6 +253,7 @@ ignore = [
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
 "src/punt_vox/voxd/conversation_mode/input_device.py" = ["PLC0415"]
+"src/punt_vox/voxd/conversation_mode/portaudio.py" = ["PLC0415"]
 "src/punt_vox/voxd/pcm_output.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
@@ -428,6 +429,7 @@ adapters = [
     "punt_vox.voxd.wire_text",
     "punt_vox.voxd.voice_call.tool_reply",
     "punt_vox.voxd.conversation_mode.input_device",
+    "punt_vox.voxd.conversation_mode.portaudio",
     "punt_vox.voxd.voice_call.call_log",
     "punt_vox.voxd.voice_call.call_trace",
     "punt_vox.voxd.voice_call.mic_input",

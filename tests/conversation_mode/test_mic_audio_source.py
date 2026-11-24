@@ -22,8 +22,9 @@ import pytest
 
 from conversation_mode._mic_fakes import FAKE_DEVICE, FakeBackend, FakeInputStream
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
-from punt_vox.voxd.conversation_mode.input_device import InputDevice, PortAudio
+from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 
 if TYPE_CHECKING:
     from collections.abc import Callable
