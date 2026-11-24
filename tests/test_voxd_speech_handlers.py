@@ -224,6 +224,28 @@ class TestSynthesizeParseGuard:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "text", ["", "  ", "\t\n"], ids=["empty", "spaces", "tab-nl"]
+    )
+    async def test_blank_text_is_rejected_before_synthesis(self, text: str) -> None:
+        """Whitespace-only text is empty text: rejected at the boundary with the
+        same clear error as "", never sent to the provider."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock(
+            side_effect=RuntimeError("provider rejected blank text")
+        )
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {"id": "1", "text": text, "provider": "elevenlabs"}
+        await handler(msg, ws)
+
+        assert sent == [{"type": "error", "id": "1", "message": "empty text"}]
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         "api_key",
         [
             "SECRETKEY123\n",

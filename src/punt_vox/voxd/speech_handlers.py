@@ -59,15 +59,15 @@ class _SpeechRequest:
         """Parse a wire message into a request, validating at the boundary.
 
         A string-typed field raises ``ValueError`` on a non-string value while a
-        numeric field accepts a JSON number (via the parse helpers); empty text
-        and an ``api_key`` no HTTP header may carry are rejected here, so both
-        handlers share one validation point.
+        numeric field accepts a JSON number (via the parse helpers); empty or
+        whitespace-only text and an ``api_key`` no HTTP header may carry are
+        rejected here, so both handlers share one validation point.
 
         Raises:
             ValueError: If the message contains no speech text.
         """
         text = parse_required_str(msg, "text")
-        if not text:
+        if not text.strip():
             raise ValueError("empty text")
         speaker_boost_raw = msg.get("speaker_boost")
         # ``provider`` is required on the wire (design §3.7): every client
@@ -107,22 +107,35 @@ class _SpeechRequest:
     ) -> SynthesisOutcome | None:  # None: it failed, and the caller has been told
         """Synthesize this request to a file, replying with the error on failure.
 
-        The one failure split both handlers share: a :data:`CALLER_ERRORS`
-        member (F2-F5, or a CA bundle TLS cannot use) crosses the wire verbatim
-        through :meth:`reject`; anything else is a daemon-side fault, laundered
-        by :meth:`fault`. F1 and F7 never get here -- ``SessionSpec`` rejects
-        them on the client -- and F6 is a connection failure the client sees.
+        A failure replies through :meth:`fail`, so both handlers share one
+        caller-error/fault split; only a daemon-side fault logs a traceback. F1
+        and F7 never get here -- ``SessionSpec`` rejects them on the client --
+        and F6 is a connection failure the client sees.
         """
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
-        except CALLER_ERRORS as exc:
-            on_failure()
-            await self.reject(exc)
         except Exception as exc:
-            logger.exception("Synthesis failed for id=%r", self.request_id)
+            if not isinstance(exc, CALLER_ERRORS):
+                logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
-            await self.fault(SafeFault.from_exception(exc))
+            await self.fail(exc)
         return None
+
+    async def fail(self, result: Exception | int) -> None:
+        """Reply to a failed synthesis, or a direct play that exited nonzero.
+
+        A :data:`CALLER_ERRORS` member (F2-F5, or a CA bundle TLS cannot use) is
+        diagnosable and caller-side, so it crosses the wire verbatim through
+        :meth:`reject` rather than getting laundered to "operation failed" by
+        :meth:`fault` (design §3.5). Any other exception, or a nonzero exit
+        code, is a daemon-side fault.
+        """
+        if isinstance(result, CALLER_ERRORS):
+            await self.reject(result)
+        elif isinstance(result, Exception):
+            await self.fault(SafeFault.from_exception(result))
+        else:
+            await self.fault(SafeFault.opaque(f"play_directly failed with rc={result}"))
 
     async def reply(self, payload: dict[str, object]) -> None:
         """Send *payload* stamped with this request's id, safe on a gone peer.
@@ -261,16 +274,7 @@ class SynthesizeHandler(MessageHandler):
             await req.reply({"type": "done"})
             return True
         self._rollback(req, dedup_recorded=dedup_recorded)
-        if isinstance(result, CALLER_ERRORS):
-            # Diagnosable, caller-side -- the same closed set the file path
-            # rejects: route verbatim through error() so the sentence crosses
-            # the wire rather than getting laundered to "operation failed" by
-            # fault(). See design §3.5, F2/F5.
-            await req.reject(result)
-        elif isinstance(result, Exception):
-            await req.fault(SafeFault.from_exception(result))
-        else:
-            await req.fault(SafeFault.opaque(f"play_directly failed with rc={result}"))
+        await req.fail(result)
         return True
 
     async def _synthesize_and_enqueue(
