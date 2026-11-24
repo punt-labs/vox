@@ -13,17 +13,21 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import websockets
 import websockets.asyncio.client
 
 from punt_vox.client_errors import (
+    FetchWriteError,
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
 )
-from punt_vox.client_fetch import FetchAssembly
+from punt_vox.client_fetch import FetchVerifier
+
+if TYPE_CHECKING:
+    from typing import IO
 
 __all__ = ["VoxdExchange"]
 
@@ -98,22 +102,31 @@ class VoxdExchange:
             raise VoxdProtocolError(timeout_msg)
         return await self._recv_within(remaining, timeout_msg)
 
-    async def reassemble(self, deadline: float) -> bytes:
-        """Consume ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end`` into bytes.
+    async def receive_fetch(self, deadline: float, sink: IO[bytes]) -> int:
+        """Stream ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end`` to *sink*.
 
         Verifies the frame order, the declared byte count, and the sha256 before
-        returning, so a short, reordered, or corrupted stream raises.
+        returning the byte count. A failed fetch may leave partial data in *sink*.
 
         Raises:
             VoxdConnectionError: If the connection is lost.
             VoxdRejectionError: If the daemon sends an error frame.
             VoxdProtocolError: If a frame is invalid or out of order, the stream
                 fails verification, or the deadline expires.
+            FetchWriteError: If writing the chunk fails or is incomplete.
         """
-        assembly = FetchAssembly.begin(await self.recv_before(deadline, "fetch_begin"))
-        for seq in range(assembly.chunks):
-            assembly.append(await self.recv_before(deadline, "chunk"), seq)
-        return assembly.finish(await self.recv_before(deadline, "fetch_end"))
+        verifier = FetchVerifier.begin(await self.recv_before(deadline, "fetch_begin"))
+        for seq in range(verifier.chunks):
+            chunk = verifier.decode_chunk(
+                await self.recv_before(deadline, "chunk"), seq
+            )
+            try:
+                written = sink.write(chunk)
+            except OSError as exc:
+                raise FetchWriteError(*exc.args) from exc
+            if written != len(chunk):
+                raise FetchWriteError(f"incomplete write for fetch chunk {seq}")
+        return verifier.finish(await self.recv_before(deadline, "fetch_end"))
 
     # The receive path is shared by single replies and streamed frames.
     async def _recv_within(self, timeout: float, timeout_msg: str) -> dict[str, object]:
