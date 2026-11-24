@@ -522,14 +522,28 @@ class TestElevenLabsProviderDefaultModel:
 
 
 class TestElevenLabsProviderCharLimits:
+    @pytest.mark.parametrize("tag_letters", [4997, 4996])
     def test_vibe_cue_must_leave_room_for_speech(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path, tag_letters: int
+    ) -> None:
+        provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="Hello.", vibe_tags=f"[{'a' * tag_letters}]")
+        with pytest.raises(
+            ValueError, match="vibe cue leaves too little room for speech"
+        ):
+            provider.synthesize(request, tmp_path / "speech.mp3")
+        mock_elevenlabs_client.text_to_speech.stream.assert_not_called()
+
+    def test_long_vibe_cue_can_fit_one_call(
         self, mock_elevenlabs_client: MagicMock, tmp_path: Path
     ) -> None:
         provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
-        request = SynthesisRequest(text="Hello.", vibe_tags=f"[{'a' * 4997}]")
-        with pytest.raises(ValueError, match="vibe cue leaves no room for speech"):
-            provider.synthesize(request, tmp_path / "speech.mp3")
-        mock_elevenlabs_client.text_to_speech.stream.assert_not_called()
+        cue = f"[{'a' * 4991}]"
+        request = SynthesisRequest(text="Hello.", vibe_tags=cue)
+        provider.synthesize(request, tmp_path / "speech.mp3")
+        outbound = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["text"]
+        assert outbound == f"{cue} Hello."
+        assert len(outbound) == 5_000
 
     def test_v3_chunks_above_5k(self) -> None:
         """eleven_v3 should chunk text exceeding 5,000 chars."""

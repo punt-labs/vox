@@ -211,9 +211,9 @@ class ElevenLabsProvider(TTSProvider):
         tags = (request.vibe_tags or "").strip()
         prefix = f"{tags} " if tags else ""
         body_limit = self._char_limit - len(prefix)
-        if body_limit <= 0:
+        if body_limit < min(len(prefix), max(1, len(request.text))):
             msg = (
-                "ElevenLabs vibe cue leaves no room for speech "
+                "ElevenLabs vibe cue leaves too little room for speech "
                 f"within {self._char_limit} characters"
             )
             raise ProviderConfigError(msg)
@@ -223,10 +223,10 @@ class ElevenLabsProvider(TTSProvider):
                 replace(request, text=prefix + chunk), path, voice_id
             )
 
-        if len(request.text) <= body_limit:
-            synthesize_chunk(request.text, output_path)
-        else:
+        if len(request.text) > body_limit:
             chunked_synthesize(request.text, body_limit, synthesize_chunk, output_path)
+        else:
+            synthesize_chunk(request.text, output_path)
 
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]
         """Build VoiceSettings from request fields, or None for defaults."""
