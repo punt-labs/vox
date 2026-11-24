@@ -357,6 +357,7 @@ adapters = [
     "punt_vox.client_exchange",
     "punt_vox.client_fetch",
     "punt_vox.client_gateway",
+    "punt_vox.client_port",
     "punt_vox.client_sync",
     "punt_vox.client_transport",
     "punt_vox.config",
