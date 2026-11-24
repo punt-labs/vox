@@ -224,7 +224,7 @@ class RecTool:
         if segments is None:
             if args.text is None:
                 return _error("Provide text or segments.")
-            segments = [{"text": args.text}]
+            segments = [SegmentBatch.text_segment(args.text)]
         batch = SegmentBatch(segments)
         if args.name is not None and len(segments) > 1:
             return _error("name only supported for single-segment calls")

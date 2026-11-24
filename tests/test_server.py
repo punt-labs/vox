@@ -622,17 +622,30 @@ class TestMcpSegmentValidation:
 
     @pytest.mark.parametrize("tool", ["unmute", "rec"])
     @pytest.mark.parametrize(
-        ("segments", "message"),
+        ("arguments", "message"),
         [
-            ([], "segments must contain at least one segment"),
-            ([{"voice": "roger"}], "segments[0].text must be a non-blank string"),
-            ([{"text": ""}], "segments[0].text must be a non-blank string"),
-            ([{"text": " \t"}], "segments[0].text must be a non-blank string"),
-            ([{"text": "Hello", "voci": "roger"}], "unknown key(s): 'voci'"),
+            ({"segments": []}, "segments must contain at least one segment"),
             (
-                [{"text": "Hello"}, {"text": " "}],
+                {"segments": [{"voice": "roger"}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": ""}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": " \t"}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": "Hello", "voci": "roger"}]},
+                "segments[0] contains unknown key(s): 'voci'",
+            ),
+            (
+                {"segments": [{"text": "Hello"}, {"text": " "}]},
                 "segments[1].text must be a non-blank string",
             ),
+            ({"text": " \t"}, "text must be a non-blank string."),
         ],
         ids=[
             "empty",
@@ -641,13 +654,14 @@ class TestMcpSegmentValidation:
             "blank-text",
             "typo",
             "late-invalid",
+            "blank-top-level-text",
         ],
     )
     async def test_rejects_before_synthesis(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tool: str,
-        segments: list[dict[str, str]],
+        arguments: dict[str, object],
         message: str,
     ) -> None:
         import punt_vox.server as srv
@@ -660,16 +674,17 @@ class TestMcpSegmentValidation:
         client_factory = MagicMock(return_value=client)
         monkeypatch.setattr(srv, "_voxd_client", client_factory)
         monkeypatch.setattr(srv._rec_tool, "_client_factory", client_factory)
-        arguments: dict[str, object] = {"segments": segments}
         if tool == "rec":
-            arguments["subcommand"] = "new"
+            arguments = {**arguments, "subcommand": "new"}
 
         async with create_connected_server_and_client_session(srv.mcp) as session:
             result = await session.call_tool(tool, arguments)
 
         assert result.isError, result.content
         assert isinstance(result.content[0], TextContent)
-        assert message in result.content[0].text
+        assert result.content[0].text.startswith(
+            f"Error executing tool {tool}: {message}"
+        )
         client_factory.assert_not_called()
 
 

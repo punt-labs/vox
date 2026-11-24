@@ -46,6 +46,14 @@ class SegmentBatch:
         return self
 
     @staticmethod
+    def text_segment(text: str) -> dict[str, str]:
+        """Wrap plain text, naming the caller's argument if it is blank."""
+        if not text.strip():
+            msg = "text must be a non-blank string."
+            raise ValueError(msg)
+        return {"text": text}
+
+    @staticmethod
     def _validated_segment(index: int, segment: dict[str, str]) -> dict[str, str]:
         extra = segment.keys() - _SEGMENT_KEYS
         if extra:

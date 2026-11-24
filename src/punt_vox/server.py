@@ -489,7 +489,7 @@ def unmute(
     if segments is None:
         if text is None:
             return _error("Provide text or segments.")
-        segments = [{"text": text}]
+        segments = [SegmentBatch.text_segment(text)]
     batch = SegmentBatch(segments)
 
     # Fill defaults BEFORE mutating session vibe: an F1 refusal
