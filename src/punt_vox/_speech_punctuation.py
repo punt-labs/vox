@@ -12,7 +12,7 @@ _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
 _TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
-_SYMBOL_NAME_RE = re.compile(r"([A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)(\W*)")
+_SYMBOL_NAME_RE = re.compile(r"_*([A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)")
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
 
 
