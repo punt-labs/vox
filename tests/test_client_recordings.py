@@ -32,7 +32,7 @@ async def test_rec_list_times_out_only_when_a_page_stalls(
         now += delays[page]
         if now > deadline:
             raise VoxdProtocolError(f"Timeout waiting for {expected}")
-        frame = {
+        frame: dict[str, object] = {
             "type": expected,
             "page": page,
             "more": page == 0,
