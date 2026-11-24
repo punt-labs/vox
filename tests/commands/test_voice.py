@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands import Ctx, voice
 from punt_vox.config import ConfigStore
@@ -104,6 +106,33 @@ class TestList:
 
 class TestSet:
     """A name given -- normalize and write to config."""
+
+    async def test_rejects_inactive_provider_without_writing(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        ctx.store.write_field("voice", "matilda")
+        config_path = tmp_path / "vox.md"
+        before = config_path.read_bytes()
+
+        result = await voice(ctx, "alloy", provider="openai")
+
+        assert result.exit_code == 1
+        assert result.error is True
+        assert "openai" in result.text
+        assert "elevenlabs" in result.text
+        assert result.json_data is not None
+        assert result.text == f"Error: {result.json_data['error']}"
+        assert config_path.read_bytes() == before
+
+    @pytest.mark.parametrize("provider", ["elevenlabs", "ElevenLabs", ""])
+    async def test_allows_active_or_empty_provider_option(
+        self, tmp_path: Path, provider: str
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        result = await voice(ctx, "matilda", provider=provider)
+        assert result.error is False
+        assert ctx.store.read().voice == "matilda"
 
     async def test_writes_normalized_voice(self, tmp_path: Path) -> None:
         result = await voice(_ctx(tmp_path), "matilda")
