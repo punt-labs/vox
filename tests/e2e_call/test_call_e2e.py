@@ -185,26 +185,37 @@ def _vox(
 
 
 def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[str]:
-    """Place one scripted call; whatever happens, leave no call live in voxd."""
+    """Place one scripted call; whatever happens, leave no call live in voxd.
+
+    The call's own outcome is primary: when it raised, a stop failure is
+    attached to that exception as a note, never raised over it. When the
+    call returned, a stop failure is the error.
+    """
     try:
-        return _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
-    finally:
-        _stop_call(env)
+        result = _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
+    except BaseException as exc:
+        if (failure := _stop_failure(env)) is not None:
+            exc.add_note(failure)
+        raise
+    if (failure := _stop_failure(env)) is not None:
+        raise AssertionError(failure)
+    return result
 
 
-def _stop_call(env: dict[str, str]) -> None:
-    """Stop a call the CLI may have left live; a refusal for no call is normal.
+def _stop_failure(env: dict[str, str]) -> str | None:  # None: the stop was fine.
+    """Stop a call the CLI may have left live; describe a stop that failed.
 
-    A hung stop must not replace the call's own outcome, so its timeout is
-    reported as a note, not raised over whatever the call raised.
+    A refusal because no call is active is the normal case after a call that
+    ended on its own.
     """
     try:
         stop = _vox(env, "call", "stop", timeout=_STOP_TIMEOUT_S)
-    except subprocess.TimeoutExpired as exc:
-        msg = f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
-        raise RuntimeError(msg) from exc
+    except subprocess.TimeoutExpired:
+        return f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
     refused = stop.returncode == 2 and "no call is active" in stop.stderr
-    assert stop.returncode == 0 or refused, stop.stdout + stop.stderr
+    if stop.returncode == 0 or refused:
+        return None
+    return f"vox call stop exited {stop.returncode}: {stop.stdout}{stop.stderr}"
 
 
 def _call_then_teardown(
@@ -246,6 +257,28 @@ def _trace_events(report: str) -> list[str]:
     trace = Path(trace_line.removeprefix("trace: "))
     assert trace.is_file(), report
     return [json.loads(line)["type"] for line in trace.read_text().splitlines()]
+
+
+def _hang(
+    env: dict[str, str], *args: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Stand in for a vox CLI whose every invocation runs out its timeout."""
+    del env
+    raise subprocess.TimeoutExpired(["vox", *args], timeout)
+
+
+def test_a_hung_stop_after_a_timed_out_call_is_a_note_on_the_call_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The call's timeout stays the error; the stop's hang rides along as a note."""
+    monkeypatch.setattr(f"{__name__}._vox", _hang)
+    with pytest.raises(subprocess.TimeoutExpired) as failure:
+        _vox_call({}, tmp_path / "turns.jsonl")
+    assert failure.value.cmd[1:3] == ["call", "--script"]
+    assert failure.value.timeout == _CALL_TIMEOUT_S
+    assert failure.value.__notes__ == [
+        f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
+    ]
 
 
 def test_scripted_call_reaches_the_tool_result(
