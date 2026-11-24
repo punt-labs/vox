@@ -57,7 +57,13 @@ def test_batch_json_lines_help_preserves_shell_example(
 ) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "punt_vox", *command, "--help"],
-        env={**os.environ, "TYPER_USE_RICH": rich, "COLUMNS": "100", "NO_COLOR": "1"},
+        env={
+            **os.environ,
+            "TYPER_USE_RICH": rich,
+            "TERMINAL_WIDTH": "100",
+            "COLUMNS": "100",
+            "NO_COLOR": "1",
+        },
         capture_output=True,
         text=True,
         check=False,
