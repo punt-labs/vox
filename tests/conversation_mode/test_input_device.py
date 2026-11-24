@@ -7,6 +7,7 @@ to the test's doubles.
 
 from __future__ import annotations
 
+import logging
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sounddevice import DeviceInfo
+
+_MODULE = "punt_vox.voxd.conversation_mode.input_device"
 
 
 class _FakePortAudioError(Exception):
@@ -150,3 +153,42 @@ def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
     (stream,) = created
     assert stream.closed
+
+
+def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A close that fails after a start failure must not hide the device error.
+
+    The caller releases the call ID and names the device on an OSError; a
+    raw PortAudioError from close would reach it as neither.
+    """
+    caplog.set_level(logging.WARNING, logger=_MODULE)
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("Error starting stream: Device unavailable [-9985]")
+        return FakeInputStream.unstartable(error, **kwargs)
+
+    def refuse_close(_stream: FakeInputStream) -> None:
+        raise _FakePortAudioError("Error closing stream: Device unavailable [-9985]")
+
+    monkeypatch.setattr(FakeInputStream, "close", refuse_close)
+    _install(
+        monkeypatch,
+        RawInputStream=construct,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "Device unavailable" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    assert "starting stream" in str(failure.value.__cause__)
+    (line,) = [r.message for r in caplog.records if r.name == _MODULE]
+    assert line == (
+        "Input stream not closed after a start failure "
+        "(_FakePortAudioError: Error closing stream: Device unavailable [-9985])"
+    )

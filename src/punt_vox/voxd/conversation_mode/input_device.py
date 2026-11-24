@@ -14,17 +14,22 @@ when a call opens the microphone.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
+
+from punt_vox.voxd.log_text import LogText
 
 if TYPE_CHECKING:
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
     # for the type checkers; the stub-free runtime module has no such attribute.
-    from sounddevice import RawInputCallback
+    from sounddevice import RawInputCallback, RawInputStream
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
 
 __all__ = ["InputDevice", "PortAudio"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +94,28 @@ class PortAudio:
         try:
             return stream.__enter__()
         except PortAudioError as exc:
-            stream.close()
+            PortAudio._close_unstarted(stream)
             raise PortAudio._refused(exc) from exc
+
+    @staticmethod
+    def _close_unstarted(stream: RawInputStream) -> None:
+        """Release a stream that would not start; a close that fails is logged.
+
+        The start failure is the error the caller must see: it names the
+        device and is the OSError the launcher releases the call ID on. A
+        second PortAudio error, from the close, would replace it, so that
+        one is a warning only, and the close runs before the device is
+        named so a query failure cannot skip it either.
+        """
+        from sounddevice import PortAudioError
+
+        try:
+            stream.close()
+        except PortAudioError as exc:
+            logger.warning(
+                "Input stream not closed after a start failure (%s)",
+                LogText.failure(exc),
+            )
 
     @staticmethod
     def _refused(exc: Exception) -> OSError:
