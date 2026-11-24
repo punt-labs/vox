@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox enable` ignores untracked runtime locks in the host repo. Existing
+  tracked lock files stay tracked. (PL-1489)
+
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
 

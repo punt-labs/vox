@@ -9,6 +9,7 @@ no-orphan-on-purge property (purge removes the import, never stranding a 404ing
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, final
 
@@ -20,7 +21,7 @@ from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.enablement import RepoEnablement
-from punt_vox.gitignore_entry import GitignoreEntry
+from punt_vox.gitignore_entry import VoxGitignore
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
@@ -90,13 +91,66 @@ def test_enable_gitignores_local_config(tmp_path: Path) -> None:
     assert _ignore_count(tmp_path) == 1
 
 
+@pytest.mark.subprocess
+def test_enable_keeps_runtime_locks_out_of_git_status(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "--quiet", "--template="], cwd=tmp_path, check=True)
+    RepoEnablement.for_repo(tmp_path).enable()
+    _config_store(tmp_path).write_field("vibe", "[focused]")
+    (tmp_path / "example.lock").touch()
+
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "status",
+            "--porcelain=v1",
+            "-uall",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths = {line.removeprefix("?? ") for line in result.stdout.splitlines()}
+    assert paths == {
+        ".claude/settings.json",
+        ".gitignore",
+        ".punt-labs/vox/CLAUDE.md",
+        ".punt-labs/vox/enabled",
+        ".punt-labs/vox/vox.md",
+        "CLAUDE.md",
+        "example.lock",
+    }
+
+
 def test_enable_keeps_user_gitignore_and_adds_no_duplicate(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     enablement = RepoEnablement.for_repo(tmp_path)
     enablement.enable()
     enablement.enable()
     text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
-    assert text == f"node_modules/\n{_LOCAL_IGNORE}\n"
+    assert text.splitlines() == [
+        "node_modules/",
+        _LOCAL_IGNORE,
+        ".punt-labs/local/",
+        "/.CLAUDE.md.punt-import.lock",
+        "/.claude/.settings.json.punt-import.lock",
+    ]
+
+
+def test_enable_stops_without_modifying_an_unreadable_gitignore(tmp_path: Path) -> None:
+    gitignore = tmp_path / ".gitignore"
+    original = b"# user rules\n\xff\n"
+    gitignore.write_bytes(original)
+
+    with pytest.raises(UnicodeDecodeError):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert gitignore.read_bytes() == original
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / ".claude").exists()
+    assert not _dir_present(tmp_path)
 
 
 def test_disable_leaves_gitignore_entry(tmp_path: Path) -> None:
@@ -526,9 +580,7 @@ def _wire_enablement(
         settings=SettingsRegistration(tmp_path / ".claude" / "settings.json"),
         audible=AudibleNotify(vox_dir),
         proposal=proposal,
-        gitignore=GitignoreEntry(
-            tmp_path / ".gitignore", _LOCAL_IGNORE, lock_path=tmp_path / "gi.lock"
-        ),
+        gitignore=VoxGitignore(tmp_path),
     )
 
 
