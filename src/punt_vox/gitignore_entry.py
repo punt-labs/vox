@@ -67,7 +67,8 @@ class VoxGitignore:
                 return False
             eol = self._eol(text)
             if text and not text.endswith("\n"):
-                text += eol
+                # Finish a trailing CR without writing a second one.
+                text += eol.removeprefix(text[-1])
             self._file.replace(f"{text}{eol.join(missing)}{eol}")
             return True
 

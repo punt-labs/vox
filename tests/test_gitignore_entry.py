@@ -32,17 +32,17 @@ def test_ensure_creates_missing_gitignore(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("last_rule", [b"dist/", b"dist/\r"])
+@pytest.mark.parametrize(
+    ("original", "appended_eol"),
+    [(b"dist/", b"\n"), (b"dist/\r", b"\n"), (b"# host\r\ndist/\r", b"\r\n")],
+)
 def test_ensure_terminates_an_unterminated_last_rule(
-    tmp_path: Path, last_rule: bytes
+    tmp_path: Path, original: bytes, appended_eol: bytes
 ) -> None:
-    _host(tmp_path).write_bytes(last_rule)
+    _host(tmp_path).write_bytes(original)
     VoxGitignore(tmp_path).ensure()
-    assert _host(tmp_path).read_bytes().startswith(last_rule + b"\n")
-    assert _host(tmp_path).read_text(encoding="utf-8").splitlines() == [
-        "dist/",
-        *_RULES,
-    ]
+    rules = appended_eol.join(rule.encode() for rule in _RULES)
+    assert _host(tmp_path).read_bytes() == original + b"\n" + rules + appended_eol
 
 
 @pytest.mark.parametrize("existing", [_ENTRY, f"/{_ENTRY}", f"{_ENTRY}  "])
