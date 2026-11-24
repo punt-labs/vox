@@ -6,8 +6,7 @@ import asyncio
 import json
 import logging
 from collections import deque
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
@@ -17,8 +16,8 @@ from punt_vox.voxd.voice_agent.events import (
     Interruption,
     UserTranscript,
 )
-from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
+from punt_vox.voxd.voice_call.call_log import CallLog, CallOutcome
 from punt_vox.voxd.voice_call.progress import CallProgress, ProgressEvents
 
 if TYPE_CHECKING:
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
     from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.boss_tools import BossTools
+    from punt_vox.voxd.voice_call.call_log import CallState
     from punt_vox.voxd.voice_call.contracts import CallInput
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
     from punt_vox.voxd.voice_call.speaker import AgentSpeaker
@@ -36,25 +36,14 @@ if TYPE_CHECKING:
     # Provision the agent and return its signed URL and the session options.
     type Dial = Callable[[], Awaitable[tuple[str, SessionOptions]]]
 
-__all__ = ["CallOutcome", "CallState", "VoiceAgentCall"]
+__all__ = ["VoiceAgentCall"]
 
 logger = logging.getLogger(__name__)
 
-type CallState = Literal["connecting", "live", "ended", "failed"]
-
-
-@dataclass(frozen=True, slots=True)
-class CallOutcome:
-    """How a call ended, for the daemon log."""
-
-    state: CallState
-    error: str | None  # None unless the call failed.
-    tool_calls: int
-
-
 _HISTORY: Final = 20
-# Failures a call can meet in normal operation; anything else is logged as a bug.
-_EXPECTED: Final = (ConvAIError, OSError, ValueError, RuntimeError)
+# Failures a call can meet in normal operation (ConvAIError is a RuntimeError);
+# anything else is logged as a bug.
+_EXPECTED: Final = (OSError, ValueError, RuntimeError)
 
 
 @final
@@ -157,7 +146,7 @@ class VoiceAgentCall:
         signed_url, options = await dial()
         async with self._opener(signed_url, options, trace=self._trace) as conv:
             self._conversation_id = conv.metadata.conversation_id
-            logger.info("Call live: conversation %s", self._conversation_id)
+            CallLog.live(self._conversation_id)
             self._state = "live"
             self._connected.set()
             async with asyncio.TaskGroup() as group:
@@ -223,25 +212,12 @@ class VoiceAgentCall:
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
-        if is_error:
-            error: str = json.loads(result)["error"]
-            logger.info("Call tool %s: error %s", call.tool_name, error)
-        else:
-            logger.info("Call tool %s: ok", call.tool_name)
+        CallLog.tool(call.tool_name, result, is_error=is_error)
         if call.tool_name == "steer_worker" and not is_error:
             receipt: dict[str, object] = json.loads(result)
-            self._trace.record(
-                "note",
-                "worker_steer_receipt",
-                {
-                    **receipt,
-                    **(
-                        {"prompt_seq": call.parameters.get("prompt_seq")}
-                        if receipt.get("choice") in ("approve", "deny")
-                        else {}
-                    ),
-                },
-            )
+            if receipt.get("choice") in ("approve", "deny"):
+                receipt["prompt_seq"] = call.parameters.get("prompt_seq")
+            self._trace.record("note", "worker_steer_receipt", receipt)
         self._tool_calls.append(
             {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}
         )

@@ -58,7 +58,7 @@ class WorkerContext:
         return {
             **WorkerHandlers(actor).handlers(store, events),
             **allowlist,
-            **CallHandlers(
+            **CallHandlers.compose(
                 actor, policy, playback, progress=events, hold_music=hold_music
             ).handlers(),
         }

@@ -252,7 +252,7 @@ async def test_a_live_call_logs_its_conversation_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     call = _call(_Peer([]))
-    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call"):
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call_log"):
         await call.run(_dial)
     assert "Call live: conversation conv_1" in [r.message for r in caplog.records]
 
@@ -268,7 +268,7 @@ async def test_each_tool_call_is_logged_with_its_outcome(
         ]
     )
     call = _call(peer)
-    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call"):
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call_log"):
         await call.run(_dial)
     lines = [r.message for r in caplog.records if r.message.startswith("Call tool")]
     assert lines == [

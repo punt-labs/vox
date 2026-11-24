@@ -8,27 +8,21 @@ would invoke it, but synchronously and under the test's control.
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.conversation_mode.mic_audio_source import (
-    InputDevice,
-    InputStreamFactory,
-)
+from punt_vox.voxd.conversation_mode.input_device import InputDevice
 
 __all__ = [
     "FAKE_DEVICE",
+    "FakeBackend",
     "FakeCallbackFlags",
     "FakeInputStream",
-    "fake_device_query",
-    "fake_input_stream_factory",
 ]
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 FAKE_DEVICE = InputDevice("Fake Microphone", 48_000.0)
-
-
-def fake_device_query() -> InputDevice:
-    """Report :data:`FAKE_DEVICE` as the default input device."""
-    return FAKE_DEVICE
 
 
 @final
@@ -88,17 +82,39 @@ class FakeInputStream:
         self._closed = True
 
 
-def fake_input_stream_factory(created: list[FakeInputStream]) -> InputStreamFactory:
-    """Return a factory that records every :class:`FakeInputStream` it makes.
+@final
+class FakeBackend:
+    """A capture backend that reports :data:`FAKE_DEVICE` and records streams.
 
-    *created* accumulates streams in construction order, so a test can
+    ``created`` accumulates streams in construction order, so a test can
     reach the most recent one to :meth:`~FakeInputStream.feed` it once the
     generator under test has reached its first ``await``.
     """
 
-    def factory(**kwargs: object) -> FakeInputStream:
-        stream = FakeInputStream(**kwargs)
-        created.append(stream)
-        return stream
+    __slots__ = ("_created", "_open")
+    _created: list[FakeInputStream]
+    _open: Callable[..., FakeInputStream]
 
-    return factory
+    def __new__(
+        cls,
+        created: list[FakeInputStream] | None = None,  # None: a private list.
+        *,
+        open_stream: Callable[..., FakeInputStream] | None = None,  # None: a fake.
+    ) -> Self:
+        self = super().__new__(cls)
+        self._created = created if created is not None else []
+        self._open = open_stream if open_stream is not None else FakeInputStream
+        return self
+
+    @property
+    def created(self) -> list[FakeInputStream]:
+        """Return the streams opened so far, oldest first."""
+        return self._created
+
+    def device(self) -> InputDevice:
+        return FAKE_DEVICE
+
+    def open(self, **kwargs: object) -> FakeInputStream:
+        stream = self._open(**kwargs)
+        self._created.append(stream)
+        return stream

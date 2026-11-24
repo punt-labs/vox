@@ -1,19 +1,11 @@
 """Live microphone capture, yielding :class:`AudioChunk` at a fixed cadence.
 
-``sounddevice`` (PortAudio bindings) is the capture backend -- cross-platform
-by construction, so there is no macOS/Linux dispatch here the way
-``providers/say.py`` vs. ``providers/espeak.py`` need one for playback: both
-platforms reach the same :class:`~sounddevice.RawInputStream` class, and
-PortAudio itself resolves to CoreAudio or ALSA underneath. PortAudio's C
-library is a separate runtime dependency from the Python package (Homebrew's
-``portaudio`` on macOS, ``libportaudio2`` on most Linux distributions) --
-the same shape as ``pydub``'s ffmpeg dependency, which this project already
-accepts.
-
-The callback PortAudio invokes runs on its own audio thread, never the event
-loop's thread -- :meth:`MicAudioSource.chunks` bridges that with
-``loop.call_soon_threadsafe`` onto an :class:`asyncio.Queue`, the same
-pattern a WebSocket server uses to accept work from a non-asyncio thread.
+The backend that names the device and opens the stream is injected; the
+production one is :class:`~.input_device.PortAudio`. The callback the backend
+invokes runs on its own audio thread, never the event loop's thread --
+:meth:`MicAudioSource.chunks` bridges that with ``loop.call_soon_threadsafe``
+onto an :class:`asyncio.Queue`, the same pattern a WebSocket server uses to
+accept work from a non-asyncio thread.
 """
 
 from __future__ import annotations
@@ -21,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Buffer
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
 
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ, AudioChunk
@@ -35,42 +26,14 @@ if TYPE_CHECKING:
     # ``ImportError`` the moment this module is loaded.
     from sounddevice import CallbackFlags, RawInputCallback
 
+    from punt_vox.voxd.conversation_mode.input_device import InputDevice
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["InputDevice", "MicAudioSource"]
+__all__ = ["MicAudioSource"]
 
 # Match the voice call transport's 20 ms audio frames.
 _CHUNK_S = 0.02
-
-
-@runtime_checkable
-class InputStreamFactory(Protocol):
-    """Constructs a :class:`~sounddevice.RawInputStream`-shaped context manager.
-
-    The production implementation opens the default system microphone.
-    """
-
-    def __call__(
-        self,
-        *,
-        samplerate: float,
-        blocksize: int,
-        callback: RawInputCallback,
-    ) -> InputStreamHandle: ...
-
-
-@dataclass(frozen=True, slots=True)
-class InputDevice:
-    """The input device PortAudio opens by default, as it reports itself."""
-
-    name: str
-    default_samplerate_hz: float
-
-
-class InputDeviceQuery(Protocol):
-    """Looks up the default input device; the production one asks PortAudio."""
-
-    def __call__(self) -> InputDevice: ...
 
 
 @runtime_checkable
@@ -82,6 +45,16 @@ class InputStreamHandle(Protocol):
     def __exit__(self, *exc_info: object) -> None: ...
 
 
+class CaptureBackend(Protocol):
+    """Names the default input device and opens a raw stream on it."""
+
+    def device(self) -> InputDevice: ...
+
+    def open(
+        self, *, samplerate: float, blocksize: int, callback: RawInputCallback
+    ) -> InputStreamHandle: ...
+
+
 @final
 class MicAudioSource:
     """Yield fixed-duration PCM chunks from the system microphone.
@@ -90,41 +63,24 @@ class MicAudioSource:
     stream context releases the audio device.
     """
 
-    __slots__ = (
-        "_chunk_s",
-        "_input_device_query",
-        "_input_stream_factory",
-        "_sample_rate_hz",
-    )
+    __slots__ = ("_backend", "_chunk_s", "_sample_rate_hz")
+    _backend: CaptureBackend
     _sample_rate_hz: int
     _chunk_s: float
-    _input_stream_factory: InputStreamFactory
-    _input_device_query: InputDeviceQuery
 
     def __new__(
         cls,
+        backend: CaptureBackend,
         *,
         sample_rate_hz: int = SAMPLE_RATE_HZ,
         chunk_s: float = _CHUNK_S,
-        input_stream_factory: InputStreamFactory | None = None,
-        input_device_query: InputDeviceQuery | None = None,
     ) -> Self:
-        """Create a mic audio source; None for either hook selects PortAudio."""
+        """Create a mic audio source over ``backend``."""
         self = super().__new__(cls)
+        self._backend = backend
         self._sample_rate_hz = sample_rate_hz
         self._chunk_s = chunk_s
-        self._input_stream_factory = input_stream_factory or cls._open_stream
-        self._input_device_query = input_device_query or cls._default_device
         return self
-
-    def device(self) -> InputDevice:
-        """Return the default input device as PortAudio reports it.
-
-        Raises:
-            OSError: When PortAudio has no default input device.
-        """
-        query = self._input_device_query
-        return query()
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
         """Capture indefinitely, yielding one :class:`AudioChunk` per block.
@@ -137,9 +93,12 @@ class MicAudioSource:
         reports via ``status.input_overflow``) is logged, not measured into
         a corrected duration, since a live call has no test harness to
         replay a corrected value against.
+
+        Raises:
+            OSError: When the backend has no default input device.
         """
         block_frames = max(1, round(self._chunk_s * self._sample_rate_hz))
-        device = self.device()
+        device = self._backend.device()
         logger.info(
             "Call input device: %s (default %.0f Hz), capturing at %d Hz",
             device.name,
@@ -156,7 +115,7 @@ class MicAudioSource:
                 logger.warning("mic capture: input overflow (callback ran late)")
             loop.call_soon_threadsafe(queue.put_nowait, bytes(indata))
 
-        with self._input_stream_factory(
+        with self._backend.open(
             samplerate=float(self._sample_rate_hz),
             blocksize=block_frames,
             callback=_callback,
@@ -164,29 +123,3 @@ class MicAudioSource:
             while True:
                 pcm = await queue.get()
                 yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
-
-    @staticmethod
-    def _default_device() -> InputDevice:
-        """Ask PortAudio for the default input device, loading it on demand."""
-        from sounddevice import PortAudioError, query_devices
-
-        try:
-            info = query_devices(kind="input")
-        except PortAudioError as exc:
-            raise OSError(f"no default input device: {exc}") from exc
-        return InputDevice(str(info["name"]), float(info["default_samplerate"]))
-
-    @staticmethod
-    def _open_stream(
-        *, samplerate: float, blocksize: int, callback: RawInputCallback
-    ) -> InputStreamHandle:
-        """Open a raw mono PCM stream, loading optional PortAudio on demand."""
-        from sounddevice import RawInputStream
-
-        return RawInputStream(
-            samplerate=samplerate,
-            blocksize=blocksize,
-            channels=1,
-            dtype="int16",
-            callback=callback,
-        )
