@@ -545,12 +545,19 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/desktop_config.py": {
+    "efferent_coupling": 2.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.267,
+    "avg_lcom": 0.267
+  },
   "src/punt_vox/desktop_install.py": {
     "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.267,
+    "avg_lcom": 0.267
   },
   "src/punt_vox/desktop_registration.py": {
     "efferent_coupling": 1.0,
