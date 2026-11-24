@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
@@ -42,10 +42,15 @@ class _Daemon:
 class _Store:
     """A store that only ever answers reads, with *provider* configured."""
 
-    def __init__(self, provider: str | None, model: str | None = None) -> None:
+    _provider: str | None
+    _model: str | None
+
+    def __new__(cls, provider: str | None, model: str | None = None) -> Self:
+        self = super().__new__(cls)
         # None: no provider declared, which the session spec refuses.
         self._provider = provider
         self._model = model
+        return self
 
     def read(self) -> VoxConfig:
         return VoxConfig(
