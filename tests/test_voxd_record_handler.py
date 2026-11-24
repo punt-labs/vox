@@ -38,6 +38,27 @@ def _store(tmp_path: Path) -> RecordStore:
     return RecordStore(tmp_path / "recordings")
 
 
+def _shortest_overlong_name(directory: Path) -> str:
+    """Return the shortest multibyte name *directory*'s filesystem refuses.
+
+    ``PC_NAME_MAX`` is 255 on both ext4 and APFS, but ext4 counts bytes and
+    APFS counts characters, so a name of 128 two-byte characters overflows
+    the one and is legal on the other. Ask the filesystem rather than assume:
+    the name is one character past the limit only where that limit is in
+    characters.
+    """
+    limit = os.pathconf(directory, "PC_NAME_MAX")
+    by_bytes = "é" * (limit // len(os.fsencode("é")) + 1)
+    try:
+        (directory / by_bytes).touch()
+    except OSError as exc:
+        if exc.errno != errno.ENAMETOOLONG:
+            raise
+        return by_bytes
+    (directory / by_bytes).unlink()
+    return "é" * (limit + 1)
+
+
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
     """Return a mock websocket and the list of payloads it is sent."""
     sent: list[dict[str, object]] = []
@@ -505,9 +526,7 @@ class TestRecordHandler:
         )
         handler = RecordHandler(synthesis=synth, store=store)
         ws, sent = _capturing_ws()
-        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
-        name = "é" * (limit // len(os.fsencode("é")) + 1)
-        assert len(name) <= limit < len(os.fsencode(name))
+        name = _shortest_overlong_name(tmp_path)
 
         msg: dict[str, object] = {
             "type": "record",
