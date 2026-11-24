@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import ssl
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -80,6 +82,86 @@ class TestElevenLabsProviderResolveVoice:
         assert exc_info.value.voice_name == "nonexistent"
         assert isinstance(exc_info.value.available, list)
         assert len(exc_info.value.available) > 0
+        assert exc_info.value.available == ["drew", "matilda"]
+
+    def test_unknown_voice_keeps_distinct_voices_with_the_same_short_name(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+        assert mock_elevenlabs_client.voices.get_all.call_count == 2
+
+        expected = {
+            "drew - baritone": "AAAAAAAAAAAAAAAAAAAA",
+            "drew - eloquent, calm": "29vD33N1CtxCmqQRPOHJ",
+            "matilda": "XrExE9yKIg1WjnnlVkGX",
+        }
+        assert exc_info.value.available == list(expected)
+        rendered = str(exc_info.value).split(". Available: ", 1)[1]
+        assert ast.literal_eval(rendered) == list(expected)
+
+        for name in [*exc_info.value.available, "drew"]:
+            provider.synthesize(
+                SynthesisRequest(text="Hello", voice=name), tmp_path / "voice.mp3"
+            )
+            bound = mock_elevenlabs_client.text_to_speech.stream.call_args
+            assert bound.kwargs["voice_id"] == expected.get(
+                name, expected["drew - eloquent, calm"]
+            )
+
+    def test_unknown_voice_skips_names_interpreted_as_ids(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        voice_id = "XrExE9yKIg1WjnnlVkGX"
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("ABCDEFGHIJKLMNOPQRST - bright, calm", voice_id),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        suggestion = "abcdefghijklmnopqrst - bright, calm"
+        assert exc_info.value.available == [suggestion, "drew"]
+        provider.synthesize(
+            SynthesisRequest(text="Hello", voice=suggestion), tmp_path / "voice.mp3"
+        )
+        assert (
+            mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["voice_id"]
+            == voice_id
+        )
+
+    def test_unknown_voice_keeps_a_colliding_full_name_without_a_description(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
+
+    @staticmethod
+    def _voice_catalog(*entries: tuple[str, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            voices=[
+                SimpleNamespace(name=name, voice_id=voice_id)
+                for name, voice_id in entries
+            ]
+        )
 
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock

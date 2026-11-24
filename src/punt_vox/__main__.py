@@ -597,6 +597,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 def doctor(  # pyright: ignore[reportUnusedFunction]
     *,
     json_output: JsonOutput = False,
+    verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
     """Check system health for vox.
@@ -606,7 +607,7 @@ def doctor(  # pyright: ignore[reportUnusedFunction]
     """
     from punt_vox.cli_doctor import DoctorCli
 
-    _flags.apply(json_output=json_output, verbose=False, quiet=quiet)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     DoctorCli.emit(_formatter, VoxClientSync())
 
 

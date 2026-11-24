@@ -1309,7 +1309,9 @@ class TestVoiceCommand:
         result = CliRunner().invoke(app, ["voice", "nobody"])
 
         assert result.exit_code == 1, result.output
-        assert "Error: nobody (available: matilda, roger)" in result.output
+        assert "Error: Unknown voice 'nobody'. Available: ['matilda', 'roger']" in (
+            result.output
+        )
         assert config.read_text() == original
         mock_client_cls.return_value.voices.assert_called_once_with(
             provider="elevenlabs"
@@ -1379,7 +1381,7 @@ class TestVoiceCommand:
         else:
             assert result.exit_code == 1, result.output
             assert json.loads(result.output) == {
-                "error": f"{voice_id} (available: alloy)"
+                "error": f"Unknown voice {voice_id!r}. Available: ['alloy']"
             }
             assert config.read_text() == original
 
@@ -1808,6 +1810,18 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
         assert result.exit_code == 1, click.unstyle(result.stderr)
         assert result.output == ""
+
+    def test_verbose_enables_debug_logging(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cli_io.configure_client_logging") as configure:
+            result = self._run_doctor(tmp_path, args=("doctor", "--verbose"))
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        assert "Daemon: running" in result.stdout
+        configure.assert_called_with(role="cli", verbose=True)
+
+    def test_verbose_and_quiet_are_mutually_exclusive(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, args=("doctor", "--verbose", "--quiet"))
+        assert result.exit_code == 2
+        assert "mutually exclusive" in click.unstyle(result.stderr)
 
     def test_mpv_missing_fails(self, tmp_path: Path) -> None:
         # mpv is a hard dependency: absence is a red \u2717 and a non-zero exit.
