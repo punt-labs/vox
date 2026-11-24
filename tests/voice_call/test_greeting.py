@@ -17,7 +17,7 @@ def test_greeting_names_two_repositories_in_one_sentence() -> None:
 def test_greeting_without_repositories_gives_the_allow_command() -> None:
     assert CallGreeting(()).spoken() == (
         f"{_INTRO}, but no repository is allowlisted yet, "
-        "so run vox worker allow <path> to add one."
+        "so run vox worker allow followed by the repository path to add one."
     )
 
 
@@ -26,5 +26,17 @@ def test_greeting_is_two_spoken_sentences_without_paths_or_markup() -> None:
     assert greeting.count(". ") == 1
     assert greeting.endswith(".")
     assert "/" not in greeting
-    assert not any(mark in greeting for mark in ("*", "`", "#", "\n", "- "))
+    assert not any(mark in greeting for mark in ("*", "`", "#", "<", ">", "\n", "- "))
     assert "alpha, beta and gamma" in greeting
+
+
+def test_greeting_qualifies_repositories_that_share_a_name() -> None:
+    greeting = CallGreeting(("/work/api", "/home/api", "/x/web")).spoken()
+    assert greeting == f"{_INTRO} in work api, home api and web."
+
+
+def test_empty_allowlist_greeting_has_no_angle_brackets() -> None:
+    greeting = CallGreeting(()).spoken()
+    assert "<" not in greeting
+    assert ">" not in greeting
+    assert "vox worker allow" in greeting

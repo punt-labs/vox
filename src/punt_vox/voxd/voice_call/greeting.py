@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import PurePath
 from typing import Final, Self, final
 
 __all__ = ["CallGreeting"]
 
 _INTRO: Final = "Hello, this is Vox. I start, steer, check and stop coding workers"
-_ALLOW_COMMAND: Final = "vox worker allow <path>"
+# Spoken, not typed: a TTS engine would read "<path>" aloud, brackets and all.
+_ALLOW_COMMAND: Final = "vox worker allow followed by the repository path"
 
 
 @final
@@ -19,9 +21,11 @@ class CallGreeting:
     _names: tuple[str, ...]
 
     def __new__(cls, projects: tuple[str, ...]) -> Self:
-        """Keep only the last path segment of each allowlisted repository."""
+        """Name each repository by its last path segment, qualified when shared."""
         self = super().__new__(cls)
-        self._names = tuple(PurePath(project).name or project for project in projects)
+        paths = tuple(PurePath(project) for project in projects)
+        shared = Counter(path.name for path in paths)
+        self._names = tuple(cls._spoken(path, shared) for path in paths)
         return self
 
     def spoken(self) -> str:
@@ -32,6 +36,13 @@ class CallGreeting:
                 f"so run {_ALLOW_COMMAND} to add one."
             )
         return f"{_INTRO} in {self._listed()}."
+
+    @staticmethod
+    def _spoken(path: PurePath, shared: Counter[str]) -> str:
+        """Return the last segment, with its parent in front when another shares it."""
+        if shared[path.name] > 1:
+            return f"{path.parent.name} {path.name}".strip()
+        return path.name or str(path)
 
     def _listed(self) -> str:
         if len(self._names) == 1:

@@ -48,7 +48,7 @@ def test_fresh_call_without_repositories_greets_with_the_allow_command(
 
     assert options.first_message == CallGreeting(()).spoken()
     assert options.first_message is not None
-    assert "vox worker allow <path>" in options.first_message
+    assert "vox worker allow followed by the repository path" in options.first_message
 
 
 def test_greeting_precedes_unchanged_away_updates(tmp_path: Path) -> None:

@@ -124,8 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A vox call now opens with the agent speaking first. It says it is Vox,
   that it starts, steers, checks and stops coding workers, and names the
-  allowlisted repositories, or tells you to run `vox worker allow <path>`
-  when none is. Away updates follow the greeting. (PL-1495)
+  allowlisted repositories, or tells you to run `vox worker allow` with the
+  repository path when none is. Away updates follow the greeting. (PL-1495)
 
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
