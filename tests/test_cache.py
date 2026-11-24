@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,6 +90,16 @@ class TestCacheKey:
         assert (
             CacheKey("a\0b", "c", "p").filename != CacheKey("a", "b\0c", "p").filename
         )
+
+    def test_cache_without_tail_fade_is_not_served(self, tmp_path: Path) -> None:
+        key = CacheKey("Hello there.", "adam", "elevenlabs", model="eleven_v3")
+        payload = json.dumps(
+            {"version": 2, **asdict(key)}, sort_keys=True, separators=(",", ":")
+        ).encode()
+        digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        _fake_mp3(tmp_path / f"{digest}.mp3")
+        with patch("punt_vox.cache.CACHE_DIR", tmp_path):
+            assert cache_get(key) is None
 
     def test_unset_settings_differ_from_zero_and_false(self) -> None:
         key = CacheKey("hello", None, None)

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import io
+import shutil
+import struct
+from itertools import pairwise
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from pydub import AudioSegment
 
-from punt_vox.core import TRAILING_SILENCE_MS, TTSClient, stitch_audio
+from punt_vox.core import TTSClient, stitch_audio
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.types import (
     AudioProviderId,
@@ -18,6 +21,8 @@ from punt_vox.types import (
     SynthesisResult,
     generate_filename,
 )
+
+TRAILING_SILENCE_MS = 150
 
 
 class TestTTSClientSynthesize:
@@ -300,6 +305,36 @@ class TestStitchAudio:
         assert out.exists()
         assert out.stat().st_size > seg1.stat().st_size
 
+    @pytest.mark.parametrize("mode", ["synthesize", "stitch"])
+    def test_final_audio_fades_into_silence(self, tmp_path: Path, mode: str) -> None:
+        source = tmp_path / "source.mp3"
+        self._write_fake_mp3(source, "sine=frequency=433:sample_rate=44100")
+        before = AudioSegment.from_mp3(source)
+        out = tmp_path / "out.mp3"
+
+        if mode == "synthesize":
+
+            def synthesize(request: SynthesisRequest, path: Path) -> SynthesisResult:
+                shutil.copyfile(source, path)
+                return SynthesisResult(
+                    path=path, text=request.text, provider=AudioProviderId.elevenlabs
+                )
+
+            provider = MagicMock()
+            provider.synthesize.side_effect = synthesize
+            TTSClient(provider).synthesize(SynthesisRequest(text="test"), out)
+        else:
+            stitch_audio([source], out)
+
+        after = AudioSegment.from_mp3(out)
+        junction = len(before.raw_data) // before.sample_width
+        radius = before.frame_rate // 500
+        window = after.raw_data[(junction - radius) * 2 : (junction + radius) * 2]
+        samples = [value for (value,) in struct.iter_unpack("<h", window)]
+        assert max(abs(b - a) for a, b in pairwise(samples)) < 200
+        assert len(after) == len(before) + TRAILING_SILENCE_MS
+        assert not any(after[-100:].raw_data)
+
     def test_stitch_preserves_mixed_format_output_with_linear_copy_work(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -312,7 +347,10 @@ class TestStitchAudio:
         expected = AudioSegment.from_mp3(low)
         for path in segments[1:]:
             expected = expected + pause + AudioSegment.from_mp3(path)
-        expected = expected + AudioSegment.silent(duration=TRAILING_SILENCE_MS)
+        tail = AudioSegment.silent(
+            duration=TRAILING_SILENCE_MS, frame_rate=expected.frame_rate
+        )
+        expected = expected.fade_out(20) + tail
         reference = io.BytesIO()
         expected.export(reference, format="mp3")
 
