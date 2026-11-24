@@ -70,7 +70,8 @@ class TestPanelSettings:
     ) -> None:
         store = ConfigStore(tmp_path)
         settings = PanelSettings(_Roster(), store)
-        settings.replace(
+        settings.replace_if_current(
+            settings.snapshot(),
             PanelState.empty().with_provider(
                 "openai", roster=("alloy", "nova"), model="tts-1", voice="nova"
             ),
@@ -96,7 +97,8 @@ class TestPanelSettings:
         class _RacingRoster:
             def voices(self, provider: VoiceTarget) -> list[str]:
                 assert provider.provider == "espeak"
-                settings.replace(
+                settings.replace_if_current(
+                    settings.snapshot(),
                     settings.snapshot().with_provider(
                         "openai", roster=("alloy",), model="tts-1", voice="alloy"
                     ),
@@ -106,7 +108,8 @@ class TestPanelSettings:
 
         store = ConfigStore(tmp_path)
         settings = PanelSettings(_RacingRoster(), store)
-        settings.replace(
+        settings.replace_if_current(
+            settings.snapshot(),
             PanelState.empty().with_provider(
                 "elevenlabs", roster=("benno",), model=None, voice="benno"
             ),
@@ -151,7 +154,8 @@ class TestPanelSettings:
         class _RacingRoster:
             def voices(self, target: VoiceTarget) -> list[str]:
                 assert target.provider == "elevenlabs"
-                settings.replace(
+                settings.replace_if_current(
+                    settings.snapshot(),
                     settings.snapshot().with_provider(
                         provider, roster=("new",), model=model, voice="new"
                     ),
@@ -161,7 +165,8 @@ class TestPanelSettings:
 
         store = ConfigStore(tmp_path)
         settings = PanelSettings(_RacingRoster(), store)
-        settings.replace(
+        settings.replace_if_current(
+            settings.snapshot(),
             PanelState.empty().with_provider(
                 "elevenlabs", roster=("matilda",), model=None, voice="matilda"
             ),

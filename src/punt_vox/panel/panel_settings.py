@@ -56,11 +56,13 @@ class PanelSettings:
         with self._lock:
             return replace(self._state.scene(), notice=self._notice)
 
-    def replace(self, state: PanelState, notice: PanelNotice) -> None:
-        """Install resynced settings and their notice together."""
+    def replace_if_current(
+        self, before: PanelState, state: PanelState, notice: PanelNotice
+    ) -> None:
+        """Install a resync only if nothing committed while it fetched voices."""
         with self._lock:
-            self._state = state
-            self._notice = notice
+            if self._state is before:
+                self._state, self._notice = state, notice
 
     def note(self, notice: PanelNotice) -> None:
         """Set the notice without changing the confirmed settings."""
@@ -206,8 +208,7 @@ class PanelSettings:
         ``commit_provider`` does: the widget already applied the pick and
         ``_state`` never moved, so only a full reinstall corrects it.
         """
-        with self._lock:
-            before = self._state
+        before = self.snapshot()
         pre_fetch_provider = before.provider
         if pre_fetch_provider is None:
             # A provider-less panel renders no clickable model at all, so a

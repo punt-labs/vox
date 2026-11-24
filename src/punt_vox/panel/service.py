@@ -243,7 +243,7 @@ class VoxPanelService:
 
     def _resync(
         self,
-        notice_on_success: PanelNotice,
+        notice: PanelNotice,
         *,
         on_read_failure: PanelNotice,
         on_rejection: Callable[[str], PanelNotice],
@@ -261,6 +261,7 @@ class VoxPanelService:
         silently replaced by a generic one blaming an unrelated
         subsystem -- the caller supplies a composed notice for each.
         """
+        before = self._settings.snapshot()
         fresh = PanelState.read(self._store)
         try:
             fresh = fresh.with_roster(self._client)
@@ -269,15 +270,14 @@ class VoxPanelService:
             # supplies the composition so a write-failure in flight is not
             # dropped when the confirming read also hits a rejection.
             logger.warning("vox-panel: voxd refused the resync: %s", exc)
-            self._settings.replace(fresh, on_rejection(str(exc)))
+            notice = on_rejection(str(exc))
         except VoxdConnectionError:
             logger.warning(
                 "vox-panel: voxd unreachable during resync: %s",
                 on_read_failure.message,
             )
-            self._settings.note(on_read_failure)
-        else:
-            self._settings.replace(fresh, notice_on_success)
+            fresh, notice = before, on_read_failure
+        self._settings.replace_if_current(before, fresh, notice)
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:

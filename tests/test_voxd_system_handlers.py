@@ -325,6 +325,22 @@ class TestVoicesHandler:
         assert "tts-2" in str(ws.sent[-1]["message"])
 
     @pytest.mark.asyncio
+    async def test_elevenlabs_roster_accepts_unlisted_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-test")
+        monkeypatch.setattr(
+            ElevenLabsProvider, "list_voices", MagicMock(return_value=["roger"])
+        )
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "elevenlabs", "model": "eleven_monolingual_v1"},
+            cast("WebSocket", ws),
+        )
+        assert ws.sent[-1]["type"] == "voices"
+        assert ws.sent[-1]["voices"] == ["roger"]
+
+    @pytest.mark.asyncio
     async def test_operational_failure_is_a_fault_not_a_rejection(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:

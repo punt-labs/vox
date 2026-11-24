@@ -110,8 +110,8 @@ class VoicesHandler(MessageHandler):
         try:
             name = parse_required_str(msg, "provider")
             model = (parse_optional_str(msg, "model") or "").strip()
-            if model:
-                MODEL_TABLE.validate(model, name.lower())
+            if model and name.lower() == "openai":
+                MODEL_TABLE.validate(model, "openai")
             provider = get_provider(name, model=model or None)
             voice_list = await asyncio.to_thread(provider.list_voices)
         except (ValueError, LookupError, OSError) as exc:

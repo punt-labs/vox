@@ -591,6 +591,35 @@ class TestApplyEvent:
         service.apply_event(PanelTopic.MODEL, {"value": items.index("gpt-4o-mini-tts")})
         assert store.written == {"model": "gpt-4o-mini-tts", "voice": "alloy"}
 
+    @pytest.mark.parametrize("rejected", [False, True])
+    def test_refresh_does_not_overwrite_concurrent_model_pick(
+        self, rejected: bool
+    ) -> None:
+        class _RacingClient:
+            race = False
+
+            def voices(self, target: VoiceTarget) -> list[str]:
+                if target.model == "gpt-4o-mini-tts":
+                    return ["alloy", "marin"]
+                assert target == VoiceTarget("openai", "tts-1")
+                if self.race:
+                    service.apply_event(PanelTopic.MODEL, {"value": 3})
+                    if rejected:
+                        raise VoxdRejectionError("old roster refused")
+                return ["alloy"]
+
+        client = _RacingClient()
+        store = _FakeStore(_config(provider="openai", model="tts-1", voice="alloy"))
+        service = VoxPanelService(client, store)  # type: ignore[arg-type]
+        service.prefetch()
+        client.race = True
+
+        service.refresh()
+
+        assert store.written["model"] == "gpt-4o-mini-tts"
+        assert service.scene().model == "gpt-4o-mini-tts"
+        assert service.scene().roster == ("alloy", "marin")
+
     def test_provider_roster_fetch_error_aborts_the_write(self) -> None:
         """VoxdConnectionError on the roster fetch surfaces a notice, no disk write.
 
