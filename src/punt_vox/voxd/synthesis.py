@@ -17,9 +17,9 @@ from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
+    SynthesisSpec,
     TTSProvider,
 )
-from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.direct_play import DirectPlayInvocation, DirectPlayResult
 from punt_vox.voxd.synthesis_cache import SynthesisCache
