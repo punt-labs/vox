@@ -213,6 +213,27 @@ class TestWritableConfigDir:
         assert writable_config_dir(child) == no_config_dir / DEFAULT_CONFIG_DIR
         assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
 
+    @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory"])
+    def test_first_write_refuses_a_destination_outside_the_checkout(
+        self, no_config_dir: Path, entry: str
+    ) -> None:
+        repo = no_config_dir / "repo"
+        child = repo / "src"
+        child.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        config = repo / DEFAULT_CONFIG_DIR
+        outside = no_config_dir / "outside"
+        if entry == "directory":
+            config.parent.mkdir()
+            config.symlink_to(outside, target_is_directory=True)
+        else:
+            config.mkdir(parents=True)
+            (config / entry).symlink_to(outside)
+
+        with pytest.raises(OSError, match="outside the Git checkout"):
+            writable_config_dir(child)
+        assert not outside.exists()
+
     def test_no_config_or_repo(self, tmp_path: Path) -> None:
         with (
             patch("punt_vox.dirs.find_config_dir", return_value=None),

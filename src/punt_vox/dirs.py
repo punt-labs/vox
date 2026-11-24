@@ -8,10 +8,12 @@ import sys
 from itertools import product
 from pathlib import Path
 
-from punt_vox.config_seed import InheritedConfig
+from punt_vox.config_target import (
+    CONFIG_PATHS,
+    DEFAULT_CONFIG_DIR as DEFAULT_CONFIG_DIR,
+    RepoConfigTarget,
+)
 
-DEFAULT_CONFIG_DIR = Path(".punt-labs") / "vox"
-_CONFIG_PATHS = (DEFAULT_CONFIG_DIR / "vox.md", DEFAULT_CONFIG_DIR / "vox.local.md")
 _XDG_MUSIC_SETTING = re.compile(r'^XDG_MUSIC_DIR="([^"]*)"', re.MULTILINE)
 
 
@@ -33,7 +35,7 @@ def find_config_dir(start: Path | None = None) -> Path | None:
     exists inside it.  No legacy fallback.  A repo with no config of its
     own inherits the nearest one above it (e.g. its workspace's).
     """
-    paths = (base / name for base, name in product(_ancestors(start), _CONFIG_PATHS))
+    paths = (base / name for base, name in product(_ancestors(start), CONFIG_PATHS))
     return next((path.parent for path in paths if path.exists()), None)
 
 
@@ -44,15 +46,15 @@ def writable_config_dir(start: Path | None = None) -> Path | None:
     isn't one, write to the repo root's ``.punt-labs/vox/``, seeding it from
     any config inherited from above the repo. Outside a git repo, use
     :func:`find_config_dir` as-is.
+
+    Raises:
+        PermissionError: A new repository config resolves outside the checkout.
     """
     found = find_config_dir(start)
     root = find_repo_root(start)
     if root is None or (found is not None and found.is_relative_to(root)):
         return found
-    own = root / DEFAULT_CONFIG_DIR
-    if found is not None:
-        InheritedConfig(found).seed(root, own)
-    return own
+    return RepoConfigTarget(root).prepare(found)
 
 
 def _read_xdg_music_dir() -> Path | None:
