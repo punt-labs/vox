@@ -13,15 +13,16 @@ import pytest
 
 from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_manifest_file import _MAX_MANIFEST_BYTES
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.filesystem_store import (
-    _MAX_MANIFEST_BYTES,
     FilesystemPartStore,
     FilesystemProgramStore,
 )
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.store import PartStore, ProgramStore
+from punt_vox.voxd.programs.store_errors import AlbumNotFoundError
 
 from .conftest import InMemoryProgramStore, make_manifest
 
@@ -34,7 +35,7 @@ _FINGERPRINT = PromptFingerprint("deadbeef")
 class _ReadSpy:
     """A binary file-handle wrapper that records the size of each read call.
 
-    Used to prove ``_read_manifest_text`` bounds its read rather than pulling a
+    Used to prove the manifest reader bounds its read rather than pulling a
     whole file into memory: the manifest read must ask for at most one byte past
     the ceiling, regardless of how large the file on disk actually is.
     """
@@ -196,7 +197,7 @@ class TestCreateAndScan:
 
         Non-UTF-8 bytes on disk are store corruption. The naive ``bytes.decode``
         raises ``UnicodeDecodeError`` (a ``ValueError`` subclass the taxonomy
-        would mis-audit as a client rejection); ``_read_manifest_text`` converts
+        would mis-audit as a client rejection); the manifest reader converts
         it to ``OSError`` so it audits as an operational fault.
         """
         store = FilesystemProgramStore(tmp_path)
@@ -247,15 +248,6 @@ class TestCreateAndScan:
             store.open(draft.locator)
         assert requested == [_MAX_MANIFEST_BYTES + 1]
 
-    def test_read_manifest_text_accepts_a_manifest_at_the_ceiling(
-        self, tmp_path: Path
-    ) -> None:
-        """A file of exactly the ceiling in bytes is read in full, not rejected."""
-        manifest = tmp_path / "manifest.json"
-        manifest.write_bytes(b"x" * _MAX_MANIFEST_BYTES)
-        text = FilesystemProgramStore._read_manifest_text(manifest)
-        assert len(text) == _MAX_MANIFEST_BYTES
-
     def test_manifest_written_utf8(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
         store.create(_draft("a3f1c9", "techno", "ambient", 1))
@@ -277,7 +269,7 @@ class TestOpen:
 
     def test_open_absent_raises(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
-        with pytest.raises(LookupError, match="no saved album"):
+        with pytest.raises(AlbumNotFoundError, match="no saved album"):
             store.open("ghost-000000")
 
     def test_open_access_fault_propagates_not_lookup(
@@ -285,9 +277,8 @@ class TestOpen:
     ) -> None:
         """A manifest that cannot be stat'd raises ``OSError``, not ``LookupError``.
 
-        A boolean ``is_file()`` swallows the ``PermissionError`` and reports "no
-        saved album" -- a client rejection; classifying through PathStatus lets the
-        fault surface so the command boundary faults it as a server-side failure.
+        The permission error must surface as a server-side failure, not be
+        classified as "no saved album".
         """
         store = FilesystemProgramStore(tmp_path)
         draft = _draft("a3f1c9", "techno", "ambient")

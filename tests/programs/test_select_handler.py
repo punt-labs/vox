@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from shutil import rmtree
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.programs.select_handler import SelectHandler
@@ -48,6 +49,33 @@ class TestSelectHandler:
         assert reply == {"type": "program_select", "id": "1"}
         await service.run_once()
         assert service.status().now_playing is not None
+
+    async def test_by_tags_skips_a_deleted_album(self, tmp_path: Path) -> None:
+        first = seed_album(tmp_path, 2, album_id="bbbbbb")
+        second = seed_album(tmp_path, 3, album_id="cccccc", vibe="calm")
+        missing = seed_album(tmp_path, 1)
+        service = make_service(tmp_path)
+        rmtree(tmp_path / missing)
+
+        reply = await _reply(service, {"id": "req", "style": "techno"})
+
+        assert reply == {"type": "program_select", "id": "req"}
+        await service.run_once()
+        assert service.active_backing_locators() == frozenset({first, second})
+        assert service.status().now_playing is not None
+
+    async def test_by_tags_errors_when_all_matching_albums_are_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        missing = seed_album(tmp_path, 1)
+        seed_album(tmp_path, 1, style="trance", album_id="bbbbbb")
+        service = make_service(tmp_path)
+        rmtree(tmp_path / missing)
+
+        reply = await _reply(service, {"id": "req", "style": "techno"})
+
+        assert reply["type"] == "error"
+        assert reply["message"] == "no albums match the selection"
 
     async def test_by_id_is_a_direct_lookup(self, tmp_path: Path) -> None:
         seed_album(
