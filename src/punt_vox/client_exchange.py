@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Self, cast, final
+from typing import Self, cast, final
 
 import websockets
 import websockets.asyncio.client
@@ -69,7 +69,8 @@ class VoxdExchange:
         except (websockets.exceptions.WebSocketException, OSError) as exc:
             raise VoxdConnectionError(self._failure(exc)) from exc
 
-    async def reply(self, timeout: float) -> dict[str, Any]:
+    # Reply fields vary by request; this boundary only validates the envelope.
+    async def reply(self, timeout: float) -> dict[str, object]:
         """Receive and decode the request's single reply within *timeout*.
 
         Raises:
@@ -80,7 +81,8 @@ class VoxdExchange:
         timeout_msg = f"Timeout waiting for response to '{self.op}'"
         return await self._recv_within(timeout, timeout_msg)
 
-    async def recv_before(self, deadline: float, expected: str) -> dict[str, Any]:
+    # Stream frames have different fields depending on the frame type.
+    async def recv_before(self, deadline: float, expected: str) -> dict[str, object]:
         """Receive and decode one frame before *deadline*.
 
         *expected* names the frame awaited; the timeout names it in the op.
@@ -113,7 +115,8 @@ class VoxdExchange:
             assembly.append(await self.recv_before(deadline, "chunk"), seq)
         return assembly.finish(await self.recv_before(deadline, "fetch_end"))
 
-    async def _recv_within(self, timeout: float, timeout_msg: str) -> dict[str, Any]:
+    # The receive path is shared by single replies and streamed frames.
+    async def _recv_within(self, timeout: float, timeout_msg: str) -> dict[str, object]:
         """Receive and decode one frame, wrapping every transport failure.
 
         A timeout is a protocol failure; a dropped socket is a connection one.
@@ -131,7 +134,8 @@ class VoxdExchange:
         return f"connection to voxd lost during '{self.op}': {exc}"
 
     @staticmethod
-    def decode(raw: object) -> dict[str, Any]:
+    # Wire objects have string keys, but field schemas depend on the operation.
+    def decode(raw: object) -> dict[str, object]:
         """Parse an object frame, rejecting invalid JSON and daemon error replies.
 
         Raises:
@@ -144,7 +148,7 @@ class VoxdExchange:
             raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
         if not isinstance(parsed, dict):
             raise VoxdProtocolError("expected a JSON object from voxd")
-        resp = cast("dict[str, Any]", parsed)
+        resp = cast("dict[str, object]", parsed)  # JSON object keys are always strings.
         if resp.get("type") == "error":
             raise VoxdRejectionError(str(resp.get("message", "unknown error")))
         return resp
