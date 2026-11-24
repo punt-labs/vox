@@ -29,6 +29,7 @@ from .fake_rest import FakeConvAIRest
 from .steps import (
     HangUp,
     SendAgentResponse,
+    SendInterruption,
     SendToolCall,
     SendUserTranscript,
     WaitForToolResult,
@@ -37,11 +38,29 @@ from .steps import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from .steps import Step
+
 pytestmark = pytest.mark.call_e2e
 
 _STARTUP_TIMEOUT_S = 30.0
-_CALL_TIMEOUT_S = 60.0
+# Every `vox call` the tier runs is bounded; a fake that never hangs up must
+# fail the test here, not hold the suite.
+_CALL_TIMEOUT_S = 45.0
+_STOP_TIMEOUT_S = 10.0
 _TASK = "add greeting.py"
+_TOOL_CALL_STEPS: tuple[Step, ...] = (
+    SendUserTranscript("please add a greeting"),
+    SendAgentResponse("Starting a worker on that now.", 1),
+    SendToolCall("start_worker", "call_1", {"task": _TASK}),
+    WaitForToolResult("call_1"),
+    HangUp(),
+)
+_INTERRUPTED_STEPS: tuple[Step, ...] = (
+    SendUserTranscript("please add a greeting"),
+    SendAgentResponse("Starting a worker on that now.", 1),
+    SendInterruption(1),
+    HangUp(),
+)
 
 
 def _free_port() -> int:
@@ -120,28 +139,33 @@ def _script(tmp_path: Path) -> Path:
     return script
 
 
-def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[str]:
+def _vox(
+    env: dict[str, str], *args: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "punt_vox", "call", "--script", str(script)],
+        [sys.executable, "-m", "punt_vox", *args],
         env=env,
         capture_output=True,
         text=True,
-        timeout=_CALL_TIMEOUT_S,
+        timeout=timeout,
         check=False,
     )
 
 
+def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[str]:
+    """Place one scripted call; whatever happens, leave no call live in voxd."""
+    try:
+        return _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
+    finally:
+        # A call the CLI gave up on is still live in the daemon until stopped;
+        # with no call active the stop is refused, which is the normal case.
+        _vox(env, "call", "stop", timeout=_STOP_TIMEOUT_S)
+
+
 async def _run_call(
-    env: dict[str, str], script: Path
+    env: dict[str, str], script: Path, steps: tuple[Step, ...]
 ) -> tuple[FakeConvAIAgent, FakeConvAIRest, subprocess.CompletedProcess[str]]:
     """Start both fakes, then voxd with their addresses, then place the call."""
-    steps = (
-        SendUserTranscript("please add a greeting"),
-        SendAgentResponse("Starting a worker on that now.", 1),
-        SendToolCall("start_worker", "call_1", {"task": _TASK}),
-        WaitForToolResult("call_1"),
-        HangUp(),
-    )
     async with FakeConvAIAgent(steps) as agent:
         with FakeConvAIRest(agent.signed_url) as rest:
             env = {**env, "VOX_CONVAI_BASE_URL": rest.base_url}
@@ -150,11 +174,22 @@ async def _run_call(
             return agent, rest, result
 
 
+def _trace_events(report: str) -> list[str]:
+    trace_line = next(
+        line for line in report.splitlines() if line.startswith("trace: ")
+    )
+    trace = Path(trace_line.removeprefix("trace: "))
+    assert trace.is_file()
+    return [json.loads(line)["type"] for line in trace.read_text().splitlines()]
+
+
 def test_scripted_call_reaches_the_tool_result(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """One call provisions, dials, answers a tool call, and reports its end."""
-    agent, rest, result = asyncio.run(_run_call(voxd_env, _script(tmp_path)))
+    agent, rest, result = asyncio.run(
+        _run_call(voxd_env, _script(tmp_path), _TOOL_CALL_STEPS)
+    )
 
     assert ("POST", "/v1/convai/agents/create") in rest.requests
     override = cast(
@@ -163,21 +198,36 @@ def test_scripted_call_reaches_the_tool_result(
     assert "agent" in override
     tool_result = agent.tool_results["call_1"]
     # No tmux on the daemon's PATH, so the worker launch fails and the daemon
-    # reports it to the agent rather than starting a real coding session.
+    # reports it to the agent rather than starting a real coding session. The
+    # missing binary is an OSError, so the agent hears the path-free fault and
+    # the raw detail (the tmux name) goes to the daemon log alone.
     assert tool_result["is_error"] is True
-    assert "tmux" in str(tool_result["result"]).lower() or "No such file" in str(
-        tool_result["result"]
-    )
+    assert json.loads(str(tool_result["result"])) == {"error": "operation failed"}
+    daemon_log = Path(voxd_env["HOME"]) / ".punt-labs" / "vox" / "logs" / "vox.log"
+    assert "call tool start_worker failed: " in daemon_log.read_text()
+    assert "tmux" in daemon_log.read_text()
 
     report = result.stdout + result.stderr
     assert "agent: Starting a worker on that now." in report
     assert "tool: start_worker(" in report
     assert ") -> error" in report
-    trace_line = next(
-        line for line in report.splitlines() if line.startswith("trace: ")
-    )
-    trace = Path(trace_line.removeprefix("trace: "))
-    assert trace.is_file()
-    events = [json.loads(line)["type"] for line in trace.read_text().splitlines()]
+    events = _trace_events(report)
     assert "ws_open" in events
     assert "client_tool_result" in events
+
+
+def test_interruption_then_hangup_ends_the_call_cleanly(
+    tmp_path: Path, voxd_env: dict[str, str]
+) -> None:
+    """An interruption mid-reply, then a remote hangup, is a clean end, not a fault."""
+    agent, _rest, result = asyncio.run(
+        _run_call(voxd_env, _script(tmp_path), _INTERRUPTED_STEPS)
+    )
+
+    report = result.stdout + result.stderr
+    assert result.returncode == 0, report
+    assert "call ended" in report
+    assert "agent: Starting a worker on that now." in report
+    assert not [line for line in report.splitlines() if line.startswith("error: ")]
+    assert "interruption" in _trace_events(report)
+    assert agent.tool_results == {}
