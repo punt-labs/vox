@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox --json rec` reports operational errors, including an unavailable daemon,
+  as JSON on stdout, matching `vox --json music`. (PL-1538)
+
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
 

@@ -12,11 +12,11 @@ path.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    NoReturn,
     Protocol,
     Self,
     final,
@@ -24,15 +24,11 @@ from typing import (
 )
 
 import typer
-from websockets.exceptions import WebSocketException
 
 from punt_vox.bare_name import BareName
+from punt_vox.cli_guard import GATEWAY_ERRORS, CliGuard
 from punt_vox.cli_io import OutputFlags, TextInput
-from punt_vox.client_errors import (
-    FetchWriteError,
-    VoxdConnectionError,
-    VoxdProtocolError,
-)
+from punt_vox.client_errors import FetchWriteError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
@@ -50,16 +46,6 @@ if TYPE_CHECKING:
     from punt_vox.client import RecordingSummary, RecordResult
 
 __all__ = ["RecCli", "build_rec_app"]
-
-# A client error, a raw WebSocket failure (stale-token handshake / mid-request
-# close, matching cli_music), or a bad name (ValueError) fails cleanly.
-_GATEWAY_ERRORS = (
-    VoxdConnectionError,
-    VoxdProtocolError,
-    WebSocketException,
-    OSError,
-    ValueError,
-)
 
 
 @runtime_checkable
@@ -173,9 +159,10 @@ _Quiet = Annotated[
 class RecCli:
     """The recordings-store command implementations (a humble object)."""
 
-    __slots__ = ("_flags", "_formatter", "_gateway_factory")
+    __slots__ = ("_flags", "_formatter", "_gateway_factory", "_guard")
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], RecordGateway]
+    _guard: CliGuard
     _flags: OutputFlags
 
     def __new__(
@@ -187,6 +174,7 @@ class RecCli:
         """Create a rec cli."""
         self = super().__new__(cls)
         self._formatter = formatter
+        self._guard = CliGuard(formatter)
         self._gateway_factory = gateway_factory or cls._default_gateway
         self._flags = flags if flags is not None else OutputFlags(formatter)
         return self
@@ -195,19 +183,6 @@ class RecCli:
     def _default_gateway() -> RecordGateway:
         """Build the production gateway -- a fresh WebSocket client per command."""
         return ClientRecordGateway(VoxClientSync())
-
-    @staticmethod
-    def _fail(message: str) -> NoReturn:
-        """Print an error to stderr and exit non-zero -- a clean CLI failure."""
-        typer.echo(f"Error: {message}", err=True)
-        raise typer.Exit(code=1)
-
-    def _run[T](self, op: Callable[[RecordGateway], T]) -> T:
-        """Run *op* against a fresh gateway, exiting cleanly on a gateway fault."""
-        try:
-            return op(self._gateway_factory())
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
 
     def new(
         self,
@@ -258,12 +233,9 @@ class RecCli:
         )
         segments = TextInput(self._formatter).resolve(text, from_file)
         self._guard_name(name, segments)
-        gateway = self._gateway_factory()
+        gateway = self._guard.run(self._gateway_factory)
         for seg_text in segments:
-            try:
-                result = gateway.new(seg_text, spec, name)
-            except _GATEWAY_ERRORS as exc:
-                self._fail(str(exc))
+            result = self._guard.run(partial(gateway.new, seg_text, spec, name))
             self._formatter.emit(
                 {
                     "id": result.name,
@@ -284,7 +256,7 @@ class RecCli:
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         rows: list[dict[str, str | int]] = []
         names: list[str] = []
-        for entry in self._run(lambda g: g.recordings()):
+        for entry in self._guard.run(lambda: self._gateway_factory().recordings()):
             rows.append({"id": entry.name, "bytes": entry.byte_count})
             names.append(entry.name)
         listing = "\n".join(names) or "No recordings."
@@ -300,7 +272,7 @@ class RecCli:
     ) -> None:
         """Play recording *ref* on the daemon host."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        self._run(lambda g: g.play(ref))
+        self._guard.run(lambda: self._gateway_factory().play(ref))
         self._formatter.emit(
             {"played": ref}, f"played store recording {ref} on the daemon host"
         )
@@ -321,9 +293,9 @@ class RecCli:
                 lambda sink: self._fetch_download(ref, sink)
             )
         except FileExistsError:
-            self._fail(f"rec get: ./{ref} exists")
+            self._guard.fail(f"rec get: ./{ref} exists")
         except OSError as exc:
-            self._fail(f"cannot write {dest}: {exc}")
+            self._guard.fail(f"cannot write {dest}: {exc}")
         self._formatter.emit({"path": str(dest), "bytes": count}, f"./{ref}")
 
     def _fetch_download(self, ref: str, sink: IO[bytes]) -> int:
@@ -332,8 +304,8 @@ class RecCli:
             return self._gateway_factory().get_into(ref, sink)
         except FetchWriteError:
             raise
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        except GATEWAY_ERRORS as exc:
+            self._guard.fail(str(exc))
 
     def remove(
         self,
@@ -345,7 +317,7 @@ class RecCli:
     ) -> None:
         """Delete recording *ref* from the store."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        self._run(lambda g: g.remove(ref))
+        self._guard.run(lambda: self._gateway_factory().remove(ref))
         self._formatter.emit({"removed": ref}, f"removed {ref}")
 
     def _validated_spec(self, spec: SynthesisSpec) -> SynthesisSpec:
@@ -367,9 +339,9 @@ class RecCli:
             # for_mcp() is SessionSpec._resolve_provider's default message --
             # the wrong verb here, mirroring __main__._fill_from_state's
             # identical rebuild for the same CLI-vs-MCP split.
-            self._fail(str(ProviderNotConfiguredError.for_cli()))
+            self._guard.fail(str(ProviderNotConfiguredError.for_cli()))
         except ModelNotAvailableError as exc:
-            self._fail(str(exc))
+            self._guard.fail(str(exc))
 
     def _bare_ref(self, ref: str) -> str:
         """Return *ref* as a bare filename, failing cleanly if it escapes the CWD.
@@ -382,16 +354,16 @@ class RecCli:
         try:
             return BareName(ref, "recording id").value
         except ValueError as exc:
-            self._fail(str(exc))
+            self._guard.fail(str(exc))
 
     def _guard_name(self, name: str | None, segments: list[str]) -> None:
         """Reject an empty name, or ``--name`` given for multiple segments."""
         if name == "":
             # The daemon is the single authority on name validity; the CLI
             # fast-fails an empty name before a wasted round-trip.
-            self._fail("--name must not be empty")
+            self._guard.fail("--name must not be empty")
         if name and len(segments) > 1:
-            self._fail("--name supports a single segment only")
+            self._guard.fail("--name supports a single segment only")
 
 
 def build_rec_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:

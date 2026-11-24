@@ -88,6 +88,7 @@ class InMemoryRecordGateway:
 
 def _cli(gateway: RecordGateway) -> tuple[RecCli, MagicMock]:
     formatter = MagicMock(spec=OutputFormatter)
+    formatter.error.side_effect = OutputFormatter().error
     return RecCli(formatter, lambda: gateway), formatter
 
 
@@ -646,6 +647,43 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
 
     assert result.exit_code == 0
     assert json.loads(result.stdout) == {"recordings": []}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--json", "rec", "new", "hi"],
+        ["--json", "rec", "list"],
+        ["--json", "rec", "play", "take.mp3"],
+        ["--json", "rec", "get", "take.mp3"],
+        ["--json", "rec", "remove", "take.mp3"],
+        ["rec", "list", "--json"],
+        ["rec", "list"],
+    ],
+)
+def test_rec_reports_stopped_daemon(
+    args: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VOXD_HOST", raising=False)
+    monkeypatch.delenv("VOXD_PORT", raising=False)
+    monkeypatch.delenv("VOXD_TOKEN", raising=False)
+    monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: tmp_path)
+
+    result = CliRunner().invoke(app, args)
+
+    message = (
+        "voxd is not running: no serve.port is published. "
+        "Start it with: vox daemon start"
+    )
+    assert result.exit_code == 1
+    if "--json" in args:
+        assert result.stdout, result.stderr
+        assert json.loads(result.stdout) == {"error": message}
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert result.stderr == f"Error: {message}\n"
 
 
 def test_new_unconfigured_provider_shows_cli_guidance_not_mcp(
