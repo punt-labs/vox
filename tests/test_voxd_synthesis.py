@@ -1658,6 +1658,7 @@ class TestApplyVibeForSynthesis:
             ("$1 million[pause]€2 million", "$1million[pause]€2million"),
             ("$1 million-[pause]$2 million", "$1million-[pause]$2million"),
             ("$1 million—€2 billion", "$1million—€2billion"),
+            ("$1 million\u2019s worth", "$1million\u2019s worth"),
         ],
     )
     def test_spaced_currency_scale_matches_attached(
