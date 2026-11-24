@@ -46,9 +46,10 @@ class DaemonEnv:
         Raises:
             ValueError: If VOXD_PORT is not a decimal port from 1 through 65535.
         """
-        raw = os.environ.get("VOXD_PORT", "").strip()
+        if not (raw := os.environ.get("VOXD_PORT", "").strip()):
+            return None
         try:
-            return PortText.parse(raw) if raw else None
+            return PortText.parse(raw)
         except ValueError as exc:
             raise ValueError(f"VOXD_PORT={exc}") from None
 
