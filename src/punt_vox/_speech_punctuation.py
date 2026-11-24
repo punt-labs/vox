@@ -16,7 +16,7 @@ _SYMBOL_NAME_RE = re.compile(
     r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
-_NUMERIC_PERCENT_RE = re.compile(r"\d%[\W_]*\Z")
+_NUMERIC_PERCENT_RE = re.compile(r"[-\u2212]?\d[\d.,\u2013-]*%[\W_]*")
 
 
 class SpeechPunctuation:
@@ -69,7 +69,7 @@ class SpeechPunctuation:
     @staticmethod
     def _unit(spoken_token: str) -> str:
         """Say a ``%`` that directly follows a spoken bare number as "percent"."""
-        return " percent" if _NUMERIC_PERCENT_RE.search(spoken_token) else ""
+        return " percent" if _NUMERIC_PERCENT_RE.fullmatch(spoken_token) else ""
 
     @staticmethod
     def _prosody(raw_suffix: str) -> str:

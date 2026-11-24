@@ -81,6 +81,9 @@ def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -
         ("%", ""),
         ("10%3", "10%3"),
         ("$5%", "5 dollars"),
+        ("/tmp/5%", "/tmp/5"),
+        ("foo5%", "foo5"),
+        ("v1.2%", "v1.2"),
     ],
 )
 def test_split_leaves_other_percent_signs_alone(token: str, core: str) -> None:
