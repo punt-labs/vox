@@ -114,8 +114,9 @@ class KeysEnvMerge:
     def _held_over(self, taken: Mapping[str, str]) -> frozenset[str]:
         """Return the credentials whose stored values stay over *taken* ones."""
         differing = {key for key, value in taken.items() if self._differs(key, value)}
-        aws = _AWS_SET if differing & _AWS_SET else frozenset()
-        return frozenset(differing | aws)
+        if differing & _AWS_SET:
+            differing |= _AWS_SET
+        return frozenset(differing)
 
     def _differs(self, key: str, value: str) -> bool:
         """Return whether writable *value* would replace a stored credential."""

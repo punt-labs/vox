@@ -50,6 +50,13 @@ def test_a_kept_aws_key_pair_never_takes_the_shells_session_token() -> None:
     assert merge.rotated == ()
 
 
+def test_a_kept_aws_secret_never_takes_the_shells_key_id_or_token() -> None:
+    stored = {"AWS_SECRET_ACCESS_KEY": "stored"}
+    merge = KeysEnvMerge(stored, _TEMPORARY_SET)
+    assert merge.merged == stored
+    assert {notice.key for notice in merge.notices} == set(_TEMPORARY_SET)
+
+
 def test_rotate_replaces_the_aws_key_pair_with_its_session_token() -> None:
     merge = KeysEnvMerge(_STATIC_PAIR, _TEMPORARY_SET, rotate=True)
     assert merge.merged == _TEMPORARY_SET
