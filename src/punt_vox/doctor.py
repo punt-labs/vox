@@ -14,6 +14,7 @@ import os
 import platform
 import shutil
 import sys
+import tempfile
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.client_errors import (
@@ -140,9 +141,9 @@ class DoctorCheck:
         """Check espeak on Linux when no cloud API keys are set."""
         if platform.system() != "Linux":
             return []
-        if any(os.environ.get(k) for k in ("ELEVENLABS_API_KEY", "OPENAI_API_KEY")):
+        if any(map(os.environ.get, ("ELEVENLABS_API_KEY", "OPENAI_API_KEY"))):
             return []
-        if shutil.which("espeak-ng") or shutil.which("espeak"):
+        if any(map(shutil.which, ("espeak-ng", "espeak"))):
             # Out of jail: report presence, never the binary's install path.
             return [CheckResult.ok("espeak: present (offline fallback)")]
         return [
@@ -334,9 +335,8 @@ class DoctorCheck:
         out_dir = default_output_dir()
         if out_dir.is_dir():
             try:
-                test_file = out_dir / ".doctor_test"
-                test_file.write_text("ok")
-                test_file.unlink()
+                with tempfile.TemporaryFile(buffering=0, dir=out_dir) as probe:
+                    probe.write(b"ok")
                 return [CheckResult.ok("output: writable")]
             except OSError:
                 return [CheckResult.fail("output: not writable — check permissions")]
