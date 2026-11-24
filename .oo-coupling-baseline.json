@@ -3265,8 +3265,8 @@
     "efferent_coupling": 9.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.714,
-    "avg_lcom": 0.714
+    "max_lcom": 0.6,
+    "avg_lcom": 0.6
   },
   "src/punt_vox/voxd/speech_reply.py": {
     "efferent_coupling": 2.0,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -214,71 +215,56 @@ class SynthesizeHandler(MessageHandler):
         # id-stamped error frame, never a ValueError that tears the connection down.
         try:
             req = _SpeechRequest.from_msg(msg, websocket)
-            once = parse_optional_int(msg, "once")
+            once = parse_optional_int(msg, "once") or 0
         except ValueError as exc:
             # WireReply makes a gone-peer send a clean no-op, matching the siblings.
             await SpeechReply(websocket, str(msg.get("id", ""))).error(exc)
             return
 
-        dedup_recorded = await self._respond_if_deduped(req, once)
-        if dedup_recorded is None:
-            return
+        await self._dispatch(req, once)
 
-        logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
-        await self._dispatch(req, dedup_recorded=dedup_recorded)
-
-    async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
+    async def _dispatch(self, req: _SpeechRequest, once: int) -> None:
         """Play a local provider directly, else synthesize to a file and enqueue."""
-        local = req.spec.provider in _LOCAL_PROVIDERS
-        if local and await self._play_local(req, dedup_recorded=dedup_recorded):
-            return
-        await self._synthesize_and_enqueue(req, dedup_recorded=dedup_recorded)
+        with ExitStack() as reservation:
+            if once > 0:
+                hit = self._once_dedup.check_and_record(req.text, float(once))
+                if hit is not None:
+                    await req.reply_duplicate(hit)
+                    return
+                reservation.callback(self._once_dedup.rollback_for(req.text))
 
-    async def _respond_if_deduped(
-        self, req: _SpeechRequest, once: int | None
-    ) -> bool | None:
-        """Check the once-dedup window.
+            logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
+            if await self._play_local(req, reservation):
+                return
+            await self._synthesize_and_enqueue(req, reservation)
 
-        Return ``None`` after replying to a dedup hit, whether acknowledged or
-        rejected; otherwise return whether this call recorded a dedup entry
-        that a later failure must roll back.
-        """
-        if once is None or once <= 0:
-            return False
-        hit = self._once_dedup.check_and_record(req.text, float(once))
-        if hit is None:
-            return True
-
-        await req.reply_duplicate(hit)
-        return None
-
-    async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
+    async def _play_local(self, req: _SpeechRequest, reservation: ExitStack) -> bool:
         """Play a local provider (espeak/say) straight to the device.
 
         Return True when the request was fully handled (a terminal reply was
         sent); False when no local path applied and the caller should fall
         through to file synthesis.
         """
+        if req.spec.provider not in _LOCAL_PROVIDERS:
+            return False
         result = await self._synthesis.try_direct_play(
             req.text, req.spec, record_result=self._playback.record_result
         )
         if result is None:
             return False
         if result == 0:
+            reservation.pop_all()
             await req.reply({"type": "done"})
         else:
-            self._rollback(req, dedup_recorded=dedup_recorded)
+            reservation.close()
             await req.fail(result)
         return True
 
     async def _synthesize_and_enqueue(
-        self, req: _SpeechRequest, *, dedup_recorded: bool
+        self, req: _SpeechRequest, reservation: ExitStack
     ) -> None:
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
-        outcome = await req.synthesize(
-            self._synthesis,
-            on_failure=lambda: self._rollback(req, dedup_recorded=dedup_recorded),
-        )
+        outcome = await req.synthesize(self._synthesis, on_failure=reservation.close)
         if outcome is None:
             return
 
@@ -288,17 +274,13 @@ class SynthesizeHandler(MessageHandler):
             request_id=req.request_id,
             notify=asyncio.Event(),
             discard=outcome.discard,
+            on_failure=reservation.pop_all().close,
         )
         try:
             await self._playback.enqueue(item)
         except BaseException:
-            outcome.discard()
+            item.finish("playback was not queued")
             raise
         await req.reply({"type": "playing", "cached": outcome.cached})
         await item.notify.wait()
         await req.reply({"type": "done"})
-
-    def _rollback(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
-        """Undo a recorded dedup entry when synthesis fails after recording it."""
-        if dedup_recorded:
-            self._once_dedup.rollback(req.text)

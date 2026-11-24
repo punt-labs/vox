@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -480,6 +481,80 @@ class TestHandleSynthesizeOnceFlag:
 
         handler._playback._queue = _InstantPlaybackQueue()  # type: ignore[assignment]
         return handler, synthesis_calls
+
+    @pytest.mark.asyncio
+    async def test_once_retries_failed_queued_playback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A nonzero player exit releases once without delaying the playing frame."""
+        frames: list[dict[str, object]] = []
+        queued = asyncio.Event()
+
+        async def capture(frame: dict[str, object]) -> None:
+            frames.append(frame)
+            if frame["type"] == "playing":
+                queued.set()
+
+        first = tmp_path / "first.mp3"
+        retry = tmp_path / "retry.mp3"
+        for path in (first, retry):
+            path.write_bytes(b"audio")
+
+        def player_command(path: Path) -> list[str]:
+            script = (
+                "raise SystemExit(7)"
+                if path == first
+                else "import time; time.sleep(0.08)"
+            )
+            return [sys.executable, "-c", script]
+
+        synthesis = MagicMock(spec=SynthesisPipeline)
+        synthesis.synthesize_to_file = AsyncMock(
+            side_effect=[
+                SynthesisOutcome(path, cached=False) for path in (first, retry)
+            ]
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.playback.AudioFile.player_command",
+            player_command,
+        )
+        playback = PlaybackQueue()
+        handler = _make_synthesize_handler(synthesis=synthesis, playback=playback)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock(side_effect=capture)
+        msg: dict[str, object] = {
+            "id": "first",
+            "text": "retry after a player failure",
+            "provider": "elevenlabs",
+            "once": 600,
+        }
+
+        async with asyncio.timeout(5):
+            request = asyncio.create_task(handler(msg, websocket))
+            try:
+                await queued.wait()
+                assert playback.queue_size == 1
+                assert not request.done()
+                consumer = asyncio.create_task(playback.consumer())
+                try:
+                    await request
+                    result = playback.last_result
+                    assert result is not None and result.rc == 7
+                    await handler({**msg, "id": "retry"}, websocket)
+                finally:
+                    consumer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer
+            finally:
+                request.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await request
+
+        assert frames[2] == {"id": "retry", "type": "playing", "cached": False}
+        result = playback.last_result
+        assert result is not None and result.ok
+        await handler({**msg, "id": "after-success"}, websocket)
+        assert frames[-1]["deduped"] is True
 
     @pytest.mark.asyncio
     async def test_once_null_does_not_dedupe(
