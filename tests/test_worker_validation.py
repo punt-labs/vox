@@ -359,9 +359,10 @@ def test_allow_refuses_a_file_without_a_closing_fence_and_leaves_it_intact(
             "punt_vox.voxd.workers.policy.subprocess.run",
             return_value=_git_toplevel(repo.resolve()),
         ),
-        pytest.raises(ValueError, match="no closing ---"),
+        pytest.raises(OSError, match="no closing ---") as refused,
     ):
         policy.allow(str(repo))
+    assert refused.value.filename == str(path)
     assert path.read_bytes() == broken.encode()
 
 
@@ -427,7 +428,7 @@ def test_allow_refuses_an_unfenced_file_that_already_holds_the_field(
             "punt_vox.voxd.workers.policy.subprocess.run",
             return_value=_git_toplevel(repo.resolve()),
         ),
-        pytest.raises(ValueError, match="no closing ---"),
+        pytest.raises(OSError, match="no closing ---"),
     ):
         policy.allow(str(repo))
     assert path.read_bytes() == unfenced.encode()

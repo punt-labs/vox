@@ -176,6 +176,19 @@ class TestWrite:
             Frontmatter(path).write_field("voice", "fin")
         assert path.read_text() == original
 
+    def test_checked_write_refuses_an_unfenced_file_as_a_format_fault(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal is an OSError naming the file: a handler faults, not errors."""
+        path = tmp_path / "vox.md"
+        path.write_text('---\nvoice: "fin"\n')
+        with pytest.raises(OSError, match="no closing ---") as refused:
+            Frontmatter(path).write_fields({"voice": "charlie"}, check=lambda _: None)
+        assert not isinstance(refused.value, ValueError)
+        assert refused.value.filename == str(path)
+        assert refused.value.strerror == "no closing ---"
+        assert path.read_text() == '---\nvoice: "fin"\n'
+
     def test_empty_updates(self, tmp_path: Path) -> None:
         path = tmp_path / "vox.md"
         Frontmatter(path).write_fields({})
@@ -289,7 +302,7 @@ class TestWrite:
         path.write_text('---\nprovider: "polly"\n')
         before = sorted(tmp_path.rglob("*"))
 
-        with pytest.raises(ValueError, match="no closing ---"):
+        with pytest.raises(OSError, match="no closing ---"):
             Frontmatter(path).write_fields({"voice": "fin"}, check=lambda _: None)
         assert sorted(tmp_path.rglob("*")) == before
 

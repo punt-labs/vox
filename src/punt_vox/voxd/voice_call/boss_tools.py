@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
-from punt_vox.voxd.voice_call.result_cache import ToolResultCache
 from punt_vox.voxd.voice_call.steering import SteeringTool
+from punt_vox.voxd.voice_call.tool_answer import ToolAnswer
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
@@ -16,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from punt_vox.voxd.voice_call.contracts import ProjectAllowlist, WorkerControl
+    from punt_vox.voxd.voice_call.tool_answer import Request
 
 __all__ = ["BossTools"]
 
@@ -112,11 +111,11 @@ class BossTools:
         {"start_worker", "steer_worker", "stop_worker"}
     )
 
-    __slots__ = ("_cache", "_directory", "_projects", "_workers")
+    __slots__ = ("_answer", "_directory", "_projects", "_workers")
     _directory: WorkerDirectory
     _workers: WorkerControl
     _projects: ProjectAllowlist
-    _cache: ToolResultCache
+    _answer: ToolAnswer
 
     def __new__(
         cls,
@@ -129,16 +128,20 @@ class BossTools:
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
         self._directory = WorkerDirectory(workers, spoken_labels)
-        self._cache = ToolResultCache()
+        self._answer = ToolAnswer()
         return self
 
     @property
     def replayed(self) -> int:
         """Return how many tool calls were answered from an earlier execution."""
-        return self._cache.hits
+        return self._answer.replayed
 
     async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
-        """Return the JSON result for the agent and whether it reports an error."""
+        """Return the JSON result for the agent and whether it reports an error.
+
+        :class:`ToolAnswer` classifies the outcome: a refusal is spoken
+        verbatim, a daemon-side fault is spoken without its path.
+        """
         steering = SteeringTool(self._workers, self._directory)
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
@@ -150,35 +153,18 @@ class BossTools:
         }
         operation = operations.get(name)
         if operation is None:
-            return json.dumps({"error": f"unknown tool {name}"}), True
+            return ToolAnswer.error(f"unknown tool {name}")
 
-        try:
-            resolved = (
-                await steering.resolve(arguments)
-                if name == "steer_worker"
-                else self._with_defaults(name, arguments)
-            )
-            identity = (
-                steering.identity(resolved) if name == "steer_worker" else resolved
-            )
+        async def request() -> Request:
+            if name == "steer_worker":
+                resolved = await steering.resolve(arguments)
+                return steering.identity(resolved), resolved
+            resolved = self._with_defaults(name, arguments)
+            return resolved, resolved
 
-            async def execute() -> str:
-                return json.dumps(await operation(resolved), ensure_ascii=False)
-
-            result = await self._cache.run(
-                ToolResultCache.key(name, identity),
-                execute,
-                durable=name in self._DURABLE,
-            )
-        except (
-            ValueError,
-            KeyError,
-            OSError,
-            RuntimeError,
-            subprocess.SubprocessError,
-        ) as exc:
-            return json.dumps({"error": str(exc)}, ensure_ascii=False), True
-        return result, False
+        return await self._answer.run(
+            name, request, operation, durable=name in self._DURABLE
+        )
 
     def _with_defaults(
         self, name: str, arguments: dict[str, object]

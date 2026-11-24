@@ -52,9 +52,10 @@ class RepoAllowlist:
         validated. Returns the stored paths, sorted.
 
         Raises:
-            ValueError: If a stored entry is invalid, *change* refuses, or
-                the file has no closing fence to hold the field.
-            OSError: If the file cannot be read or written.
+            ValueError: If a stored entry is invalid or *change* refuses.
+            OSError: If the file cannot be read or written, or has no closing
+                fence to hold the field; a handler faults instead of blaming
+                the client.
             UnicodeDecodeError: If the config file is not UTF-8.
         """
 
@@ -73,9 +74,10 @@ class RepoAllowlist:
         the same path when both are absolute. Only a blank *raw* is refused.
 
         Raises:
-            ValueError: If *raw* is blank, matches no stored entry, the field
-                is not a list of strings, or the file has no closing fence.
-            OSError: If the file cannot be read or written.
+            ValueError: If *raw* is blank, matches no stored entry, or the
+                field is not a list of strings.
+            OSError: If the file cannot be read or written, or has no closing
+                fence.
             UnicodeDecodeError: If the config file is not UTF-8.
         """
         if not raw.strip():
@@ -92,7 +94,8 @@ class RepoAllowlist:
     def _rewrite(self, change: Callable[[list[str]], list[str]]) -> tuple[str, ...]:
         """Store ``change(stored entries)`` in one locked read-modify-write.
 
-        A malformed config file is refused, never rebuilt around this field.
+        A malformed config file is refused with an ``OSError``, never
+        rebuilt around this field.
         """
         written: tuple[str, ...] = ()
 

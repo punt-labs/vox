@@ -623,11 +623,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/frontmatter.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 2.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.604,
-    "avg_lcom": 0.604
+    "max_lcom": 0.7,
+    "avg_lcom": 0.7
   },
   "src/punt_vox/frontmatter_block.py": {
     "efferent_coupling": 1.0,

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
+import errno
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.config_lock import ConfigLock
 from punt_vox.frontmatter_block import FrontmatterBlock
-from punt_vox.paths import run_dir
-from punt_vox.sibling_lock import SiblingLock
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from punt_vox.sibling_lock import SiblingLock
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +88,24 @@ class Frontmatter:
     ) -> None:
         """Write multiple key-value pairs in a single read-write cycle.
 
-        A check runs against the current block under the write lock, and
-        checked writes never rebuild a malformed block from just the updates.
-        Until the lock file exists, the check also runs before the lock is
-        taken, so a refused write leaves nothing on disk.
+        Every value is validated up front, so the serialization invariant
+        is enforced by the class that serializes -- a caller bypassing
+        ``ConfigStore`` still cannot corrupt the frontmatter (PY-EH-1).
+
+        A check runs against the current block under the write lock, and a
+        checked write refuses a file without a closing fence, even one that
+        already holds every key, instead of editing or rebuilding it. That
+        refusal is an ``OSError`` naming the file: the daemon's own config is
+        at fault, not the caller's request. Until the lock file exists, the
+        check also runs before the lock is taken, so a refused write leaves
+        nothing on disk.
+
+        Raises:
+            ConfigValueError: If a value cannot be stored.
+            ValueError: If *check* refuses.
+            OSError: If the file exists but cannot be read, cannot be written,
+                or (on a checked write) has no closing fence.
+            UnicodeDecodeError: If the file is not UTF-8.
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
@@ -113,9 +128,9 @@ class Frontmatter:
 
         Raises:
             ConfigValueError: If the new value cannot be stored.
-            ValueError: If *check* refuses, or a checked write finds no
-                closing fence.
-            OSError: If the file exists but cannot be read, or cannot be written.
+            ValueError: If *check* refuses.
+            OSError: If the file exists but cannot be read, cannot be written,
+                or (on a checked write) has no closing fence.
             UnicodeDecodeError: If the file is not UTF-8.
         """
 
@@ -147,16 +162,8 @@ class Frontmatter:
             self._require_fenced(block)
 
     def _lock(self) -> SiblingLock:
-        """Share a local-state lock across every spelling of the config path."""
-        # Read-only .punt-labs requires a pre-provisioned, writable local lock zone.
-        target = self._path.resolve()
-        directory = target.parent
-        if directory.name == "vox" and directory.parent.name == ".punt-labs":
-            lock_path = directory.parent / "local" / "vox" / f"{target.name}.lock"
-        else:
-            digest = hashlib.sha256(str(target).encode()).hexdigest()
-            lock_path = run_dir() / "config-locks" / digest
-        return SiblingLock(target, lock_path=lock_path, mode=0o666)
+        """Return the lock every spelling of this config path shares."""
+        return ConfigLock(self._path).sibling()
 
     def _write_fields(
         self,
@@ -190,11 +197,13 @@ class Frontmatter:
         """Refuse a checked write into a file with no closing fence.
 
         A key already present is no licence: without a closing fence the
-        file is not frontmatter, whatever it happens to hold.
+        file is not frontmatter, whatever it happens to hold. An OSError,
+        not a ValueError: the daemon's own file is at fault, so a wire
+        handler faults instead of blaming the client, and the path rides in
+        ``filename`` for the log alone, never the wire.
         """
         if block is not None and not block.fenced:
-            msg = f"Malformed config (no closing ---): {self._path}"
-            raise ValueError(msg)
+            raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
 
     def _updated_block(
         self,

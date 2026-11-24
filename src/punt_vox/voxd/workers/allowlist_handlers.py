@@ -6,7 +6,6 @@ import asyncio
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
-from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -78,11 +77,10 @@ class AllowlistHandlers:
             return
         try:
             result = await operation(msg)
-        except UnicodeDecodeError as exc:
-            # Not a client fault: the daemon's own config file is not UTF-8.
-            await reply.fault(SafeFault.from_exception(exc))
-            return
         except (ValueError, OSError) as exc:
+            # A refused request is an error; the daemon's own config file
+            # unreadable, not UTF-8 or without a closing fence is a fault,
+            # with the path in vox.log alone.
             await reply.reject_or_fault(exc)
             return
         await reply.send({"type": "worker_result", "result": result})
