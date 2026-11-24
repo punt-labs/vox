@@ -789,7 +789,10 @@ class TestSynthesizeHandlerTypedErrorRouting:
         sent = await self._drive(handler)
 
         assert sent[-1]["type"] == "error"
-        assert sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert (
+            sent[-1]["message"]
+            == "Unknown voice 'bella'. Available: alloy, ash, ballad"
+        )
         assert not any(
             f.get("type") == "fault" or f.get("message") == "operation failed"
             for f in sent

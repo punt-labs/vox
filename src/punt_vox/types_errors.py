@@ -25,7 +25,8 @@ class ConfigValueError(ValueError):
 class VoiceNotFoundError(ValueError):
     """Raised when a voice name cannot be resolved by a provider.
 
-    Renders as ``"<name> (available: <a>, <b>, ...)"`` via :meth:`__str__`.
+    Renders as ``"Unknown voice '<name>'. Available: <a>, <b>, ..."``
+    via :meth:`__str__`.
     ``__str__`` is the load-bearing override: ``BaseException.__init__``
     runs after ``__new__`` and overwrites ``args`` with the constructor's
     original positional arguments, so a message stashed in
@@ -35,13 +36,13 @@ class VoiceNotFoundError(ValueError):
     programmatic callers) while ``__str__`` renders the sentence.
     """
 
-    _voice_name: str
+    _name: str
     _available: tuple[str, ...]
 
     def __new__(cls, name: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
         """Create the exception with its structured failure details."""
         self = super().__new__(cls, name, available)
-        self._voice_name = name
+        self._name = name
         # Tuple-copy in __new__ so the stored field is immutable outright:
         # a caller that mutates its list after raising cannot change
         # ``str(exc)`` or ``exc.available``. The outbound ``list()`` copy
@@ -54,12 +55,12 @@ class VoiceNotFoundError(ValueError):
 
     def __str__(self) -> str:
         """Render the message so ``str(exc)`` is user-facing, not a tuple repr."""
-        return f"{self._voice_name} (available: {', '.join(self._available)})"
+        return f"Unknown voice {self._name!r}. Available: {', '.join(self._available)}"
 
     @property
     def voice_name(self) -> str:
         """Return the voice name that was not found."""
-        return self._voice_name
+        return self._name
 
     @property
     def available(self) -> list[str]:

@@ -521,7 +521,10 @@ class TestVoicesHandler:
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "vf5"
-        assert ws.sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert (
+            ws.sent[-1]["message"]
+            == "Unknown voice 'bella'. Available: alloy, ash, ballad"
+        )
         assert not any("operation failed" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio

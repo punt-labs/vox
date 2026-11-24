@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unknown voice errors identify the unrecognized name and suggest each
+  available voice once, without listing lookup aliases separately. (PL-1550)
+
 - `vox daemon status --json` and `vox doctor` report the actual listening port
   when `voxd --port 0` lets the operating system choose a port.
 

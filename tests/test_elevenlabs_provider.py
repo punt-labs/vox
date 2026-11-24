@@ -80,6 +80,21 @@ class TestElevenLabsProviderResolveVoice:
         assert exc_info.value.voice_name == "nonexistent"
         assert isinstance(exc_info.value.available, list)
         assert len(exc_info.value.available) > 0
+        assert exc_info.value.available == ["drew", "matilda"]
+
+    def test_unknown_voice_keeps_distinct_voices_with_the_same_short_name(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        other_drew = MagicMock()
+        other_drew.name = "Drew - baritone"
+        other_drew.voice_id = "AAAAAAAAAAAAAAAAAAAA"
+        mock_elevenlabs_client.voices.get_all.return_value.voices.append(other_drew)
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
 
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock

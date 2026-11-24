@@ -259,7 +259,7 @@ class TestVoiceNotFoundError:
     def test_str_renders_the_f5_sentence(self) -> None:
         exc = VoiceNotFoundError("bella", ["alloy", "ash", "ballad"])
 
-        assert str(exc) == "bella (available: alloy, ash, ballad)"
+        assert str(exc) == "Unknown voice 'bella'. Available: alloy, ash, ballad"
 
     def test_str_is_not_the_tuple_repr(self) -> None:
         """Regression: without ``__str__`` this would render as the args tuple.
@@ -275,8 +275,8 @@ class TestVoiceNotFoundError:
         rendered = str(VoiceNotFoundError("bella", ["alloy"]))
 
         assert not rendered.startswith("(")
-        assert "'bella'" not in rendered  # the tuple repr quotes 'bella'
-        assert "available" in rendered
+        assert "'bella'" in rendered
+        assert "Available:" in rendered
 
     def test_properties_expose_the_structured_fields(self) -> None:
         exc = VoiceNotFoundError("bella", ["alloy", "ash"])
@@ -308,5 +308,5 @@ class TestVoiceNotFoundError:
         available.append("added-after-raise")
         available[0] = "MUTATED"
 
-        assert str(exc) == "bella (available: alloy, ash)"
+        assert str(exc) == "Unknown voice 'bella'. Available: alloy, ash"
         assert exc.available == ["alloy", "ash"]
