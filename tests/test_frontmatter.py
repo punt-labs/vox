@@ -314,7 +314,9 @@ class TestWrite:
         lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
         read_block = Frontmatter._read_block
 
-        def read_while_a_writer_starts(fm: Frontmatter) -> FrontmatterBlock | None:
+        def read_while_a_writer_starts(
+            fm: Frontmatter,
+        ) -> FrontmatterBlock | None:  # None: no config file.
             lock.parent.mkdir(parents=True, exist_ok=True)
             lock.touch()
             return read_block(fm)
