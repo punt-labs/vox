@@ -129,6 +129,8 @@ def test_the_real_key_is_sent_without_the_override(
         "http://127.0.0.1:70000",
         "http://127.0.0.1:4321/v1",  # a path
         "http://user@127.0.0.1:4321",  # userinfo
+        "http://:x@127.0.0.1:1",  # a password alone is still userinfo
+        "http://user:x@127.0.0.1:1",
         "http://[::1",  # unparsable
     ],
 )
