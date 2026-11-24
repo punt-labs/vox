@@ -19,16 +19,16 @@ from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
-from punt_vox.enablement import (
-    ENABLE_OUTCOME_REASONS,
-    EnableOutcome,
-    ProviderProposal,
-    RepoEnablement,
-)
+from punt_vox.enablement import RepoEnablement
 from punt_vox.gitignore_entry import GitignoreEntry
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
+from punt_vox.provider_proposal import (
+    ENABLE_OUTCOME_REASONS,
+    EnableOutcome,
+    ProviderProposal,
+)
 from punt_vox.settings_registration import SettingsRegistration
 from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 
