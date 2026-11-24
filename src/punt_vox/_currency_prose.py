@@ -31,8 +31,9 @@ class ProseCurrency:
         tag_pattern = tag.pattern if tag is not None else r"(?!)"
         boundary = rf"(?P<boundary>(?<!\S)|{tag_pattern})"
         end = (
-            rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
+            rf"(?:(?P<separator>{_TRAILING_PUNCTUATION}"
             rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d|[-+\u2212]?[{_SYMBOLS}]))"
+            rf"|\u2014(?=\S))"
             rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))"
         )
         joined = cls._attach_scale(prose, boundary, end)
@@ -51,7 +52,7 @@ class ProseCurrency:
             lambda match: (
                 match["boundary"]
                 + CurrencyGrammar.HORIZONTAL_GAP.sub("", match["price"])
-                + cls._tag_separator(match)
+                + cls._separator(match)
             ),
             prose,
         )
@@ -59,9 +60,9 @@ class ProseCurrency:
     @classmethod
     def _prefix_amount(cls, match: re.Match[str]) -> str:
         amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
-        return amount + cls._tag_separator(match)
+        return amount + cls._separator(match)
 
     @staticmethod
-    def _tag_separator(match: re.Match[str]) -> str:
-        before_tag = match["before_tag"]
-        return "" if before_tag is None else f"{before_tag} "
+    def _separator(match: re.Match[str]) -> str:
+        punctuation = match["separator"]
+        return "" if punctuation is None else f"{punctuation} "

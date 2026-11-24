@@ -384,6 +384,10 @@ class TestSymbolStripping:
             ("$1billion", "1 billion dollars"),
             ("$1trillion", "1 trillion dollars"),
             ("We saved $1 million", "We saved 1 million dollars"),
+            (
+                "We saved $1 million—enough to retire",
+                "We saved 1 million dollars— enough to retire",
+            ),
             ("$2.5 billion,", "2.5 billion dollars,"),
             ("$10 thousand", "10 thousand dollars"),
             ("$1 trillion", "1 trillion dollars"),
