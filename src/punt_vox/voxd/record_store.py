@@ -26,7 +26,7 @@ from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.types import generate_filename
+from punt_vox.recording_name import RecordingName
 from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.path_status import PathStatus
@@ -95,14 +95,13 @@ class RecordStore:
     def resolve(self, name: str | None, text: str) -> Path:
         """Resolve the destination for a record write, contained in the root.
 
-        A client-supplied *name* is validated as a bare filename; only ``None``
-        (absent) content-addresses by *text* -- the canonical name every other
-        vox MP3 uses. An explicit empty string is an invalid name, not "absent",
-        so it is rejected (``ValueError``), as are absolute, separated,
-        traversing, and NUL-bearing names.
+        A client-supplied *name* is validated as a :class:`RecordingName`; only
+        ``None`` (absent) content-addresses by *text* -- the canonical name every
+        other vox MP3 uses. An explicit empty or whitespace-only string is an
+        invalid name, not "absent", so it is rejected (``ValueError``), as are
+        absolute, separated, traversing, and NUL-bearing names.
         """
-        candidate = generate_filename(text) if name is None else name
-        return self._resolve_within_root(candidate)
+        return self._resolve_within_root(RecordingName.for_take(name, text).value)
 
     def resolve_ref(self, ref: str) -> Path:
         """Resolve a play/fetch reference to a contained store path.

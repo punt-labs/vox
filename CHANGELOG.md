@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unknown voice errors identify the unrecognized name and suggest each
   available voice once, without listing lookup aliases separately. (PL-1550)
 
+- `vox rec new --name` rejects an empty or whitespace-only name with
+  `Error: recording name must not be empty or whitespace` instead of storing a
+  recording whose id lists as a blank row. Existing blank-named recordings
+  can still be played, fetched, and removed. (PL-1557)
+
 - A config write that is refused, such as `vox voice` with no provider set,
   no longer leaves a lock file or empty `.punt-labs/` directories behind.
   (PL-1552)
