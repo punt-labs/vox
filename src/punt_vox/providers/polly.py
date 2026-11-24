@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
+from xml.sax.saxutils import escape
 
 import boto3
 
@@ -209,37 +210,32 @@ class PollyProvider(TTSProvider):
         """
         text = strip_vibe_tags(request.text)
 
-        resolved_voice = request.voice or self.default_voice
-        voice_cfg = self._voices.resolve(resolved_voice)
+        voice_cfg = self._voices.resolve(request.voice or self.default_voice)
+        voice_id = voice_cfg.voice_id
         rate = request.rate if request.rate is not None else 100
-        ssml_text = f'<speak><prosody rate="{rate}%">{text}</prosody></speak>'
+        ssml_text = f'<speak><prosody rate="{rate}%">{escape(text)}</prosody></speak>'
         with _translate_auth_errors():
             response = self._client.synthesize_speech(
                 Text=ssml_text,
                 TextType="ssml",
-                VoiceId=voice_cfg.voice_id,
+                VoiceId=voice_id,
                 LanguageCode=voice_cfg.language_code,
                 OutputFormat="mp3",
                 Engine=voice_cfg.engine,
                 SampleRate="22050",
             )
 
-        logger.info(
-            "API call: provider=polly, voice=%s, chars=%d",
-            voice_cfg.voice_id,
-            len(text),
-        )
+        logger.info("API call: provider=polly, voice=%s, chars=%d", voice_id, len(text))
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open("wb") as f:
-            f.write(response["AudioStream"].read())
+        output_path.write_bytes(response["AudioStream"].read())
         logger.info("Wrote %s", output_path)
         language = request.language or _infer_iso_from_bcp47(voice_cfg.language_code)
         return SynthesisResult(
             path=output_path,
             text=text,
             provider=AudioProviderId.polly,
-            voice=voice_cfg.voice_id,
+            voice=voice_id,
             language=language,
             metadata=request.metadata,
         )

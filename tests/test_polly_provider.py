@@ -160,6 +160,21 @@ class TestPollyProviderSynthesize:
         assert call_kwargs["TextType"] == "ssml"
         assert '<prosody rate="60%">' in call_kwargs["Text"]
 
+    def test_synthesize_escapes_ssml_text(
+        self,
+        mock_boto_client: MagicMock,
+        polly_provider: PollyProvider,
+        tmp_output_dir: Path,
+    ) -> None:
+        request = SynthesisRequest(text="AT&T <b> >")
+        out = tmp_output_dir / "escaped.mp3"
+        result = polly_provider.synthesize(request, out)
+        call_kwargs = mock_boto_client.synthesize_speech.call_args.kwargs
+        assert call_kwargs["Text"] == (
+            '<speak><prosody rate="100%">AT&amp;T &lt;b&gt; &gt;</prosody></speak>'
+        )
+        assert result.text == request.text
+
     def test_synthesize_passes_voice_params(
         self,
         mock_boto_client: MagicMock,
