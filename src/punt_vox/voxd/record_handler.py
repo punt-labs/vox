@@ -10,7 +10,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.voxd._parse import parse_present_str
-from punt_vox.voxd.speech_handlers import _SpeechRequest
+from punt_vox.voxd.speech_request import SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_fault import SafeFault
@@ -56,7 +56,7 @@ class RecordHandler(MessageHandler):
         # Keep an explicit "" distinct from absence so only unnamed takes
         # content-address. Defer hashing unnamed takes to place().
         try:
-            req = _SpeechRequest.from_msg(msg, websocket)
+            req = SpeechRequest.from_msg(msg, websocket)
             name = parse_present_str(msg, "name")
             await self._validate_name(name, req.text)
         except (ValueError, OSError) as exc:
@@ -83,7 +83,7 @@ class RecordHandler(MessageHandler):
 
         await self._record(req, name)
 
-    async def _record(self, req: _SpeechRequest, name: str | None) -> None:
+    async def _record(self, req: SpeechRequest, name: str | None) -> None:
         """Synthesize, land the file in the store, and send the terminal reply.
 
         Each failing step has already sent its own error frame, so a failure
@@ -111,7 +111,7 @@ class RecordHandler(MessageHandler):
             await asyncio.to_thread(self._store.resolve, name, text)
 
     async def _store_outcome(
-        self, req: _SpeechRequest, name: str | None, outcome: SynthesisOutcome
+        self, req: SpeechRequest, name: str | None, outcome: SynthesisOutcome
     ) -> RecordWrite | None:
         """Land the synthesized file in the store, or reply error and return None."""
         work = asyncio.get_running_loop().run_in_executor(

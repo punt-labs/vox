@@ -90,6 +90,42 @@ class TestTextInputResolve:
         assert json.loads(capsys.readouterr().out) == {"error": "no text on stdin"}
 
 
+class TestSpeechStdinEncoding:
+    """Reject bad pipe bytes before resolving synthesis settings."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [["say", "--once", "10", "--provider", "espeak", "-"], ["rec", "new"]],
+    )
+    @pytest.mark.parametrize("charset", ["utf-8", "latin-1"])
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
+    def test_invalid_speech_stdin(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        command: list[str],
+        charset: str,
+        flags: list[str],
+    ) -> None:
+        def fail_on_synthesis_settings() -> None:
+            pytest.fail("invalid stdin reached synthesis settings")
+
+        monkeypatch.setattr(
+            "punt_vox.cli_synthesis.SessionSpec.for_repo", fail_on_synthesis_settings
+        )
+        result = CliRunner(charset=charset).invoke(
+            app, [*flags, *command], input=b"left\xffright"
+        )
+
+        assert result.exit_code == 1
+        message = "speech stdin must be valid UTF-8"
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert unstyle(result.stderr).strip() == f"Error: {message}."
+
+
 class TestTextInputFromFile:
     """TextInput parses a --from JSON segments file."""
 

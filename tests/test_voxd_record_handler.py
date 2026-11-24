@@ -388,6 +388,28 @@ class TestRecordHandler:
         assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
         synth.synthesize_to_file.assert_not_called()
 
+    def test_surrogate_is_rejected_before_recording_ack(self, tmp_path: Path) -> None:
+        synth = MagicMock(spec=SynthesisPipeline)
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            handler(
+                {
+                    "type": "record",
+                    "id": "r1",
+                    "text": "left\ud800right",
+                    "provider": "espeak",
+                },
+                ws,
+            )
+        )
+
+        assert sent == [
+            {"type": "error", "id": "r1", "message": "text must be valid UTF-8"}
+        ]
+        synth.synthesize_to_file.assert_not_called()
+
     async def test_empty_normalized_text_rejects_after_ack(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

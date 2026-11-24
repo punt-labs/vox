@@ -1,4 +1,4 @@
-"""Tests for punt_vox.voxd.speech_handlers -- synthesize and record handlers."""
+"""Tests for WebSocket speech synthesis and playback requests."""
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ from punt_vox.types_provider_errors import (
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
-from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+from punt_vox.voxd.synthesize_handler import SynthesizeHandler
 
 
 def _make_synthesize_handler(
@@ -221,6 +221,24 @@ class TestSynthesizeParseGuard:
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "1"
         assert "text must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_surrogate_is_rejected_before_dedup(self) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        await handler(
+            {"id": "1", "text": "left\udcffright", "provider": "espeak", "once": 10},
+            ws,
+        )
+
+        ws.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "1", "message": "text must be valid UTF-8"}
+        )
+        mock_synth.try_direct_play.assert_not_called()
         mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
@@ -470,7 +488,7 @@ class TestHandleSynthesizeOnceFlag:
         mock_synth.synthesize_to_file = fake_synthesize
 
         monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+            "punt_vox.voxd.synthesize_handler._LOCAL_PROVIDERS", set[str]()
         )
 
         handler = _make_synthesize_handler(synthesis=mock_synth)
@@ -671,7 +689,7 @@ class TestHandleSynthesizeCachedSignal:
         mock_synth = MagicMock(spec=SynthesisPipeline)
         mock_synth.synthesize_to_file = fake_synthesize
         monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+            "punt_vox.voxd.synthesize_handler._LOCAL_PROVIDERS", set[str]()
         )
         handler = _make_synthesize_handler(synthesis=mock_synth)
 

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import typer
 
 from punt_vox.logging_config import configure_client_logging
-from punt_vox.output_formatter import OutputFormatter
 from punt_vox.segment_file import SegmentFile
+from punt_vox.speech_stdin import SpeechStdin
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.output_formatter import OutputFormatter
 
 __all__ = ["OutputFlags", "TextInput"]
 
@@ -92,7 +96,7 @@ class TextInput:
         when no argument is given and stdin is not a terminal (a pipe).
 
         Raises:
-            typer.Exit: If no text is provided or standard input is empty.
+            typer.Exit: If no text is provided or stdin is empty or not UTF-8.
             typer.BadParameter: If the file cannot be read or its content is invalid.
             OSError: If standard input cannot be read.
         """
@@ -120,9 +124,5 @@ class TextInput:
         return text == "-" or (text is None and not sys.stdin.isatty())
 
     def _read_stdin(self) -> str:
-        """Read and return stripped text from stdin, or exit on empty input."""
-        data = sys.stdin.read().strip()
-        if not data:
-            self._formatter.error("no text on stdin", "Error: no text on stdin.")
-            raise typer.Exit(code=1)
-        return data
+        """Read speech stdin with the shared formatter."""
+        return SpeechStdin(self._formatter).read()
