@@ -239,7 +239,7 @@ def test_bad_allowlist_entries_are_rejected_by_name(
     ("entry", "reason"),
     [("   ", "blank"), ("relative/repo", "not absolute"), ("/", "the filesystem root")],
 )
-def test_allow_and_disallow_refuse_bad_entries_before_git(
+def test_allow_refuses_bad_entries_before_git(
     tmp_path: Path, entry: str, reason: str
 ) -> None:
     policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
@@ -248,9 +248,18 @@ def test_allow_and_disallow_refuse_bad_entries_before_git(
         pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"),
     ):
         policy.allow(entry)
-    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
-        policy.disallow(entry)
     git.assert_not_called()
+    assert policy.repos() == ()
+
+
+@pytest.mark.parametrize("entry", ["relative/repo", "/"])
+def test_disallow_refuses_only_what_is_not_stored(tmp_path: Path, entry: str) -> None:
+    """Disallow validates nothing but blankness: an unstored entry is the refusal."""
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with pytest.raises(ValueError, match=f"not allowlisted: {entry}"):
+        policy.disallow(entry)
+    with pytest.raises(ValueError, match="worker_repos entry blank"):
+        policy.disallow("   ")
     assert policy.repos() == ()
 
 
@@ -464,3 +473,33 @@ def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None
     assert policy.repos() == tuple(
         sorted(("/a", str(repo_a.resolve()), str(repo_b.resolve())))
     )
+
+
+def test_disallow_removes_a_stored_relative_entry_and_keeps_the_rest(
+    tmp_path: Path,
+) -> None:
+    """An entry stored before validation existed can still be taken out."""
+    config = ConfigStore(tmp_path / "config")
+    kept = tmp_path / "kept"
+    config.write_field("worker_repos", repr(["relative/repo", str(kept)]))
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(ValueError, match="not absolute"):
+        policy.repos()
+    assert policy.disallow("relative/repo") == (str(kept),)
+    assert policy.repos() == (str(kept),)
+
+
+def test_disallow_matches_a_stored_entry_by_resolved_path(tmp_path: Path) -> None:
+    """A stored entry with a symlink or dot segment matches its resolved spelling."""
+    config = ConfigStore(tmp_path / "config")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    config.write_field("worker_repos", repr([str(alias), "   ", str(tmp_path / "x")]))
+    policy = WorkerRepoPolicy(config)
+    assert policy.disallow(str(repo)) == ("   ", str(tmp_path / "x"))
+    with pytest.raises(ValueError, match="not allowlisted"):
+        policy.disallow(str(repo))
+    with pytest.raises(ValueError, match="blank"):
+        policy.disallow(" ")

@@ -105,25 +105,26 @@ def test_worker_cli_reports_daemon_refusal() -> None:
 
 
 @pytest.mark.parametrize(
-    ("args", "operation"),
-    [
-        (["worker", "allow", "repo"], "allow"),
-        (["worker", "disallow", "repo"], "disallow"),
-    ],
+    ("operation", "sent"),
+    [("allow", "{tmp}/repo"), ("disallow", "repo")],
 )
-def test_allow_and_disallow_send_the_resolved_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], operation: str
+def test_allow_sends_the_resolved_path_and_disallow_the_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, sent: str
 ) -> None:
-    """The CLI resolves the path; the daemon validates and writes the allowlist."""
+    """allow resolves before sending; disallow sends the spelling as written.
+
+    A stored entry that predates validation (a relative path) matches only by
+    its text, so a resolved disallow argument could never remove it.
+    """
     monkeypatch.chdir(tmp_path)
     with patch(
         "punt_vox.worker_client.WorkerClient.request",
         new_callable=AsyncMock,
         return_value=[str(tmp_path / "repo")],
     ) as request:
-        result = CliRunner().invoke(app, args)
+        result = CliRunner().invoke(app, ["worker", operation, "repo"])
     assert result.exit_code == 0, result.output
-    request.assert_awaited_once_with(operation, project=str(tmp_path / "repo"))
+    request.assert_awaited_once_with(operation, project=sent.format(tmp=tmp_path))
     assert result.output == f"{tmp_path / 'repo'}\n"
 
 

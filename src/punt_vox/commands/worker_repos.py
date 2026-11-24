@@ -37,23 +37,27 @@ class WorkerReposCli:
             typer.echo(path)
 
     @staticmethod
-    def _project(operation: str, path: str) -> str:
-        """Resolve PATH for the daemon; a blank one would resolve to the cwd."""
+    def _present(operation: str, path: str) -> str:
+        """Refuse a blank PATH: resolved, it would name the cwd."""
         if not path.strip():
             typer.echo(f"vox: worker {operation}: PATH must not be blank", err=True)
             raise typer.Exit(2)
-        return str(Path(path).expanduser().resolve())
+        return path
 
     @staticmethod
     def allow(path: str, *, as_json: JsonFlag = False) -> None:
         """Allow workers in a repository; PATH must be a git top level."""
-        project = WorkerReposCli._project("allow", path)
-        WorkerReposCli._paths("allow", as_json=as_json, project=project)
+        project = Path(WorkerReposCli._present("allow", path)).expanduser().resolve()
+        WorkerReposCli._paths("allow", as_json=as_json, project=str(project))
 
     @staticmethod
     def disallow(path: str, *, as_json: JsonFlag = False) -> None:
-        """Remove a repository from the worker allowlist."""
-        project = WorkerReposCli._project("disallow", path)
+        """Remove a repository from the worker allowlist.
+
+        PATH goes to the daemon as written: it matches a stored entry by
+        text or by resolved path, so a stored relative entry can be removed.
+        """
+        project = WorkerReposCli._present("disallow", path)
         WorkerReposCli._paths("disallow", as_json=as_json, project=project)
 
     @staticmethod

@@ -66,19 +66,12 @@ class WorkerRepoPolicy:
         return self._allowlist.edit(lambda allowed: allowed | {path})
 
     def disallow(self, project: str) -> tuple[str, ...]:
-        """Remove a repository from the allowlist and return the new list.
+        """Remove *project* by stored text or resolved path; lenient, unlike allow.
 
         Raises:
-            ValueError: If the resolved path is not allowlisted.
+            ValueError: If *project* is blank or matches no stored entry.
         """
-        path = RepoAllowlist.entry(project)
-
-        def remove(allowed: set[Path]) -> set[Path]:
-            if path not in allowed:
-                raise ValueError(f"not allowlisted: {path}")
-            return allowed - {path}
-
-        return self._allowlist.edit(remove)
+        return self._allowlist.remove(project)
 
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""

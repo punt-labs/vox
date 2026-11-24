@@ -48,27 +48,77 @@ class RepoAllowlist:
         """Replace the allowlist with ``change(current)`` under the file's lock.
 
         One locked read-modify-write: a writer that lands between the read
-        and the write waits, so no entry is lost. Returns the stored paths,
-        sorted. A malformed config file is refused, never rebuilt around
-        this field.
+        and the write waits, so no entry is lost. Every stored entry is
+        validated. Returns the stored paths, sorted.
 
         Raises:
-            ValueError: If the stored field is malformed, *change* refuses,
-                or the file has no closing fence to hold the field.
+            ValueError: If a stored entry is invalid, *change* refuses, or
+                the file has no closing fence to hold the field.
             OSError: If the file cannot be read or written.
             UnicodeDecodeError: If the config file is not UTF-8.
         """
-        stored: list[str] = []
+
+        def changed(entries: list[str]) -> list[str]:
+            current = {self.entry(e) for e in entries}
+            return sorted(str(path) for path in change(current))
+
+        return self._rewrite(changed)
+
+    def remove(self, raw: str) -> tuple[str, ...]:
+        """Drop every stored entry matching *raw* and return the rest, in order.
+
+        Lenient on purpose: an entry stored before validation existed (a
+        relative path) can still be taken out, so the strict readers stop
+        refusing. An entry matches by string equality, or by resolving to
+        the same path when both are absolute. Only a blank *raw* is refused.
+
+        Raises:
+            ValueError: If *raw* is blank, matches no stored entry, the field
+                is not a list of strings, or the file has no closing fence.
+            OSError: If the file cannot be read or written.
+            UnicodeDecodeError: If the config file is not UTF-8.
+        """
+        if not raw.strip():
+            raise ValueError(f"worker_repos entry blank: {raw!r}")
+
+        def dropped(entries: list[str]) -> list[str]:
+            remaining = [e for e in entries if not self._same(e, raw)]
+            if len(remaining) == len(entries):
+                raise ValueError(f"not allowlisted: {raw}")
+            return remaining
+
+        return self._rewrite(dropped)
+
+    def _rewrite(self, change: Callable[[list[str]], list[str]]) -> tuple[str, ...]:
+        """Store ``change(stored entries)`` in one locked read-modify-write.
+
+        A malformed config file is refused, never rebuilt around this field.
+        """
+        written: tuple[str, ...] = ()
 
         def transform(raw: str | None) -> str:
-            current = {self.entry(p) for p in self._parse(raw)}
-            stored.extend(sorted(str(path) for path in change(current)))
-            return self._literal(tuple(stored))
+            nonlocal written
+            written = tuple(change(self._parse(raw)))
+            return self._literal(written)
 
         # A checked write never rebuilds a malformed file around this field;
         # the policy itself has no precondition, so the check is a no-op.
         self._config.update_field(_FIELD, transform, check=lambda _fields: None)
-        return tuple(stored)
+        return written
+
+    @staticmethod
+    def _same(stored: str, raw: str) -> bool:
+        """Return whether *stored* names *raw*, by text or by resolved path."""
+        if stored == raw:
+            return True
+        resolved = RepoAllowlist._resolved(raw)
+        return resolved is not None and RepoAllowlist._resolved(stored) == resolved
+
+    @staticmethod
+    def _resolved(text: str) -> Path | None:
+        """Resolve an absolute spelling; a relative one has no resolved form."""
+        path = Path(text).expanduser()
+        return path.resolve() if path.is_absolute() else None
 
     @staticmethod
     def _parse(raw: str | None) -> list[str]:
