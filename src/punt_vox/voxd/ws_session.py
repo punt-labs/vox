@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Self, cast, final
 
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from punt_vox.voxd.fetch_handler import FetchHandler
-
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @final
 class WebSocketSession:
-    """Dispatch one handler at a time, watching for close during fetch."""
+    """Dispatch one handler at a time, watching for close during streams."""
 
     __slots__ = ("_frames", "_handlers", "_pending", "_socket")
 
@@ -73,28 +71,26 @@ class WebSocketSession:
         handler = self._handlers.get(kind)
         if handler is None:
             await self._error(f"unknown message type: {kind}", str(msg.get("id", "")))
-        elif isinstance(handler, FetchHandler):
-            await self._fetch(handler, msg)
+        elif kind in {"fetch", "rec_list"}:
+            await self._stream(handler, msg)
         else:
             await handler(msg, self._socket)
 
-    async def _fetch(self, handler: MessageHandler, msg: dict[str, object]) -> None:
-        fetch = asyncio.create_task(handler(msg, self._socket))
+    async def _stream(self, handler: MessageHandler, msg: dict[str, object]) -> None:
+        stream = asyncio.create_task(handler(msg, self._socket))
         try:
-            await self._watch_fetch(fetch)
+            await self._watch_stream(stream)
         except BaseException:
-            fetch.cancel()
-            (result,) = await asyncio.gather(fetch, return_exceptions=True)
-            if isinstance(result, Exception) and not isinstance(
-                result, WebSocketDisconnect
-            ):
-                logger.error("Fetch teardown failed", exc_info=result)
+            stream.cancel()
+            (e,) = await asyncio.gather(stream, return_exceptions=True)
+            if isinstance(e, Exception) and not isinstance(e, WebSocketDisconnect):
+                logger.error("%s teardown failed", str(msg["type"]).title(), exc_info=e)
             raise
-        await fetch
+        await stream
 
-    async def _watch_fetch(self, fetch: asyncio.Task[None]) -> None:
+    async def _watch_stream(self, stream: asyncio.Task[None]) -> None:
         # ASGI delivers disconnect through receive, in FIFO order. Buffer while
-        # watching the fetch, but retain backpressure for a saturated pipeline.
+        # watching the stream, but retain backpressure for a saturated pipeline.
         while len(self._frames) < _MAX_READ_AHEAD:
             pending = self._pending
             if pending is None:
@@ -102,7 +98,7 @@ class WebSocketSession:
                     self._socket.receive_text()
                 )
             done, _ = await asyncio.wait(
-                (pending, fetch), return_when=asyncio.FIRST_COMPLETED
+                (pending, stream), return_when=asyncio.FIRST_COMPLETED
             )
             if pending not in done:
                 return
@@ -114,7 +110,7 @@ class WebSocketSession:
                 return
             self._frames.append(pending.result())
             self._pending = None
-            if fetch in done:
+            if stream in done:
                 return
 
     async def _error(self, message: str, request_id: str = "") -> None:
