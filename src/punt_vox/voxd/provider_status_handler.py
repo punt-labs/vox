@@ -7,6 +7,10 @@ Design §3.6.  Two request shapes fold through one handler:
 * Without, the reply carries every registered provider's verdict and
   the daemon's ``preferred`` proposal -- the name a fresh repo should
   adopt, per :meth:`ProviderCredentials.preferred`.
+* With ``verify: true`` (``vox doctor``), each ready row is confirmed by
+  the provider's authenticated health check through
+  :class:`~punt_vox.providers.live_check.LiveCheck`, so a present but
+  rejected key reports ``check_failed`` instead of ``ready``.
 
 Both shapes read the same
 :class:`~punt_vox.providers.credentials.ProviderCredentials` the daemon
@@ -27,6 +31,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.providers.credentials import ProviderCredentials
+from punt_vox.providers.live_check import LiveCheck
 from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -51,15 +56,21 @@ class ProviderStatusHandler:
     on every request and the answer is current rather than cached.
     """
 
-    __slots__ = ("_credentials",)
+    __slots__ = ("_credentials", "_live_check")
     _credentials: ProviderCredentials
+    _live_check: LiveCheck
 
-    def __new__(cls, credentials: ProviderCredentials | None = None) -> Self:
+    def __new__(
+        cls,
+        credentials: ProviderCredentials | None = None,
+        live_check: LiveCheck | None = None,
+    ) -> Self:
         """Create a provider status handler."""
         self = super().__new__(cls)
         self._credentials = (
             credentials if credentials is not None else ProviderCredentials()
         )
+        self._live_check = live_check if live_check is not None else LiveCheck()
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
@@ -70,7 +81,8 @@ class ProviderStatusHandler:
         Request::
 
             {"type": "provider_status", "id": "<hex>",
-             "provider": "<name>" | absent}
+             "provider": "<name>" | absent,
+             "verify": true | false | absent}
 
         Reply, always through :class:`WireReply` (so a gone peer is a
         quiet no-op rather than an uncorrelated router traceback)::
@@ -100,30 +112,50 @@ class ProviderStatusHandler:
         the handler needs no try/except of its own.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
+        verify = msg.get("verify", False)
         try:
             requested = parse_optional_str(msg, "provider")
         except ValueError as exc:
             await reply.error(str(exc))
             return
+        if not isinstance(verify, bool):
+            await reply.error("field 'verify' must be a boolean")
+            return
 
-        rows = self._rows(requested)
-        payload: dict[str, object] = {
+        await reply.send(await self._payload(requested, verify=verify))
+
+    async def _payload(
+        self, requested: str | None, *, verify: bool
+    ) -> dict[str, object]:
+        """Return the reply body; a live-check failure is never ``preferred``.
+
+        Excluding a provider whose live check failed keeps the proposal from
+        naming a key the provider just rejected.
+        """
+        rows = await self._rows(requested, verify=verify)
+        failed = frozenset(row.name for row in rows if row.reason == "check_failed")
+        return {
             "type": "provider_status",
             "providers": [row.to_dict() for row in rows],
-            "preferred": self._credentials.preferred(),
+            "preferred": self._credentials.preferred(excluding=failed),
         }
-        await reply.send(payload)
 
-    def _rows(self, requested: str | None) -> tuple[ProviderReadiness, ...]:
+    async def _rows(
+        self, requested: str | None, *, verify: bool
+    ) -> tuple[ProviderReadiness, ...]:
         """Return the readiness rows the reply should carry.
 
         A named provider yields a one-row tuple (still an
         :class:`~punt_vox.types_provider.ProviderReadiness`, so the
         reply shape does not fork); an omitted ``provider`` returns
         every registered verdict in the daemon's fixed preference
-        order.  Extracted as a method so the ``__call__`` body reads
-        as one wire transaction rather than two.
+        order.  With *verify*, each ready row is confirmed by
+        :class:`~punt_vox.providers.live_check.LiveCheck`.
         """
         if requested is None:
-            return self._credentials.report_all()
-        return (self._credentials.report(requested),)
+            rows = self._credentials.report_all()
+        else:
+            rows = (self._credentials.report(requested),)
+        if not verify:
+            return rows
+        return await self._live_check.confirm_all(rows)

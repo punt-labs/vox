@@ -249,7 +249,9 @@ class VoxClientSync:
         """
         return self._drive(lambda c: c.health(), within_s=timeout)
 
-    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
+    def provider_status(
+        self, provider: str | None = None, *, verify: bool = False
+    ) -> ProviderStatusPayload:
         """Return the daemon's provider readiness set + its preferred proposal.
 
         Sync twin of :meth:`VoxClient.provider_status`; the daemon
@@ -257,7 +259,8 @@ class VoxClientSync:
         ``vox doctor`` report the current environment rather than a
         cached snapshot.  With *provider* omitted, the reply carries
         every registered verdict; with it set, the reply carries just
-        that one row.
+        that one row.  *verify* asks for an authenticated live check
+        of each ready provider.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -265,7 +268,7 @@ class VoxClientSync:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        return self._drive(lambda c: c.provider_status(provider))
+        return self._drive(lambda c: c.provider_status(provider, verify=verify))
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 

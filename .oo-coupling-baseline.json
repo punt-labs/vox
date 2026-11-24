@@ -210,11 +210,11 @@
     "avg_lcom": 0.5
   },
   "src/punt_vox/client.py": {
-    "efferent_coupling": 6.0,
-    "public_names": 6.0,
+    "efferent_coupling": 7.0,
+    "public_names": 4.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.843,
-    "avg_lcom": 0.843
+    "max_lcom": 0.817,
+    "avg_lcom": 0.817
   },
   "src/punt_vox/client_call.py": {
     "efferent_coupling": 1.0,
@@ -2891,11 +2891,11 @@
     "avg_lcom": 0.167
   },
   "src/punt_vox/voxd/provider_status_handler.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.5,
+    "avg_lcom": 0.5
   },
   "src/punt_vox/voxd/rec_handlers.py": {
     "efferent_coupling": 3.0,

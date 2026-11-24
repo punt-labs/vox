@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox doctor` now confirms each configured provider with an authenticated
+  live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
+  credentials, now reports not ready with the provider's reason instead of
+  `ready`, and is never the preferred provider. (PL-834)
+
 - Lux scene trees and patches now report themselves as unhashable while
   retaining structural equality.
 

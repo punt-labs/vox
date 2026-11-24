@@ -33,6 +33,7 @@ class TestProviderStatusReasons:
                     "unconfigured",
                     "unknown_provider",
                     "no_credentials",
+                    "check_failed",
                     "voxd_unavailable",
                 }
             )
