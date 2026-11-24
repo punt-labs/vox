@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, final
 
+import pytest
+
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.panel.control_push import ControlPush
@@ -15,14 +17,18 @@ from punt_vox.panel.state import PanelState
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
+    from punt_vox.voice_target import VoiceTarget
 
 
 @final
 class _Roster:
-    def voices(self, provider: str) -> list[str]:
-        assert provider == "openai"
-        return ["alloy", "nova"]
+    def voices(self, provider: VoiceTarget) -> list[str]:
+        assert provider.provider == "openai"
+        return (
+            ["alloy", "marin", "nova"]
+            if provider.model == "gpt-4o-mini-tts"
+            else ["alloy", "nova"]
+        )
 
 
 class TestPanelSettings:
@@ -30,8 +36,8 @@ class TestPanelSettings:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         class _UnavailableRoster:
-            def voices(self, provider: str) -> list[str]:
-                raise VoxdConnectionError(f"no roster for {provider}")
+            def voices(self, provider: VoiceTarget) -> list[str]:
+                raise VoxdConnectionError(f"no roster for {provider.provider}")
 
         store = ConfigStore(tmp_path)
         settings = PanelSettings(_UnavailableRoster(), store)
@@ -71,11 +77,16 @@ class TestPanelSettings:
             PanelNotice.silent(),
         )
 
-        assert settings.commit_model("tts-1-hd") is ControlPush.REFRESH
+        assert settings.commit_model("gpt-4o-mini-tts") is ControlPush.REFRESH
 
-        assert store.read_field("model") == "tts-1-hd"
+        assert store.read_field("model") == "gpt-4o-mini-tts"
         assert store.read_field("voice") == "alloy"
         assert settings.snapshot().voice == "alloy"
+        assert settings.snapshot().roster == ("alloy", "marin", "nova")
+
+        assert settings.commit_model("tts-1") is ControlPush.REFRESH
+
+        assert settings.snapshot().roster == ("alloy", "nova")
 
     def test_provider_yields_when_another_thread_won_the_race(
         self, tmp_path: Path
@@ -83,8 +94,8 @@ class TestPanelSettings:
         """A provider change during the roster fetch wins over this commit."""
 
         class _RacingRoster:
-            def voices(self, provider: str) -> list[str]:
-                assert provider == "espeak"
+            def voices(self, provider: VoiceTarget) -> list[str]:
+                assert provider.provider == "espeak"
                 settings.replace(
                     settings.snapshot().with_provider(
                         "openai", roster=("alloy",), model="tts-1", voice="alloy"
@@ -129,15 +140,20 @@ class TestPanelSettings:
         assert store.read_field("model") is None
         assert store.read_field("voice") is None
 
-    def test_model_yields_when_provider_changed_mid_fetch(self, tmp_path: Path) -> None:
-        """A provider change during the roster fetch wins over this commit."""
+    @pytest.mark.parametrize(
+        ("provider", "model"), [("espeak", None), ("elevenlabs", "eleven_v3")]
+    )
+    def test_model_yields_when_target_changed_mid_fetch(
+        self, tmp_path: Path, provider: str, model: str | None
+    ) -> None:
+        """A provider or model change during the roster fetch wins over this commit."""
 
         class _RacingRoster:
-            def voices(self, provider: str) -> list[str]:
-                assert provider == "elevenlabs"
+            def voices(self, target: VoiceTarget) -> list[str]:
+                assert target.provider == "elevenlabs"
                 settings.replace(
                     settings.snapshot().with_provider(
-                        "espeak", roster=("en",), model=None, voice="en"
+                        provider, roster=("new",), model=model, voice="new"
                     ),
                     PanelNotice.silent(),
                 )
@@ -157,4 +173,6 @@ class TestPanelSettings:
         assert changed is ControlPush.CORRECT
         assert store.read_field("model") is None
         assert store.read_field("voice") is None
-        assert settings.scene().provider == "espeak"
+        assert settings.scene().provider == provider
+        assert settings.scene().model == model
+        assert settings.snapshot().roster == ("new",)

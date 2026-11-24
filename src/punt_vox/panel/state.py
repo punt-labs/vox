@@ -11,9 +11,11 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.panel.panel_scene import PanelScene
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
-    from punt_vox.panel.ports import SettingsSource, VoiceRoster
+    from punt_vox.panel.ports import SettingsSource
+    from punt_vox.voice_target import RosterClient
 
 __all__ = ["PanelState"]
 
@@ -57,7 +59,7 @@ class PanelState:
         return cls(notify="n", speak="y", voice=None, roster=())
 
     @classmethod
-    def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
+    def read(cls, client: RosterClient, store: SettingsSource) -> Self:
         """Read the config fields fresh from disk and the voice roster from voxd.
 
         Provider and model are normalised at this boundary: a raw
@@ -68,7 +70,7 @@ class PanelState:
         guard needs to re-strip, and the daemon never sees a whitespace
         provider on the roster wire.
 
-        The roster is fetched for the normalised provider only. An unset or
+        The roster is fetched for the normalised provider and model. An unset or
         whitespace-only ``cfg.provider`` returns an empty roster rather
         than borrowing a different provider's voices; the panel does not
         display any roster at all until the caller has chosen a real
@@ -77,7 +79,7 @@ class PanelState:
         cfg = store.read()
         provider = cls._normalise(cfg.provider)
         model = cls._normalise(cfg.model)
-        roster = tuple(client.voices(provider)) if provider else ()
+        roster = tuple(client.voices(VoiceTarget(provider, model))) if provider else ()
         return cls(
             notify=cfg.notify,
             speak=cfg.speak,
@@ -114,15 +116,6 @@ class PanelState:
         provider; None means no model or no available voice.
         """
         return replace(self, provider=provider, model=model, roster=roster, voice=voice)
-
-    def with_model(self, model: str, *, voice: str | None) -> Self:
-        """Return a copy with ``model`` set + cascaded ``voice`` from the caller.
-
-        The cascade is computed by the caller (``VoxPanelService``) so
-        this method is a pure setter. ``voice=None`` means the roster
-        the caller fetched was empty.
-        """
-        return replace(self, model=model, voice=voice)
 
     def scene(self) -> PanelScene:
         """Return this state as the scene it projects onto."""

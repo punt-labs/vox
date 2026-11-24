@@ -269,10 +269,11 @@ class TestVoicesHandler:
     """The voices handler rejects a malformed provider without tearing the socket."""
 
     @pytest.mark.asyncio
-    async def test_non_string_provider_is_a_rejected_op(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("key", ["provider", "model"])
+    async def test_non_string_field_is_a_rejected_op(
+        self, caplog: pytest.LogCaptureFixture, key: str
     ) -> None:
-        """A non-string ``provider`` is a rejected client request, not a fault.
+        """A non-string field is a rejected client request, not a fault.
 
         The ValueError from the parse is caught and replied as an id-stamped error
         frame -- the parse must not escape the handler and tear the connection
@@ -280,14 +281,48 @@ class TestVoicesHandler:
         failed", because the client sent a bad request, not the daemon failing.
         """
         ws = _CollectingWs()
+        msg: dict[str, object] = {"id": "v1", "provider": "openai", key: 123}
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            await VoicesHandler()({"id": "v1", "provider": 123}, cast("WebSocket", ws))
+            await VoicesHandler()(msg, cast("WebSocket", ws))
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v1"
         assert "must be a string" in str(ws.sent[-1]["message"])
         assert any("rejected op" in r.getMessage() for r in caplog.records)
         assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("model", "has_marin"),
+        [
+            (None, False),
+            ("  ", False),
+            ("tts-1-hd", False),
+            (" gpt-4o-mini-tts ", True),
+        ],
+    )
+    async def test_openai_roster_uses_wire_model(
+        self, monkeypatch: pytest.MonkeyPatch, model: str | None, has_marin: bool
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "openai", "model": model}, cast("WebSocket", ws)
+        )
+        assert ws.sent[-1]["type"] == "voices"
+        roster = ws.sent[-1]["voices"]
+        assert isinstance(roster, list)
+        assert ("marin" in roster) == has_marin
+
+    @pytest.mark.asyncio
+    async def test_unknown_openai_model_is_rejected(self) -> None:
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "openai", "model": "tts-2"},
+            cast("WebSocket", ws),
+        )
+        assert ws.sent[-1]["type"] == "error"
+        assert "tts-2" in str(ws.sent[-1]["message"])
 
     @pytest.mark.asyncio
     async def test_operational_failure_is_a_fault_not_a_rejection(

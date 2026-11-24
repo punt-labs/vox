@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
     from punt_vox.panel.ports import HubListener
+    from punt_vox.voice_target import VoiceTarget
 
 
 @final
@@ -55,11 +56,11 @@ class _FakeDaemonClient:
         self.roster_reads = 0
         self.roster_reads_by_provider: list[str | None] = []
 
-    def voices(self, provider: str | None = None) -> list[str]:
+    def voices(self, provider: VoiceTarget) -> list[str]:
         self.roster_reads += 1
-        self.roster_reads_by_provider.append(provider)
-        if provider is not None and provider in self._voices_by_provider:
-            return self._voices_by_provider[provider]
+        self.roster_reads_by_provider.append(provider.provider)
+        if provider.provider in self._voices_by_provider:
+            return self._voices_by_provider[provider.provider]
         return self._voices
 
     def synthesize(
@@ -239,7 +240,7 @@ class TestPrefetch:
 
     def test_daemon_unavailable_keeps_the_empty_default(self) -> None:
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -252,7 +253,7 @@ class TestPrefetch:
 
     def test_daemon_unavailable_sets_the_notice(self) -> None:
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -267,7 +268,7 @@ class TestPrefetch:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
         class _MisbehavingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "unexpected reply"
                 raise VoxdProtocolError(msg)
 
@@ -539,7 +540,7 @@ class TestApplyEvent:
         class _RejectingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     raise VoxdRejectionError(detail)
@@ -571,7 +572,7 @@ class TestApplyEvent:
         detail = "Unknown provider ''. Available: elevenlabs, say"
 
         class _RejectingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 raise VoxdRejectionError(detail)
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
@@ -595,7 +596,7 @@ class TestApplyEvent:
         class _RosterFailingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     msg = "voxd unreachable"
@@ -662,7 +663,7 @@ class TestApplyEvent:
         class _RosterFailingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     msg = "voxd unreachable"
@@ -688,7 +689,7 @@ class TestApplyEvent:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
         class _MisbehavingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 return ["roger"]
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
@@ -955,7 +956,7 @@ class TestRefreshAndRecover:
         two unrelated subsystems failed, and the message must say both."""
 
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -978,7 +979,7 @@ class TestRefreshAndRecover:
         detail = "Unknown provider 'openai'"
 
         class _RejectingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 raise VoxdRejectionError(detail)
 
             def synthesize(self, *args: object, **kwargs: object) -> object:

@@ -8,6 +8,7 @@ from punt_vox.panel.state import PanelState
 
 if TYPE_CHECKING:
     from punt_vox.config import VoxConfig
+    from punt_vox.voice_target import VoiceTarget
 
 
 @final
@@ -32,10 +33,12 @@ class _FakeClient:
     def __init__(self, voices: list[str]) -> None:
         self._voices = voices
         self.last_provider_arg: str | None = None
+        self.last_model_arg: str | None = None
         self.call_count = 0
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        self.last_provider_arg = provider
+    def voices(self, provider: VoiceTarget) -> list[str]:
+        self.last_provider_arg = provider.provider
+        self.last_model_arg = provider.model
         self.call_count += 1
         return self._voices
 
@@ -78,12 +81,14 @@ class TestRead:
         assert state.roster == ("aria", "roger")
 
     def test_reads_provider_and_model_from_config(self) -> None:
+        client = _FakeClient(["marin"])
         state = PanelState.read(
-            _FakeClient(["aria"]),
-            _FakeStore(_config(provider="openai", model="tts-1")),
+            client,
+            _FakeStore(_config(provider="openai", model="gpt-4o-mini-tts")),
         )
         assert state.provider == "openai"
-        assert state.model == "tts-1"
+        assert state.model == "gpt-4o-mini-tts"
+        assert client.last_model_arg == state.model
 
     def test_roster_fetch_carries_the_current_provider(self) -> None:
         """PanelState.read asks voxd for the CURRENT provider's roster.
@@ -238,18 +243,6 @@ class TestWithField:
         assert after.roster == ("only", "roger")
         assert after.model == "eleven_flash_v2_5"
         assert after.voice == "only"
-
-    def test_with_model_stores_cascaded_voice(self) -> None:
-        """The cascade rule stores exactly what the caller resolved."""
-        after = PanelState.empty().with_model("tts-1", voice="alloy")
-        assert after.model == "tts-1"
-        assert after.voice == "alloy"
-
-    def test_with_model_voice_none_stores_none(self) -> None:
-        """A ``voice=None`` cascade (empty roster) is stored verbatim."""
-        after = PanelState.empty().with_model("tts-1", voice=None)
-        assert after.model == "tts-1"
-        assert after.voice is None
 
 
 class TestScene:

@@ -31,6 +31,7 @@ from punt_vox.paths import run_dir
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -1416,11 +1417,12 @@ class TestVoxClientVoices:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        result = await client.voices(provider="elevenlabs")
+        result = await client.voices(VoiceTarget("elevenlabs", "eleven_v3"))
         assert result == ["drew", "matilda"]
 
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["provider"] == "elevenlabs"
+        assert sent["model"] == "eleven_v3"
 
     @pytest.mark.asyncio
     async def test_voices_always_sends_provider_on_the_wire(self) -> None:
@@ -1438,6 +1440,7 @@ class TestVoxClientVoices:
         assert result == ["fred"]
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["provider"] == "say"
+        assert "model" not in sent
 
     @pytest.mark.asyncio
     async def test_voices_waits_longer_than_provider_enumeration(self) -> None:
@@ -1892,7 +1895,11 @@ class TestVoxClientSync:
             assert result.store_path == Path("/store/z.mp3")
             assert result.byte_count == 20
 
-    def test_voices(self) -> None:
+    @pytest.mark.parametrize(
+        ("target", "model"),
+        [("say", None), (VoiceTarget("openai", "gpt-4o-mini-tts"), "gpt-4o-mini-tts")],
+    )
+    def test_voices(self, target: str | VoiceTarget, model: str | None) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
@@ -1906,8 +1913,10 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.voices("say")
+            result = sync_client.voices(target)
             assert result == ["fred"]
+            frame = json.loads(mock_ws.send.call_args.args[0])
+            assert frame.get("model") == model
 
 
 class TestVoxClientSyncFrameDispatch:

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from punt_vox.client import SynthesizeResult
     from punt_vox.panel.ports import HubListener
     from punt_vox.types_synthesis import SynthesisSpec
+    from punt_vox.voice_target import VoiceTarget
 
 
 def _config(voice: str | None, provider: str | None) -> VoxConfig:
@@ -86,7 +87,7 @@ class _RosterFailsAfterPrefetch:
     def __init__(self) -> None:
         self.call_count = 0
 
-    def voices(self, provider: str | None = None) -> list[str]:
+    def voices(self, provider: VoiceTarget) -> list[str]:
         self.call_count += 1
         if self.call_count > 1:
             msg = "voxd unreachable"

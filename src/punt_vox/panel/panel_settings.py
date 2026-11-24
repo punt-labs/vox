@@ -11,12 +11,14 @@ from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.state import PanelState
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.panel.panel_scene import PanelScene
-    from punt_vox.panel.ports import SettingsStore, VoiceRoster
+    from punt_vox.panel.ports import SettingsStore
+    from punt_vox.voice_target import RosterClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +29,14 @@ __all__ = ["PanelSettings"]
 class PanelSettings:
     """Hold a panel's settings and notice with one lock for atomic commits."""
 
-    _client: VoiceRoster
+    _client: RosterClient
     _store: SettingsStore
     _lock: threading.Lock
     _state: PanelState
     _notice: PanelNotice
     __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
 
-    def __new__(cls, client: VoiceRoster, store: SettingsStore) -> Self:
+    def __new__(cls, client: RosterClient, store: SettingsStore) -> Self:
         """Create empty settings for a session."""
         self = super().__new__(cls)
         self._client = client
@@ -83,19 +85,19 @@ class PanelSettings:
             self._notice = PanelNotice.silent()
 
     def _fetch_roster_or_notice(
-        self, provider: str, context: str
+        self, target: VoiceTarget, context: str
     ) -> tuple[str, ...] | RosterError:
         """Fetch *provider*'s voice roster or return the reported daemon fault.
 
         Failures set a notice under the lock, preserving the daemon's reason
         when it rejected the request. The caller aborts its commit.
         """
-        result = Cascade.fetch_roster(self._client, provider)
+        result = Cascade.fetch_roster(self._client, target)
         if isinstance(result, RosterError):
             logger.warning(
                 "vox-panel: roster fetch failed during %s (provider=%r): %s",
                 context,
-                provider,
+                target.provider,
                 result.message,
             )
             # A daemon-sent rejection carries the reason voxd refused (an
@@ -145,10 +147,10 @@ class PanelSettings:
             pre_fetch_provider = self._state.provider
             if provider == pre_fetch_provider:
                 return self._cleared_notice()
-        roster = self._fetch_roster_or_notice(provider, "provider-switch")
+        target = Cascade.default_target(provider)
+        roster = self._fetch_roster_or_notice(target, "provider-switch")
         if isinstance(roster, RosterError):
             return ControlPush.CORRECT
-        model_default = Cascade.default_model(provider)
         voice_default = Cascade.first_or_empty(roster)
         with self._lock:
             # Re-check under the lock: another thread may have committed a
@@ -171,14 +173,14 @@ class PanelSettings:
             self._store.write_fields(
                 {
                     "provider": provider,
-                    "model": model_default,
+                    "model": target.model_field,
                     "voice": voice_default,
                 }
             )
             self._state = self._state.with_provider(
                 provider,
                 roster=roster,
-                model=model_default or None,
+                model=target.model,
                 voice=voice_default or None,
             )
             self._notice = PanelNotice.silent()
@@ -188,17 +190,15 @@ class PanelSettings:
         """Persist a model change; cascade voice to the current-provider default.
 
         The cascade rule: setting a model writes model +
-        ``client.voices(current_provider)[0]`` for the voice, in one
+        the first voice for that model, in one
         atomic write. A ``VoxdConnectionError`` on the roster fetch
         surfaces as a transient notice; the write is abandoned so the
         disk never lands a model whose companion voice we could not read.
 
         Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
         that must not block other panel threads on their own reads. The
-        provider is re-checked under the lock after the fetch: if another
-        thread swapped the provider mid-flight, this commit gives up
-        rather than clobber the newer state with a voice from the wrong
-        provider. Mirrors ``commit_provider``'s pre-fetch guard.
+        provider and model are re-checked under the lock after the fetch
+        so a concurrent switch can't be overwritten by a stale result.
 
         Every abandoned commit below -- no provider selected yet, an
         unreadable roster, a provider changed mid-fetch -- answers
@@ -207,7 +207,8 @@ class PanelSettings:
         ``_state`` never moved, so only a full reinstall corrects it.
         """
         with self._lock:
-            pre_fetch_provider = self._state.provider
+            before = self._state
+        pre_fetch_provider = before.provider
         if pre_fetch_provider is None:
             # A provider-less panel renders no clickable model at all, so a
             # MODEL event cannot originate from the widget in this state.
@@ -218,29 +219,24 @@ class PanelSettings:
             # as it stands -- this call has nothing of its own to report.
             logger.info("vox-panel: model click ignored; no provider selected yet")
             return ControlPush.CORRECT
-        roster = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
+        target = VoiceTarget(pre_fetch_provider, model)
+        roster = self._fetch_roster_or_notice(target, "model-switch")
         if isinstance(roster, RosterError):
             return ControlPush.CORRECT
         voice_default = Cascade.first_or_empty(roster)
         with self._lock:
-            # Re-check under the lock: another thread may have committed a
-            # different provider (via PROVIDER topic) while our roster RPC
-            # was in flight. Give up rather than persist a voice default
-            # from the wrong provider on top of that newer state.
-            current_provider = self._state.provider
-            if current_provider != pre_fetch_provider:
-                logger.info(
-                    "vox-panel: provider changed to %r mid-fetch; "
-                    "aborting our model %r commit",
-                    current_provider,
-                    model,
-                )
-                # Same as ``commit_provider``'s mid-fetch abort: nothing
-                # happened here, so nothing this call owns belongs on the
-                # notice band, and another thread's reason stays put.
+            if (self._state.provider, self._state.model) != (
+                before.provider,
+                before.model,
+            ):
                 return ControlPush.CORRECT
             self._store.write_fields({"model": model, "voice": voice_default})
-            self._state = self._state.with_model(model, voice=voice_default or None)
+            self._state = self._state.with_provider(
+                pre_fetch_provider,
+                roster=roster,
+                model=model,
+                voice=voice_default or None,
+            )
             self._notice = PanelNotice.silent()
             return ControlPush.REFRESH
 

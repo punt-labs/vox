@@ -15,7 +15,7 @@ import tempfile
 import uuid
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -44,6 +44,7 @@ from punt_vox.types_programs import (
 from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_recording import RecordingFetchRequest
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 logger = logging.getLogger(__name__)
 
@@ -525,8 +526,8 @@ class VoxClient:
             tmp.unlink(missing_ok=True)
             raise
 
-    async def voices(self, provider: str) -> list[str]:
-        """List *provider*'s voice roster; a missing ``voices`` key is a protocol error.
+    async def voices(self, provider: str | VoiceTarget) -> list[str]:
+        """List the target's voices; a provider name uses its default model.
 
         State is the sole authority on which provider voxd runs, so the
         caller names it explicitly on every roster fetch: the wire never
@@ -539,12 +540,11 @@ class VoxClient:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
         """
-        msg: dict[str, object] = {"type": "voices", "provider": provider}
+        msg = VoiceTarget.request(provider)
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_PROVIDER)
         if "voices" not in resp:
             raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")
-        voice_list: list[str] = resp["voices"]
-        return voice_list
+        return cast("list[str]", resp["voices"])
 
     async def health(self, *, output_dirs: bool = False) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version).

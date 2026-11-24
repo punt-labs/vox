@@ -43,17 +43,21 @@ _MAX_CHARS = 4096
 # the fallback when state declares none.
 _DEFAULT_MODEL = "tts-1"
 
-# Static voice list for tts-1 / tts-1-hd models.
-VOICES: dict[str, str] = {
-    "alloy": "alloy",
-    "ash": "ash",
-    "coral": "coral",
-    "echo": "echo",
-    "fable": "fable",
-    "onyx": "onyx",
-    "nova": "nova",
-    "sage": "sage",
-    "shimmer": "shimmer",
+# https://developers.openai.com/api/docs/guides/text-to-speech#voice-options
+_LEGACY_VOICES = (
+    "alloy",
+    "ash",
+    "coral",
+    "echo",
+    "fable",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+)
+# Keep shared voice indices stable across model switches in the panel.
+_MODEL_VOICES = {
+    "gpt-4o-mini-tts": (*_LEGACY_VOICES, "ballad", "cedar", "marin", "verse")
 }
 
 
@@ -61,7 +65,7 @@ class OpenAIProvider(TTSProvider):
     """OpenAI TTS provider.
 
     Implements the TTSProvider protocol using the OpenAI audio API.
-    Supports tts-1 and tts-1-hd models with 9 built-in voices.
+    Lists and resolves built-in voices for the selected speech model.
 
     The SDK client is built on first use, not here: constructing it loads
     ``SSL_CERT_FILE``, and a bad bundle should fail the request that needs
@@ -122,8 +126,7 @@ class OpenAIProvider(TTSProvider):
         """Synthesize text to an MP3 file using OpenAI TTS."""
         text = strip_vibe_tags(request.text)
 
-        resolved_voice = request.voice or self.default_voice
-        voice = self._resolve_voice_name(resolved_voice)
+        voice = self.resolve_voice(request.voice or self.default_voice)
         rate = request.rate if request.rate is not None else 90
         speed = self._rate_to_speed(rate)
 
@@ -154,7 +157,11 @@ class OpenAIProvider(TTSProvider):
 
         Language is accepted but not validated — OpenAI voices are multilingual.
         """
-        return self._resolve_voice_name(name)
+        key = name.lower()
+        roster = self.list_voices()
+        if key in roster:
+            return key
+        raise VoiceNotFoundError(name, roster)
 
     def check_health(self) -> list[HealthCheck]:
         """Check the OpenAI API key, then the configured model's access."""
@@ -217,12 +224,11 @@ class OpenAIProvider(TTSProvider):
         return self.default_voice
 
     def list_voices(self, language: str | None = None) -> list[str]:  # noqa: ARG002 -- protocol requires language param
-        """List available voices.
+        """List available voices for the selected model.
 
-        OpenAI voices are multilingual; language filter is accepted but
-        all voices are returned regardless.
+        OpenAI voices are multilingual, so the language filter is ignored.
         """
-        return sorted(VOICES)
+        return list(_MODEL_VOICES.get(self._model, _LEGACY_VOICES))
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -232,13 +238,6 @@ class OpenAIProvider(TTSProvider):
         return None
 
     # -- Private helpers --------------------------------------------------
-
-    def _resolve_voice_name(self, name: str) -> str:
-        """Resolve a voice name, case-insensitive."""
-        key = name.lower()
-        if key in VOICES:
-            return VOICES[key]
-        raise VoiceNotFoundError(name, sorted(VOICES))
 
     def _new_sdk(self) -> openai.OpenAI:
         """Construct the SDK client with the key this provider was built with.

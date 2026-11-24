@@ -8,8 +8,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
+from punt_vox.models import MODEL_TABLE
 from punt_vox.providers import get_provider
-from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd._parse import parse_optional_str, parse_required_str
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
@@ -89,7 +90,7 @@ class VoicesHandler(MessageHandler):
         return super().__new__(cls)
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """List available voices for the requested provider.
+        """List available voices for the requested provider and model.
 
         ``provider`` is required on the wire (design §3.7): every
         client fills it from state via :class:`SessionSpec` before
@@ -106,10 +107,12 @@ class VoicesHandler(MessageHandler):
         # Reply via WireReply (a gone peer no-ops, not a teardown), and parse inside
         # the try so domain failures classify like the store handlers.
         reply = WireReply(websocket, str(msg.get("id", "")))
-        provider_name = ""
         try:
-            provider_name = parse_required_str(msg, "provider")
-            provider = get_provider(provider_name)
+            name = parse_required_str(msg, "provider")
+            model = (parse_optional_str(msg, "model") or "").strip()
+            if model:
+                MODEL_TABLE.validate(model, name.lower())
+            provider = get_provider(name, model=model or None)
             voice_list = await asyncio.to_thread(provider.list_voices)
         except (ValueError, LookupError, OSError) as exc:
             # Shared taxonomy: ValueError = rejected client request (WARNING),
@@ -122,9 +125,7 @@ class VoicesHandler(MessageHandler):
             logger.exception("voices op failed id=%r", reply.request_id)
             await reply.fault(SafeFault.opaque("operation failed"))
             return
-        await reply.send(
-            {"type": "voices", "provider": provider_name, "voices": voice_list}
-        )
+        await reply.send({"type": "voices", "provider": name, "voices": voice_list})
 
 
 class HealthHandler(MessageHandler):
