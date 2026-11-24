@@ -804,8 +804,7 @@ Inert on its own: nothing refuses that did not refuse before.
 | `src/punt_vox/providers/openai.py`, `providers/elevenlabs.py` | delete `os.environ.get("TTS_MODEL")` at `openai.py:62`, `elevenlabs.py:78`, `elevenlabs.py:138`; raise `ProviderAuthError` on a credential rejection. | The model substitution (§3.9) and F3's typed error. |
 | `src/punt_vox/keys.py` | derive `PROVIDER_KEY_NAMES` from `providers/credentials.py`; **remove** `TTS_MODEL` (`:30`). | Deletes the fourth copy of the map; the model is state, not a credential. |
 | `src/punt_vox/desktop_install.py` | use `providers/credentials.py` for the key-variable map; keep the `keys.env` read (§3.8). | Deletes the third copy. |
-| `src/punt_vox/resolve.py` | delete `resolve_voice_and_language` and `_validate_and_infer` only — `apply_vibe`, `split_leading_expressive_tags`, and `strip_expressive_tags` stay (imported by `tests/test_server.py:25`). | No production callers, and it is the same silent-substitution pattern preserved as a template (PY-RF-6, forward integration). |
-| `tests/test_resolve.py` | delete the `resolve_voice_and_language` cases; keep the rest. | Follows its subject, function-scoped. |
+| `src/punt_vox/resolve.py`, `tests/test_resolve.py` | Done separately: removed the unused `resolve_voice_and_language` and `_validate_and_infer` functions and their tests. The expressive-tag helpers and their tests in `tests/test_server.py` remain. | No production callers. This cleanup does not change default voice policy (PL-782). |
 
 ### PR 3 — observability: the client can see all of it
 
