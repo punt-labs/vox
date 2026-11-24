@@ -42,7 +42,7 @@ class AudioRequest:
     speaker_boost: bool | None = None
     provider: AudioProviderId | None = None
     metadata: dict[str, str] = field(default_factory=_metadata)
-    vibe_tags: str | None = None
+    vibe_tags: str | None = None  # None means no separate session cue to prepend.
 
     @staticmethod
     def validate_language(code: str) -> str:

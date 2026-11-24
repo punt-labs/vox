@@ -37,7 +37,7 @@ class SynthesisCache:
         spec: SynthesisSpec,
         chars_in: int,
         *,
-        vibe_tags: str | None = None,
+        vibe_tags: str | None = None,  # None means no cue affects provider audio.
     ) -> Self:
         """Build the anonymous identity from all audio-affecting settings."""
         key = CacheKey(

@@ -124,7 +124,7 @@ class SynthesisPipeline:
     @staticmethod
     def _normalize_for_synthesis(
         raw_text: str, spec: SynthesisSpec
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None]:  # Cue is None when blank, unset, or unsupported.
         expressive = SynthesisPipeline.model_supports_expressive_tags(
             spec.provider or "", spec.model
         )

@@ -53,7 +53,7 @@ class CacheKey:
     similarity: float | None = None
     style: float | None = None
     speaker_boost: bool | None = None
-    vibe_tags: str | None = None
+    vibe_tags: str | None = None  # Omit absent session cues to retain no-cue keys.
 
     @property
     def filename(self) -> str:
