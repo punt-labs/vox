@@ -188,3 +188,63 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
         "next",
     ]
     assert caplog.messages.count("WebSocket error") == int(broken_receive)
+
+
+async def test_fetch_read_ahead_pauses_at_32_and_drains_in_order(
+    router: WebSocketRouter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "r.mp3").write_bytes(b"data")
+    full, resume = asyncio.Event(), asyncio.Event()
+    original_measure = FetchDigest.measure
+    sent: list[dict[str, object]] = []
+    socket = AsyncMock(spec=WebSocket)
+    socket.headers = {}
+    socket.application_state = WebSocketState.CONNECTED
+    socket.send_json.side_effect = sent.append
+    labels = [str(i) for i in range(33)]
+    frames = iter(
+        [
+            json.dumps({"type": "fetch", "id": "r", "ref": "r.mp3"}),
+            *(json.dumps({"type": "next", "id": label}) for label in labels),
+        ]
+    )
+
+    async def receive() -> str:
+        frame = next(frames, None)
+        if frame is None:
+            raise WebSocketDisconnect(1000)
+        if socket.receive_text.await_count == 33:
+            full.set()
+        return frame
+
+    async def measure(digest: FetchDigest, path: Path) -> object:
+        await resume.wait()
+        return await original_measure(digest, path)
+
+    async def next_request(msg: dict[str, object], websocket: WebSocket) -> None:
+        if msg["id"] == labels[0]:
+            assert socket.receive_text.await_count == 33  # fetch and 32 frames
+        await websocket.send_json({"type": "next", "id": msg["id"]})
+
+    socket.receive_text.side_effect = receive
+    monkeypatch.setattr(FetchDigest, "measure", measure)
+    router.handlers["next"] = next_request
+    task = asyncio.create_task(router.handle_connection(socket))
+    try:
+        async with asyncio.timeout(2):
+            await full.wait()
+            assert not sent
+            resume.set()
+            await asyncio.shield(task)
+    finally:
+        resume.set()
+        await asyncio.wait_for(task, timeout=5)
+
+    assert [frame["type"] for frame in sent[:3]] == [
+        "fetch_begin",
+        "chunk",
+        "fetch_end",
+    ]
+    assert [frame["id"] for frame in sent[3:]] == labels
