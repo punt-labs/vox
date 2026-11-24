@@ -17,7 +17,7 @@ _SYMBOL_NAME_RE = re.compile(
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
 _NUMBER = r"[-\u2212]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
-_NUMERIC_PERCENT_RE = re.compile(rf"{_NUMBER}%?(?:[-\u2013]{_NUMBER})?%[\W_]*")
+_NUMERIC_PERCENT_RE = re.compile(rf"{_NUMBER}(?:%?[-\u2013]{_NUMBER})?%(?:[^\w%]|_)*")
 
 
 class SpeechPunctuation:
