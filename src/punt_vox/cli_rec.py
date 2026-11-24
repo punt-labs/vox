@@ -215,7 +215,6 @@ class RecCli:
         gateway = self._guard.run(self._gateway_factory)
         for seg_text in segments:
             result = self._guard.run(partial(gateway.new, seg_text, spec, name))
-            self._formatter.warn(result.warning)
             self._formatter.emit(
                 {
                     "id": result.name,
@@ -223,6 +222,7 @@ class RecCli:
                     "cached": result.cached,
                 },
                 result.name,
+                warning=result.warning,
             )
 
     def list_recordings(

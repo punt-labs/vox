@@ -199,9 +199,8 @@ def _speak_segments(
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
-        _formatter.warn(result.warning)
         payload: dict[str, object] = {"id": result.request_id, **result.dedup_fields()}
-        _formatter.emit(payload, seg_text)
+        _formatter.emit(payload, seg_text, warning=result.warning)
 
 
 @app.command()
