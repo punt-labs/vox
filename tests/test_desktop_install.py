@@ -150,7 +150,6 @@ class TestServerEnvNeverCarriesSecret:
         env = DesktopInstaller("say", tmp_path / "audio").server_env()
 
         assert env == {
-            "TTS_PROVIDER": "say",
             "VOX_OUTPUT_DIR": str(tmp_path / "audio"),
         }
 

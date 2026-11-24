@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
   Inline cues stay where they were written. (PL-1577)
 
+- `vox desktop install --provider` rejects unknown providers and shows how to
+  set the suggested provider in Claude Desktop instead of claiming it was set.
+  (PL-1594)
+
 - Hooks on machines without `jq` decode the payload's `cwd` instead of
   cutting it at the first quote, so a repo path with a quote, backslash or
   non-ASCII name no longer silently drops the Stop and other notifications.

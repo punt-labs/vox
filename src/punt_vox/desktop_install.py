@@ -1,4 +1,4 @@
-"""Build Claude Desktop MCP configuration for an explicitly selected provider."""
+"""Build Claude Desktop MCP configuration and suggest a TTS provider."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ _PROVIDER_KEY_VARS: dict[str, str] = ProviderCredentials().api_key_env_vars()
 class DesktopInstaller:
     """Build the secret-free Claude Desktop entry for one provider.
 
-    Owns the provider name and output directory; produces the ``env`` map
+    Owns the suggested provider and output directory; produces the ``env`` map
     for the MCP server registration and reports whether the daemon can
     obtain the provider credential without ever embedding or echoing it.
     """
@@ -118,18 +118,22 @@ class DesktopInstaller:
         A ``None`` provider means "pick a provider whose credentials the
         installer's environment can already satisfy" -- the same question
         :meth:`ProviderCredentials.preferred` answers for the enable path.
-        A given name is lowercased so ``ElevenLabs`` and ``elevenlabs``
-        resolve identically. Raises :class:`ValueError` when no provider
-        is ready: a fresh install with no credentials in view of the
-        installer has nothing sensible to write as the routing default.
+        A given name is lowercased and must name a known provider.
 
         Raises:
-            ValueError: If no configured provider is available.
+            ValueError: If the name is unknown or no provider can be suggested.
         """
+        credentials = ProviderCredentials()
+        provider: str | None
         if provider_name is not None:
-            return cls(provider_name.lower(), audio_dir)
-        provider = ProviderCredentials().preferred()
-        if provider is None:
+            provider = provider_name.lower()
+            if provider not in credentials.providers:
+                msg = (
+                    f"Unknown TTS provider {provider_name!r}. "
+                    f"Allowed: {', '.join(credentials.providers)}"
+                )
+                raise ValueError(msg)
+        elif (provider := credentials.preferred()) is None:
             msg = (
                 "No TTS provider credentials found in the current environment. "
                 "Export ELEVENLABS_API_KEY / OPENAI_API_KEY / AWS credentials, "
@@ -140,22 +144,16 @@ class DesktopInstaller:
 
     @property
     def provider(self) -> str:
-        """Return the resolved provider name."""
+        """Return the suggested provider name."""
         return self._provider
 
     def server_env(self) -> dict[str, str]:
         """Return the non-secret ``env`` for the MCP server registration.
 
-        Only routing config -- provider name and output directory. A
-        resolved API key is deliberately never included: it would land in
-        plaintext in ``claude_desktop_config.json`` (PL-PP-4). The daemon
-        reads the key from ``keys.env`` instead, so the server still
-        authenticates without the secret ever touching this file.
+        Only the output directory belongs here; the provider comes from Vox
+        state, and the daemon reads API keys from ``keys.env``.
         """
-        return {
-            "TTS_PROVIDER": self._provider,
-            "VOX_OUTPUT_DIR": str(self._audio_dir),
-        }
+        return {"VOX_OUTPUT_DIR": str(self._audio_dir)}
 
     def requires_credential(self) -> bool:
         """Return whether the provider authenticates with an API key."""
@@ -201,9 +199,9 @@ class DesktopInstaller:
             raise ValueError(msg)
         key_var = _PROVIDER_KEY_VARS[self._provider]
         return (
-            f"Warning: {key_var} is not available to the vox daemon. "
+            f"Warning: Using {self._provider} requires {key_var} in the vox daemon. "
             "The Claude Desktop config stores no API key by design. voxd "
             f"reads its key from {keys_env_file()} at startup -- export "
             f"{key_var} and run 'vox daemon install' to store it there, "
-            f"or choose --provider say/espeak/polly."
+            "or select a different provider."
         )

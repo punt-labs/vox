@@ -23,7 +23,7 @@ _CLI_MOD = "punt_vox.cli_desktop"
 def _failing_replace(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
     """Make the config rewrite raise *exc* from inside ``AtomicFile``.
 
-    Patched at the name ``cli_desktop`` holds, so the CLI's own handling of a
+    Patched at the name ``desktop_config`` holds, so the CLI's own handling of a
     failed write is what is under test; the swap's atomicity and its temp-file
     cleanup belong to ``AtomicFile`` and are covered by its own tests.
     """
@@ -31,7 +31,7 @@ def _failing_replace(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> Non
     def _boom(_self: object, _text: str, *, mode: int | None = None) -> None:
         raise exc
 
-    monkeypatch.setattr(f"{_CLI_MOD}.AtomicFile.replace", _boom)
+    monkeypatch.setattr("punt_vox.desktop_config.AtomicFile.replace", _boom)
 
 
 def _failing_mkdir(monkeypatch: pytest.MonkeyPatch, target: Path) -> None:
@@ -87,6 +87,7 @@ class TestInstallPlatformDispatch:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config_path = _linux_host(monkeypatch, tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
 
         result = CliRunner().invoke(
             app,
@@ -104,8 +105,57 @@ class TestInstallPlatformDispatch:
         data = json.loads(config_path.read_text(encoding="utf-8"))
         entry = data["mcpServers"]["vox"]
         assert entry["command"] == "/usr/bin/uvx"
-        assert entry["args"] == ["--from", "punt-vox", "vox", "mcp"]
-        assert entry["env"]["TTS_PROVIDER"] == "say"
+        assert entry["args"] == [
+            "--directory",
+            str(config_path.parent / "vox"),
+            "--from",
+            "punt-vox",
+            "vox",
+            "mcp",
+        ]
+        assert entry["env"] == {"VOX_OUTPUT_DIR": str(tmp_path / "audio")}
+        assert 'provider tool with name="say"' in result.output
+
+    def test_json_reports_the_provider_as_a_suggestion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _linux_host(monkeypatch, tmp_path)
+
+        result = _install("--json", out=tmp_path / "audio")
+
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "provider" not in payload
+        assert payload["suggested_provider"] == "say"
+        assert "'vox daemon install'" in payload["next_step"]
+        assert "'vox daemon start'" in payload["next_step"]
+        assert "Restart Claude Desktop" in payload["next_step"]
+        assert "If you want to set or change your provider" in payload["next_step"]
+        assert 'provider tool with name="say"' in payload["next_step"]
+
+    def test_unknown_provider_does_not_write_anything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _linux_host(monkeypatch, tmp_path)
+        audio_dir = tmp_path / "audio"
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "desktop",
+                "install",
+                "--provider",
+                "espeka",
+                "--output-dir",
+                str(audio_dir),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Unknown TTS provider 'espeka'" in result.output
+        assert "espeak" in result.output
+        assert not audio_dir.exists()
+        assert not config_path.parent.exists()
 
     def test_unsupported_platform_refuses_and_writes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -479,7 +529,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert _install(out=tmp_path / "audio").exit_code == 0
 
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
+            config_path.name,
+            "vox",
         ]
 
     def test_failed_write_leaves_the_old_config_and_no_temp_sibling(
@@ -505,7 +556,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert "Could not write" in result.output
         assert config_path.read_text(encoding="utf-8") == original
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
+            config_path.name,
+            "vox",
         ]
 
     def test_a_symlinked_config_is_written_through_not_replaced(
@@ -534,6 +586,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert config_path.readlink() == real
         installed = json.loads(real.read_text(encoding="utf-8"))
         assert installed["mcpServers"]["vox"]["args"] == [
+            "--directory",
+            str(config_path.parent / "vox"),
             "--from",
             "punt-vox",
             "vox",
