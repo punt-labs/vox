@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.atomic_file import AtomicFile
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 __all__ = ["ConfigEncodingError", "ConfigText"]
@@ -21,7 +22,7 @@ class ConfigEncodingError(UnicodeDecodeError):
 
     _path: Path
 
-    def __new__(cls, path: Path, error: UnicodeDecodeError) -> Self:
+    def __new__(cls, path: Path, error: UnicodeDecodeError, /) -> Self:
         """Bind the path and initialize the built-in decoder fields."""
         self = super().__new__(cls)
         UnicodeDecodeError.__init__(
@@ -30,12 +31,8 @@ class ConfigEncodingError(UnicodeDecodeError):
         self._path = path
         return self
 
-    if TYPE_CHECKING:
-
-        def __init__(self, path: Path, error: UnicodeDecodeError) -> None: ...
-    else:
-        # The native initializer takes codec fields, not this constructor's arguments.
-        __init__ = Exception.__init__
+    # Accept the constructor arguments without reinitializing the codec fields.
+    __init__: Callable[..., None] = Exception.__init__
 
     @property
     def path(self) -> Path:
