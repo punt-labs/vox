@@ -7,7 +7,7 @@ facts (``docs/vox-enable-disable.tex``): the tool-owned directory
 invariant is the § 2.11 biconditional -- the marker is present exactly when the
 import is present -- which every transition preserves:
 
-- ``enable``  gitignores ``vox.local.md``, deposits the guide, adds the import,
+- ``enable``  gitignores local state and locks, deposits the guide, adds the import,
   registers settings, sets an audible notify default, asks the DAEMON for a
   proposed starter provider (design §3.8: the *daemon* chooses, never a local
   probe of the enabling process's environment), writes that provider into
@@ -27,7 +27,7 @@ import is present -- which every transition preserves:
 :class:`~punt_vox.settings_registration.SettingsRegistration`, the
 :class:`~punt_vox.audible_notify.AudibleNotify` default, the
 :class:`~punt_vox.provider_proposal.ProviderProposal` daemon proposal, and the
-:class:`~punt_vox.gitignore_entry.GitignoreEntry` for ``vox.local.md``.
+:class:`~punt_vox.gitignore_entry.VoxGitignore` for local state and locks.
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
-from punt_vox.config import EPHEMERAL_FILENAME, ConfigStore
+from punt_vox.config import ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.dirs import find_repo_root
-from punt_vox.gitignore_entry import GitignoreEntry
+from punt_vox.gitignore_entry import VoxGitignore
 from punt_vox.provider_proposal import EnableOutcome, ProviderProposal
 from punt_vox.settings_registration import SettingsRegistration
 
@@ -53,9 +53,6 @@ __all__ = ["EnableOutcome", "RepoEnablement"]
 # The exact canonical repo-scope import line (§ 2.4). Byte-identical across all
 # tools and both surfaces; what ``enable`` writes and ``disable`` prunes.
 _IMPORT_LINE = "@.punt-labs/vox/CLAUDE.md"
-
-# The repo-relative path of the machine-local config ``enable`` keeps out of git.
-_LOCAL_CONFIG_IGNORE = f".punt-labs/vox/{EPHEMERAL_FILENAME}"
 
 
 @final
@@ -85,7 +82,7 @@ class RepoEnablement:
     _settings: SettingsRegistration
     _audible: AudibleNotify
     _proposal: ProviderProposal
-    _gitignore: GitignoreEntry
+    _gitignore: VoxGitignore
 
     def __new__(
         cls,
@@ -96,7 +93,7 @@ class RepoEnablement:
         settings: SettingsRegistration,
         audible: AudibleNotify,
         proposal: ProviderProposal,
-        gitignore: GitignoreEntry,
+        gitignore: VoxGitignore,
     ) -> Self:
         """Create a repo enablement."""
         self = super().__new__(cls)
@@ -120,11 +117,7 @@ class RepoEnablement:
             settings=SettingsRegistration(repo_root / ".claude" / "settings.json"),
             audible=AudibleNotify(vox_dir),
             proposal=ProviderProposal(ConfigStore(vox_dir)),
-            gitignore=GitignoreEntry(
-                repo_root / ".gitignore",
-                _LOCAL_CONFIG_IGNORE,
-                lock_path=repo_root / ".punt-labs" / "local" / "vox" / "gitignore.lock",
-            ),
+            gitignore=VoxGitignore(repo_root),
         )
 
     @classmethod
@@ -172,9 +165,9 @@ class RepoEnablement:
     def enable(self) -> EnableOutcome:
         """Reach the Enabled state from anywhere; idempotent (also the upgrade path).
 
-        Order matters for crash-safety: the ``.gitignore`` entry for
-        ``vox.local.md`` first (so no later step can leave machine-local state
-        committable), then the guide (so the import never points
+        Order matters for crash-safety: install the ``.gitignore`` rules
+        before writing local state or taking the shared host locks.
+        Deposit the guide next (so the import never points
         at a missing guide), then the import, the settings, the audible notify
         default, the daemon-proposed provider (§3.8), and the marker **last**.
         The marker is vox's on-signal -- the hooks gate on it -- so if any

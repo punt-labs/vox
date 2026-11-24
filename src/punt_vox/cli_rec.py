@@ -215,7 +215,7 @@ class RecCli:
         --name only works for a single text segment.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        boost = speaker_boost if speaker_boost else None
+        segments = TextInput(self._formatter).resolve(text, from_file)
         spec = self._fill_from_state(
             self._validated_spec(
                 SynthesisSpec(
@@ -227,11 +227,10 @@ class RecCli:
                     stability=stability,
                     similarity=similarity,
                     style=style,
-                    speaker_boost=boost,
+                    speaker_boost=speaker_boost or None,
                 )
             )
         )
-        segments = TextInput(self._formatter).resolve(text, from_file)
         self._guard_name(name, segments)
         gateway = self._guard.run(self._gateway_factory)
         for seg_text in segments:
