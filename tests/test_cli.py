@@ -3182,6 +3182,21 @@ class TestCacheCommands:
             expected_text = "Entries: 4" if command == "status" else "Cleared 9"
             assert expected_text in result.stdout
 
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_trailing_json_reports_daemon_connection_error(
+        self, mock_client_cls: MagicMock, command: str
+    ) -> None:
+        rpc = getattr(mock_client_cls.return_value, f"cache_{command}")
+        rpc.side_effect = VoxdConnectionError("refused")
+
+        result = CliRunner().invoke(app, ["cache", command, "--json"])
+
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert json.loads(result.stdout) == {"error": "refused"}
+        assert result.stderr == ""
+        rpc.assert_called_once_with()
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_status_routes_through_client(self, mock_client_cls: MagicMock) -> None:
         from punt_vox.client import CacheStatus
