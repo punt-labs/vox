@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast, final
 from punt_vox.cascade import Cascade, RosterError
 from punt_vox.types_errors import VoiceNotFoundError
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:
@@ -66,8 +67,10 @@ class VoiceRoster:
 
     @staticmethod
     def _require_same_provider(provider: str, fields: dict[str, str]) -> None:
-        active = fields.get("provider") or None
-        if (active or "").lower() != provider.lower():
+        active = fields.get("provider")
+        if not active:
+            raise ProviderNotConfiguredError.for_mcp()
+        if active.lower() != provider.lower():
             msg = (
                 f"The active provider changed from {provider!r} to {active!r}. "
                 "Retry setting the voice."

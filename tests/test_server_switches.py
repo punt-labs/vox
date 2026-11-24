@@ -527,10 +527,13 @@ def test_voice_set_rejects_provider_change_during_roster_fetch(
 
     result = json.loads(voice.dispatch("roger"))
 
-    assert result == {
-        "error": "The active provider changed from 'elevenlabs' "
-        f"to {provider_after!r}. Retry setting the voice."
-    }
+    if provider_after is None:
+        assert "no TTS provider" in result["error"]
+    else:
+        assert result == {
+            "error": "The active provider changed from 'elevenlabs' "
+            f"to {provider_after!r}. Retry setting the voice."
+        }
     assert session.voice == "matilda"
     assert config.read_text() == switched
 
