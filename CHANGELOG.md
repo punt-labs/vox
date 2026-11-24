@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox status` reports the running daemon's live log level after `vox log`,
   or `unknown` when the daemon can't report it. (PL-854)
 
+- Keep the daemon responsive to other requests while it hashes a large store
+  file before sending it. (PL-1430)
+
 - Treat non-object JSON replies from voxd as protocol errors. Instead of
   crashing, `vox status` reports `unknown`. `vox daemon status` reports
   `unresponsive` for an identified local daemon and `unknown` for an
