@@ -86,6 +86,7 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
     from punt_vox.client_sync import VoxClientSync
     from punt_vox.types_programs.prompts import PromptSet
     from punt_vox.types_synthesis import SynthesisSpec
+    from punt_vox.voice_target import VoiceTarget
 
     assert punt_vox.VoxClient is VoxClient
     assert punt_vox.VoxClientSync is VoxClientSync
@@ -95,6 +96,7 @@ def test_public_api_is_reexported_from_owning_modules() -> None:
     assert punt_vox.VoxdConnectionError is VoxdConnectionError
     assert punt_vox.VoxdProtocolError is VoxdProtocolError
     assert punt_vox.PromptSet is PromptSet
+    assert punt_vox.VoiceTarget is VoiceTarget
 
 
 def test_import_stays_light_and_daemon_free() -> None:
@@ -124,6 +126,7 @@ def test_all_lists_the_public_api() -> None:
         "PromptSet",
         "SynthesisSpec",
         "SynthesizeResult",
+        "VoiceTarget",
         "VoxClient",
         "VoxClientSync",
         "VoxError",

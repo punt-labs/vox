@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from punt_vox import VoiceTarget
 from punt_vox.client import (
     CacheStatus,
     VoxClient,
@@ -31,7 +32,6 @@ from punt_vox.paths import run_dir
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voice_target import VoiceTarget
 
 # ---------------------------------------------------------------------------
 # Path resolution
