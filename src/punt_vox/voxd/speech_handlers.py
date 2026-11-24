@@ -60,11 +60,12 @@ class _SpeechRequest:
 
         A string-typed field raises ``ValueError`` on a non-string value while a
         numeric field accepts a JSON number (via the parse helpers); empty or
-        whitespace-only text and an ``api_key`` no HTTP header may carry are
+        whitespace-only text, an ``api_key`` no HTTP header may carry, and a
+        rate or voice setting :meth:`SynthesisSpec.validate` refuses are
         rejected here, so both handlers share one validation point.
 
         Raises:
-            ValueError: If the message contains no speech text.
+            ValueError: If the message has no speech text or an invalid field.
         """
         text = parse_required_str(msg, "text")
         if not text.strip():
@@ -90,6 +91,7 @@ class _SpeechRequest:
             ),
             api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
+        spec.validate()
         return cls(
             text=text,
             spec=spec,
