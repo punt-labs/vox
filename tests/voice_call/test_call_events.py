@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
+from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.events import (
@@ -21,6 +22,7 @@ from punt_vox.voxd.voice_agent.events import (
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
+from punt_vox.voxd.voice_call.inputs import MicInput
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
 from .fakes import FakePlayback, FakeWorkers, payload
@@ -30,8 +32,10 @@ if TYPE_CHECKING:
 
     import pytest
 
+    from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.voice_call.call import Opener
+    from punt_vox.voxd.voice_call.contracts import CallInput
 
 
 class _Silent:
@@ -39,6 +43,15 @@ class _Silent:
         silence: tuple[bytes, ...] = ()
         for pcm in silence:
             yield pcm
+
+
+class _DeadMicSource:
+    """A MicAudioSource double: the macOS denied capture, zeros without end."""
+
+    async def chunks(self) -> AsyncIterator[AudioChunk]:
+        while True:
+            await asyncio.sleep(0)
+            yield AudioChunk(pcm=bytes(640), duration_s=0.02)
 
 
 class _Peer:
@@ -65,7 +78,9 @@ class _Peer:
         self.results.append(tool_call_id + result)
 
 
-def _call(peer: _Peer) -> VoiceAgentCall:
+def _call(peer: _Peer, audio: CallInput | None = None) -> VoiceAgentCall:
+    """Build a call on ``peer``; ``audio`` None sends no caller audio at all."""
+
     @asynccontextmanager
     async def opener(
         url: str, options: SessionOptions, *, trace: EventTrace
@@ -76,7 +91,7 @@ def _call(peer: _Peer) -> VoiceAgentCall:
     workers = FakeWorkers()
     return VoiceAgentCall(
         BossTools(workers, workers),
-        _Silent(),
+        audio if audio is not None else _Silent(),
         AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=cast("EventTrace", None),
         opener=cast("Opener", opener),
@@ -262,3 +277,27 @@ async def test_each_tool_call_is_logged_with_its_outcome(
         "Call tool no_such_tool: error unknown tool no_such_tool",
     ]
     assert call.outcome().tool_calls == 3
+
+
+async def test_a_silent_microphone_fails_the_live_call_naming_the_remedies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _OpenLine(_Peer):
+        """A peer that never hangs up: only the caller's side can end the call."""
+
+        async def receive(self) -> object:
+            await asyncio.sleep(3600)
+            raise EOFError
+
+    call = _call(_OpenLine([]), MicInput(cast("MicAudioSource", _DeadMicSource())))
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.voice_call"):
+        async with asyncio.timeout(10):
+            await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "failed"
+    error = str(status["error"])
+    assert error.startswith("no microphone signal")
+    assert "System Settings > Privacy & Security > Microphone" in error
+    assert "terminal" in error
+    assert call.outcome().error == error
+    assert "Voice call failed" not in caplog.text  # an expected failure, not a bug
