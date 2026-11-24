@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say --from` and `vox rec new --from` validate the segment file before
+  selecting a TTS provider. Invalid JSON errors name the file and location.
+  (PL-1541)
+
 - Partial album export confirmations in Claude Code show the number of skipped
   tracks instead of listing every filename. Export details still include the
   filenames. (PL-1540)
