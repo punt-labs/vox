@@ -141,7 +141,7 @@ def conflicting_provider_environment(
 ) -> None:
     """Configure ElevenLabs in the repo and conflicting legacy env defaults."""
     (hermetic_config / "vox.md").write_text(
-        "---\nprovider: elevenlabs\nmodel: eleven_v3\n---\n"
+        "---\nprovider: elevenlabs\nmodel: eleven_v3\nvoice: adam\n---\n"
     )
     monkeypatch.setenv("TTS_PROVIDER", "openai")
     monkeypatch.setenv("TTS_MODEL", "tts-1")
