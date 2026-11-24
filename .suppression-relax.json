@@ -28,5 +28,11 @@
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.",
     "added_at": "2026-11-22T07:34:00.284238Z"
+  },
+  {
+    "file": "src/punt_vox/voxd/workers/worktrees.py",
+    "ceiling": 2,
+    "justify": "git worktree add/remove/prune, branch -D and show-ref with a fixed argv list, the same S603/S607 waiver policy.py and command.py carry for their git calls; no shell, no caller text in argv",
+    "added_at": "2026-11-24T16:27:30.168899Z"
   }
 ]

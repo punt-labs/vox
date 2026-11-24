@@ -7,13 +7,18 @@ import logging
 import os
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from test_workers import FakeWorkerProvider, TrivialProfile, _fake_policy
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.voice_call.boss_tools import BossTools
+from punt_vox.voxd.workers.actor import WorkerActor
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
+from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 from .fakes import FakeWorkers, payload
 
@@ -425,3 +430,26 @@ async def test_start_faults_without_the_path_on_a_malformed_config(
     ):
         answer = await tools.answer("start_worker", {"task": "fix x"})
     _assert_path_free_fault(answer, tmp_path, caplog)
+
+
+async def test_start_speaks_the_worktree_deadline_through_the_real_registry(
+    tmp_path: Path,
+) -> None:
+    """A `git worktree add` past its deadline reaches the agent as a spoken error."""
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    worktrees.create.side_effect = ValueError(
+        "worker start timed out creating the worktree after 90 s"
+    )
+    registry = WorkerRegistry(
+        _fake_policy(tmp_path, worktrees),
+        WorkerRecords(tmp_path / "workers"),
+        {"tmux": FakeWorkerProvider()},
+        {"claude": TrivialProfile()},
+    )
+    answer = await BossTools(WorkerActor(registry), FakeWorkers()).answer(
+        "start_worker", {"task": "fix x"}
+    )
+    assert answer == (
+        '{"error": "worker start timed out creating the worktree after 90 s"}',
+        True,
+    )

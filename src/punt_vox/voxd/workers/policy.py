@@ -9,24 +9,32 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.allowlist import RepoAllowlist
+from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 if TYPE_CHECKING:
     from punt_vox.repo_spellings import RepoSpellings
+    from punt_vox.voxd.workers.model import WorkerRecord
 
 logger = logging.getLogger(__name__)
 
 
 @final
 class WorkerRepoPolicy:
-    """Resolve top levels before comparing against the durable allowlist."""
+    """Resolve top levels before comparing against the durable allowlist.
 
-    __slots__ = ("_allowlist",)
+    The policy also owns the git worktree commands, so a worker's checkout
+    is made and unmade only under the same repository rules that admit it.
+    """
+
+    __slots__ = ("_allowlist", "_worktrees")
     _allowlist: RepoAllowlist
+    _worktrees: WorkerWorktrees
 
     def __new__(cls, config: ConfigStore) -> Self:
-        """Bind the durable policy source."""
+        """Bind the durable policy source and the git worktree commands."""
         self = super().__new__(cls)
         self._allowlist = RepoAllowlist(config)
+        self._worktrees = WorkerWorktrees()
         return self
 
     def repos(self) -> tuple[str, ...]:
@@ -91,13 +99,14 @@ class WorkerRepoPolicy:
             raise ValueError("Worker project must be a repository top level")
         return path
 
-    @staticmethod
-    def create(project: Path, worktree: Path, branch: str) -> None:
-        """Keep the source checkout untouched and retain the new branch."""
-        subprocess.run(
-            ["git", "-C", str(project), "worktree", "add", "-b", branch, str(worktree)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
+    def create(self, project: Path, worktree: Path, branch: str) -> None:
+        """Keep the source checkout untouched and retain the new branch.
+
+        Raises:
+            ValueError: If ``git worktree add`` outlives its deadline.
+        """
+        self._worktrees.create(project, worktree, branch)
+
+    def discard_recorded(self, record: WorkerRecord) -> WorkerRecord:
+        """Discard a failed launch's worktree and note the outcome on its record."""
+        return self._worktrees.discard_recorded(record)

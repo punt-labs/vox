@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from starlette.websockets import WebSocket
-from test_workers import FakeWorkerProvider, TrivialProfile, _registry
+from test_workers import FakeWorkerProvider, TrivialProfile, _fake_policy, _registry
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.workers.context import WorkerContext
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
+from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 
 def test_corrupt_worker_record_does_not_block_healthy_workers(tmp_path: Path) -> None:
@@ -148,3 +151,80 @@ async def test_allowlist_routes_stay_live_when_worker_recovery_fails(
     reply = ws.send_json.call_args.args[0]
     assert reply["type"] == "error"
     assert "recovery failed" in str(reply["message"])
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (
+        ["init", "-q", "-b", "main"],
+        [
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "root",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(repo), *args], check=True)
+    return repo
+
+
+@pytest.mark.subprocess
+def test_timed_out_launch_discards_the_worktree_git_finished_anyway(
+    tmp_path: Path,
+) -> None:
+    """Git completed after the deadline: nothing of value is in that worktree."""
+    repo = _git_repo(tmp_path)
+    policy = _fake_policy(repo, WorkerWorktrees())
+    records = WorkerRecords(tmp_path / "workers")
+    registry = WorkerRegistry(
+        policy, records, {"fake": FakeWorkerProvider()}, {"test": TrivialProfile()}
+    )
+    real_run = subprocess.run
+
+    def slow_git(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        done = real_run(argv, check=True, capture_output=True, text=True)
+        if "add" in argv:  # git finished, but only after the deadline passed
+            raise subprocess.TimeoutExpired(argv, 90)
+        return done
+
+    with (
+        patch("punt_vox.voxd.workers.worktrees.subprocess.run", side_effect=slow_git),
+        pytest.raises(
+            ValueError,
+            match="worker start timed out creating the worktree after 90 s",
+        ),
+    ):
+        registry.start("edit", str(repo), provider="fake", harness="test")
+    record = registry.list()[0]
+    assert record.state == "stopped"
+    assert record.last_report["launch_error"] == "ValueError"
+    assert record.last_report["worktree_discarded"] is True
+    assert not Path(record.worktree).exists()
+    branches = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--list", record.branch],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert branches == ""
+    assert not (tmp_path / "workers" / record.id).exists()
+
+
+def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    worktrees.discard.side_effect = OSError("busy")
+    registry = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    record = registry.list()[0]
+    assert record.last_report["launch_error"] == "OSError"
+    assert record.last_report["discard_error"] == "OSError"
+    assert "worktree_discarded" not in record.last_report

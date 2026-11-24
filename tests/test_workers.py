@@ -27,12 +27,14 @@ from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
 from punt_vox.voxd.workers.handlers import WorkerHandlers
+from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.steering_types import DecisionChoice
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.trust import ClaudeTrust
+from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 from punt_vox.worker_client import WorkerClient
 
 
@@ -115,9 +117,39 @@ class TrivialProfile:
         return {"session_started": True}
 
 
-def _registry(tmp_path: Path, provider: FakeWorkerProvider) -> WorkerRegistry:
+def _fake_policy(
+    tmp_path: Path,
+    worktrees: WorkerWorktrees | None = None,  # None: no git runs in the test.
+) -> MagicMock:
+    """A policy double resolving to *tmp_path*, with git faked but the recorded
+    discard running the real bookkeeping over the (mocked) ``discard``."""
+    git = worktrees or MagicMock(spec=WorkerWorktrees)
+    if isinstance(git, MagicMock):
+
+        def bookkeeping(record: WorkerRecord) -> WorkerRecord:
+            return WorkerWorktrees.discard_recorded(git, record)
+
+        git.discard_recorded.side_effect = bookkeeping
+
+    def create(project: Path, worktree: Path, branch: str) -> None:
+        git.create(project, worktree, branch)
+
+    def discard_recorded(record: WorkerRecord) -> WorkerRecord:
+        return git.discard_recorded(record)
+
     policy = MagicMock(spec=WorkerRepoPolicy)
     policy.resolve.return_value = tmp_path
+    policy.create.side_effect = create
+    policy.discard_recorded.side_effect = discard_recorded
+    return policy
+
+
+def _registry(
+    tmp_path: Path,
+    provider: FakeWorkerProvider,
+    worktrees: WorkerWorktrees | None = None,  # None: no git runs in the test.
+) -> WorkerRegistry:
+    policy = _fake_policy(tmp_path, worktrees)
     records = WorkerRecords(tmp_path / "workers")
     registry = WorkerRegistry(
         policy,

@@ -142,7 +142,7 @@ class WorkerRegistry:
         return observed
 
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
-        record = self._lifecycle.rollback(record, error)
+        record = self._policy.discard_recorded(self._lifecycle.rollback(record, error))
         try:
             self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
