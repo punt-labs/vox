@@ -341,11 +341,12 @@ class TestPlacement:
         assert write.path.read_bytes() == b"\xff\xfb" * 100
         assert write.byte_count == 200
 
-    def test_name_at_filename_limit_lands_bytes(
-        self, store: RecordStore, tmp_path: Path
+    @pytest.mark.parametrize("bytes_below_limit", [0, 1])
+    def test_name_at_or_just_below_filename_limit_lands_bytes(
+        self, store: RecordStore, tmp_path: Path, bytes_below_limit: int
     ) -> None:
         limit = os.pathconf(tmp_path, "PC_NAME_MAX")
-        count, remaining = divmod(limit, len(os.fsencode("é")))
+        count, remaining = divmod(limit - bytes_below_limit, len(os.fsencode("é")))
         name = "é" * count + "x" * remaining
         source = tmp_path / "src.mp3"
         source.write_bytes(b"audio")
