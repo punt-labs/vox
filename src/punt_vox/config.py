@@ -13,11 +13,14 @@ import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.frontmatter import Frontmatter
 from punt_vox.paths import config_dir as _global_config_dir
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -252,15 +255,17 @@ class ConfigStore:
         """Return ``debug`` only when explicitly set, else the quiet ``info``."""
         return "debug" if (raw or "").strip().lower() == "debug" else "info"
 
-    def write_field(self, key: str, value: str) -> None:
-        """Write a single config field to the correct file."""
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Write one field, optionally checking that file under its write lock."""
         self._reject_unknown(key)
-        Frontmatter.validate_value(value)
-
-        if key in EPHEMERAL_KEYS:
-            self._ephemeral.write_field(key, value)
-        else:
-            self._durable.write_field(key, value)
+        store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
+        store.write_fields({key: value}, check=check)
 
     def write_fields(self, updates: dict[str, str]) -> None:
         """Write multiple config fields, routing each to the correct file."""

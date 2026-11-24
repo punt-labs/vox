@@ -441,8 +441,14 @@ class _RaisingStore(ConfigStore):
     bypassed by root in some CI environments).
     """
 
-    def write_field(self, key: str, value: str) -> None:
-        _ = (key, value)
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        _ = (key, value, check)
         msg = "disk write refused"
         raise PermissionError(msg)
 

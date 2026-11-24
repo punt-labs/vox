@@ -15,6 +15,7 @@ import pytest
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands import Ctx, voice
 from punt_vox.config import ConfigStore
+from punt_vox.sibling_lock import SiblingLock
 
 
 def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
@@ -124,6 +125,40 @@ class TestSet:
         assert result.json_data is not None
         assert result.text == f"Error: {result.json_data['error']}"
         assert config_path.read_bytes() == before
+
+    async def test_rejects_provider_switched_before_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        config_path = tmp_path / "vox.md"
+        switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
+        acquire = SiblingLock._acquire
+
+        def after_provider_switch(lock: SiblingLock, descriptor: int) -> None:
+            # A peer's provider cascade finished just before we got the lock.
+            config_path.write_bytes(switched)
+            acquire(lock, descriptor)
+
+        monkeypatch.setattr(SiblingLock, "_acquire", after_provider_switch)
+
+        result = await voice(ctx, "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "the active provider is 'openai'" in result.text
+        assert config_path.read_bytes() == switched
+
+    async def test_checked_write_preserves_uneditable_config(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "vox.md"
+        original = b'---\nprovider: "elevenlabs"\n'
+        config_path.write_bytes(original)
+
+        result = await voice(_ctx(tmp_path), "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "no closing ---" in result.text
+        assert config_path.read_bytes() == original
 
     @pytest.mark.parametrize("provider", ["elevenlabs", "ElevenLabs", ""])
     async def test_allows_active_or_empty_provider_option(

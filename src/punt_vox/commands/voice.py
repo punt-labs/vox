@@ -37,43 +37,33 @@ class VoiceCommand:
         :meth:`SynthesisSpec.normalize_voice`; a blank/lone-``@`` write
         returns an error result rather than corrupting the config.
         """
-        cfg = ctx.store.read()
-
         if name is None:
+            cfg = ctx.store.read()
             return self._list(ctx, provider or cfg.provider, cfg.voice)
-
-        if (error := self._provider_error(provider, cfg.provider)) is not None:
-            return error
-        return self._set(ctx, name)
-
-    @classmethod
-    def _provider_error(
-        cls, target: str | None, active: str | None
-    ) -> CommandResult | None:
-        if not active:
-            return cls._error(str(ProviderNotConfiguredError.for_cli()))
-        if target and target.lower() != active.lower():
-            return cls._error(
-                f"Cannot set a voice for {target!r}: the active provider is {active!r}."
-            )
-        return None
-
-    @classmethod
-    def _set(cls, ctx: Ctx, name: str) -> CommandResult:
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
-            return cls._error("voice name is empty", prefix="")
+            return self._error("voice name is empty", prefix="")
         try:
-            ctx.store.write_field("voice", normalized)
-        except ValueError as exc:
-            # ConfigStore rejects control chars / unescaped quotes in string
-            # values (raises ConfigValueError, a ValueError subclass). Return a
-            # clean error envelope rather than let the exception cross the
-            # boundary as a traceback.
-            return cls._error(str(exc))
+            ctx.store.write_field(
+                "voice",
+                normalized,
+                check=lambda fields: self._check(provider, fields.get("provider")),
+            )
+        except (OSError, ValueError) as exc:
+            return self._error(str(exc))
         return CommandResult(
             text=f"{normalized}'s here.", json_data={"voice": normalized}
         )
+
+    @staticmethod
+    def _check(target: str | None, active: str | None) -> None:
+        if not active:
+            raise ProviderNotConfiguredError.for_cli()
+        if target and target.lower() != active.lower():
+            msg = (
+                f"Cannot set a voice for {target!r}: the active provider is {active!r}."
+            )
+            raise ValueError(msg)
 
     @classmethod
     def _list(
@@ -103,7 +93,7 @@ class VoiceCommand:
                 return cls._error(str(exc))
         listing = SwitchList(names=tuple(names), current=current)
         payload = listing.payload()
-        payload["provider"] = provider or None
+        payload["provider"] = provider
         return CommandResult(
             text=listing.render("" if provider else "No voices for this provider."),
             json_data=payload,
