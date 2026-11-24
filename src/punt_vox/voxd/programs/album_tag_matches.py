@@ -62,7 +62,7 @@ class AlbumTagMatches:
         """Read ready parts, treating a missing album as an empty contributor."""
         try:
             return album.ready_parts()
-        except (AlbumNotFoundError, FileNotFoundError) as exc:
+        except AlbumNotFoundError as exc:
             logger.warning("skipping missing album %s: %s", album.id.value, exc)
             return ()
 

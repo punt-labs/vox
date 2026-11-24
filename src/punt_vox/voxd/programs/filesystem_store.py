@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,9 +22,9 @@ from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.path_status import PathStatus
+from punt_vox.voxd.programs.album_manifest_file import AlbumManifestFile
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
-from punt_vox.voxd.programs.store_errors import AlbumNotFoundError
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.part import Part
@@ -38,10 +37,6 @@ _MANIFEST_NAME = "manifest.json"
 # What a client supplies when it names an album: one bare directory segment.
 # The label heads every structural rejection so it reads in the caller's terms.
 _LOCATOR_LABEL = "album locator"
-# A manifest is small JSON (album tags + up to a pool of Part entries); anything
-# past this ceiling is corrupt or a planted file, and is rejected before the read
-# so one giant manifest cannot exhaust daemon memory at scan time.
-_MAX_MANIFEST_BYTES = 1024 * 1024
 
 
 @final
@@ -138,23 +133,14 @@ class FilesystemProgramStore:
     def open(self, directory: str) -> FilesystemPartStore:
         """Return the PartStore for a scan/create-validated directory, else raise.
 
-        A missing manifest raises ``AlbumNotFoundError``. A manifest that exists
-        but cannot be stat'd raises the underlying ``OSError``,
-        so an access fault surfaces as a server-side fault rather than a false
-        "no saved album". A symlinked manifest still classifies as a regular file
-        when following links and is refused later by the
-        ``O_NOFOLLOW`` read.
-
         Raises:
-            AlbumNotFoundError: If the album has no regular manifest file.
+            AlbumNotFoundError: If the album's manifest is missing.
             OSError: If the manifest cannot be inspected or read safely.
         """
         path = self._contained_dir(directory)
-        manifest_path = path / _MANIFEST_NAME
-        if not PathStatus.of(manifest_path).is_regular_file:
-            msg = f"no saved album at directory {directory!r}"
-            raise AlbumNotFoundError(msg)
-        manifest = AlbumManifest.from_json(self._read_manifest_text(manifest_path))
+        manifest = AlbumManifest.from_json(
+            AlbumManifestFile(path / _MANIFEST_NAME).read_saved()
+        )
         return FilesystemPartStore(path, manifest)
 
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
@@ -199,7 +185,9 @@ class FilesystemProgramStore:
             logger.debug("skipping album dir outside root: %s", directory)
             return None
         try:
-            obj = JsonObject.parse(self._read_manifest_text(manifest_path), "manifest")
+            obj = JsonObject.parse(
+                AlbumManifestFile(manifest_path).read_text(), "manifest"
+            )
             if obj.opt_str("id") is None:
                 logger.debug("skipping idless legacy album dir: %s", directory)
                 return None
@@ -207,48 +195,6 @@ class FilesystemProgramStore:
         except (ValueError, OSError) as exc:
             logger.error("skipping corrupt manifest in %s: %s", directory.name, exc)
             return None
-
-    @staticmethod
-    def _read_manifest_text(manifest_path: Path) -> str:
-        """Return a manifest's UTF-8 text, refusing a symlink or an oversized file.
-
-        The manifest is opened ``O_NOFOLLOW`` so a symlinked ``manifest.json`` (a
-        planted file pointing at an arbitrary target) raises ``OSError`` instead
-        of being read through. The read itself is bounded to one byte past the
-        ceiling: a file that grows between the open and the read (a TOCTOU that a
-        trusted ``fstat`` size would miss) still cannot pull an unbounded amount
-        into memory.
-
-        Every read-integrity failure raises ``OSError`` -- a symlink, a file over
-        the ceiling, or non-UTF-8 bytes. All three are daemon-side store
-        corruption, an operational fault rather than a bad client request, so the
-        taxonomy audits them as ``fault`` ("operation failed"), never ``error``
-        ("rejected op"). ``_scan_one`` catches ``OSError`` and skips the album;
-        ``open`` lets it surface as the corrupt-album fault.
-        """
-        fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
-        try:
-            handle = os.fdopen(fd, "rb")
-        except OSError:
-            # fdopen failed to adopt the fd (e.g. resource pressure); close the
-            # raw descriptor by hand so it never leaks. On success the file
-            # object owns the fd and the ``with`` closes it.
-            os.close(fd)
-            raise
-        with handle:
-            raw = handle.read(_MAX_MANIFEST_BYTES + 1)
-        name = manifest_path.name
-        if len(raw) > _MAX_MANIFEST_BYTES:
-            msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
-            raise OSError(msg)
-        try:
-            return raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            # UnicodeDecodeError subclasses ValueError, which the taxonomy maps to
-            # a client rejection. Non-UTF-8 bytes on disk are store corruption, so
-            # re-raise as OSError to audit alongside the other read-integrity faults.
-            msg = f"manifest is not valid UTF-8: {name}"
-            raise OSError(msg) from exc
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory`` for a single bare directory name, else raise.

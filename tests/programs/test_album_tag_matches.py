@@ -19,24 +19,37 @@ if TYPE_CHECKING:
 
 
 class TestAlbumTagMatches:
+    def test_select_rejects_a_manifest_replaced_by_a_directory(
+        self, tmp_path: Path
+    ) -> None:
+        locator = seed_album(tmp_path, 1)
+        store = FilesystemProgramStore(tmp_path)
+        matches = AlbumTagMatches(store.scan(), TagQuery(style="techno"))
+        path = tmp_path / locator / "manifest.json"
+        path.unlink()
+        path.mkdir()
+
+        with pytest.raises(OSError, match="manifest is not a regular file"):
+            matches.select()
+
     def test_select_skips_an_album_lost_during_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        seed_album(tmp_path, 1)
+        locator = seed_album(tmp_path, 1)
         store = FilesystemProgramStore(tmp_path)
         matches = AlbumTagMatches(store.scan(), TagQuery(style="techno"))
 
-        with patch.object(
-            FilesystemProgramStore,
-            "open",
+        with patch(
+            "punt_vox.voxd.programs.album_manifest_file.os.open",
             side_effect=FileNotFoundError("manifest disappeared"),
-        ):
+        ) as open_file:
             assert not matches.select()
 
+        assert open_file.call_args.args[0] == tmp_path / locator / "manifest.json"
         assert (
             "punt_vox.voxd.programs.album_tag_matches",
             logging.WARNING,
-            "skipping missing album a3f1c9: manifest disappeared",
+            f"skipping missing album a3f1c9: no saved album at directory {locator!r}",
         ) in caplog.record_tuples
 
     @pytest.mark.parametrize("fault", [PermissionError, KeyError])
