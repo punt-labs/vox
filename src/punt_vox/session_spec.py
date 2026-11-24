@@ -13,10 +13,12 @@ This module owns the fix: one class turns a state snapshot plus an optional
 per-call override into a :class:`SynthesisSpec` whose ``provider`` is
 guaranteed non-empty, whose ``model`` is validated against that provider,
 and whose ``voice`` / ``vibe_tags`` inherit from state when the override
-leaves them unset. A caller with no authoritative provider -- neither in
-state nor in the override -- gets :class:`ProviderNotConfiguredError` before any
-wire message is built. A state that pairs a provider with an alien model
-(a hand-edited ``vox.md``) gets :class:`ModelNotAvailableError` in the same
+leaves them unset -- the voice only when the resolved provider is state's,
+since voice names are provider-scoped. A caller with no authoritative
+provider -- neither in state nor in the override -- gets
+:class:`ProviderNotConfiguredError` before any wire message is built. A
+state that pairs a provider with an alien model (a hand-edited ``vox.md``)
+gets :class:`ModelNotAvailableError` in the same
 place, never a silent substitution to the provider's default.
 
 The type of the state snapshot is the structural
@@ -81,17 +83,17 @@ class SessionSpec:
         A per-call ``override`` field wins when it is set; an unset field
         (``None`` for the ``str | None`` fields, missing for the rest) inherits
         from state. The provider must resolve to a non-empty name; a
-        non-empty model must appear in the resolved provider's model list
-        (see :meth:`_state_model_for` for how state's model interacts with
-        a provider override), or one of the two typed errors is raised.
+        non-empty model must appear in the resolved provider's model list,
+        or one of the two typed errors is raised. State's model and voice are
+        inherited only when the resolved provider is state's (see
+        :meth:`_scoped_to`); a provider override otherwise gets that provider's
+        defaults.
         """
         base = override or SynthesisSpec()
         provider = self._resolve_provider(base.provider)
         model = self._resolve_model(base.model, provider)
-        voice = base.voice if base.voice is not None else self._state.voice
-        vibe_tags = (
-            base.vibe_tags if base.vibe_tags is not None else self._state.vibe_tags
-        )
+        voice = self._scoped_to(provider).voice if base.voice is None else base.voice
+        vibe_tags = self._state.vibe_tags if base.vibe_tags is None else base.vibe_tags
         return replace(
             base, provider=provider, model=model, voice=voice, vibe_tags=vibe_tags
         )
@@ -117,25 +119,26 @@ class SessionSpec:
             raise ProviderNotConfiguredError.for_mcp()
         return candidate
 
-    def _state_model_for(self, provider: str) -> str | None:
-        """Return state's model when it belongs to *provider*, else :data:`None`.
+    def _scoped_to(self, provider: str) -> SessionState:
+        """Return state when its provider is *provider*, else an empty state.
 
-        State's model is scoped to state's provider -- a hand-edited
-        ``vox.md`` naming elevenlabs and ``eleven_v3`` says nothing about
-        what to send when the caller overrides to polly. The comparison
-        strips whitespace to mirror :meth:`_resolve_provider`'s
+        State's model and voice are scoped to state's provider -- a
+        ``vox.md`` naming elevenlabs, ``eleven_v3`` and ``adam`` says nothing
+        about what to send when the caller overrides to polly, so that
+        override inherits neither and the provider uses its own defaults.
+        The comparison strips whitespace to mirror :meth:`_resolve_provider`'s
         normalisation, so ``provider: "  elevenlabs  "`` in state still
         counts as matching a bare ``elevenlabs`` override.
         """
-        state_provider = (self._state.provider or "").strip()
-        return self._state.model if state_provider == provider else None
+        owned = (self._state.provider or "").strip() == provider
+        return self._state if owned else SynthesisSpec()
 
     def _resolve_model(self, override: str | None, provider: str) -> str | None:
         """Return the model to send, validated against *provider* when non-empty.
 
         The override wins over state's model; either falls through to
         :data:`None` when both are unset. State's model is only consulted
-        when it belongs to *provider* -- see :meth:`_state_model_for`.
+        when it belongs to *provider* -- see :meth:`_scoped_to`.
 
         An empty or whitespace-only string is treated as "no model" (the
         permanent state for polly, say, and espeak, and the "use the
@@ -152,7 +155,7 @@ class SessionSpec:
         two-providers is "use the default". Normalising here also means
         no downstream surface sees a padded model name.
         """
-        raw = override if override is not None else self._state_model_for(provider)
+        raw = self._scoped_to(provider).model if override is None else override
         if raw is None:
             return None
         # An empty (or whitespace-only) model means "no user-selectable
