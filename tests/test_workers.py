@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
+import os
 import stat
 import subprocess
 from collections.abc import Mapping
@@ -19,6 +22,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.actor import WorkerActor
+from punt_vox.voxd.workers.allowlist_handlers import AllowlistHandlers
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
@@ -319,3 +323,276 @@ def test_record_rejects_invalid_identity(tmp_path: Path) -> None:
     (tmp_path / f"{uuid4()}.json").write_text("[]")
     with pytest.raises(ValueError, match="Invalid worker record"):
         records.load()
+
+
+@pytest.mark.asyncio
+async def test_call_side_allow_repos_disallow_roundtrip(tmp_path: Path) -> None:
+    """The daemon owns the allowlist: allow, list and disallow are worker RPCs."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = ConfigStore(tmp_path / "config")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(config)).handlers()
+    ws = AsyncMock(spec=WebSocket)
+
+    async def rpc(operation: str, **fields: object) -> dict[str, object]:
+        await handlers[f"worker_{operation}"](
+            {"type": f"worker_{operation}", "id": "rpc", **fields}, ws
+        )
+        return cast("dict[str, object]", ws.send_json.call_args.args[0])
+
+    assert await rpc("repos") == {"type": "worker_result", "id": "rpc", "result": []}
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=MagicMock(stdout=f"{repo.resolve()}\n"),
+    ):
+        allowed = await rpc("allow", project=str(repo))
+    assert allowed["result"] == [str(repo.resolve())]
+    assert config.read_field("worker_repos") == repr([str(repo.resolve())])
+    assert (await rpc("repos"))["result"] == [str(repo.resolve())]
+    refused = await rpc("allow", project=str(tmp_path / "missing"))
+    assert refused["type"] == "error"
+    assert "not a directory" in str(refused["message"])
+    for blank in ({}, {"project": ""}, {"project": None}):
+        bare = await rpc("allow", **blank)
+        assert bare["type"] == "error", blank
+        assert "project is required" in str(bare["message"])
+    assert config.read_field("worker_repos") == repr([str(repo.resolve())])
+    assert (await rpc("disallow", project=str(repo)))["result"] == []
+    assert config.read_field("worker_repos") == "[]"
+
+
+@pytest.mark.asyncio
+async def test_allowlist_handler_faults_hide_the_path_and_decode_errors(
+    tmp_path: Path,
+) -> None:
+    """M4: an OSError or a bad encoding is a server fault, never a client rejection."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "vox.md").write_bytes(b'---\nworker_repos: "[]"\n\xff\n---\n')
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert str(tmp_path) not in str(reply["message"])
+    with patch.object(
+        WorkerRepoPolicy,
+        "allow",
+        side_effect=PermissionError(13, "Permission denied", str(config_dir / "x")),
+    ):
+        await handlers["worker_allow"](
+            {"type": "worker_allow", "id": "a", "project": str(tmp_path)}, ws
+        )
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert str(tmp_path) not in str(reply["message"])
+
+
+def _unfenced(path: Path) -> OSError:
+    """Return the fault Frontmatter raises for a file with no closing fence."""
+    return OSError(errno.EBADMSG, "no closing ---", str(path))
+
+
+def _broken_config(tmp_path: Path, content: bytes) -> Path:
+    """Write *content* as the global vox.md and return the config dir."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "vox.md").write_bytes(content)
+    return config_dir
+
+
+def _assert_path_free_fault(
+    reply: dict[str, object], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The frame is a fault naming no segment of *tmp_path*; the log names it."""
+    assert reply["type"] == "error"
+    message = str(reply["message"])
+    for segment in tmp_path.parts[1:]:
+        assert segment not in message, (segment, message)
+    faults = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert faults, "a config fault must be audited as a fault"
+    assert any("operation failed" in r.getMessage() for r in faults)
+    assert not any("rejected op" in r.getMessage() for r in caplog.records)
+    # The log keeps the path (its tail may be cut by the log field cap).
+    assert any(tmp_path.parts[1] in r.getMessage() for r in faults)
+
+
+_UNREADABLE = pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode 000")
+
+
+def _start_request(project: Path) -> dict[str, object]:
+    return {
+        "id": "s",
+        "type": "worker_start",
+        "task": "edit",
+        "project": str(project),
+        "provider": "fake",
+        "harness": "test",
+    }
+
+
+def _worker_handlers(config_dir: Path, tmp_path: Path) -> WorkerHandlers:
+    registry = WorkerRegistry(
+        WorkerRepoPolicy(ConfigStore(config_dir)),
+        WorkerRecords(tmp_path / "workers"),
+        {"fake": FakeWorkerProvider()},
+        {"test": TrivialProfile()},
+    )
+    return WorkerHandlers(WorkerActor(registry))
+
+
+@_UNREADABLE
+@pytest.mark.asyncio
+async def test_worker_start_faults_without_the_path_on_an_unreadable_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_dir = _broken_config(tmp_path, b'---\nworker_repos: "[]"\n---\n')
+    (config_dir / "vox.md").chmod(0)
+    ws = AsyncMock(spec=WebSocket)
+    try:
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await _worker_handlers(config_dir, tmp_path).handle(
+                _start_request(tmp_path), ws
+            )
+    finally:
+        (config_dir / "vox.md").chmod(0o600)
+    _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+
+@pytest.mark.asyncio
+async def test_worker_start_faults_without_the_path_on_a_non_utf8_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_dir = _broken_config(tmp_path, b'---\nworker_repos: "[]"\n\xff\n---\n')
+    ws = AsyncMock(spec=WebSocket)
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+        await _worker_handlers(config_dir, tmp_path).handle(
+            _start_request(tmp_path), ws
+        )
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert reply["message"] == "operation failed"
+    faults = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("utf-8" in r.getMessage() for r in faults)
+    assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_worker_start_faults_without_the_path_on_a_malformed_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A missing fence is the daemon's own file at fault, never the client."""
+    config_dir = _broken_config(tmp_path, b'---\nworker_repos: "[]"\n---\n')
+    ws = AsyncMock(spec=WebSocket)
+    with (
+        patch.object(
+            WorkerRepoPolicy,
+            "resolve",
+            side_effect=_unfenced(config_dir / "vox.md"),
+        ),
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"),
+    ):
+        await _worker_handlers(config_dir, tmp_path).handle(
+            _start_request(tmp_path), ws
+        )
+    _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+
+@_UNREADABLE
+@pytest.mark.asyncio
+async def test_allowlist_rpcs_fault_without_the_path_on_an_unreadable_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_dir = _broken_config(tmp_path, b'---\nworker_repos: "[]"\n---\n')
+    (config_dir / "vox.md").chmod(0)
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    try:
+        for operation in ("repos", "allow", "disallow"):
+            caplog.clear()
+            with (
+                patch(
+                    "punt_vox.voxd.workers.policy.subprocess.run",
+                    return_value=MagicMock(stdout=f"{repo.resolve()}\n"),
+                ),
+                caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"),
+            ):
+                await handlers[f"worker_{operation}"](
+                    {"type": f"worker_{operation}", "id": "r", "project": str(repo)},
+                    ws,
+                )
+            _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+    finally:
+        (config_dir / "vox.md").chmod(0o600)
+
+
+@pytest.mark.asyncio
+async def test_allowlist_rpcs_fault_without_the_path_on_a_malformed_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No closing fence: a fault with the path in vox.log, never an error frame."""
+    config_dir = _broken_config(tmp_path, b"---\nworker_repos: \"['/repo']\"\n")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    requests: tuple[dict[str, object], ...] = (
+        {"type": "worker_allow", "id": "a", "project": str(repo)},
+        {"type": "worker_disallow", "id": "d", "project": "/repo"},
+    )
+    for request in requests:
+        caplog.clear()
+        with (
+            patch(
+                "punt_vox.voxd.workers.policy.subprocess.run",
+                return_value=MagicMock(stdout=f"{repo.resolve()}\n"),
+            ),
+            caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"),
+        ):
+            await handlers[str(request["type"])](request, ws)
+        _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+
+@pytest.mark.asyncio
+async def test_repos_faults_on_an_unclosed_config_as_every_edit_does(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A vox.md with an opening --- and no closing fence is not a valid policy.
+
+    Every edit of such a file faults, so listing it as a policy would show
+    entries no edit could ever touch. The read faults the same way, naming
+    no path on the wire, while a missing file still lists empty.
+    """
+    config_dir = _broken_config(tmp_path, b"---\nworker_repos: \"['/repo']\"\n")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+        await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+    _assert_path_free_fault(ws.send_json.call_args.args[0], tmp_path, caplog)
+
+    (config_dir / "vox.md").unlink()
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "m"}, ws)
+    assert ws.send_json.call_args.args[0] == {
+        "type": "worker_result",
+        "id": "m",
+        "result": [],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [b"", b"# notes\n\nprose only\n"])
+async def test_repos_lists_empty_for_a_file_with_no_frontmatter(
+    tmp_path: Path, content: bytes
+) -> None:
+    """Only a file that opens a fence and never closes it is refused."""
+    config_dir = _broken_config(tmp_path, content)
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "e"}, ws)
+    assert ws.send_json.call_args.args[0] == {
+        "type": "worker_result",
+        "id": "e",
+        "result": [],
+    }

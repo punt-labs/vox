@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -102,3 +102,131 @@ def test_worker_cli_reports_daemon_refusal() -> None:
         result = CliRunner().invoke(app, ["worker", "list"])
     assert result.exit_code == 1
     assert "not allowlisted" in result.output
+
+
+@pytest.mark.parametrize(
+    ("operation", "extra"),
+    [("allow", {}), ("disallow", {"spelling": "repo"})],
+)
+def test_allow_and_disallow_send_the_resolved_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    extra: dict[str, str],
+) -> None:
+    """Both resolve PATH before sending, so one spelling allows and disallows.
+
+    disallow also sends the spelling as written when it differs, so a stored
+    entry that does not resolve can still be removed by typing it exactly.
+    """
+    monkeypatch.chdir(tmp_path)
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[str(tmp_path / "repo")],
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", operation, "repo"])
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with(operation, project=str(tmp_path / "repo"), **extra)
+    assert result.output == f"{tmp_path / 'repo'}\n"
+
+
+def test_disallow_sends_one_spelling_when_the_path_is_already_resolved(
+    tmp_path: Path,
+) -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "disallow", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with("disallow", project=str(tmp_path.resolve()))
+
+
+def test_repos_lists_one_path_per_line_or_a_json_array() -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=["/a", "/b"],
+    ) as request:
+        text = CliRunner().invoke(app, ["worker", "repos"])
+        as_json = CliRunner().invoke(app, ["worker", "repos", "--json"])
+    assert text.exit_code == 0, text.output
+    assert text.output == "/a\n/b\n"
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.output) == ["/a", "/b"]
+    assert request.await_args_list == [call("repos"), call("repos")]
+
+
+def test_allow_refusal_is_one_line_on_stderr() -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        side_effect=VoxdProtocolError("not a git repository top level: /x"),
+    ):
+        result = CliRunner().invoke(app, ["worker", "allow", "/x"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "vox: worker allow: not a git repository top level: /x\n"
+
+
+def test_worker_help_names_the_allowlist_commands() -> None:
+    output = CliRunner().invoke(app, ["worker", "--help"]).output
+    for command in ("allow", "disallow", "repos"):
+        assert command in output
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_allow_and_disallow_refuse_a_blank_path_before_sending(blank: str) -> None:
+    """Path('') is the cwd; the daemon's blank check must see the blank."""
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request", new_callable=AsyncMock
+    ) as request:
+        allow = CliRunner().invoke(app, ["worker", "allow", blank])
+        disallow = CliRunner().invoke(app, ["worker", "disallow", blank])
+    request.assert_not_awaited()
+    for result, name in ((allow, "allow"), (disallow, "disallow")):
+        assert result.exit_code == 2, result.output
+        assert f"vox: worker {name}: PATH must not be blank" in result.output
+
+
+@pytest.mark.parametrize("reply", [None, "/a", {"repos": []}])
+def test_repos_rejects_a_reply_that_is_not_a_list(reply: object) -> None:
+    """M7: a wrong-shaped daemon reply is a protocol error, not a traceback."""
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=reply,
+    ):
+        result = CliRunner().invoke(app, ["worker", "repos"])
+    assert result.exit_code == 1, result.output
+    assert "vox: worker repos: expected a list of paths" in result.output
+
+
+def test_disallow_sends_a_spelling_the_client_cannot_resolve_as_typed() -> None:
+    """A ``~user`` path for an unknown account still reaches the daemon.
+
+    The client cannot resolve it, so the typed text is the only spelling and
+    goes as the project; the daemon's exact-text match removes the entry.
+    """
+    typed = "~no-such-user-for-this-test/repo"
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "disallow", typed])
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with("disallow", project=typed)
+
+
+def test_allow_still_refuses_a_path_the_client_cannot_resolve() -> None:
+    typed = "~no-such-user-for-this-test/repo"
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request", new_callable=AsyncMock
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "allow", typed])
+    assert result.exit_code == 1, result.output
+    assert "cannot resolve" in result.output
+    request.assert_not_awaited()

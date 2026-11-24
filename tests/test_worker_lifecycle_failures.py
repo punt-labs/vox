@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, TrivialProfile, _registry
 
+from punt_vox.config import ConfigStore
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.workers.context import WorkerContext
+from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 
 
@@ -114,3 +117,34 @@ def test_dead_worker_is_persisted_and_explicit_stop_clears_pane(tmp_path: Path) 
         assert stopped.state == "exited"
         assert registry.stop(record.id).state == "exited"
     stop.assert_called_once_with(record.session)
+
+
+@pytest.mark.asyncio
+async def test_allowlist_routes_stay_live_when_worker_recovery_fails(
+    tmp_path: Path,
+) -> None:
+    """The allowlist needs only the policy, so it outlives a failed recovery."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(config_dir))
+    with (
+        patch(
+            "punt_vox.voxd.workers.context.WorkerSubsystem.policy", return_value=policy
+        ),
+        patch(
+            "punt_vox.voxd.workers.context.WorkerSubsystem.recover",
+            side_effect=RuntimeError("tmux gone"),
+        ),
+    ):
+        handlers = WorkerContext.handlers(PlaybackQueue())
+    ws = AsyncMock(spec=WebSocket)
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+    assert ws.send_json.call_args.args[0] == {
+        "type": "worker_result",
+        "id": "r",
+        "result": [],
+    }
+    await handlers["worker_start"]({"type": "worker_start", "id": "s"}, ws)
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert "recovery failed" in str(reply["message"])
