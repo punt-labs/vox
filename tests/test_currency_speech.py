@@ -1,5 +1,7 @@
 """Tests for monetary expressions and literal currency signs."""
 
+from __future__ import annotations
+
 import pytest
 
 from punt_vox._currency_speech import CurrencySpeech
