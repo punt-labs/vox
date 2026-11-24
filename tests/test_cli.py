@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
 import pytest
 import typer
 from _cli_introspect import command_opts, option_help
@@ -1728,6 +1729,7 @@ class TestDoctorCommand:
         self,
         tmp_path: Path,
         *,
+        args: tuple[str, ...] = ("doctor",),
         ffmpeg_found: bool = True,
         mpv_found: bool = True,
         mpv_version: str = "0.38.0",
@@ -1809,7 +1811,7 @@ class TestDoctorCommand:
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
         ):
             worker_path.return_value.is_dir.return_value = False
-            return runner.invoke(app, ["doctor"])
+            return runner.invoke(app, args)
 
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)
@@ -1826,6 +1828,39 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
         assert "\u2717 ffmpeg" in result.output
+
+    @pytest.mark.parametrize("args", [("--json", "doctor"), ("doctor", "--json")])
+    def test_json_reports_failed_checks(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        payload = json.loads(result.stdout)
+        assert payload["failed"] == 1
+        assert any(
+            check["message"].startswith("ffmpeg:") and not check["passed"]
+            for check in payload["checks"]
+        )
+
+    @pytest.mark.parametrize("args", [("-q", "doctor"), ("doctor", "-q")])
+    def test_quiet_suppresses_text_but_preserves_failure(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert result.output == ""
+
+    def test_verbose_enables_debug_logging(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cli_io.configure_client_logging") as configure:
+            result = self._run_doctor(tmp_path, args=("doctor", "--verbose"))
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        assert "Daemon: running" in result.stdout
+        configure.assert_called_with(role="cli", verbose=True)
+
+    def test_verbose_and_quiet_are_mutually_exclusive(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, args=("doctor", "--verbose", "--quiet"))
+        assert result.exit_code == 2
+        assert "mutually exclusive" in click.unstyle(result.stderr)
 
     def test_mpv_missing_fails(self, tmp_path: Path) -> None:
         # mpv is a hard dependency: absence is a red \u2717 and a non-zero exit.
