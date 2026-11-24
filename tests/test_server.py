@@ -665,13 +665,20 @@ class TestMcpSegmentValidation:
         arguments: dict[str, object],
         message: str,
     ) -> None:
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="req")
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult(
+                id="test.mp3",
+                name="test.mp3",
+                store_path=Path("test.mp3"),
+                byte_count=1,
+            )
+
         client = MagicMock()
-        client.synthesize.side_effect = lambda *args, **kwargs: SynthesizeResult(
-            request_id="req"
-        )
-        client.record.side_effect = lambda *args, **kwargs: RecordResult(
-            id="test.mp3", name="test.mp3", store_path=Path("test.mp3"), byte_count=1
-        )
+        client.synthesize.side_effect = synthesize
+        client.record.side_effect = record
         client_factory = MagicMock(return_value=client)
         monkeypatch.setattr(punt_vox.server, "_voxd_client", client_factory)
         monkeypatch.setattr(
