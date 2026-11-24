@@ -594,21 +594,20 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command()
-def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
+def doctor(  # pyright: ignore[reportUnusedFunction]
+    *,
+    json_output: JsonOutput = False,
+    quiet: Quiet = False,
+) -> None:
     """Check system health for vox.
 
     Raises:
         typer.Exit: If any diagnostic check fails.
     """
-    from punt_vox.doctor import DoctorCheck
-    from punt_vox.doctor_result import CheckResults
+    from punt_vox.cli_doctor import DoctorCli
 
-    check = DoctorCheck(client=VoxClientSync())
-    payload, text = CheckResults(check.run_all()).format()
-    _formatter.emit(payload, text)
-
-    if payload.get("failed", 0):
-        raise typer.Exit(code=1)
+    _flags.apply(json_output=json_output, verbose=False, quiet=quiet)
+    DoctorCli.emit(_formatter, VoxClientSync())
 
 
 # ---------------------------------------------------------------------------
