@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import subprocess
 import sys
 import tempfile
@@ -138,6 +139,20 @@ def test_missing_output_requires_file_write_inside_created_directory(
     with patch.object(tempfile, "TemporaryFile", side_effect=reject_file):
         assert OutputHealth(root).probe()["output_dir"] == "not_writable"
 
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_output_is_not_writable_when_temporary_file_write_fails(
+    tmp_path: Path,
+) -> None:
+    with patch.object(tempfile, "TemporaryFile") as open_probe:
+        opened_file = open_probe.return_value.__enter__.return_value
+        opened_file.write.side_effect = OSError(errno.ENOSPC, "no space left")
+
+        assert OutputHealth(tmp_path / "albums").probe()["output_dir"] == "not_writable"
+
+    opened_file.write.assert_called_once_with(b"ok")
+    open_probe.return_value.__exit__.assert_called_once()
     assert list(tmp_path.iterdir()) == []
 
 
