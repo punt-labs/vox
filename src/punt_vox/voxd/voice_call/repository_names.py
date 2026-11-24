@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterator
-from pathlib import PurePath
 from typing import Self, final
+
+from punt_vox.voxd.voice_call.spoken_path import SpokenPath
 
 __all__ = ["RepositoryNames"]
 
@@ -24,13 +25,10 @@ class RepositoryNames:
 
     def __new__(cls, projects: tuple[str, ...]) -> Self:
         self = super().__new__(cls)
-        segments = tuple(cls._segments(PurePath(project)) for project in projects)
-        depths = [1] * len(segments)
-        names = cls._rendered(segments, depths)
-        while (grown := cls._grown(segments, depths, names)) != depths:
-            depths = grown
-            names = cls._rendered(segments, depths)
-        self._names = names
+        paths = [SpokenPath(project) for project in projects]
+        while cls._deepened(paths):
+            pass
+        self._names = tuple(path.spoken() for path in paths)
         return self
 
     def __len__(self) -> int:
@@ -52,29 +50,11 @@ class RepositoryNames:
         return f"{', '.join(leading)} and {last}" if leading else last
 
     @staticmethod
-    def _segments(path: PurePath) -> tuple[str, ...]:
-        """Return the spoken segments of a path, without its root."""
-        return tuple(part for part in path.parts if part != path.anchor) or (str(path),)
+    def _deepened(paths: list[SpokenPath]) -> bool:
+        """Deepen every path whose spoken name another still shares.
 
-    @staticmethod
-    def _rendered(
-        segments: tuple[tuple[str, ...], ...], depths: list[int]
-    ) -> tuple[str, ...]:
-        """Render each path from its last ``depth`` segments."""
-        return tuple(
-            " ".join(parts[-depth:])
-            for parts, depth in zip(segments, depths, strict=True)
-        )
-
-    @staticmethod
-    def _grown(
-        segments: tuple[tuple[str, ...], ...],
-        depths: list[int],
-        names: tuple[str, ...],
-    ) -> list[int]:
-        """Deepen every name another path still shares, while it has a parent."""
-        shared = Counter(names)
-        return [
-            depth + 1 if shared[name] > 1 and depth < len(parts) else depth
-            for parts, depth, name in zip(segments, depths, names, strict=True)
-        ]
+        Returns whether any name changed, so the caller loops until none does.
+        """
+        shared = Counter(path.spoken() for path in paths)
+        deepened = [path.deepen() for path in paths if shared[path.spoken()] > 1]
+        return any(deepened)
