@@ -36,7 +36,6 @@ class VoxGroup(TyperGroup):
         return typer.Typer(
             cls=cls,
             name="vox",
-            help="Text-to-speech CLI.",
             no_args_is_help=True,
             context_settings={"help_option_names": ["-h", "--help"]},
         )
