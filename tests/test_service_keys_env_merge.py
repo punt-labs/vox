@@ -10,6 +10,7 @@ from punt_vox.service.keys_env_merge import KeysEnvMerge
 from punt_vox.service.keys_env_report import KeyNotice
 
 _DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
+_AWS_DIFFERS = "the stored AWS key pair differs (--rotate-keys replaces it)"
 
 
 def test_a_different_value_keeps_the_stored_one_and_notes_it() -> None:
@@ -46,8 +47,24 @@ _TEMPORARY_SET = {
 def test_a_kept_aws_key_pair_never_takes_the_shells_session_token() -> None:
     merge = KeysEnvMerge(_STATIC_PAIR, _TEMPORARY_SET)
     assert merge.merged == _STATIC_PAIR
-    assert KeyNotice("AWS_SESSION_TOKEN", _DIFFERS, kept=False) in merge.notices
+    assert (
+        KeyNotice("AWS_SESSION_TOKEN", _AWS_DIFFERS, kept=False, aws_stay=True)
+        in merge.notices
+    )
     assert merge.rotated == ()
+
+
+def test_rotate_to_a_static_pair_drops_the_stored_session_token() -> None:
+    merge = KeysEnvMerge(_TEMPORARY_SET, _STATIC_PAIR, rotate=True)
+    assert merge.merged == _STATIC_PAIR
+    assert merge.rotated == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+    assert merge.removed == ("AWS_SESSION_TOKEN",)
+
+
+def test_a_matching_pair_keeps_its_stored_session_token() -> None:
+    merge = KeysEnvMerge(_TEMPORARY_SET, _STATIC_PAIR | _TEMPORARY_SET)
+    assert merge.merged == _TEMPORARY_SET
+    assert merge.removed == ()
 
 
 def test_a_kept_aws_secret_never_takes_the_shells_key_id_or_token() -> None:

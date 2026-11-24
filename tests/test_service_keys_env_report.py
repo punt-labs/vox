@@ -16,6 +16,29 @@ def test_kept_notice_says_the_stored_value_survived() -> None:
     )
 
 
+def test_unstored_aws_notice_says_the_stored_credentials_stay() -> None:
+    notice = KeyNotice(
+        "AWS_SESSION_TOKEN", "the stored AWS key pair differs", False, aws_stay=True
+    )
+    assert str(notice) == (
+        "AWS_SESSION_TOKEN: the stored AWS key pair differs; "
+        "not written; the stored AWS credentials stay"
+    )
+
+
+def test_report_names_a_removed_aws_key_after_the_replacements() -> None:
+    report = KeysEnvReport(
+        Path("/k"), (), ("AWS_ACCESS_KEY_ID",), ("AWS_SESSION_TOKEN",)
+    )
+    assert report.notice_lines() == (
+        "    ~ AWS_ACCESS_KEY_ID: replaced the stored value",
+        (
+            "    ~ AWS_SESSION_TOKEN: removed the stored value with the AWS key "
+            "pair it signed for"
+        ),
+    )
+
+
 def test_unkept_notice_says_the_provider_has_no_credential() -> None:
     notice = KeyNotice("OPENAI_API_KEY", "refused: a space at position 3", kept=False)
     assert str(notice) == (
