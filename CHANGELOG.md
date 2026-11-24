@@ -51,8 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `start_worker` gives up on `git worktree add` after 90 s with a spoken
-  error instead of hanging the call, and a launch that fails removes its own
-  worktree and branch instead of leaving them behind. (PL-1496)
+  error instead of hanging the call. A launch that fails returns its error
+  at once and discards its own worktree and branch in the background, off
+  the worker lock; a discard that was skipped because the pane would not
+  stop, or that failed, is retried on a later `stop_worker`. The client's
+  start budget is derived from that deadline plus a margin, so a start that
+  runs to the deadline still hears the reason. (PL-1496)
 
 - `vox desktop install --provider` rejects unknown providers and shows how to
   set the suggested provider in Claude Desktop instead of claiming it was set.
