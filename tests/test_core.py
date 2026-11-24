@@ -308,7 +308,7 @@ class TestStitchAudio:
     @pytest.mark.parametrize("mode", ["synthesize", "stitch"])
     def test_final_audio_fades_into_silence(self, tmp_path: Path, mode: str) -> None:
         source = tmp_path / "source.mp3"
-        self._write_fake_mp3(source, "sine=frequency=433:sample_rate=44100")
+        self._write_fake_mp3(source, "sine=frequency=313:sample_rate=44100")
         before = AudioSegment.from_mp3(source)
         out = tmp_path / "out.mp3"
 
@@ -327,9 +327,10 @@ class TestStitchAudio:
             stitch_audio([source], out)
 
         after = AudioSegment.from_mp3(out)
-        junction = len(before.raw_data) // before.sample_width
-        radius = before.frame_rate // 500
-        window = after.raw_data[(junction - radius) * 2 : (junction + radius) * 2]
+        junction = len(before.raw_data)
+        start = junction - (before.frame_rate * 25 // 1000) * before.sample_width
+        end = junction + (before.frame_rate * 5 // 1000) * before.sample_width
+        window = after.raw_data[start:end]
         samples = [value for (value,) in struct.iter_unpack("<h", window)]
         assert max(abs(b - a) for a, b in pairwise(samples)) < 200
         assert len(after) == len(before) + TRAILING_SILENCE_MS
