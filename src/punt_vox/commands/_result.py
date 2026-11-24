@@ -9,7 +9,7 @@ codes); library callers inspect the fields directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from punt_vox.client_sync import VoxClientSync
@@ -37,6 +37,16 @@ class CommandResult:
     json_data: dict[str, object] | None = None
     error: bool = False
     exit_code: int = 0
+
+    @classmethod
+    def failure(cls, message: str) -> Self:
+        """Build a standard CLI failure with an unprefixed JSON message."""
+        return cls(
+            text=f"Error: {message}",
+            json_data={"error": message},
+            error=True,
+            exit_code=1,
+        )
 
 
 @dataclass(frozen=True, slots=True)
