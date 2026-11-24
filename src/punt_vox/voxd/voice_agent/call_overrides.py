@@ -33,7 +33,7 @@ __all__ = [
     "LOOPBACK_HOSTS",
     "LOOPBACK_ORIGINS",
     "PLACEHOLDER_KEY",
-    "TestOverrides",
+    "CallOverrides",
 ]
 
 BASE_URL_ENV: Final = "VOX_CONVAI_BASE_URL"
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 @final
-class TestOverrides:
+class CallOverrides:
     """Read the loopback-only test switches from the process environment."""
 
     __slots__ = ()

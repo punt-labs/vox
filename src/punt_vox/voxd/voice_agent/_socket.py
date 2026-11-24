@@ -1,7 +1,7 @@
 """Open and use a signed socket without logging the bearer URL or frames.
 
 Plaintext loopback can also be trusted by a test-only environment switch;
-see :mod:`punt_vox.voxd.voice_agent.test_overrides`.
+see :mod:`punt_vox.voxd.voice_agent.call_overrides`.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from websockets.exceptions import (
     WebSocketException,
 )
 
+from punt_vox.voxd.voice_agent.call_overrides import LOOPBACK_ORIGINS, CallOverrides
 from punt_vox.voxd.voice_agent.fault import ConvAIError
-from punt_vox.voxd.voice_agent.test_overrides import LOOPBACK_ORIGINS, TestOverrides
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -74,7 +74,7 @@ class Socket:
             msg = "Invalid ElevenLabs signed URL"
             raise ConvAIError(msg) from None
         trusted = {("wss", "api.elevenlabs.io")}
-        if allow_loopback or TestOverrides.allow_loopback():
+        if allow_loopback or CallOverrides.allow_loopback():
             trusted |= LOOPBACK_ORIGINS
         if (url.scheme, url.hostname) not in trusted or url.username is not None:
             msg = "Untrusted ElevenLabs signed URL origin"

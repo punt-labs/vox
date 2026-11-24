@@ -6,7 +6,7 @@ it out at the end. This device gives the PCM sink the same callback and
 finished-callback contract as PortAudio's, paced at the sample rate on its
 own thread, so the sink's played, dropped and interrupted accounting is real
 and only the sound is missing. ``VOX_PCM_OUTPUT=silent`` selects it; see
-:mod:`punt_vox.voxd.voice_agent.test_overrides`.
+:mod:`punt_vox.voxd.voice_agent.call_overrides`.
 """
 
 from __future__ import annotations

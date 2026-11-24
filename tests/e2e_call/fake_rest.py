@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.voice_agent.test_overrides import PLACEHOLDER_KEY
+from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
 
 if TYPE_CHECKING:
     from types import TracebackType

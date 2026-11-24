@@ -4,10 +4,10 @@ import httpx
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError
-from punt_vox.voxd.voice_agent.test_overrides import LOOPBACK_HOSTS, PLACEHOLDER_KEY
+from punt_vox.voxd.voice_agent.call_overrides import LOOPBACK_HOSTS, PLACEHOLDER_KEY
 
 _API = "https://api.elevenlabs.io"
-_OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.test_overrides"
+_OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.call_overrides"
 
 
 def test_credential_identity_uses_scrypt_scoped_to_the_endpoint() -> None:

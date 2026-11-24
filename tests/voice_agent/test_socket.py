@@ -97,7 +97,7 @@ async def test_loopback_env_var_warns_once_when_it_takes_effect(
 ) -> None:
     monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
     with (
-        caplog.at_level("WARNING", logger="punt_vox.voxd.voice_agent.test_overrides"),
+        caplog.at_level("WARNING", logger="punt_vox.voxd.voice_agent.call_overrides"),
         pytest.raises(ConvAIError, match="handshake failed"),
     ):
         await Socket.open("ws://127.0.0.1:1")
