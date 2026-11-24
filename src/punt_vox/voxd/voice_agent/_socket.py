@@ -1,4 +1,8 @@
-"""Open and use a signed socket without logging the bearer URL or frames."""
+"""Open and use a signed socket without logging the bearer URL or frames.
+
+Plaintext loopback can also be trusted by a test-only environment switch;
+see :mod:`punt_vox.voxd.voice_agent.test_overrides`.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from websockets.exceptions import (
 )
 
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.test_overrides import TestOverrides
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -44,18 +49,7 @@ class Socket:
         signed_url: str, *, allow_loopback: bool = False
     ) -> ClientConnection:
         """Open the vendor socket; allow plaintext loopback tests only by opt-in."""
-        try:
-            url = urlsplit(signed_url)
-            origin = (url.scheme, url.hostname)
-        except ValueError:
-            msg = "Invalid ElevenLabs signed URL"
-            raise ConvAIError(msg) from None
-        trusted = {("wss", "api.elevenlabs.io")}
-        if allow_loopback:
-            trusted.update({("ws", "127.0.0.1"), ("ws", "::1")})
-        if origin not in trusted or url.username is not None:
-            msg = "Untrusted ElevenLabs signed URL origin"
-            raise ConvAIError(msg)
+        Socket._require_trusted(signed_url, allow_loopback=allow_loopback)
         try:
             return await _NoRedirect(
                 signed_url,
@@ -70,6 +64,21 @@ class Socket:
         except (WebSocketException, OSError, ValueError) as exc:
             msg = f"ElevenLabs WebSocket handshake failed ({type(exc).__name__})"
             raise ConvAIError(msg) from None
+
+    @staticmethod
+    def _require_trusted(signed_url: str, *, allow_loopback: bool) -> None:
+        """Reject any origin but the vendor's, or loopback when a test opts in."""
+        try:
+            url = urlsplit(signed_url)
+        except ValueError:
+            msg = "Invalid ElevenLabs signed URL"
+            raise ConvAIError(msg) from None
+        trusted = {("wss", "api.elevenlabs.io")}
+        if allow_loopback or TestOverrides.allow_loopback():
+            trusted.update({("ws", "127.0.0.1"), ("ws", "::1")})
+        if (url.scheme, url.hostname) not in trusted or url.username is not None:
+            msg = "Untrusted ElevenLabs signed URL origin"
+            raise ConvAIError(msg)
 
     @staticmethod
     async def receive(socket: ClientConnection) -> bytes | str:

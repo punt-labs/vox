@@ -276,6 +276,11 @@ check-style-mismatch = true
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ruff.lint.flake8-builtins]
+# ``format`` is the parameter name http.server's ``log_message`` fixes for its
+# overrides; pyright rejects an override that renames it.
+builtins-ignorelist = ["format"]
+
 [tool.ruff.lint.pep8-naming]
 # Stdlib names fixed by the base-class API: the RotatingFileHandler override
 # method ``doRollover`` (renaming it would fail to override -- N802) and the
@@ -611,7 +616,7 @@ domain = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not roundtrip and not quarantine and not playback and not levels'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e and not call_e2e and not roundtrip and not quarantine and not playback and not levels'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
@@ -625,6 +630,7 @@ markers = [
     "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",
     "sdk: marks tests that drive a real Claude Agent SDK session and cost real money (run with -m sdk)",
     "levels: signal-level loudness, silence, and track-change checks for chimes and music via ffmpeg ebur128/silencedetect and an mpv render (offline by default; live music also marked integration)",
+    "call_e2e: marks voice-call end-to-end tests that run a real voxd subprocess against a fake ElevenLabs agent on loopback, with no credentials (run with -m call_e2e)",
     "e2e: marks packaging-e2e tests that drive the INSTALLED wheel -- `vox` binary as a subprocess and `vox mcp` over stdio; catches entry-point resolution / missing-wheel-data / stdio-startup faults no in-process test can see (run with -m e2e; requires `make install` first)",
 ]
 filterwarnings = [

@@ -36,3 +36,24 @@ async def test_remote_close_reports_code_but_not_vendor_reason() -> None:
             with pytest.raises(ConvAIError, match="close code 1011") as failure:
                 await Socket.receive(socket)
             assert "private" not in str(failure.value)
+
+
+async def test_loopback_env_var_trusts_plaintext_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def accept(socket: ServerConnection) -> None:
+        await socket.close()
+
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
+    async with serve(accept, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        socket = await Socket.open(f"ws://127.0.0.1:{port}")
+        await socket.close()
+
+
+async def test_loopback_is_untrusted_without_the_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VOX_CALL_ALLOW_LOOPBACK", raising=False)
+    with pytest.raises(ConvAIError, match="Untrusted"):
+        await Socket.open("ws://127.0.0.1:1")

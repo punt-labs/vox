@@ -1,4 +1,8 @@
-"""Register client tools and fetch signed conversations through the REST API."""
+"""Register client tools and fetch signed conversations through the REST API.
+
+The API origin can be redirected to loopback by a test-only environment
+switch; see :mod:`punt_vox.voxd.voice_agent.test_overrides`.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import httpx
 
 from punt_vox.voxd.voice_agent._decode import EventDecoder
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.test_overrides import TestOverrides
 
 if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import (
@@ -42,11 +47,18 @@ class ConvAIControl:
     _credential_id: str
     _http: httpx.Client
 
-    def __new__(cls, api_key: str, *, base_url: str = _API) -> Self:
+    def __new__(
+        cls,
+        api_key: str,
+        *,
+        base_url: str | None = None,  # None reads the test override, else the API.
+    ) -> Self:
         """Construct off the event loop because key derivation is synchronous."""
         if not api_key.strip():
             msg = "ElevenLabs Conversational AI requires an API key"
             raise ValueError(msg)
+        if base_url is None:
+            base_url = TestOverrides.base_url(_API)
         self = super().__new__(cls)
         self._credential_id = hashlib.scrypt(
             api_key.encode(),

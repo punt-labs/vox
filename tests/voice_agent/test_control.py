@@ -4,6 +4,10 @@ import httpx
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError
+from punt_vox.voxd.voice_agent.test_overrides import TestOverrides
+
+_API = "https://api.elevenlabs.io"
+_OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.test_overrides"
 
 
 def test_credential_identity_uses_scrypt_scoped_to_the_endpoint() -> None:
@@ -87,3 +91,20 @@ def test_signed_url_connection_failure_is_sanitized(
                 control.signed_url("agent_vox")
         assert "private" not in str(failure.value)
         assert "unrecorded" not in str(failure.value)
+
+
+def test_base_url_env_var_is_honoured_for_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "http://127.0.0.1:4321")
+    assert TestOverrides.base_url(_API) == "http://127.0.0.1:4321"
+
+
+def test_base_url_env_var_is_ignored_for_remote_hosts(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "https://evil.example")
+    with caplog.at_level("WARNING", logger=_OVERRIDES_LOGGER):
+        base_url = TestOverrides.base_url(_API)
+    assert base_url == _API
+    assert "VOX_CONVAI_BASE_URL ignored" in caplog.text
