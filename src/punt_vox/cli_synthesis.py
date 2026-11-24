@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, TypedDict, Unpack, final
+from typing import TYPE_CHECKING, Self, Unpack, final
 
 import typer
 
@@ -19,17 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.output_formatter import OutputFormatter
-
-
-class _SynthesisOptions(TypedDict):
-    voice: str | None
-    language: str | None
-    rate: int
-    provider: str | None
-    model: str | None
-    stability: float | None
-    similarity: float | None
-    style: float | None
+    from punt_vox.types_cli_synthesis import SynthesisOptions
 
 
 @final
@@ -54,7 +44,7 @@ class CliSynthesis:
         *,
         speaker_boost: bool,
         api_key: str | None = None,
-        **options: Unpack[_SynthesisOptions],
+        **options: Unpack[SynthesisOptions],
     ) -> tuple[list[str], SynthesisSpec]:
         """Resolve segments first, then validate options and fill repo defaults."""
         segments = self._text_input.resolve(text, from_file)
