@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import typer
 
 from punt_vox.logging_config import configure_client_logging
-from punt_vox.output_formatter import OutputFormatter
 from punt_vox.segment_file import SegmentFile
+from punt_vox.speech_stdin import SpeechStdin
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.output_formatter import OutputFormatter
 
 __all__ = ["OutputFlags", "TextInput"]
 
@@ -92,7 +96,7 @@ class TextInput:
         when no argument is given and stdin is not a terminal (a pipe).
 
         Raises:
-            typer.Exit: If no text is provided or standard input is empty.
+            typer.Exit: If no text is provided or stdin is empty or not UTF-8.
             typer.BadParameter: If TEXT and --from are combined or the file is invalid.
             OSError: If standard input cannot be read.
         """
@@ -100,11 +104,9 @@ class TextInput:
             if text is not None:
                 raise typer.BadParameter("TEXT and --from are mutually exclusive.")
             return SegmentFile(from_file).segments()
-        if text == "-":
+        if self._should_read_stdin(text):
             return [self._read_stdin()]
         if text is None:
-            if self._stdin_is_piped():
-                return [self._read_stdin()]
             self._formatter.error(
                 "provide TEXT argument, --from file, or piped stdin",
                 "Error: provide TEXT argument, --from file, or piped stdin.",
@@ -113,14 +115,24 @@ class TextInput:
         return [text]
 
     @staticmethod
-    def _stdin_is_piped() -> bool:
-        """Check whether stdin can be read without prompting at a terminal."""
-        return not sys.stdin.isatty()
+    def prepare_shared_stdin(
+        text: str | None, from_file: Path | None, *, api_key_stdin: bool
+    ) -> None:
+        """Set up speech stdin before a piped API key reads from it."""
+        if api_key_stdin and from_file is None and TextInput._should_read_stdin(text):
+            SpeechStdin.prepare()
+
+    @staticmethod
+    def _should_read_stdin(text: str | None) -> bool:
+        """Return whether text should be read from stdin.
+
+        True when the caller passes ``-`` explicitly, or gives no argument while
+        stdin is a pipe (not a terminal) -- the Unix convention for composing in
+        a pipeline. An interactive shell with no argument is left to the caller's
+        usage error rather than blocking on a terminal read.
+        """
+        return not sys.stdin.isatty() if text is None else text == "-"
 
     def _read_stdin(self) -> str:
-        """Read and return stripped text from stdin, or exit on empty input."""
-        data = sys.stdin.read().strip()
-        if not data:
-            self._formatter.error("no text on stdin", "Error: no text on stdin.")
-            raise typer.Exit(code=1)
-        return data
+        """Read speech stdin with the shared formatter."""
+        return SpeechStdin(self._formatter).read()
