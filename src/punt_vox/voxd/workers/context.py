@@ -11,6 +11,7 @@ from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.wire_reply import WireReply
+from punt_vox.voxd.workers.allowlist_handlers import AllowlistHandlers
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
@@ -42,17 +43,21 @@ class WorkerContext:
     ) -> dict[str, MessageHandler]:
         """Wire ingestion, workers and calls with one store and one worker actor."""
         store = HookContextStore()
+        policy = WorkerSubsystem.policy()
+        # The allowlist needs only the policy, so it stays live when the
+        # worker actor fails to recover: an operator can still fix the policy.
+        allowlist = AllowlistHandlers(policy).handlers()
         try:
-            policy = WorkerSubsystem.policy()
             actor = WorkerSubsystem.recover(store, policy)
         except Exception:
             logger.exception("Worker startup recovery failed")
-            return WorkerContext._degraded(store)
+            return {**WorkerContext._degraded(store), **allowlist}
         if lifetime is not None:
             lifetime.callback(actor.shutdown)
         events = ProgressEvents()
         return {
             **WorkerHandlers(actor).handlers(store, events),
+            **allowlist,
             **CallHandlers(
                 actor, policy, playback, progress=events, hold_music=hold_music
             ).handlers(),

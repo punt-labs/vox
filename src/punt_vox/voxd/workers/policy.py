@@ -2,48 +2,83 @@
 
 from __future__ import annotations
 
-import ast
+import logging
 import subprocess
 from pathlib import Path
-from typing import Self, cast, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.config import ConfigStore
+from punt_vox.voxd.workers.allowlist import RepoAllowlist
+
+if TYPE_CHECKING:
+    from punt_vox.repo_spellings import RepoSpellings
+
+logger = logging.getLogger(__name__)
 
 
 @final
 class WorkerRepoPolicy:
     """Resolve top levels before comparing against the durable allowlist."""
 
-    __slots__ = ("_config",)
-    _config: ConfigStore
+    __slots__ = ("_allowlist",)
+    _allowlist: RepoAllowlist
 
     def __new__(cls, config: ConfigStore) -> Self:
         """Bind the durable policy source."""
         self = super().__new__(cls)
-        self._config = config
+        self._allowlist = RepoAllowlist(config)
         return self
-
-    @staticmethod
-    def _allowed(raw: str) -> set[Path]:
-        try:
-            repos: object = ast.literal_eval(raw)
-        except (ValueError, SyntaxError) as exc:
-            raise ValueError("worker_repos must be a list of repository paths") from exc
-        if not isinstance(repos, list):
-            raise ValueError("worker_repos must be a list of repository paths")
-        paths = cast("list[object]", repos)
-        if not all(isinstance(p, str) for p in paths):
-            raise ValueError("worker_repos must be a list of repository paths")
-        return {Path(str(p)).expanduser().resolve() for p in paths}
 
     def repos(self) -> tuple[str, ...]:
         """Return the allowlisted repository paths, sorted for a stable prompt."""
-        raw = self._config.read_field("worker_repos") or "[]"
-        return tuple(sorted(str(path) for path in self._allowed(raw)))
+        return tuple(sorted(str(path) for path in self._allowlist.paths()))
+
+    @staticmethod
+    def _top_level(path: Path) -> Path:
+        """Return the git top level containing *path*, or raise ``ValueError``."""
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("git is not installed on the daemon host") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"git timed out reading {path}") from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            logger.warning("git rev-parse failed for %s: %s", path, detail)
+            raise ValueError(f"not a git repository top level: {path}") from exc
+        return Path(result.stdout.strip()).resolve()
+
+    def allow(self, project: str) -> tuple[str, ...]:
+        """Add a repository top level to the allowlist and return the new list.
+
+        Raises:
+            ValueError: If *project* is not a directory, not inside a git
+                repository, or not that repository's top level.
+        """
+        path = RepoAllowlist.entry(project)
+        if not path.is_dir():
+            raise ValueError(f"not a directory: {path}")
+        if self._top_level(path) != path:
+            raise ValueError(f"not a git repository top level: {path}")
+        return self._allowlist.edit(lambda allowed: allowed | {path})
+
+    def disallow(self, named: RepoSpellings) -> tuple[str, ...]:
+        """Remove the entry *named* names; lenient, unlike allow.
+
+        Raises:
+            ValueError: If no stored entry is named.
+        """
+        return self._allowlist.remove(named)
 
     def resolve(self, project: str) -> Path:
         """Refuse subdirectories, unlisted repositories and malformed policy."""
-        allowed = self._allowed(self._config.read_field("worker_repos") or "[]")
+        allowed = self._allowlist.paths()
         path = Path(project).expanduser()
         if not path.is_absolute():
             raise ValueError("Worker project must be an absolute path")
@@ -52,14 +87,7 @@ class WorkerRepoPolicy:
             raise ValueError(
                 f"Worker project is not allowlisted in worker_repos: {path}"
             )
-        result = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if Path(result.stdout.strip()).resolve() != path:
+        if self._top_level(path) != path:
             raise ValueError("Worker project must be a repository top level")
         return path
 
