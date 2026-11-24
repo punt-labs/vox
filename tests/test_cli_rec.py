@@ -174,11 +174,11 @@ def test_new_uses_configured_provider_from_state(
 
 @pytest.mark.usefixtures("conflicting_provider_environment")
 @pytest.mark.parametrize(
-    ("provider_args", "expected_provider", "expected_model", "expected_voice"),
+    ("provider_args", "expected"),
     [
-        ([], "elevenlabs", "eleven_v3", "adam"),
-        (["--provider", "polly"], "polly", None, None),
-        (["--provider", "openai", "--model", "tts-1-hd"], "openai", "tts-1-hd", None),
+        ([], ("elevenlabs", "eleven_v3", "adam")),
+        (["--provider", "polly"], ("polly", None, None)),
+        (["--provider", "openai", "--model", "tts-1-hd"], ("openai", "tts-1-hd", None)),
     ],
     ids=["repo-default", "explicit-provider", "explicit-model"],
 )
@@ -186,9 +186,7 @@ def test_new_uses_configured_provider_from_state(
 def test_rec_new_provider_ignores_environment(
     mock_client_cls: MagicMock,
     provider_args: list[str],
-    expected_provider: str,
-    expected_model: str | None,
-    expected_voice: str | None,
+    expected: tuple[str, str | None, str | None],
 ) -> None:
     record = mock_client_cls.return_value.record
     record.return_value = RecordResult(
@@ -200,11 +198,7 @@ def test_rec_new_provider_ignores_environment(
     assert result.exit_code == 0, result.output
     record.assert_called_once()
     spec = record.call_args.args[1]
-    assert (spec.provider, spec.model, spec.voice) == (
-        expected_provider,
-        expected_model,
-        expected_voice,
-    )
+    assert (spec.provider, spec.model, spec.voice) == expected
 
 
 def test_new_fills_provider_through_session_spec_for_repo(
