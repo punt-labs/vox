@@ -59,9 +59,13 @@ class WorkerWorktrees:
                 "worker start timed out creating the worktree after "
                 f"{self.CREATE_DEADLINE} s"
             ) from exc
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as exc:
             self._timed(project, started, "failed in")
-            raise
+            failure = GitFailure(exc)
+            logger.warning("Worker worktree could not be created: %s", failure)
+            raise ValueError(
+                f"worker start could not create the worktree: {failure.reason}"
+            ) from exc
         self._timed(project, started, "created in")
 
     @staticmethod

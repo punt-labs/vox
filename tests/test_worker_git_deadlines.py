@@ -230,7 +230,7 @@ def test_worktree_create_git_failure_logs_its_elapsed_time(
             "subprocess.run",
             side_effect=subprocess.CalledProcessError(128, ["git"], stderr="fatal"),
         ),
-        pytest.raises(subprocess.CalledProcessError),
+        pytest.raises(ValueError, match="could not create the worktree: fatal"),
     ):
         WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
     assert any(
@@ -305,3 +305,49 @@ def test_discard_records_every_failed_step(
     line = next(r.getMessage() for r in caplog.records if worker_id in r.getMessage())
     assert "remove: CalledProcessError" in line
     assert "; branch: CalledProcessError" in line
+
+
+def test_worktree_create_git_failure_is_a_spoken_value_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """git's reason reaches the agent; the repository's path reaches no one."""
+    repo = tmp_path / "shiny-repo"
+    repo.mkdir()
+    failure = subprocess.CalledProcessError(
+        128,
+        ["git", "-C", str(repo), "worktree", "add", "-b", "vox-worker/x", "/w/x"],
+        stderr=(
+            f"fatal: a branch named 'vox-worker/x' already exists\nhint: see {repo}\n"
+        ),
+    )
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
+        patch("subprocess.run", side_effect=failure),
+        pytest.raises(ValueError) as raised,
+    ):
+        WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
+    assert str(raised.value) == (
+        "worker start could not create the worktree: "
+        "fatal: a branch named 'vox-worker/x' already exists"
+    )
+    assert isinstance(raised.value.__cause__, subprocess.CalledProcessError)
+    line = next(r.getMessage() for r in caplog.records if "could not" in r.getMessage())
+    assert "git -C <path> worktree add -b vox-worker/x <path>" in line
+    assert "fatal: a branch named 'vox-worker/x' already exists" in line
+    assert str(tmp_path) not in line
+
+
+def test_worktree_create_git_failure_without_stderr_names_the_exit(
+    tmp_path: Path,
+) -> None:
+    with (
+        patch(
+            "subprocess.run",
+            side_effect=subprocess.CalledProcessError(128, ["git"], stderr=""),
+        ),
+        pytest.raises(
+            ValueError,
+            match=r"^worker start could not create the worktree: git exited 128$",
+        ),
+    ):
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")

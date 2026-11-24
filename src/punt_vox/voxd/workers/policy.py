@@ -103,7 +103,8 @@ class WorkerRepoPolicy:
         """Keep the source checkout untouched and retain the new branch.
 
         Raises:
-            ValueError: If ``git worktree add`` outlives its deadline.
+            ValueError: If ``git worktree add`` outlives its deadline or fails;
+                the message carries git's reason with every path scrubbed.
         """
         self._worktrees.create(project, worktree, branch)
 

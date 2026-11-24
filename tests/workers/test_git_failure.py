@@ -54,3 +54,25 @@ def test_other_errors_keep_their_message_with_paths_scrubbed(
 
 def test_kind_is_the_exception_class() -> None:
     assert GitFailure(ValueError("x")).kind == "ValueError"
+
+
+def test_reason_is_the_first_stderr_line_scrubbed() -> None:
+    failure = GitFailure(
+        subprocess.CalledProcessError(
+            128,
+            ["git"],
+            stderr="fatal: a branch named 'vox-worker/x' already exists\nhint: /x/y\n",
+        )
+    )
+    assert failure.reason == "fatal: a branch named 'vox-worker/x' already exists"
+
+
+def test_reason_without_stderr_names_the_exit_status() -> None:
+    assert GitFailure(subprocess.CalledProcessError(128, ["git"])).reason == (
+        "git exited 128"
+    )
+
+
+def test_reason_of_a_timeout_or_plain_error_is_its_detail() -> None:
+    assert GitFailure(OSError("busy: /x")).reason == "busy: <path>"
+    assert GitFailure(subprocess.TimeoutExpired(["git"], 9)).reason == "git"

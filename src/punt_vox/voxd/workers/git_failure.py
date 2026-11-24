@@ -16,16 +16,27 @@ _ABSOLUTE_PATH: Final = re.compile(r"(?<![\w.])/[^\s'\":]+")
 class GitFailure:
     """One line naming the exception type, the git argv and its stderr."""
 
-    __slots__ = ("_detail", "_kind")
+    __slots__ = ("_detail", "_kind", "_reason")
     _detail: str
     _kind: str
+    _reason: str
 
     def __new__(cls, exc: Exception) -> Self:
         """Read the argv and stderr a subprocess error carries; else its message."""
         self = super().__new__(cls)
         self._kind = type(exc).__name__
         self._detail = cls._scrub(cls._describe(exc))
+        self._reason = cls._scrub(cls._reason_of(exc, self._detail))
         return self
+
+    @property
+    def reason(self) -> str:
+        """Return the one line fit to speak: git's first stderr line, scrubbed.
+
+        A git failure with no stderr names its exit status; any other error
+        is its detail.
+        """
+        return self._reason
 
     @property
     def kind(self) -> str:
@@ -54,6 +65,20 @@ class GitFailure:
         if isinstance(stderr, bytes):
             stderr = stderr.decode(errors="replace")
         return f"{command}: {stderr}" if stderr else command
+
+    @classmethod
+    def _reason_of(cls, exc: Exception, detail: str) -> str:
+        if not isinstance(exc, subprocess.CalledProcessError):
+            return detail
+        first = cls._stderr_text(exc).strip().split("\n", 1)[0]
+        return first or f"git exited {exc.returncode}"
+
+    @staticmethod
+    def _stderr_text(exc: subprocess.CalledProcessError) -> str:
+        stderr = exc.stderr
+        if isinstance(stderr, bytes):
+            return stderr.decode(errors="replace")
+        return stderr or ""
 
     @staticmethod
     def _scrub(text: str) -> str:
