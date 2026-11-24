@@ -672,7 +672,7 @@ async def test_local_hangup_releases_playback_before_saving_departure(
     assert released_at_departure == [1]
     assert steps == ["terminal", "released", "departure"]
     assert not playback.sinks[0].finished
-    assert ("Call departure not saved (OSError)" in caplog.text) is save_fails
+    assert ("Call departure not saved (OSError" in caplog.text) is save_fails
 
 
 @pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])

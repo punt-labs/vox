@@ -23,20 +23,18 @@ def test_reason_strips_line_breaks_and_absolute_paths(text: str, expected: str) 
     assert LogText.reason(text) == expected
 
 
-@pytest.mark.parametrize("value", ["headset", "aec", "none"])
-def test_echo_control_keeps_an_accepted_declaration(value: str) -> None:
-    assert LogText.echo_control(value) == value
-
-
-@pytest.mark.parametrize("value", ["speakers", "head\nset", True, None, 3])
-def test_echo_control_replaces_anything_else(value: object) -> None:
-    assert LogText.echo_control(value) == "other"
-
-
-def test_tool_name_keeps_a_catalog_tool() -> None:
-    assert LogText.tool_name("start_worker") == "start_worker"
-
-
-@pytest.mark.parametrize("name", ["no_such_tool", "x\nCall ended: forged", ""])
-def test_tool_name_replaces_anything_else(name: str) -> None:
-    assert LogText.tool_name(name) == "unknown"
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (
+            RuntimeError("player missing at /opt/x"),
+            "RuntimeError: player missing at <path>",
+        ),
+        (OSError("first\nsecond"), "OSError: first second"),
+        (ValueError(), "ValueError"),
+    ],
+)
+def test_failure_names_an_exception_by_type_and_safe_message(
+    exc: BaseException, expected: str
+) -> None:
+    assert LogText.failure(exc) == expected

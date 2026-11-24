@@ -459,3 +459,69 @@ class TestSetupFailure:
             )
         assert self._lines(caplog)[-1] == "Call not started: FileExistsError"
         assert not any(str(tmp_path) in line for line in self._lines(caplog))
+
+
+class TestTaskFailure:
+    """An exception in the task outside call.run still reaches the caller."""
+
+    class _BrokenMusic:
+        def __call__(self) -> AbstractContextManager[None]:
+            return self
+
+        def __enter__(self) -> None:
+            raise RuntimeError("hold music player is not installed at /opt/x")
+
+        def __exit__(self, *exc_info: object) -> None:
+            pass
+
+    async def test_hold_music_failing_on_entry_fails_the_call_promptly(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+        launcher = _launcher(
+            tmp_path,
+            connector=_Connector(),
+            opener=_Opener(),
+            hold_music=self._BrokenMusic(),
+        )
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+        )
+        async with asyncio.timeout(2):
+            await active.wait_connected(30)
+        status = active.status()
+        assert status["state"] == "failed"
+        assert status["error"] == (
+            "RuntimeError: hold music player is not installed at <path>"
+        )
+        (ended,) = [
+            r.message for r in caplog.records if r.message.startswith("Call ended:")
+        ]
+        assert "error RuntimeError: hold music player is not installed at <path>" in (
+            ended
+        )
+
+    async def test_cancel_logs_an_exception_the_task_ended_with(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="punt_vox.voxd.voice_call.active_call")
+        launcher = _launcher(
+            tmp_path,
+            connector=_Connector(),
+            opener=_Opener(),
+            hold_music=self._BrokenMusic(),
+        )
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+        )
+        await asyncio.sleep(0.05)
+        await active.cancel()
+        (line,) = [
+            r.message
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.voice_call.active_call"
+        ]
+        assert line == (
+            "Call task ended with RuntimeError: hold music player is not installed "
+            "at <path>"
+        )

@@ -3,41 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import os
-from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Self, final
-from uuid import UUID
 
-from punt_vox.voxd.voice_agent.trace import EventTrace
+from punt_vox.voxd.voice_call.log_text import LogText
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from typing import TextIO
+    from uuid import UUID
 
     from punt_vox.voxd.voice_call.call import VoiceAgentCall
 
-__all__ = ["ActiveCall", "CallTrace"]
+__all__ = ["ActiveCall"]
 
-
-@dataclass(frozen=True, slots=True)
-class CallTrace:
-    """Resources for a call trace, reserved by its unique call ID."""
-
-    path: Path
-    stream: TextIO
-    events: EventTrace
-
-    @classmethod
-    def reserve(cls, directory: Path, call_id: UUID) -> Self:
-        """Create a private trace and refuse an ID that was already used."""
-        path = directory / f"call-{call_id.hex}.jsonl"
-        try:
-            stream = os.fdopen(
-                os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
-            )
-        except FileExistsError:
-            raise ValueError("call_id has already been used") from None
-        return cls(path, stream, EventTrace(stream))
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -79,10 +58,19 @@ class ActiveCall:
         }
 
     async def wait_connected(self, timeout: float) -> None:
-        """Wait for the connection, marking it failed before cancellation."""
+        """Wait for the connection, or for the task to end before connecting.
+
+        A task that ends first has already recorded why; only a task still
+        running at the deadline is marked as never having connected.
+        """
+        connected = asyncio.ensure_future(self._call.connected())
         try:
-            await asyncio.wait_for(self._call.connected(), timeout)
-        except TimeoutError:
+            await asyncio.wait(
+                {connected, self._task}, timeout=timeout, return_when="FIRST_COMPLETED"
+            )
+        finally:
+            connected.cancel()
+        if not connected.done() and not self._task.done():
             self._call.mark_failed("the ElevenLabs conversation did not connect")
             await self.cancel()
 
@@ -91,19 +79,6 @@ class ActiveCall:
         if call_id is not None and call_id != self._call_id:
             raise ValueError("the requested call is no longer current")
         self._task.cancel()
-        await asyncio.gather(self._task, return_exceptions=True)
-
-    @staticmethod
-    def requested_id(msg: dict[str, object]) -> UUID | None:
-        """Read the optional call ID without treating malformed IDs as absent."""
-        if "call_id" not in msg:
-            if msg.get("type") in ("call_start_scoped", "call_stop_scoped"):
-                raise ValueError("call_id is required for a scoped request")
-            return None
-        value = msg["call_id"]
-        if not isinstance(value, str):
-            raise ValueError("call_id must be a UUID string")
-        try:
-            return UUID(value)
-        except ValueError:
-            raise ValueError("call_id must be a UUID string") from None
+        (ending,) = await asyncio.gather(self._task, return_exceptions=True)
+        if isinstance(ending, Exception):
+            logger.warning("Call task ended with %s", LogText.failure(ending))

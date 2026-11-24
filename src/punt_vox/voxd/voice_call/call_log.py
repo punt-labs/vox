@@ -6,9 +6,11 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.log_text import LogText
+from punt_vox.voxd.voice_call.mic_input import MicInput
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -19,6 +21,8 @@ if TYPE_CHECKING:
 __all__ = ["CallLog"]
 
 logger = logging.getLogger(__name__)
+
+_TOOLS: Final = frozenset(tool.name for tool in BossTools.CATALOG)
 
 
 @final
@@ -33,8 +37,7 @@ class CallLog:
     def __new__(cls, trace: Path, outcome: Callable[[], CallOutcome]) -> Self:
         """Start the clock on a call that writes its trace at ``trace``."""
         self = super().__new__(cls)
-        self._trace, self._outcome = trace, outcome
-        self._started = time.monotonic()
+        self._trace, self._outcome, self._started = trace, outcome, time.monotonic()
         return self
 
     def __enter__(self) -> Self:
@@ -56,11 +59,9 @@ class CallLog:
         naming the exception type only: a setup failure's message may carry
         a trace path or provider detail. The exception propagates.
         """
-        logger.info(
-            "Call starting: input %s, echo control %s",
-            "script" if "script" in msg else "mic",
-            LogText.echo_control(msg.get("echo_control", "none")),
-        )
+        mode = ("mic", "script")["script" in msg]
+        echo = MicInput.echo_label(msg.get("echo_control", "none"))
+        logger.info("Call starting: input %s, echo control %s", mode, echo)
         try:
             yield
         except Exception as exc:
@@ -75,9 +76,9 @@ class CallLog:
     @staticmethod
     def tool(name: str, result: str, *, is_error: bool) -> None:
         """Log one answered client tool call; an error names its redacted text."""
+        tool = name if name in _TOOLS else "unknown"  # An agent-chosen name.
         if is_error:
             error: str = json.loads(result)["error"]
-            verdict = f"error {LogText.reason(error)}"
+            logger.info("Call tool %s: error %s", tool, LogText.reason(error))
         else:
-            verdict = "ok"
-        logger.info("Call tool %s: %s", LogText.tool_name(name), verdict)
+            logger.info("Call tool %s: ok", tool)

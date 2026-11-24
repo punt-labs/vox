@@ -8,12 +8,15 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.input_device import PortAudio
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-from punt_vox.voxd.voice_call.active_call import ActiveCall, CallTrace
+from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
 from punt_vox.voxd.voice_call.call_log import CallLog
+from punt_vox.voxd.voice_call.call_trace import CallTrace
 from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
-from punt_vox.voxd.voice_call.inputs import MicInput, ScriptInput
+from punt_vox.voxd.voice_call.inputs import ScriptInput
+from punt_vox.voxd.voice_call.log_text import LogText
+from punt_vox.voxd.voice_call.mic_input import MicInput
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
@@ -108,12 +111,19 @@ class CallLauncher:
             )
 
         async def run() -> None:
-            with CallLog(trace.path, call.outcome), self._hold_music():
-                await call.run(
-                    lambda: self._dial(returning),
-                    returning.covered,
-                    depart=lambda reported: self._depart(returning, reported),
-                )
+            with CallLog(trace.path, call.outcome):
+                try:
+                    with self._hold_music():
+                        await call.run(
+                            lambda: self._dial(returning),
+                            returning.covered,
+                            depart=lambda reported: self._depart(returning, reported),
+                        )
+                except Exception as exc:
+                    # Outside call.run nothing else reports a failure; a caller
+                    # waiting to connect would otherwise time out on a false message.
+                    call.mark_failed(LogText.failure(exc))
+                    raise
 
         task = asyncio.create_task(run())
         task.add_done_callback(lambda _: trace.stream.close())
@@ -127,13 +137,7 @@ class CallLauncher:
     async def _input(msg: dict[str, object]) -> CallInput:
         if "script" in msg:
             return await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
-        if msg.get("echo_control") not in MicInput.ECHO_CONTROL:
-            raise ValueError(
-                "Live calls require echo protection: wear a headset and use "
-                "'vox call --headset', or configure system echo cancellation "
-                "and use 'vox call --aec'"
-            )
-        return MicInput(MicAudioSource(PortAudio()))
+        return MicInput.from_wire(msg, MicAudioSource(PortAudio()))
 
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)
@@ -145,4 +149,4 @@ class CallLauncher:
         try:
             await asyncio.to_thread(returning.depart, reported)
         except (OSError, RuntimeError, ValueError) as exc:
-            logger.warning("Call departure not saved (%s)", type(exc).__name__)
+            logger.warning("Call departure not saved (%s)", LogText.failure(exc))

@@ -22,7 +22,7 @@ from punt_vox.voxd.voice_agent.events import (
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
-from punt_vox.voxd.voice_call.inputs import MicInput
+from punt_vox.voxd.voice_call.mic_input import MicInput
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 

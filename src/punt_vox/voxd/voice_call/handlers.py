@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.paths import calls_dir
@@ -11,6 +10,7 @@ from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
+from punt_vox.voxd.voice_call.call_id import CallId
 from punt_vox.voxd.voice_call.launcher import CallLauncher
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -90,7 +90,7 @@ class CallHandlers:
                     status = await self._start(msg)
                 case "call_stop":
                     async with self._lock:
-                        status = await self._stop(ActiveCall.requested_id(msg))
+                        status = await self._stop(CallId.requested(msg))
                 case "call_teardown":
                     status = await self._teardown()
                 case _:
@@ -122,7 +122,7 @@ class CallHandlers:
 
     async def _launch(self, msg: dict[str, object]) -> ActiveCall:
         self._require_idle()
-        call_id = ActiveCall.requested_id(msg) or uuid.uuid4()
+        call_id = CallId.for_start(msg)
         self._active = await self._launcher.launch(call_id, msg)
         return self._active
 
