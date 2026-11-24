@@ -191,6 +191,7 @@ def test_scripted_call_reaches_the_tool_result(
         _run_call(voxd_env, _script(tmp_path), _TOOL_CALL_STEPS)
     )
 
+    assert agent.fault is None
     assert ("POST", "/v1/convai/agents/create") in rest.requests
     override = cast(
         "dict[str, object]", agent.initiation["conversation_config_override"]
@@ -224,6 +225,7 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
         _run_call(voxd_env, _script(tmp_path), _INTERRUPTED_STEPS)
     )
 
+    assert agent.fault is None
     report = result.stdout + result.stderr
     assert result.returncode == 0, report
     assert "call ended" in report

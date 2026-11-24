@@ -163,3 +163,32 @@ async def test_client_close_ends_the_script_without_raising() -> None:
         await _recv(socket)
         await socket.close()
     assert agent.tool_results == {}
+
+
+async def test_undecodable_client_frame_surfaces_as_a_fault() -> None:
+    """A frame the fake cannot decode fails the test at once, not at a timeout."""
+    agent = FakeConvAIAgent((WaitForToolResult("never"), HangUp()))
+    with pytest.raises(json.JSONDecodeError):
+        async with asyncio.timeout(1), agent:
+            socket = await _open(agent)
+            await _recv(socket)
+            await socket.send("not json")
+            with pytest.raises(ConnectionClosed) as closed:
+                await socket.recv()
+            assert closed.value.rcvd is not None
+            assert closed.value.rcvd.code == 1011
+    assert isinstance(agent.fault, json.JSONDecodeError)
+
+
+async def test_player_error_surfaces_as_a_fault() -> None:
+    """A step the fake cannot play fails the test with the real error."""
+    agent = FakeConvAIAgent((SendAudio(cast("bytes", "not bytes"), 1),))
+    with pytest.raises(TypeError):
+        async with asyncio.timeout(1), agent:
+            socket = await _open(agent)
+            await _recv(socket)
+            with pytest.raises(ConnectionClosed) as closed:
+                await socket.recv()
+            assert closed.value.rcvd is not None
+            assert closed.value.rcvd.code == 1011
+    assert isinstance(agent.fault, TypeError)

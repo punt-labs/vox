@@ -43,15 +43,19 @@ _AUDIO_FORMAT = "pcm_16000"
 class FakeConvAIAgent:
     """Serve one scripted ElevenLabs conversation on a loopback port.
 
-    The agent records the client's initiation payload, answers pings, keeps
-    every client message in ``received``, and plays its steps in order. A
-    client close ends the script without raising.
+    The agent records the client's initiation payload, keeps every client
+    message in ``received``, and plays its steps in order. A client close ends
+    the script without raising. Any other error in the reader or the player is
+    the agent's ``fault``: the socket closes with code 1011 so the client sees
+    it at once, and leaving the context re-raises it so the test fails with
+    the real error rather than a timeout.
     """
 
     __slots__ = (
         "_audio_chunks",
         "_changed",
         "_closed",
+        "_fault",
         "_initiation",
         "_port",
         "_received",
@@ -67,6 +71,7 @@ class FakeConvAIAgent:
     _tool_results: dict[str, Message]
     _audio_chunks: int
     _closed: bool
+    _fault: BaseException | None  # None until the reader or player fails.
     _changed: asyncio.Condition
 
     def __new__(cls, steps: Iterable[Step]) -> Self:
@@ -79,6 +84,7 @@ class FakeConvAIAgent:
         self._tool_results = {}
         self._audio_chunks = 0
         self._closed = False
+        self._fault = None
         self._changed = asyncio.Condition()
         return self
 
@@ -102,6 +108,10 @@ class FakeConvAIAgent:
     def audio_chunks(self) -> int:
         return self._audio_chunks
 
+    @property
+    def fault(self) -> BaseException | None:  # None while the fake has not failed.
+        return self._fault
+
     async def __aenter__(self) -> Self:
         server = await self._stack.enter_async_context(
             serve(self._handle, "127.0.0.1", 0)
@@ -116,25 +126,34 @@ class FakeConvAIAgent:
         tb: TracebackType | None,  # Context-manager protocol shape.
     ) -> None:
         await self._stack.aclose()
+        if self._fault is not None:
+            raise self._fault
 
     async def _handle(self, socket: ServerConnection) -> None:
-        reader = asyncio.create_task(self._read(socket))
+        tasks = {
+            asyncio.create_task(self._read(socket)),
+            asyncio.create_task(self._play(socket)),
+        }
         try:
-            # The client hanging up is the normal end of a script, not a fault.
-            with suppress(ConnectionClosed):
-                await self._play(socket)
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            faults = [exc for task in done if (exc := task.exception()) is not None]
+            if faults:
+                await self._fail(socket, faults[0])
         finally:
-            await self._stop_reading(reader)
+            for task in tasks:
+                await self._stop(task)
 
     async def _play(self, socket: ServerConnection) -> None:
-        await self._wait_until(lambda: bool(self._initiation) or self._closed)
-        if self._closed:
-            return
-        await socket.send(json.dumps(self._metadata()))
-        for step in self._steps:
-            if await self._run(step, socket):
+        # The client hanging up is the normal end of a script, not a fault.
+        with suppress(ConnectionClosed):
+            await self._wait_until(lambda: bool(self._initiation) or self._closed)
+            if self._closed:
                 return
-        await socket.wait_closed()
+            await socket.send(json.dumps(self._metadata()))
+            for step in self._steps:
+                if await self._run(step, socket):
+                    return
+            await socket.wait_closed()
 
     async def _run(self, step: Step, socket: ServerConnection) -> bool:
         """Play one step; return True when the step ended the conversation."""
@@ -193,6 +212,12 @@ class FakeConvAIAgent:
         finally:
             await self._mark_closed()
 
+    async def _fail(self, socket: ServerConnection, exc: BaseException) -> None:
+        """Keep the first error and close the socket so the client sees it now."""
+        if self._fault is None:
+            self._fault = exc
+        await socket.close(code=1011, reason=f"fake agent fault: {exc}"[:123])
+
     async def _record(self, socket: ServerConnection, message: Message) -> None:
         if not self._initiation:
             self._initiation = message
@@ -219,10 +244,10 @@ class FakeConvAIAgent:
             await self._changed.wait_for(predicate)
 
     @staticmethod
-    async def _stop_reading(reader: asyncio.Task[None]) -> None:
-        reader.cancel()
-        with suppress(asyncio.CancelledError):
-            await reader
+    async def _stop(task: asyncio.Task[None]) -> None:
+        """End a task without re-raising what it already failed with."""
+        task.cancel()
+        await asyncio.wait({task})
 
     @staticmethod
     def _metadata() -> Message:
