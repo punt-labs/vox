@@ -16,7 +16,7 @@ _SYMBOL_NAME_RE = re.compile(
     r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
-_NUMBER = r"[-\u2212]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
+_NUMBER = r"[-\u2212]?(?:\d(?:[\d.,]*\d)?|\.\d+)"
 _NUMERIC_PERCENT_RE = re.compile(rf"{_NUMBER}(?:%?[-\u2013]{_NUMBER})?%(?:[^\w%]|_)*")
 
 

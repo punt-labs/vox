@@ -69,6 +69,8 @@ def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
         ("1,000%", "1,000 percent", ""),
         ("\u22122%", "\u22122 percent", ""),
         (".5%", ".5 percent", ""),
+        ("1.234,5%", "1.234,5 percent", ""),
+        ("1.234.567%", "1.234.567 percent", ""),
         ("-.5%", "-.5 percent", ""),
         ("85%\u201390%,", "85 percent\u201390 percent", ","),
     ],
