@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
 
+- `vox enable` adds `.punt-labs/vox/vox.local.md` to the repo's `.gitignore`
+  (once, after any existing rules), so machine-local session state is never
+  committed. A symlinked `.gitignore`, which git does not read, stops enable
+  with an error instead of being written through. (PL-818)
+
 - `vox voice <name> --provider <provider>` rejects an inactive provider
   without changing the active provider or saved voice. (PL-1487)
 
