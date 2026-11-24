@@ -19,7 +19,12 @@ class ProseCurrency:
     """Prepare prose-only amount forms for the shared money renderer."""
 
     @classmethod
-    def canonicalize(cls, prose: str, *, tag: re.Pattern[str] | None) -> str:
+    def canonicalize(
+        cls,
+        prose: str,
+        *,
+        tag: re.Pattern[str] | None,  # Plain prose has no expressive tag boundaries.
+    ) -> str:
         """Join written scales to prefix amounts and move trailing currency signs."""
         if not _CURRENCY_SYMBOL.search(prose):
             return prose
