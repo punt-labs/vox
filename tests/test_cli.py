@@ -865,6 +865,31 @@ class TestApiKeyInputPaths:
         assert spec.api_key == "sk_stdin_test"
         assert "warning: --api-key on the command line" not in result.stderr
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_stdin_leaves_remaining_text_for_speech(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        result = CliRunner(charset="UTF-8").invoke(
+            app,
+            ["say", "--api-key-stdin", "-"],
+            input="sk_stdin_test\nhello world\nsecond line\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        text, spec = synthesize.call_args.args
+        assert text == "hello world\nsecond line"
+        assert spec.api_key == "sk_stdin_test"
+
     def test_api_key_stdin_rejects_tty(
         self,
         monkeypatch: pytest.MonkeyPatch,

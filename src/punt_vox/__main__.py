@@ -233,13 +233,9 @@ def say(  # pyright: ignore[reportUnusedFunction]
     file), or from stdin when TEXT is ``-`` or the input is piped.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    # Resolve the per-call API key from exactly one of the four
-    # supported sources (file, stdin, env var, argv) and fire a
-    # stderr warning when the argv path was used. See
-    # ``ApiKeyResolver`` for the full rationale.
-    resolved_api_key = ApiKeyResolver(
+    key_resolver = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
-    ).resolve()
+    )
 
     segments, spec = _synthesis.prepare(
         text,
@@ -253,7 +249,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        api_key=resolved_api_key,
+        api_key=_synthesis.resolve_api_key(key_resolver, text, from_file),
     )
 
     _speak_segments(segments, spec, once or None)

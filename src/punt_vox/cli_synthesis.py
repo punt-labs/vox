@@ -18,6 +18,7 @@ from punt_vox.types_synthesis_errors import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.api_key_resolver import ApiKeyResolver
     from punt_vox.output_formatter import OutputFormatter
     from punt_vox.types_cli_synthesis import SynthesisOptions
 
@@ -58,6 +59,15 @@ class CliSynthesis:
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         return segments, self._fill_from_state(spec)
+
+    def resolve_api_key(
+        self, resolver: ApiKeyResolver, text: str | None, from_file: Path | None
+    ) -> str | None:
+        """Resolve the key before speech, setting up stdin if they share it."""
+        self._text_input.prepare_shared_stdin(
+            text, from_file, api_key_stdin=resolver.uses_stdin
+        )
+        return resolver.resolve()
 
     def _fill_from_state(self, spec: SynthesisSpec) -> SynthesisSpec:
         """Resolve defaults and report provider or model errors in CLI format."""
