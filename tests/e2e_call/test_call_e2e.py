@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import signal
 import socket
 import subprocess
@@ -138,10 +137,15 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class Daemon:
-    """A running voxd under test: the port it serves and its process id."""
+    """A running voxd under test: the port it serves and its process."""
 
     port: int
-    pid: int
+    process: subprocess.Popen[bytes]
+
+    def kill(self, timeout: float = 5.0) -> int:
+        """SIGKILL the daemon and return its exit status once it has gone."""
+        self.process.kill()
+        return self.process.wait(timeout=timeout)
 
 
 @contextmanager
@@ -165,14 +169,16 @@ def _daemon(env: dict[str, str]) -> Generator[Daemon]:
             stderr=stderr,
         )
     try:
+        # A startup failure already carries the daemon detail in its own
+        # error, so only an exit after startup is added as a note.
         run_dir = home / ".punt-labs" / "vox" / "run"
-        yield Daemon(
-            _wait_for_port_file(run_dir, process, home, stderr_path), process.pid
-        )
-    except BaseException as exc:
-        if (exited := process.poll()) is not None:
-            exc.add_note(_exit_detail(exited, home, stderr_path))
-        raise
+        port = _wait_for_port_file(run_dir, process, home, stderr_path)
+        try:
+            yield Daemon(port, process)
+        except BaseException as exc:
+            if (exited := process.poll()) is not None:
+                exc.add_note(_exit_detail(exited, home, stderr_path))
+            raise
     finally:
         exited = process.poll()
         process.terminate()
@@ -318,8 +324,7 @@ def test_a_daemon_killed_mid_call_puts_its_detail_on_the_propagating_error(
 ) -> None:
     """The block's own error, not the fixture's assert, carries the daemon detail."""
     with pytest.raises(subprocess.TimeoutExpired) as failure, _daemon(voxd_env) as voxd:
-        os.kill(voxd.pid, signal.SIGKILL)
-        time.sleep(0.5)
+        assert voxd.kill() == -signal.SIGKILL
         raise subprocess.TimeoutExpired(["vox", "call"], _CALL_TIMEOUT_S)
     (note,) = failure.value.__notes__
     assert note.startswith(f"voxd exited with {-signal.SIGKILL} during the test\n")
