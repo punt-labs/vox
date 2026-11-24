@@ -54,10 +54,10 @@
   "src/punt_vox/_currency_grammar.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.33,
+    "avg_params": 1.25,
     "max_complexity": 5.0,
-    "avg_complexity": 2.67,
-    "module_size": 68.0,
+    "avg_complexity": 2.5,
+    "module_size": 76.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

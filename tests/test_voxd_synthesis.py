@@ -1381,6 +1381,20 @@ class TestApplyVibeForSynthesis:
     ) -> None:
         assert self._apply("5€[laugh]", None, "elevenlabs", model) == expected
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("eleven_v3", "5 euros [pause] 10 years ago"),
+            ("eleven_multilingual_v2", "5 euros 10 years ago"),
+        ],
+    )
+    def test_keeps_tag_boundary_between_suffix_amount_and_number(
+        self, model: str, expected: str
+    ) -> None:
+        assert (
+            self._apply("5€[pause]10 years ago", None, "elevenlabs", model) == expected
+        )
+
     def test_inline_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [serious] world", None, "polly", None)
         assert result == "hello world"

@@ -59,17 +59,26 @@ class CurrencyGrammar:
             rf"(?P<rates>(?:/{word})*)"
         )
 
-    @staticmethod
-    def prefix_suffix_amounts(prose: str, *, tag: re.Pattern[str] | None = None) -> str:
+    @classmethod
+    def prefix_suffix_amounts(
+        cls, prose: str, *, tag: re.Pattern[str] | None = None
+    ) -> str:
         """Put prose amounts in prefix order for the shared money renderer."""
-        start, end = r"(?<!\S)", r"(?!\S)"
-        if tag is not None:
-            start, end = rf"{start}|{tag.pattern}", rf"{end}|{tag.pattern}"
+        tag_pattern = tag.pattern if tag is not None else r"(?!)"
         return re.sub(
-            rf"(?P<boundary>{start}){_SUFFIX_AMOUNT}(?={_TRAILING_PUNCTUATION}(?:{end}))",
-            r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>",
+            rf"(?P<boundary>(?<!\S)|{tag_pattern}){_SUFFIX_AMOUNT}"
+            rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
+            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d))"
+            rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))",
+            cls._prefix_amount,
             prose,
         )
+
+    @staticmethod
+    def _prefix_amount(match: re.Match[str]) -> str:
+        amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
+        before_tag = match["before_tag"]
+        return amount if before_tag is None else f"{amount}{before_tag} "
 
     @staticmethod
     def _word_pattern(text: str) -> str:
