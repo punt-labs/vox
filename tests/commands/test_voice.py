@@ -189,7 +189,10 @@ class TestSet:
         assert result.exit_code == 1
         assert "empty" in result.text
 
-    async def test_unconfigured_provider_refuses_set(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("has_config", [True, False])
+    async def test_unconfigured_provider_refuses_set(
+        self, tmp_path: Path, has_config: bool
+    ) -> None:
         """Setting a voice with no provider configured refuses, never writes.
 
         A voice name is provider-scoped, so writing ``matilda`` into
@@ -198,14 +201,19 @@ class TestSet:
         with ``vox model``'s set-refusal; unlike the list branch, setting
         needs an authoritative provider.
         """
-        # Overwrite the seeded vox.md to remove the provider entry.
-        (tmp_path / "vox.md").write_text("---\n---\n")
+        config_path = tmp_path / "vox.md"
+        original = b"---\n---\n"
+        if has_config:
+            config_path.write_bytes(original)
         client = MagicMock()
         result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), "matilda")
         assert result.error is True
         assert result.exit_code == 1
         assert "no TTS provider" in result.text
-        assert ConfigStore(tmp_path).read_field("voice") is None
+        if has_config:
+            assert config_path.read_bytes() == original
+        else:
+            assert not config_path.exists()
         client.voices.assert_not_called()
 
     async def test_config_write_error_returns_envelope(self, tmp_path: Path) -> None:
