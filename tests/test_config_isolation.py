@@ -32,8 +32,8 @@ class TestSuiteDoesNotTouchRealConfig:
     def test_redirect_is_active(self, hermetic_config: Path) -> None:
         """Default resolution points at the tmp dir, not the relative default."""
         assert hermetic_config == config_mod.DEFAULT_CONFIG_DIR
-        assert hermetic_config == dirs_mod.DEFAULT_CONFIG_DIR
         assert hermetic_config == dirs_mod.find_config_dir()
+        assert hermetic_config == dirs_mod.writable_config_dir()
         assert hermetic_config != Path(".punt-labs") / "vox"
 
     def test_default_write_lands_in_tmp(self, hermetic_config: Path) -> None:
