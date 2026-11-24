@@ -107,12 +107,16 @@ class TestSayCommand:
         command: list[str],
         rate: str,
     ) -> None:
-        say_client.return_value.synthesize.side_effect = lambda *_args, **_kwargs: (
-            SynthesizeResult(request_id="abc123")
-        )
-        rec_client.return_value.record.side_effect = lambda *_args, **_kwargs: (
-            RecordResult("abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100)
-        )
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc123")
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult(
+                "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+            )
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
         result = CliRunner().invoke(
             app,
             [*command, "hello", "--provider", "elevenlabs", "--rate", rate, "--json"],
