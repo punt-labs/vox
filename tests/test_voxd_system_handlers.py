@@ -17,6 +17,7 @@ from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.output_health import OutputHealth
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.system_handlers import (
     ChimeHandler,
@@ -205,6 +206,22 @@ class TestHealthReply:
 
         assert ws.sent[-1]["type"] == "health"
         assert ws.sent[-1]["id"] == "h1"
+
+    @pytest.mark.asyncio
+    async def test_unavailable_output_diagnostics_preserve_base_health(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def unavailable(_probe: OutputHealth) -> None:
+            return None
+
+        monkeypatch.setattr(OutputHealth, "probe_within_budget", unavailable)
+        health = DaemonHealth(PlaybackQueue(), lambda: 0, 0)
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
 
     @pytest.mark.asyncio
     async def test_gone_peer_during_health_send_does_not_raise(self) -> None:

@@ -158,6 +158,6 @@ class HealthHandler(MessageHandler):
         reply = WireReply(websocket, str(msg.get("id", "")))
         payload = self._health.full_payload()
         if msg.get("output_dirs") is True and self._output_health is not None:
-            payload.update(await self._output_health.probe_within_budget())
+            payload.update(await self._output_health.probe_within_budget() or {})
         payload["type"] = "health"
         await reply.send(payload)

@@ -6,12 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 from threading import Event
+from typing import assert_type
 from unittest.mock import patch
 
 import pytest
 
 from punt_vox.voxd import output_health
-from punt_vox.voxd.output_health import OutputHealth
+from punt_vox.voxd.output_health import OutputDiagnostics, OutputHealth
 
 
 def test_stalled_probe_does_not_hold_process_open() -> None:
@@ -30,7 +31,7 @@ def stalled_probe(self):
     Event().wait()
 
 async def run():
-    await OutputHealth(Path(".")).probe_within_budget()
+    assert await OutputHealth(Path(".")).probe_within_budget() is None
     assert entered.is_set()
 
 output_health._PROBE_TIMEOUT_S = 0.1
@@ -48,30 +49,32 @@ async def test_timed_out_requests_share_the_in_flight_probe(
     release = Event()
     finished = Event()
 
-    def blocked_probe(_probe: OutputHealth) -> dict[str, object]:
+    verdict: OutputDiagnostics = {"output_dir": "writable", "music_dir_missing": False}
+
+    def blocked_probe(_probe: OutputHealth) -> OutputDiagnostics:
         nonlocal calls
         calls += 1
         assert release.wait(timeout=5.0)
         finished.set()
-        return {"output_dir": "writable"}
+        return verdict
 
     monkeypatch.setattr(OutputHealth, "probe", blocked_probe)
     monkeypatch.setattr(output_health, "_PROBE_TIMEOUT_S", 0.01)
     probe = OutputHealth(tmp_path)
 
     try:
-        assert await probe.probe_within_budget() == {}
-        assert await probe.probe_within_budget() == {}
+        assert await probe.probe_within_budget() is None
+        assert await probe.probe_within_budget() is None
         monkeypatch.setattr(output_health, "_PROBE_TIMEOUT_S", 1.0)
         release.set()
-        assert await probe.probe_within_budget() == {"output_dir": "writable"}
+        assert await probe.probe_within_budget() == verdict
     finally:
         release.set()
         assert finished.wait(timeout=1.0)
 
     assert calls == 1
     assert "Timed out checking the album output directories" in caplog.text
-    assert await probe.probe_within_budget() == {"output_dir": "writable"}
+    assert await probe.probe_within_budget() == verdict
     assert calls == 2
 
 
@@ -130,7 +133,7 @@ def test_probe_reports_only_verdicts_for_the_configured_root(
     music = tmp_path / "Music"
     monkeypatch.setattr(output_health, "_resolve_music_dir", lambda: music)
 
-    assert OutputHealth(music / "vox").probe() == {
+    assert assert_type(OutputHealth(music / "vox").probe(), OutputDiagnostics) == {
         "output_dir": "absent",
         "music_dir_missing": True,
     }

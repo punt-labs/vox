@@ -7,7 +7,7 @@ import logging
 import tempfile
 from concurrent.futures import Future
 from threading import Thread
-from typing import TYPE_CHECKING, Literal, Self, final
+from typing import TYPE_CHECKING, Literal, Self, TypedDict, final
 
 from punt_vox.dirs import _resolve_music_dir  # pyright: ignore[reportPrivateUsage]
 
@@ -18,13 +18,22 @@ logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT_S = 1.0
 
+type OutputVerdict = Literal["absent", "not_writable", "writable"]
+
+
+class OutputDiagnostics(TypedDict):
+    """Path-free diagnostics returned when an output probe succeeds."""
+
+    output_dir: OutputVerdict
+    music_dir_missing: bool
+
 
 @final
 class OutputHealth:
     """Probe the actual root wired into the daemon's album store."""
 
     __slots__ = ("_pending", "_root")
-    _pending: asyncio.Future[dict[str, object]] | None
+    _pending: asyncio.Future[OutputDiagnostics | None] | None
     _root: Path
 
     def __new__(cls, root: Path) -> Self:
@@ -34,17 +43,17 @@ class OutputHealth:
         self._root = root
         return self
 
-    def probe(self) -> dict[str, object]:
+    def probe(self) -> OutputDiagnostics:
         """Return output-directory verdicts without sending paths to clients."""
         return {
             "output_dir": self._output_status(),
             "music_dir_missing": self._music_dir_missing(),
         }
 
-    async def probe_within_budget(self) -> dict[str, object]:
+    async def probe_within_budget(self) -> OutputDiagnostics | None:
         """Bound the wait and reuse the pending probe if storage is still busy."""
         if self._pending is None or self._pending.done():
-            result: Future[dict[str, object]] = Future()
+            result: Future[OutputDiagnostics | None] = Future()
             Thread(
                 target=self._complete_probe,
                 args=(result,),
@@ -58,14 +67,15 @@ class OutputHealth:
             )
         except TimeoutError:
             logger.warning("Timed out checking the album output directories")
-            return {}
+            return None
 
-    def _complete_probe(self, result: Future[dict[str, object]]) -> None:
+    def _complete_probe(self, result: Future[OutputDiagnostics | None]) -> None:
+        verdict: OutputDiagnostics | None
         try:
             verdict = self.probe()
         except Exception:
             logger.exception("Could not check the album output directories")
-            verdict = {}
+            verdict = None
         result.set_result(verdict)
 
     def _music_dir_missing(self) -> bool:
@@ -79,7 +89,7 @@ class OutputHealth:
             logger.warning("Could not check the music directory", exc_info=True)
             return False
 
-    def _output_status(self) -> Literal["absent", "not_writable", "writable"]:
+    def _output_status(self) -> OutputVerdict:
         try:
             directory = self._existing_ancestor(self._root)
             with tempfile.TemporaryFile(buffering=0, dir=directory) as probe:
