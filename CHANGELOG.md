@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox --json rec` reports operational errors, including an unavailable daemon,
   as JSON on stdout, matching `vox --json music`. (PL-1538)
 
+- Partial album export confirmations in Claude Code show the number of skipped
+  tracks instead of listing every filename. Export details still include the
+  filenames. (PL-1540)
+
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
 
