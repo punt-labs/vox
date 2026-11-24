@@ -635,23 +635,43 @@ def test_read_port_file_missing_is_none(
     assert ProcessManager().read_port_file() is None
 
 
-@pytest.mark.parametrize("content", ["", "84", "not-a-port"])
+def test_read_port_file_accepts_a_valid_off_port_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
+    (tmp_path / "serve.port").write_text(" 9000\n")
+    assert ProcessManager().read_port_file() == 9000
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "not-a-port",
+        "0",
+        "65536",
+        "+8422",
+        "8_422",
+        pytest.param("9" * 4301, id="oversized-decimal"),
+    ],
+)
 def test_read_port_file_unparseable_is_a_stale_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     content: str,
 ) -> None:
-    """A partial serve.port (a crash leftover) warns and reads as absent."""
+    """An invalid serve.port warns and reads as absent."""
     monkeypatch.setattr(ProcessManager, "_run_dir", staticmethod(lambda: tmp_path))
-    (tmp_path / "serve.port").write_text(content)
-    with caplog.at_level("WARNING", logger="punt_vox.service.process"):
+    port_file = tmp_path / "serve.port"
+    port_file.write_text(content)
+    with caplog.at_level("WARNING", logger="punt_vox.service.stale_port_file"):
         port = ProcessManager().read_port_file()
-    if content == "84":
-        assert port == 84
-        return
     assert port is None
-    assert any("serve.port" in r.getMessage() for r in caplog.records)
+    preview = repr(content[:32]) + ("..." if len(content) > 32 else "")
+    assert caplog.messages == [
+        f"Ignoring stale {port_file}: {preview} is not a port (1-65535)"
+    ]
 
 
 def test_read_port_file_read_error_is_surfaced(
