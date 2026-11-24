@@ -27,6 +27,12 @@ _ID: Final = {
 }
 
 
+_NO_REPOS: Final = (
+    "no repository is allowlisted for workers; "
+    "run `vox worker allow <path>` on the daemon host"
+)
+
+
 def _schema(properties: dict[str, object], *required: str) -> dict[str, object]:
     return {"type": "object", "properties": properties, "required": list(required)}
 
@@ -186,8 +192,10 @@ class BossTools:
     async def _start(self, arguments: dict[str, object]) -> object:
         task = self._text(arguments, "task")
         project = arguments.get("project")
-        if project is None:  # More than one repo, so no default was filled in.
+        if project is None:  # No default was filled in: zero repos, or several.
             allowlisted = list(self._projects.repos())
+            if not allowlisted:
+                raise ValueError(_NO_REPOS)
             raise ValueError(f"name a project; allowlisted: {allowlisted}")
         if not isinstance(project, str):
             raise ValueError("project must be a string")

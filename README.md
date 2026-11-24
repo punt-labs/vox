@@ -633,15 +633,18 @@ pip install "punt-vox[call]"
 `sounddevice` uses PortAudio. On macOS, run `brew install portaudio`; on
 most Linux distributions, install `libportaudio2`.
 
-To let Vox start workers, add the Git repository's absolute path to the
-durable global config (`~/.punt-labs/vox/vox.md` for a user-run daemon).
-Use the daemon's config path if you run it as a system service:
+To let Vox start workers, allowlist the Git repository on the machine that
+runs the daemon:
 
-```yaml
----
-worker_repos: "['/absolute/path/to/vox-demo']"
----
+```bash
+vox worker allow /absolute/path/to/vox-demo
 ```
+
+The path must be a repository top level; `vox worker repos` lists the
+allowlist, `vox worker disallow <path>` removes one, and `vox status` shows
+the allowlisted repositories on its `Workers:` line. The daemon writes the
+list to its own durable config, so the command works the same for a user-run
+daemon and a system service.
 
 This list controls which repositories workers can start in, not which
 commands they can run. Workers inherit the harness's permissions. Vox

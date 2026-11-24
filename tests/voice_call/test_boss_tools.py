@@ -223,6 +223,19 @@ async def test_start_without_project_needs_one_repo() -> None:
     assert "/a" in json.loads(result)["error"]
 
 
+async def test_start_with_an_empty_allowlist_names_the_fix() -> None:
+    """The dead end on 2026-11-23: four tries, 'allowlisted: []', no way out."""
+    workers = FakeWorkers(())
+    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
+    assert error
+    message = json.loads(result)["error"]
+    assert message == (
+        "no repository is allowlisted for workers; "
+        "run `vox worker allow <path>` on the daemon host"
+    )
+    assert workers.started == []
+
+
 async def test_reask_during_a_slow_start_starts_one_worker() -> None:
     workers = FakeWorkers()
     workers.gate.clear()

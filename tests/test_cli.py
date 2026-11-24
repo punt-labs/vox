@@ -28,6 +28,7 @@ from punt_vox.client_errors import (
     VoxdRejectionError,
 )
 from punt_vox.client_results import RecordResult, SynthesizeResult
+from punt_vox.config import ConfigStore
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -1698,6 +1699,53 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Daemon:    unknown\n" in result.output
         assert "Log level: unknown (daemon health unavailable)\n" in result.output
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_names_the_allowlisted_worker_repos(
+        self, mock_client_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        """Workers: lists each allowlisted repository by its last path segment."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        demo, lux = tmp_path.resolve() / "srv" / "vox-demo", tmp_path.resolve() / "lux"
+        ConfigStore(ConfigStore.global_dir()).write_field(
+            "worker_repos", repr([str(demo), str(lux)])
+        )
+
+        result = CliRunner().invoke(app, ["status"])
+        as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   lux, vox-demo\n" in result.output
+        assert json.loads(as_json.output)["worker_repos"] == [str(lux), str(demo)]
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_says_how_to_allowlist_when_none_is(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+
+        result = CliRunner().invoke(app, ["status"])
+        as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (none allowlisted; run vox worker allow <path>)\n" in (
+            result.output
+        )
+        assert json.loads(as_json.output)["worker_repos"] == []
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_reports_a_malformed_worker_allowlist(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        ConfigStore(ConfigStore.global_dir()).write_field("worker_repos", "nope")
+
+        result = CliRunner().invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (worker_repos must be a list of repository paths)\n" in (
+            result.output
+        )
 
 
 # ---------------------------------------------------------------------------
