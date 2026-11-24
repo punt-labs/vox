@@ -1239,7 +1239,7 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited it
 
 1. **Embed API keys in the launchd plist / systemd unit** — Keys would be visible in the service config file. More importantly, the plist is written at install time from whatever shell runs `vox daemon install`. If that shell doesn't have direnv loaded (e.g., running from a directory without `.envrc`), no keys get embedded. Fragile and non-obvious.
 
-2. **Use per-request keys instead of daemon credentials** — Without a daemon credential store, callers would have to manage the required keys themselves and repeatedly send them over the wire. Synthesis requests can now carry an optional `api_key`, but that supplements rather than replaces `keys.env`.
+2. **Require callers to supply keys on every request** — Without a daemon credential store, callers would have to manage the required keys themselves and repeatedly send them over the wire. For providers that accept it, an optional per-request `api_key` takes precedence for that synthesis call without changing what `keys.env` stores.
 
 3. **Read keys from macOS Keychain / Linux secret-service** — Not portable. Keychain is user-specific setup, not something every vox user would have. Not a general solution.
 
