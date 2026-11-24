@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Separate panel provider/model roster fetches and atomic commits from scene
+  orchestration without changing selector behavior. (PL-837)
+
 - Resolve non-repo config locks and SessionStart panel logs through the shared
   per-user paths without moving them. (PL-1444)
 

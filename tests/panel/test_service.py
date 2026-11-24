@@ -646,8 +646,8 @@ class TestApplyEvent:
                 # Subsequent calls: mid-flight, another thread wins with
                 # openai. We simulate by mutating the service's state
                 # directly (as if another thread had held the lock).
-                svc = self._service_ref[0]
-                svc._state = svc._state.with_provider(
+                settings = self._service_ref[0]._settings
+                settings._state = settings.snapshot().with_provider(
                     "openai", roster=("alloy",), model="tts-1", voice="alloy"
                 )
                 return ["en", "en-us"]  # espeak roster (what our caller asked for)
@@ -706,11 +706,10 @@ class TestApplyEvent:
     def test_model_click_with_no_provider_selected_corrects(self) -> None:
         """A model commit dispatched before any provider is chosen is abandoned.
 
-        ``apply_event``'s own ``_model_for`` guard already refuses a MODEL
+        ``apply_event``'s click target already refuses a MODEL
         click with no provider selected (an empty model list makes
-        ``ModelControl`` raise before ``_commit_model`` runs), so this drives
-        ``_commit_model`` directly -- the same private entry point the
-        mid-fetch race tests below reach into -- to prove its own no-provider
+        ``ModelControl`` raise before ``commit_model`` runs), so this drives
+        ``PanelSettings.commit_model`` directly to prove its own no-provider
         guard also answers :attr:`~ControlPush.CORRECT`: the widget already
         applied the pick optimistically and ``_state`` never moves, so only a
         full reinstall snaps it back.
@@ -719,7 +718,7 @@ class TestApplyEvent:
             _FakeDaemonClient(), (store := _FakeStore(_config(provider=None)))
         )
         service.prefetch()
-        changed = service._commit_model("tts-1")
+        changed = service._settings.commit_model("tts-1")
         assert changed is ControlPush.CORRECT
         assert "model" not in store.written
         assert "voice" not in store.written
@@ -761,7 +760,7 @@ class TestApplyEvent:
     def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
         """A mid-flight competing provider commit wins; this model commit gives up.
 
-        Same race as ``_commit_provider``: if the roster RPC lands second,
+        Same race as a provider commit: if the roster RPC lands second,
         the model commit must not clobber the new provider's state with a
         voice default computed for the OLD provider.
         """
@@ -778,8 +777,8 @@ class TestApplyEvent:
                     return ["matilda", "aria"]
                 # Mid-flight: another thread wins with espeak. Simulate by
                 # mutating the service's state directly.
-                svc = self._service_ref[0]
-                svc._state = svc._state.with_provider(
+                settings = self._service_ref[0]._settings
+                settings._state = settings.snapshot().with_provider(
                     "espeak", roster=("en",), model=None, voice="en"
                 )
                 return ["matilda", "aria"]  # old-provider roster
