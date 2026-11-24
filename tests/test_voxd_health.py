@@ -166,6 +166,7 @@ class TestHealthPayloadMinimal:
 
         assert "daemon_version" not in payload
         assert "pid" not in payload
+        assert "log_level" not in payload
 
     def test_active_sessions_reads_callable(self) -> None:
         """Minimal payload reads client_count via the callable."""

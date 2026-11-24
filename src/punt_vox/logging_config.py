@@ -64,6 +64,12 @@ def apply_log_level(numeric: int) -> None:
     _file_handler().setLevel(numeric)
 
 
+def daemon_log_level() -> str | None:
+    """Return the live file logging threshold, or None without a file handler."""
+    handler = logging.getHandlerByName("file")
+    return logging.getLevelName(handler.level).lower() if handler else None
+
+
 def _file_handler() -> logging.Handler:
     """Return the named durable handler installed by shared configuration."""
     return logging.getHandlerByName("file") or logging.NullHandler()

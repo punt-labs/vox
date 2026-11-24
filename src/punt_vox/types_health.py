@@ -37,6 +37,7 @@ class HealthStatus:
     # nothing has played -- a diagnostic sub-record kept as a typed mapping
     # because a caller only ever forwards it to a log, never branches on it.
     last_playback: Mapping[str, object] | None = None
+    log_level: str = "unknown"
 
     @classmethod
     def from_wire(cls, raw: Mapping[str, object]) -> Self:
@@ -50,6 +51,7 @@ class HealthStatus:
             queued=cls._as_int(raw.get("queued")),
             active_sessions=cls._as_int(raw.get("active_sessions")),
             last_playback=cls._as_map(raw.get("last_playback")),
+            log_level=cls._as_str(raw.get("log_level"), "unknown"),
         )
 
     @staticmethod
