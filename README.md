@@ -256,8 +256,8 @@ JSON array of strings or objects with a string `text` field. Blank segments
 are skipped. With `--json`, stdout is JSON Lines, not a JSON array: each
 successful segment produces one JSON object per line, in input order.
 
-On the first daemon or connection error while processing a segment, the
-command writes a final `{"error": "..."}` object to stdout, skips the
+If the daemon rejects a segment or the connection fails during processing,
+the command writes a final `{"error": "..."}` object to stdout, skips the
 remaining segments, and exits nonzero. Earlier results stay in the output.
 An invalid segments file instead produces a single `{"error": "..."}`
 object and exits with status 2 before processing any segments. Successful

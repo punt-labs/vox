@@ -226,9 +226,10 @@ def say(  # pyright: ignore[reportUnusedFunction]
     file), or from stdin when TEXT is ``-`` or the input is piped.
 
     With --from and --json, stdout is JSON Lines: one JSON object per
-    successful segment, in input order. On the first daemon or connection
-    error during a segment, Vox writes a final {"error": "..."} line and
-    exits nonzero. Earlier lines remain; later segments are skipped.
+    successful segment, in input order. If the daemon rejects a segment or
+    the connection fails during processing, Vox writes a final
+    {"error": "..."} line and exits nonzero. Earlier lines remain; later
+    segments are skipped.
 
     Save stdout and check Vox's exit status separately from jq:
 
