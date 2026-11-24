@@ -17,6 +17,7 @@ from punt_vox import __version__, commands as cmds
 from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_daemon import DaemonCli
 from punt_vox.cli_desktop import build_desktop_app
+from punt_vox.cli_doctor import DoctorCli
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_group import VoxGroup
 from punt_vox.cli_io import OutputFlags
@@ -605,8 +606,6 @@ def doctor(  # pyright: ignore[reportUnusedFunction]
     Raises:
         typer.Exit: If any diagnostic check fails.
     """
-    from punt_vox.cli_doctor import DoctorCli
-
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     DoctorCli.emit(_formatter, VoxClientSync())
 
