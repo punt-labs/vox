@@ -33,6 +33,8 @@ class SettingsRefresh:
     """Read a snapshot and install it only while its predecessor is current."""
 
     __slots__ = ("_client", "_store")
+    _client: PanelDaemonClient
+    _store: SettingsStore
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         """Bind the disk and roster sources used for each refresh."""
