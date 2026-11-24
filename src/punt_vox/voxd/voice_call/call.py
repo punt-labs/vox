@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Self, final
 
 from punt_vox.voxd.voice_agent.events import (
@@ -35,11 +36,21 @@ if TYPE_CHECKING:
     # Provision the agent and return its signed URL and the session options.
     type Dial = Callable[[], Awaitable[tuple[str, SessionOptions]]]
 
-__all__ = ["CallState", "VoiceAgentCall"]
+__all__ = ["CallOutcome", "CallState", "VoiceAgentCall"]
 
 logger = logging.getLogger(__name__)
 
 type CallState = Literal["connecting", "live", "ended", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class CallOutcome:
+    """How a call ended, for the daemon log."""
+
+    state: CallState
+    error: str | None  # None unless the call failed.
+    tool_calls: int
+
 
 _HISTORY: Final = 20
 # Failures a call can meet in normal operation; anything else is logged as a bug.
@@ -146,6 +157,7 @@ class VoiceAgentCall:
         signed_url, options = await dial()
         async with self._opener(signed_url, options, trace=self._trace) as conv:
             self._conversation_id = conv.metadata.conversation_id
+            logger.info("Call live: conversation %s", self._conversation_id)
             self._state = "live"
             self._connected.set()
             async with asyncio.TaskGroup() as group:
@@ -160,6 +172,10 @@ class VoiceAgentCall:
     def mark_failed(self, error: str) -> None:
         """Keep the terminal failure reason in subsequent call status replies."""
         self._state, self._error = "failed", error
+
+    def outcome(self) -> CallOutcome:
+        """Return the call's state, failure reason and tool call count."""
+        return CallOutcome(self._state, self._error, len(self._tool_calls))
 
     def status(self) -> dict[str, object]:
         """Return the call's state and its recent exchange."""
@@ -207,6 +223,11 @@ class VoiceAgentCall:
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
+        if is_error:
+            error: str = json.loads(result)["error"]
+            logger.info("Call tool %s: error %s", call.tool_name, error)
+        else:
+            logger.info("Call tool %s: ok", call.tool_name)
         if call.tool_name == "steer_worker" and not is_error:
             receipt: dict[str, object] = json.loads(result)
             self._trace.record(

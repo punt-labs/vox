@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from contextlib import nullcontext
 from pathlib import Path
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.types import MessageHandler
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
-    from punt_vox.voxd.voice_call.call import Opener
+    from punt_vox.voxd.voice_call.call import CallOutcome, Opener
     from punt_vox.voxd.voice_call.connector import AgentConnector
     from punt_vox.voxd.voice_call.contracts import (
         CallInput,
@@ -156,6 +157,11 @@ class CallHandlers:
             if "script" in msg
             else MicInput.with_echo_control(msg.get("echo_control"))
         )
+        logger.info(
+            "Call starting: input %s, echo control %s",
+            "script" if "script" in msg else "mic",
+            msg.get("echo_control", "none"),
+        )
         await self._connector.prepare()
         await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
         trace = CallTrace.reserve(self._trace_dir, call_id)
@@ -187,13 +193,29 @@ class CallHandlers:
                 logger.warning("Call departure not saved (%s)", type(exc).__name__)
 
         async def run() -> None:
-            with self._hold_music():
-                await call.run(dial, returning.covered, depart=depart)
+            started = time.monotonic()
+            try:
+                with self._hold_music():
+                    await call.run(dial, returning.covered, depart=depart)
+            finally:
+                self._log_end(call.outcome(), time.monotonic() - started, trace.path)
 
         task = asyncio.create_task(run())
         task.add_done_callback(lambda _: trace.stream.close())
         self._active = ActiveCall(call_id, call, task, trace.path)
         return self._active
+
+    @staticmethod
+    def _log_end(outcome: CallOutcome, duration_s: float, trace: Path) -> None:
+        logger.info(
+            "Call ended: %s, %d tool call%s, duration %.1f s%s, trace %s",
+            outcome.state,
+            outcome.tool_calls,
+            "" if outcome.tool_calls == 1 else "s",
+            duration_s,
+            f", error {outcome.error}" if outcome.error is not None else "",
+            trace,
+        )
 
     async def _stop(self, call_id: UUID | None) -> dict[str, object]:
         active = self._active

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -230,3 +231,34 @@ async def test_an_unexpected_failure_is_logged_and_reported(
     assert call.status()["state"] == "failed"
     assert "agent_id" in str(call.status()["error"])
     assert "Voice call failed" in caplog.text
+
+
+async def test_a_live_call_logs_its_conversation_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call = _call(_Peer([]))
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call"):
+        await call.run(_dial)
+    assert "Call live: conversation conv_1" in [r.message for r in caplog.records]
+
+
+async def test_each_tool_call_is_logged_with_its_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    peer = _Peer(
+        [
+            ClientToolCall("t1", "list_workers", {}, expects_response=True),
+            ClientToolCall("t2", "start_worker", {"task": " "}, expects_response=True),
+            ClientToolCall("t3", "no_such_tool", {}, expects_response=False),
+        ]
+    )
+    call = _call(peer)
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call"):
+        await call.run(_dial)
+    lines = [r.message for r in caplog.records if r.message.startswith("Call tool")]
+    assert lines == [
+        "Call tool list_workers: ok",
+        "Call tool start_worker: error task must be a non-empty string",
+        "Call tool no_such_tool: error unknown tool no_such_tool",
+    ]
+    assert call.outcome().tool_calls == 3

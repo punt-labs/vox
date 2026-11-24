@@ -4,6 +4,7 @@ import asyncio
 import base64
 import functools
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -161,13 +162,16 @@ async def test_call_barge_in_reask_starts_one_worker(tmp_path: Path) -> None:
     assert "conversation_signature=s" not in text
 
 
-async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
+async def test_remote_hangup_ends_the_call(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     async def peer(socket: ServerConnection) -> None:
         await socket.recv()
         await socket.send(json.dumps(_METADATA))
 
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call")
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
@@ -186,6 +190,13 @@ async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
                 break
             await asyncio.sleep(0.01)
     assert cast("dict[str, object]", status)["state"] == "ended"
+    messages = [r.message for r in caplog.records]
+    started = [m for m in messages if m.startswith("Call starting:")]
+    assert started == ["Call starting: input script, echo control none"]
+    assert "Call live: conversation conv_call" in messages
+    (ended,) = [m for m in messages if m.startswith("Call ended:")]
+    assert "0 tool calls" in ended
+    assert str(cast("dict[str, object]", status)["trace"]) in ended
 
 
 async def test_return_opens_with_only_away_results_and_open_decisions(
@@ -921,7 +932,9 @@ async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
 async def test_a_failed_provisioning_is_reported_to_the_caller(
     tmp_path: Path,
     echo_control: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call.handlers")
     connector = _SlowConnector()
     connector.release.set()
     workers = FakeWorkers()
@@ -937,6 +950,11 @@ async def test_a_failed_provisioning_is_reported_to_the_caller(
     assert "provisioning failed" in str(reply)
     status = (await _rpc(handlers, {"type": "call_status"}))["result"]
     assert cast("dict[str, object]", status)["state"] == "failed"
+    messages = [r.message for r in caplog.records]
+    assert f"Call starting: input mic, echo control {echo_control}" in messages
+    (ended,) = [m for m in messages if m.startswith("Call ended:")]
+    assert ended.startswith("Call ended: failed, 0 tool calls, duration ")
+    assert ", error agent provisioning failed" in ended
 
 
 @pytest.mark.parametrize(
