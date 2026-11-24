@@ -533,6 +533,7 @@ domain = [
     "punt_vox.service.backend",
     "punt_vox.service.daemon_status",
     "punt_vox.service.deadline",
+    "punt_vox.service.key_admission",
     "punt_vox.service.key_value_policy",
     "punt_vox.service.keys_env_merge",
     "punt_vox.service.keys_env_report",

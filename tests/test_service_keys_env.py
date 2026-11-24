@@ -120,7 +120,7 @@ def test_write_keys_env_forces_0600_over_existing_wider_file(
     keys_path = tmp_path / "keys.env"
     keys_path.write_text("OPENAI_API_KEY=old\n", encoding="utf-8")
     keys_path.chmod(0o644)
-    writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+    writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path, rotate=True)
     assert stat_mod.S_IMODE(keys_path.stat().st_mode) == 0o600
     assert "OPENAI_API_KEY=sk-new" in keys_path.read_text(encoding="utf-8")
 
@@ -170,10 +170,48 @@ def test_write_keys_env_preserves_existing_keys(
     keys_path.write_text(
         "# header\nELEVENLABS_API_KEY=original-eleven\nOPENAI_API_KEY=original-openai\n"
     )
-    writer.write({"OPENAI_API_KEY": "new-openai"}, keys_path)
+    writer.write({"OPENAI_API_KEY": "new-openai"}, keys_path, rotate=True)
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY=original-eleven" in content
     assert "OPENAI_API_KEY=new-openai" in content
+
+
+def test_write_keys_env_keeps_a_stored_key_the_env_contradicts(
+    writer: KeysEnvWriter, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A stale shell key never replaces a working stored one without rotate.
+
+    Install used to copy a revoked ``ELEVENLABS_API_KEY`` from the shell over
+    the working one in keys.env, and speech failed with HTTP 401.
+    """
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-working\n")
+    with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
+        report = writer.write({"ELEVENLABS_API_KEY": "sk-revoked"}, keys_path)
+    assert "ELEVENLABS_API_KEY=sk-working" in keys_path.read_text()
+    kept = (
+        "    ! ELEVENLABS_API_KEY: the environment's value differs "
+        "(--rotate-keys replaces it); kept the stored value"
+    )
+    assert report.notice_lines() == (kept,)
+    assert report.rotated == ()
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "ELEVENLABS_API_KEY" in logged
+    assert "sk-working" not in logged
+    assert "sk-revoked" not in logged
+
+
+def test_write_keys_env_rotate_replaces_and_reports_the_key(
+    writer: KeysEnvWriter, tmp_path: Path
+) -> None:
+    """``rotate=True`` writes the new value and names the key, never a value."""
+    keys_path = tmp_path / "keys.env"
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-old\n")
+    report = writer.write({"ELEVENLABS_API_KEY": "sk-new"}, keys_path, rotate=True)
+    assert "ELEVENLABS_API_KEY=sk-new" in keys_path.read_text()
+    assert report.notice_lines() == (
+        "    ~ ELEVENLABS_API_KEY: replaced the stored value",
+    )
 
 
 def test_write_keys_env_keeps_existing_key_when_env_value_empty(
@@ -255,7 +293,7 @@ def test_write_keys_env_override_and_absent_keys_log_nothing(
     keys_path = tmp_path / "keys.env"
     keys_path.write_text("ELEVENLABS_API_KEY=sk-kept\nOPENAI_API_KEY=sk-old\n")
     with caplog.at_level(logging.WARNING, logger="punt_vox.service.keys_env"):
-        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path)
+        writer.write({"OPENAI_API_KEY": "sk-new"}, keys_path, rotate=True)
     content = keys_path.read_text()
     assert "ELEVENLABS_API_KEY=sk-kept" in content
     assert "OPENAI_API_KEY=sk-new" in content

@@ -382,7 +382,7 @@ AWS_DEFAULT_REGION=us-east-1
 TTS_PROVIDER=elevenlabs
 ```
 
-`vox daemon install` also copies into `keys.env` any provider keys set in the shell that runs the install, so keys set in `.envrc` or similar before installing work too. After install, edit the file directly.
+`vox daemon install` also copies into `keys.env` any provider keys set in the shell that runs the install, so keys set in `.envrc` or similar before installing work too. A key already stored in `keys.env` is kept when the shell holds a different value, and the install output names it; run `vox daemon install --rotate-keys` to replace stored keys with the shell's. Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still follow the shell. After install, edit the file directly.
 
 #### 3. Restart the Daemon
 

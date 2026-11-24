@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 _installer = ServiceInstaller()
 
 
-def install() -> str:
+def install(*, rotate_keys: bool = False) -> str:
     """Install voxd as a system service.  Return a status message."""
-    return _installer.install()
+    return _installer.install(rotate_keys=rotate_keys)
 
 
 def uninstall() -> str:
