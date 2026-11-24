@@ -71,8 +71,18 @@ class GitignoreEntry:
         A missing ``.gitignore`` is created. The appended line uses the host's
         first line terminator and a missing final terminator is added first,
         so the entry never fuses onto the user's last rule.
+
+        Raises:
+            ValueError: If the host is a symlink. Git does not read a symlinked
+                ``.gitignore``, and writing through it would edit a file
+                outside the repo.
         """
         with self._lock.held():
+            if self._file.path.is_symlink():
+                msg = (
+                    f"{self._file.path} is a symlink; git ignores it, vox won't edit it"
+                )
+                raise ValueError(msg)
             text = self._file.read()
             if self._lists_entry(text):
                 return False

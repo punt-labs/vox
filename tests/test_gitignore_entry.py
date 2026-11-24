@@ -64,6 +64,15 @@ def test_ensure_adds_the_entry_after_a_leading_space_variant(tmp_path: Path) -> 
     assert text == f" {_ENTRY}\n{_ENTRY}\n"
 
 
+def test_ensure_refuses_a_symlinked_host(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep\n", encoding="utf-8")
+    _host(tmp_path).symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        _entry(tmp_path).ensure()
+    assert outside.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_ensure_twice_adds_one_line(tmp_path: Path) -> None:
     entry = _entry(tmp_path)
     entry.ensure()
