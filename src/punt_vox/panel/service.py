@@ -285,7 +285,7 @@ class VoxPanelService:
                 else PanelNotice.config_unreadable()
             )
         except VoxdRejectionError as exc:
-            failure = exc
+            fresh, failure = before if external else fresh, exc
             notice = on_rejection(str(exc))
         except VoxdConnectionError as exc:
             fresh, failure, notice = before, exc, on_read_failure

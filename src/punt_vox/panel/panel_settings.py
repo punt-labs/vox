@@ -56,7 +56,12 @@ class PanelSettings:
     def scene(self) -> PanelScene:
         """Read the confirmed settings and notice together."""
         with self._lock:
-            notice = self._notice if self._notice.is_present else self._refresh_notice
+            notice = self._notice
+            if (
+                not notice.is_present
+                or self._refresh_notice == PanelNotice.config_unreadable()
+            ):
+                notice = self._refresh_notice
             return replace(self._state.scene(), notice=notice)
 
     def replace_if_current(

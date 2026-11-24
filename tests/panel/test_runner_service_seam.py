@@ -26,7 +26,7 @@ import pytest
 from punt_lux.operations import Ok, OpError
 
 from panel.doubles import PANEL_LOGGER
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.panel.panel_guard import PanelGuard
@@ -93,14 +93,18 @@ class _RosterFailsAfterPrefetch:
     click mid-flight.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, error: VoxdConnectionError | VoxdRejectionError | None = None
+    ) -> None:
         self.call_count = 0
+        self._error = (
+            error if error is not None else VoxdConnectionError("voxd unreachable")
+        )
 
     def voices(self, provider: VoiceTarget) -> list[str]:
         self.call_count += 1
         if self.call_count > 1:
-            msg = "voxd unreachable"
-            raise VoxdConnectionError(msg)
+            raise self._error
         return ["benno", "aria"]
 
     def synthesize(
@@ -344,6 +348,47 @@ class TestRunnerServiceSeam:
         store.write_field("voice", "aria")
         assert await service.reconcile()
         assert service.scene().notice == PanelNotice.control_rejected("voice")
+
+    async def test_a_refused_external_roster_fetch_keeps_the_confirmed_picker(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(
+            _RosterFailsAfterPrefetch(VoxdRejectionError("roster refused")), store
+        )
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+        before = service.scene()
+
+        store.write_fields({"provider": "openai", "voice": "alloy"})
+        assert await service.reconcile()
+        assert service.scene().notice == PanelNotice.voxd_rejected("roster refused")
+        assert service.scene().roster == before.roster
+        assert service.scene().provider == before.provider
+        assert service.scene().voice == before.voice
+
+    async def test_an_unreadable_config_takes_priority_over_an_old_control_notice(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path, durable_only=True)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+        control_notice = PanelNotice.control_rejected("voice")
+        service.note_control_rejected("voice")
+        assert service.scene().notice == control_notice
+        path = tmp_path / "vox.md"
+        original = path.read_bytes()
+
+        path.write_bytes(b"\xff")
+        assert await service.reconcile()
+        assert service.scene().notice == PanelNotice.config_unreadable()
+
+        path.write_bytes(original)
+        assert await service.reconcile()
+        assert service.scene().notice == control_notice
 
     @pytest.mark.parametrize("external", [True, False], ids=["poll", "menu"])
     @pytest.mark.parametrize(
