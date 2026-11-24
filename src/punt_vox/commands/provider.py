@@ -53,24 +53,21 @@ class ProviderCommand:
                 f"unknown provider {name!r}. Allowed: {allowed}"
             )
 
-        if cfg.provider == name:
-            return CommandResult(text=f"Provider: {name}", json_data={"provider": name})
-
-        target = Cascade.default_target(name)
-        voice_default = Cascade.fetch_first_voice(ctx.client, target)
-        if isinstance(voice_default, RosterError):
-            return CommandResult.failure(voice_default.message)
-
-        updates = {
-            "provider": name,
-            "model": target.model_field,
-            "voice": voice_default,
-        }
-        try:
-            ctx.store.write_fields(updates)
-        except ConfigValueError as exc:
-            return CommandResult.failure(str(exc))
-        return CommandResult(text=f"Provider: {name}", json_data={**updates})
+        updates: dict[str, str] = {"provider": name}
+        if cfg.provider != name:
+            target = Cascade.default_target(name)
+            voice_default = Cascade.fetch_first_voice(ctx.client, target)
+            if isinstance(voice_default, RosterError):
+                return CommandResult.failure(voice_default.message)
+            updates.update(model=target.model_field, voice=voice_default)
+            try:
+                ctx.store.write_fields(updates)
+            except ConfigValueError as exc:
+                return CommandResult.failure(str(exc))
+        return CommandResult(
+            text=f"Provider: {name}",
+            json_data={**updates},
+        )
 
 
 provider: ProviderCommand = ProviderCommand()
