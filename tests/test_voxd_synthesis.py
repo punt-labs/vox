@@ -1417,6 +1417,32 @@ class TestApplyVibeForSynthesis:
         assert self._apply(source, None, "elevenlabs", model) == expected
 
     @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("€1.234,56", "1,234 euros and 56 cents"),
+            ("1.234,56€", "1,234 euros and 56 cents"),
+            ("€1.234.567,89", "1,234,567 euros and 89 cents"),
+            ("It costs 1.234,56€.", "It costs 1,234 euros and 56 cents."),
+            ("€1.234,56\u20132.345,67", "1,234.56 to 2,345.67 euros"),
+            ("€1.234,56-2.345,67", "1,234.56 to 2,345.67 euros"),
+            (
+                "€1.234,56\u2013€2.345,67",
+                "1,234 euros and 56 cents to 2,345 euros and 67 cents",
+            ),
+            ("€1.234", "1.234 euros"),
+            ("€1.50", "1 euro and 50 cents"),
+            ("€1.234,567", "1.234,567"),
+            ("$1.234,56", "1.234,56"),
+            ("`€1.234,56`", "euro sign 1.234,56"),
+        ],
+    )
+    def test_euro_dotted_thousands(
+        self, model: str, source: str, expected: str
+    ) -> None:
+        assert self._apply(source, None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
     @pytest.mark.parametrize("separator", ["\u2013", "-"])
     def test_euro_comma_decimal_bare_range(self, model: str, separator: str) -> None:
         dot_range = self._apply("€1.50\u20132.50", None, "elevenlabs", model)

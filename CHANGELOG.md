@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speak euro amounts such as `€1,50` and `1,50€` as euros and cents. Commas
   with three-digit groups still mark thousands, and other currencies and
   inline code are unchanged. (PL-1535)
+- Speak dotted thousands in euro amounts with a two-digit decimal comma,
+  such as `€1.234,56` and `1.234,56€`, as euros and cents. Dot-only amounts
+  such as `€1.234` keep their existing reading. (PL-1536)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS

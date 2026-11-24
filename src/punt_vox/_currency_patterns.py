@@ -7,7 +7,7 @@ from typing import final
 
 _SIGN = r"[-+\u2212]"
 _WHOLE = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
-_EURO_DECIMAL = rf"{_WHOLE},\d{{2}}(?!\d|[.,]\d)"
+_EURO_DECIMAL = rf"(?:\d{{1,3}}(?:\.\d{{3}})+|{_WHOLE}),\d{{2}}(?!\d|[.,]\d)"
 _PREFIX_AMOUNT = (
     rf"(?P<{{p}}sign_before>{_SIGN})?"
     r"(?P<{p}symbol>{symbol})"
@@ -29,22 +29,21 @@ class CurrencyPatterns:
     @classmethod
     def prose_fields(cls, match: re.Match[str], prefix: str) -> tuple[str, str, str]:
         """Read the currency symbol, canonical number, and sign."""
-        number = cls._canonical_number(
-            match[prefix + "amount"], match[prefix + "comma_decimal"]
-        )
+        amount, decimal = match.group(prefix + "amount", prefix + "comma_decimal")
         sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
-        return match[prefix + "symbol"], number, sign
+        return match[prefix + "symbol"], cls._canonical(amount, decimal), sign
 
     @classmethod
     def bare_end(cls, match: re.Match[str]) -> str:
         """Read the canonical number for a range end with no currency sign."""
-        return cls._canonical_number(
-            match["bare_end"] or "", match["bare_comma_decimal"]
-        )
+        return cls._canonical(match["bare_end"] or "", match["bare_comma_decimal"])
 
     @staticmethod
-    def _canonical_number(number: str, comma_decimal: str | None) -> str:
-        return ".".join(number.rsplit(",", 1)) if comma_decimal else number
+    def _canonical(number: str, decimal: str | None) -> str:
+        if decimal is None:
+            return number
+        whole, cents = decimal.rsplit(",", 1)
+        return f"{whole.replace('.', ',')}.{cents}"
 
     @classmethod
     def code_amount(cls, symbols: str) -> str:
