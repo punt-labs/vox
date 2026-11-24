@@ -215,6 +215,37 @@ class TestTextInputFromFile:
         with pytest.raises(typer.BadParameter, match="valid JSON"):
             TextInput(OutputFormatter()).resolve(None, path)
 
+    def test_invalid_json_crlf_reports_line_and_column_only(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "segs.json"
+        path.write_bytes(b'[\r\n  "ok",\r\n  nope\r\n]\r\n')
+        with pytest.raises(typer.BadParameter, match=r"line 3 column 3$"):
+            TextInput(OutputFormatter()).resolve(None, path)
+
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    def test_invalid_json_precedes_provider_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        hermetic_config: Path,
+        command: list[str],
+    ) -> None:
+        (hermetic_config / "vox.md").unlink()
+        monkeypatch.chdir(tmp_path)
+        path = Path("broken.json")
+        path.write_text("{not json", encoding="utf-8")
+
+        result = CliRunner().invoke(
+            app, [*command, "--from", str(path)], env={"COLUMNS": "42"}
+        )
+
+        stderr = " ".join(unstyle(result.stderr).replace("│", " ").split())
+        assert result.exit_code == 2, stderr
+        assert "broken.json" in stderr
+        assert "invalid JSON" in stderr
+        assert "line 1 column 2" in stderr
+
     @pytest.mark.parametrize(
         "item",
         [{"text": False}, {"text": 0}, {"text": [1, 2]}, {"text": None}, {}],
