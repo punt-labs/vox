@@ -60,17 +60,19 @@ class SpeechMarkdown:
         token: Token, offset: int, positions: dict[int, int]
     ) -> CodeSpan | LinkSpan | None:
         at = positions.get
-        match token.type, token.meta.get(_SOURCE_OFFSET):
-            case "code_inline", _:
-                opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
-                width = len(token.markup)
-                match at(offset + opening), at(offset + end - width):
-                    case int(start), int(close):
-                        return CodeSpan(start, start + width, close)
-            case "link_open", (int(opening), int(label_end), int(end)):
-                match at(offset + opening), at(offset + label_end), at(offset + end):
-                    case int(start), int(label_stop), int(close):
-                        return LinkSpan(start, label_stop, close + 1)
+        if token.type == "code_inline":
+            opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
+            width = len(token.markup)
+            code = at(offset + opening), at(offset + end - width)
+            if None not in code:
+                start, close = cast("tuple[int, int]", code)
+                return CodeSpan(start, start + width, close)
+        elif isinstance(bounds := token.meta.get(_SOURCE_OFFSET), tuple):
+            opening, label_end, end = cast("tuple[int, int, int]", bounds)
+            link = at(offset + opening), at(offset + label_end), at(offset + end)
+            if None not in link:
+                start, label_stop, close = cast("tuple[int, int, int]", link)
+                return LinkSpan(start, label_stop, close + 1)
         return None
 
     @classmethod
@@ -80,11 +82,8 @@ class SpeechMarkdown:
         lines = MarkdownOffsets.line_boundaries(text)
         for token in cls._MARKDOWN.parse(text, {_VIBED: vibed}):
             if token.type == "inline" and token.map is not None and token.children:
-                yield (
-                    token.content,
-                    token.children,
-                    lines[token.map[0] : token.map[1] + 1],
-                )
+                start, end = token.map
+                yield token.content, token.children, lines[start : end + 1]
 
     @classmethod
     def _source_tokens(

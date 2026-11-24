@@ -2909,6 +2909,5 @@
 {"ts":"2026-11-24T22:08:02Z","commit":"348afef","source":null,"files_scored":554,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-24T22:16:54Z","commit":"d9e5b03","source":null,"files_scored":554,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Check raw-source coordinates explicitly without catching missing parser-token metadata.","deltas":{"src/punt_vox/_speech_markdown.py":{"avg_params":[2.22,2.3],"module_size":[141.0,142.0]}},"removed":[]}
 {"ts":"2026-11-24T22:16:56Z","commit":"d9e5b03","source":null,"files_scored":554,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
-{"ts":"2026-11-24T22:20:14Z","commit":"370c4c3","source":null,"files_scored":554,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{},"removed":[]}
-{"ts":"2026-11-24T22:20:55Z","commit":"370c4c3","source":null,"files_scored":554,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{},"removed":[]}
 {"ts":"2026-11-24T22:21:16Z","commit":"370c4c3","source":null,"files_scored":554,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/_speech_markdown.py":{"avg_params":[2.3,2.22],"max_complexity":[7.0,6.0],"avg_complexity":[4.1,4.0],"module_size":[142.0,139.0]}},"removed":[]}
+{"ts":"2026-11-24T22:22:48Z","commit":"420e2fb","source":null,"files_scored":554,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/_speech_markdown.py":{"module_size":[139.0,138.0]}},"removed":[]}
