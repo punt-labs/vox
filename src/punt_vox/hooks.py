@@ -25,6 +25,7 @@ import logging
 import os
 import random
 import select
+import subprocess
 import sys
 from pathlib import Path
 
@@ -180,13 +181,11 @@ def _spawn_chime(signal: str) -> None:
     Fire-and-forget so the hook returns immediately -- a side-effect hook must
     not block the event it observes.
     """
-    import subprocess as _sp
-
     try:
-        _sp.Popen(
+        subprocess.Popen(
             [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
     except OSError as e:
