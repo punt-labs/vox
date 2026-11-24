@@ -260,6 +260,9 @@ async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> N
         "XDG_CONFIG_HOME": str(home / ".config"),
         "AWS_EC2_METADATA_DISABLED": "true",
     }
+    for key in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     subprocess.run(
         [binary, "desktop", "install", "--provider", "espeak", "--uvx-path", uv],
         cwd=first,
