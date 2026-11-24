@@ -2,11 +2,9 @@
 set -euo pipefail
 
 _stdin=$(cat) || _stdin=""
-if command -v jq >/dev/null 2>&1; then
-  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null) || _cwd=""
-else
-  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//') || _cwd=""
-fi
+# shellcheck source=plugin/hooks/payload.sh
+source "$(dirname "${BASH_SOURCE[0]}")/payload.sh"
+_cwd=$(printf '%s' "$_stdin" | vox_hook_payload_field cwd) || _cwd=""
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 _cwd=$(cd "$_cwd" 2>/dev/null && pwd) || _cwd="$PWD"
 

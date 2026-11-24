@@ -4,11 +4,9 @@
 # SYNCHRONOUS (never async): only synchronous UserPromptSubmit stdout is injected
 # as additionalContext. It is non-blocking: it only injects context.
 _stdin=$(cat)
-if command -v jq >/dev/null 2>&1; then
-  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null)
-else
-  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
-fi
+# shellcheck source=plugin/hooks/payload.sh
+source "$(dirname "${BASH_SOURCE[0]}")/payload.sh" || exit 0
+_cwd=$(printf '%s' "$_stdin" | vox_hook_payload_field cwd)
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 
 # Per-repo opt-in: silent unless this repo ran `vox enable` and vox is installed.
