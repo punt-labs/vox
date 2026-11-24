@@ -37,8 +37,8 @@ _PREFIX_AMOUNT = (
 _SUFFIX_AMOUNT = (
     rf"(?P<leading>_*[^\w\s~/.,`{_SYMBOLS}]*?)"
     rf"(?P<sign>{_SIGN}?)(?P<amount>{_NUMBER})(?P<symbol>[{_SYMBOLS}])"
-    rf"(?=(?:[^\w\s`{_SYMBOLS}]|_)*(?!\S))"
 )
+_TRAILING_PUNCTUATION = rf"(?:[^\w\s`{_SYMBOLS}]|_)*"
 _LETTER = r"[^\W\d_]"
 
 
@@ -60,13 +60,13 @@ class CurrencyGrammar:
         )
 
     @staticmethod
-    def prefix_suffix_amounts(
-        prose: str, *, after: re.Pattern[str] | None = None
-    ) -> str:
+    def prefix_suffix_amounts(prose: str, *, tag: re.Pattern[str] | None = None) -> str:
         """Put prose amounts in prefix order for the shared money renderer."""
-        boundary = rf"(?<!\S)|{after.pattern}" if after is not None else r"(?<!\S)"
+        start, end = r"(?<!\S)", r"(?!\S)"
+        if tag is not None:
+            start, end = rf"{start}|{tag.pattern}", rf"{end}|{tag.pattern}"
         return re.sub(
-            rf"(?P<boundary>{boundary}){_SUFFIX_AMOUNT}",
+            rf"(?P<boundary>{start}){_SUFFIX_AMOUNT}(?={_TRAILING_PUNCTUATION}(?:{end}))",
             r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>",
             prose,
         )

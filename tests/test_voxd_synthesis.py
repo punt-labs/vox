@@ -1372,6 +1372,15 @@ class TestApplyVibeForSynthesis:
         assert "alert" not in result
         assert "serious" not in result
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [("eleven_v3", "5 euros [laugh]"), ("eleven_multilingual_v2", "5 euros")],
+    )
+    def test_speaks_suffix_amount_before_adjacent_tag(
+        self, model: str, expected: str
+    ) -> None:
+        assert self._apply("5€[laugh]", None, "elevenlabs", model) == expected
+
     def test_inline_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [serious] world", None, "polly", None)
         assert result == "hello world"
