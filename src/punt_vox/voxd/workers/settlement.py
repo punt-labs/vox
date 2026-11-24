@@ -16,11 +16,11 @@ if TYPE_CHECKING:
 
 @final
 class SettledDebts:
-    """The outcome of one settlement job: the record it produced and the
-    marker sets of the debts it actually ran.
+    """The record one settlement job produced and the markers of the debts it ran.
 
-    Folding back only those sets keeps a debt marked pending by a concurrent
-    stop, during the job, from being overwritten by the job's stale snapshot.
+    Folding back only those marker sets keeps a debt marked pending by a
+    concurrent stop, during the job, from being overwritten by the job's
+    stale snapshot.
     """
 
     __slots__ = ("_markers", "_result")
