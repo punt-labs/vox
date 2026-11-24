@@ -58,7 +58,11 @@ class GitignoreEntry:
         return self._entry
 
     def is_present(self) -> bool:
-        """Return whether the host already lists the entry (bare or ``/``-anchored)."""
+        """Return whether the host already lists the entry (bare or ``/``-anchored).
+
+        Only trailing spaces are discounted, as git discounts them; a leading
+        space is part of git's pattern, so a padded line is a different rule.
+        """
         return self._lists_entry(self._file.read())
 
     def ensure(self) -> bool:
@@ -80,7 +84,7 @@ class GitignoreEntry:
 
     def _lists_entry(self, text: str) -> bool:
         accepted = {self._entry, f"/{self._entry}"}
-        return any(line.strip() in accepted for line in text.splitlines())
+        return any(line.rstrip(" ") in accepted for line in text.splitlines())
 
     @staticmethod
     def _eol(text: str) -> str:

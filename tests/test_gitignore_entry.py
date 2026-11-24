@@ -47,7 +47,7 @@ def test_ensure_preserves_crlf(tmp_path: Path) -> None:
     assert _host(tmp_path).read_bytes() == f"dist/\r\n{_ENTRY}\r\n".encode()
 
 
-@pytest.mark.parametrize("existing", [_ENTRY, f"/{_ENTRY}", f"  {_ENTRY}  "])
+@pytest.mark.parametrize("existing", [_ENTRY, f"/{_ENTRY}", f"{_ENTRY}  "])
 def test_ensure_is_a_noop_when_listed(tmp_path: Path, existing: str) -> None:
     original = f"dist/\n{existing}\n"
     _host(tmp_path).write_text(original, encoding="utf-8")
@@ -55,6 +55,13 @@ def test_ensure_is_a_noop_when_listed(tmp_path: Path, existing: str) -> None:
     assert entry.is_present() is True
     assert entry.ensure() is False
     assert _host(tmp_path).read_text(encoding="utf-8") == original
+
+
+def test_ensure_adds_the_entry_after_a_leading_space_variant(tmp_path: Path) -> None:
+    _host(tmp_path).write_text(f" {_ENTRY}\n", encoding="utf-8")
+    assert _entry(tmp_path).ensure() is True
+    text = _host(tmp_path).read_text(encoding="utf-8")
+    assert text == f" {_ENTRY}\n{_ENTRY}\n"
 
 
 def test_ensure_twice_adds_one_line(tmp_path: Path) -> None:
