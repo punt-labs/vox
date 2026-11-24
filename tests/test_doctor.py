@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import socket
 import sys
@@ -429,6 +430,17 @@ class TestCheckOutputDir:
             patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
             patch("punt_vox.doctor.tempfile.TemporaryFile", side_effect=OSError),
         ):
+            results = DoctorCheck().check_output_dir()
+        assert results[0].passed is False
+        assert results[0].message == "output: not writable — check permissions"
+
+    def test_full_disk_reports_failure(self, tmp_path: Path) -> None:
+        with (
+            patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
+            patch("punt_vox.doctor.tempfile.TemporaryFile") as temporary_file,
+        ):
+            probe = temporary_file.return_value.__enter__.return_value
+            probe.write.side_effect = OSError(errno.ENOSPC, "No space left on device")
             results = DoctorCheck().check_output_dir()
         assert results[0].passed is False
         assert results[0].message == "output: not writable — check permissions"
