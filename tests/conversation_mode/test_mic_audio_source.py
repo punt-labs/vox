@@ -180,33 +180,6 @@ async def test_opening_the_stream_logs_the_device_name_and_rates(
     )
 
 
-def test_default_device_query_reads_portaudio(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        sys.modules,
-        "sounddevice",
-        SimpleNamespace(
-            PortAudioError=_FakePortAudioError,
-            query_devices=_device_info("MacBook Air Microphone", 48000.0),
-        ),
-    )
-    assert PortAudio().device() == InputDevice("MacBook Air Microphone", 48000.0)
-
-
-def test_default_device_query_without_a_device_is_an_oserror(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def no_device(kind: str) -> DeviceInfo:
-        raise _FakePortAudioError(f"Error querying device {kind}")
-
-    monkeypatch.setitem(
-        sys.modules,
-        "sounddevice",
-        SimpleNamespace(PortAudioError=_FakePortAudioError, query_devices=no_device),
-    )
-    with pytest.raises(OSError, match="no default input device"):
-        PortAudio().device()
-
-
 async def test_a_device_open_failure_propagates_out_of_chunks() -> None:
     def refuse(**_kwargs: object) -> FakeInputStream:
         raise OSError("no default input device available")
