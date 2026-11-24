@@ -121,3 +121,22 @@ def test_overview_reports_only_refusal_as_not_running(
     assert text.exit_code == 0
     assert f"Daemon:    {expected}\n" in text.output
     assert json.loads(payload.output)["daemon"] == expected
+
+
+@pytest.mark.parametrize("serve_port", ["0", pytest.param("9" * 4301, id="long")])
+def test_status_does_not_treat_invalid_discovery_ports_as_absent(
+    serve_port: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOXD_HOST", "127.0.0.1")
+    monkeypatch.delenv("VOXD_PORT", raising=False)
+    run_dir().mkdir(parents=True)
+    (run_dir() / "serve.port").write_text(serve_port)
+
+    with patch("punt_vox.cli_io.configure_client_logging"):
+        overview = CliRunner().invoke(app, ["status", "--json"])
+        daemon = CliRunner().invoke(app, ["daemon", "status", "--json"])
+
+    assert overview.exit_code == 0
+    assert json.loads(overview.output)["daemon"] == "unknown"
+    assert daemon.exit_code == 1
+    assert json.loads(daemon.output)["status"] == "unknown"

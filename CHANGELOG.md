@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still
   follow the shell. (PL-1322)
 
+- Reject malformed daemon discovery ports before connecting, so status reports
+  an unknown daemon state rather than mistaking it for a stopped daemon. (PL-1421)
+
 - Keep the daemon responsive to other requests while it hashes a large store
   file before sending it. (PL-1430)
 
