@@ -202,6 +202,17 @@ class TestResolveMusicDir:
             result = _resolve_music_dir()
         assert result == tmp_path / "Music"
 
+    def test_linux_fallback_with_non_utf8_xdg_file(self, tmp_path: Path) -> None:
+        dirs_file = tmp_path / ".config" / "user-dirs.dirs"
+        dirs_file.parent.mkdir(parents=True)
+        dirs_file.write_bytes(b'# Invalid UTF-8: \xff\nXDG_MUSIC_DIR="$HOME/Musik"\n')
+        with (
+            patch("punt_vox.dirs.sys.platform", "linux"),
+            patch("punt_vox.dirs.Path.home", return_value=tmp_path),
+        ):
+            result = _resolve_music_dir()
+        assert result == tmp_path / "Music"
+
     def test_macos(self, tmp_path: Path) -> None:
         with (
             patch("punt_vox.dirs.sys.platform", "darwin"),

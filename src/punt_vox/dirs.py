@@ -39,29 +39,24 @@ def find_config_dir(start: Path | None = None) -> Path | None:
 def _parse_xdg_user_dir(key: str) -> Path | None:
     """Parse a single key from ~/.config/user-dirs.dirs.
 
-    Returns None if the file doesn't exist, the key isn't found,
-    or the value cannot be resolved.
+    Returns None if the file is missing, unreadable, or not UTF-8,
+    or if the key isn't found.
     """
     dirs_file = Path.home() / ".config" / "user-dirs.dirs"
     if not dirs_file.is_file():
         return None
     try:
         text = dirs_file.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
     # Expected line format: XDG_MUSIC_DIR="$HOME/Music"
-    pattern = re.compile(
-        rf'^{re.escape(key)}="([^"]*)"',
-        re.MULTILINE,
-    )
-    match = pattern.search(text)
+    match = re.search(rf'^{re.escape(key)}="([^"]*)"', text, re.MULTILINE)
     if not match:
         return None
 
-    raw = match.group(1)
     # Expand $HOME -- the only variable XDG user-dirs.dirs uses
-    resolved = raw.replace("$HOME", str(Path.home()))
+    resolved = match.group(1).replace("$HOME", str(Path.home()))
     return Path(resolved)
 
 
