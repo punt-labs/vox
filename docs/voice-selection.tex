@@ -1,0 +1,101 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage{fuzz}
+\begin{document}
+\title{Vox voice selection}
+\maketitle
+
+A roster belongs to a target (a provider and its optional model).
+The panel may lag behind the file. The saved voice must belong to the
+saved target's roster; a hand-edited invalid target is represented by
+an empty roster and no confirmed voice. Picker indices name entries in
+the shown roster, never in a different target's roster.
+
+\begin{zed}
+  [TARGET, VOICE]
+\end{zed}
+
+\begin{schema}{VoiceSelection}
+  available : TARGET \fun \power VOICE \\
+  saved, shown : TARGET \\
+  voice, roster : \power VOICE
+\where
+  \# voice \leq 1 \\
+  voice \subseteq available(saved) \\
+  roster \subseteq available(shown)
+\end{schema}
+
+\begin{schema}{SwitchTarget}
+  \Delta VoiceSelection \\
+  target? : TARGET \\
+  default? : \power VOICE
+\where
+  available' = available \\
+  saved' = target? \\
+  voice' = default? \\
+  shown' = shown \\
+  roster' = roster
+\end{schema}
+
+A panel model click also installs the fetched roster, as in a successful
+refresh below. A daemon rejection can show the configured target without
+offering any voices; the model picker remains usable. Roster order is left
+abstract: a voice pick enters the model after its index has been decoded.
+
+\begin{schema}{PanelSwitchTarget}
+  \Delta VoiceSelection \\
+  target?, expected? : TARGET \\
+  fetched?, default? : \power VOICE
+\where
+  expected? = saved \\
+  default? \subseteq fetched? \\
+  available' = available \\
+  shown' = target? \\
+  saved' = target? \\
+  roster' = fetched? \\
+  voice' = default?
+\end{schema}
+
+\begin{schema}{RefreshRoster}
+  \Delta VoiceSelection \\
+  target? : TARGET \\
+  fetched? : \power VOICE
+\where
+  target? = saved \\
+  available' = available \\
+  saved' = saved \\
+  voice' = voice \\
+  shown' = target? \\
+  roster' = fetched?
+\end{schema}
+
+\begin{schema}{ChooseVoice}
+  \Delta VoiceSelection \\
+  picked? : VOICE
+\where
+  shown = saved \\
+  picked? \in roster \\
+  voice' = \{picked?\} \\
+  available' = available \\
+  saved' = saved \\
+  shown' = shown \\
+  roster' = roster
+\end{schema}
+
+In a stale click (\texttt{shown} differs from \texttt{saved}), the choice is rejected
+without a write; a refresh restores the current roster. A stale refresh
+similarly leaves the confirmed settings unchanged.
+
+\begin{schema}{RejectStaleVoice}
+  \Xi VoiceSelection
+\where
+  shown \neq saved
+\end{schema}
+
+\begin{schema}{RejectStaleRefresh}
+  \Xi VoiceSelection \\
+  target? : TARGET
+\where
+  target? \neq saved
+\end{schema}
+
+\end{document}
