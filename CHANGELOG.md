@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve currency and signs when speaking attached amounts, rates, compact
+  amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
+  `$5-$10`. (PL-1414)
+
 - `vox say`, `vox rec new`, and voice listings from `vox voice` use the
   repo's configured provider unless given an explicit `--provider` flag.
   `TTS_PROVIDER` only guides provider selection during setup. To override

@@ -38,6 +38,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/_currency_speech.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.25,
+    "max_complexity": 9.0,
+    "avg_complexity": 3.75,
+    "module_size": 101.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/_inline_code.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -67,10 +80,10 @@
   "src/punt_vox/_speech_punctuation.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.25,
+    "avg_params": 1.17,
     "max_complexity": 5.0,
-    "avg_complexity": 2.88,
-    "module_size": 85.0,
+    "avg_complexity": 2.17,
+    "module_size": 45.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -1430,14 +1443,14 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/normalize.py": {
-    "method_ratio": 0.364,
+    "method_ratio": 0.545,
     "encapsulation_ratio": 1.0,
     "avg_params": 1.09,
     "max_complexity": 8.0,
-    "avg_complexity": 2.73,
+    "avg_complexity": 2.64,
     "module_size": 516.0,
     "classes_per_module": 1.0,
-    "class_to_func_ratio": 0.125,
+    "class_to_func_ratio": 0.167,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

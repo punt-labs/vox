@@ -4,27 +4,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from decimal import Decimal
 
-_CURRENCY_UNITS = {
-    "$": ("dollar", "dollars"),
-    "€": ("euro", "euros"),
-    "£": ("pound", "pounds"),
-    "¥": ("yen", "yen"),
-    "₹": ("rupee", "rupees"),
-    "₩": ("won", "won"),
-    "₽": ("ruble", "rubles"),
-}
-_SIGN_WORDS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
-_CURRENCY_AMOUNT = re.compile(
-    rf"(?P<sign_before>[-+\u2212])?(?P<symbol>[{''.join(_CURRENCY_UNITS)}])"
-    r"(?(sign_before)|(?P<sign_after>[-+\u2212])?)"
-    r"(?P<amount>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
-)
-_LEADING_NON_SPEECH_RE = re.compile(
-    rf"^(?:[-\u2212]{{2,}}|(?!(?:{_CURRENCY_AMOUNT.pattern}[\W_]*$|[-\u2212]\.?\d))"
-    r"[^\w~/.])+"
-)
+from punt_vox._currency_speech import CurrencySpeech
+
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
@@ -43,16 +25,20 @@ class SpeechPunctuation:
         (``~/._``), a numeric minus, and signed or unsigned currency amounts.
         Trailing non-prosody symbols are discarded to avoid synthesis artifacts.
         """
-        core, raw_suffix = cls._split_trailing(_LEADING_NON_SPEECH_RE.sub("", token))
+        currency = CurrencySpeech.prose_pattern(token).pattern
+        leading = (
+            rf"^(?:[-\u2212]{{2,}}|(?!(?:{currency}[\W_]*$|[-\u2212]\.?\d))[^\w~/.])+"
+        )
+        core, raw_suffix = cls._split_trailing(re.sub(leading, "", token))
         suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-        return cls._spell_currency(core), suffix
+        return CurrencySpeech.speak_prose(core), suffix
 
     @classmethod
     def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
         """Say a code currency symbol literally rather than as a monetary unit."""
-        return _TOKEN_RE.sub(
-            lambda token: cls._spell_code_token(token, in_path=in_path), text
-        )
+        attached = _TOKEN_RE.match(text) if in_path else None
+        start = attached.end() if attached else 0
+        return text[:start] + _TOKEN_RE.sub(cls._spell_code_token, text[start:])
 
     @staticmethod
     def is_code_path(text: str) -> bool:
@@ -65,36 +51,9 @@ class SpeechPunctuation:
         return _FILE_PATH_RE.match(core) is not None
 
     @classmethod
-    def _spell_code_token(cls, match: re.Match[str], *, in_path: bool) -> str:
+    def _spell_code_token(cls, match: re.Match[str]) -> str:
         token = match[0]
-        if (in_path and match.start() == 0) or cls.is_code_path(token):
-            return token
-        return _CURRENCY_AMOUNT.sub(cls._spell_code_symbol, token)
-
-    @staticmethod
-    def _spell_code_symbol(match: re.Match[str]) -> str:
-        symbol, amount = match.group("symbol", "amount")
-        before, after = match.group("sign_before", "sign_after")
-        unit, _ = _CURRENCY_UNITS[symbol]
-        left = " " if match.string[match.start() - 1 : match.start()].isalnum() else ""
-        right = " " if match.string[match.end() : match.end() + 1].isalnum() else ""
-        return (
-            f"{left}{_SIGN_WORDS[before or '']}{unit} sign "
-            f"{_SIGN_WORDS[after or '']}{amount}{right}"
-        )
-
-    @staticmethod
-    def _spell_currency(core: str) -> str:
-        match = _CURRENCY_AMOUNT.fullmatch(core.lstrip("_"))
-        if match is None:
-            return core
-        symbol, amount = match.group("symbol", "amount")
-        sign = "".join(filter(None, match.group("sign_before", "sign_after")))
-        singular, plural = _CURRENCY_UNITS[symbol]
-        is_one = "." not in amount and Decimal(amount.replace(",", "")) == 1
-        unit = singular if is_one else plural
-        number = "0" + amount if amount.startswith(".") else amount
-        return f"{_SIGN_WORDS[sign]}{number} {unit}"
+        return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
 
     @staticmethod
     def _split_trailing(core_candidate: str) -> tuple[str, str]:
