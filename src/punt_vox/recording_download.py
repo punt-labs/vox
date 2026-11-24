@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import shutil
@@ -12,7 +13,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.pinned_directory import PinnedDirectory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
     from typing import IO
 
@@ -44,32 +45,35 @@ class RecordingDownload:
         """Verify and flush the download before opening the final path."""
         if self._dest.exists(follow_symlinks=False):
             raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), self._dest)
+        with self._staging() as (staged, dir_fd):
+            count = fetch(staged)
+            staged.flush()
+            self._publish(staged, dir_fd)
+            return count
+
+    @contextlib.contextmanager
+    def _staging(self) -> Generator[tuple[IO[bytes], int | None]]:
+        """Name the staging file only in a directory that is actually private."""
         with (
             tempfile.TemporaryDirectory(
                 dir=self._dest.parent, prefix=".vox-rec-"
             ) as tmp,
             PinnedDirectory.opened(self._dest.parent / tmp) as directory,
-            self._open_staged(directory.fd) as staged,
         ):
-            count = fetch(staged)
-            staged.flush()
-            self._publish(staged, directory.fd)
-            return count
+            info = os.fstat(directory.fd)
+            if info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0:
+                flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+                fd = os.open(_STAGED_FILE, flags, 0o600, dir_fd=directory.fd)
+                with os.fdopen(fd, "w+b") as staged:
+                    yield staged, directory.fd
+                return
+        # Filesystems that ignore mkdtemp's mode cannot safely stage by name.
+        with tempfile.TemporaryFile(dir=self._dest.parent) as staged:
+            yield staged, None
 
-    @staticmethod
-    def _open_staged(dir_fd: int) -> IO[bytes]:
-        """Open the staging file within the pinned, private directory."""
-        if os.fstat(dir_fd).st_uid != os.geteuid():
-            raise PermissionError(
-                "recording staging directory is not owned by this user"
-            )
-        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
-        return os.fdopen(os.open(_STAGED_FILE, flags, 0o600, dir_fd=dir_fd), "w+b")
-
-    def _publish(self, staged: IO[bytes], dir_fd: int) -> None:
+    def _publish(self, staged: IO[bytes], dir_fd: int | None) -> None:
         """Give the verified inode a final name, copying only if links fail."""
-        # Filesystems without POSIX permissions may ignore mkdtemp's mode.
-        if stat.S_IMODE(os.fstat(dir_fd).st_mode) & 0o077 == 0:
+        if dir_fd is not None:
             try:
                 os.link(_STAGED_FILE, self._dest, src_dir_fd=dir_fd)
                 return

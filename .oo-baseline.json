@@ -2368,10 +2368,10 @@
   "src/punt_vox/recording_download.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.2,
+    "avg_params": 1.0,
     "max_complexity": 4.0,
-    "avg_complexity": 2.2,
-    "module_size": 68.0,
+    "avg_complexity": 2.4,
+    "module_size": 72.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
