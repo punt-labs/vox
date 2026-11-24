@@ -1,10 +1,10 @@
-"""Tests for :mod:`punt_vox.voxd.voice_call.log_text`."""
+"""Tests for :mod:`punt_vox.voxd.log_text`."""
 
 from __future__ import annotations
 
 import pytest
 
-from punt_vox.voxd.voice_call.log_text import LogText
+from punt_vox.voxd.log_text import LogText
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.input_device import PortAudio
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
@@ -15,7 +16,6 @@ from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_trace import CallTrace
 from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
 from punt_vox.voxd.voice_call.inputs import ScriptInput
-from punt_vox.voxd.voice_call.log_text import LogText
 from punt_vox.voxd.voice_call.mic_input import MicInput
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker

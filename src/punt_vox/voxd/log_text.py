@@ -1,4 +1,4 @@
-"""What of a call's caller and worker text may reach one line of the daemon log."""
+"""What of caller, peer, device and worker text may reach one line of the daemon log."""
 
 from __future__ import annotations
 

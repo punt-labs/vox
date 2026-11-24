@@ -8,6 +8,7 @@ import logging
 import pytest
 
 from conversation_mode._mic_fakes import FakeBackend, FakeInputStream
+from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_capture import MicCapture
 
 
@@ -19,6 +20,30 @@ async def test_open_holds_the_device_before_any_chunk_is_read() -> None:
     assert stream.kwargs["blocksize"] == 320
     capture.close()
     assert stream.closed
+
+
+async def test_open_logs_a_device_name_with_a_newline_on_one_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The device names itself; its text cannot forge a call's end line."""
+
+    class _ForgingBackend:
+        def device(self) -> InputDevice:
+            return InputDevice("USB\nCall ended: forged", 48_000.0)
+
+        def open(self, **kwargs: object) -> FakeInputStream:
+            return FakeInputStream(**kwargs)
+
+    with caplog.at_level(logging.INFO):
+        capture = MicCapture.open(
+            _ForgingBackend(), sample_rate_hz=16_000, chunk_s=0.02
+        )
+    capture.close()
+    (line,) = [r.message for r in caplog.records if "input device" in r.message]
+    assert line == (
+        "Call input device: USB Call ended: forged (default 48000 Hz), "
+        "capturing at 16000 Hz"
+    )
 
 
 async def test_open_propagates_a_device_refusal_and_holds_nothing() -> None:

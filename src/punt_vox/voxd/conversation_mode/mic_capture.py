@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.block_queue import BlockQueue
+from punt_vox.voxd.log_text import LogText
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -65,9 +66,9 @@ class MicCapture:
         """
         block_frames = max(1, round(chunk_s * sample_rate_hz))
         device = backend.device()
-        logger.info(
+        logger.info(  # The device names itself: its text may not forge a line.
             "Call input device: %s (default %.0f Hz), capturing at %d Hz",
-            device.name,
+            LogText.reason(device.name),
             device.default_samplerate_hz,
             sample_rate_hz,
         )

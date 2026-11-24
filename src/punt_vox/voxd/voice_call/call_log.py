@@ -7,8 +7,8 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Final, Self, final
 
+from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.boss_tools import BossTools
-from punt_vox.voxd.voice_call.log_text import LogText
 from punt_vox.voxd.voice_call.mic_input import MicInput
 
 if TYPE_CHECKING:
@@ -70,8 +70,8 @@ class CallLog:
 
     @staticmethod
     def live(conversation_id: str) -> None:
-        """Log the conversation the agent answered on."""
-        logger.info("Call live: conversation %s", conversation_id)
+        """Log the conversation the agent answered on; the peer named it."""
+        logger.info("Call live: conversation %s", LogText.reason(conversation_id))
 
     @staticmethod
     def tool(name: str, answer: ToolReply) -> None:

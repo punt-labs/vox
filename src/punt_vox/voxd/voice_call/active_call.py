@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.voice_call.log_text import LogText
+from punt_vox.voxd.log_text import LogText
 
 if TYPE_CHECKING:
     from pathlib import Path

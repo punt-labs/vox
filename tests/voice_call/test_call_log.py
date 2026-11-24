@@ -58,6 +58,14 @@ def test_live_logs_the_conversation_id(records: pytest.LogCaptureFixture) -> Non
     assert _messages(records) == ["Call live: conversation conv_42"]
 
 
+def test_live_keeps_a_conversation_id_with_a_newline_on_one_line(
+    records: pytest.LogCaptureFixture,
+) -> None:
+    """The peer names the conversation; its text cannot forge an end line."""
+    CallLog.live("conv_42\nCall ended: forged")
+    assert _messages(records) == ["Call live: conversation conv_42 Call ended: forged"]
+
+
 class TestTool:
     def test_a_successful_tool_logs_ok(self, records: pytest.LogCaptureFixture) -> None:
         CallLog.tool("list_workers", ToolReply.ok(json.dumps({"workers": []})))
