@@ -333,6 +333,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     ).resolve()
 
+    segments = _text_input.resolve(text, from_file)
     spec = _fill_from_state(
         _validated_spec(
             SynthesisSpec(
@@ -350,7 +351,6 @@ def say(  # pyright: ignore[reportUnusedFunction]
         )
     )
 
-    segments = _text_input.resolve(text, from_file)
     _speak_segments(segments, spec, once or None)
 
 
