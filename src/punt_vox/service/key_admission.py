@@ -94,7 +94,14 @@ class AwsCredentials:
 
     def stale(self, merged: Mapping[str, str]) -> tuple[str, ...]:
         """Return the stored AWS keys left behind once *merged* replaced the pair."""
-        if all(self._stored.get(k, merged.get(k)) == merged.get(k) for k in _AWS_PAIR):
-            return ()
         written = {k for k, v in self._taken.items() if merged.get(k) == v}
+        if self._pair_kept(merged, written):
+            return ()
         return tuple(sorted(self._stored.keys() - written))
+
+    def _pair_kept(self, merged: Mapping[str, str], written: set[str]) -> bool:
+        """Return whether *merged* keeps the stored pair, or writes none at all."""
+        stored_pair = self._stored.keys() & _AWS_PAIR
+        if not stored_pair:
+            return not written & _AWS_PAIR
+        return all(self._stored[k] == merged.get(k) for k in stored_pair)

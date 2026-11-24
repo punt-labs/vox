@@ -97,6 +97,19 @@ def test_a_matching_pair_keeps_the_stored_token_the_shell_omits() -> None:
     assert merge.removed == ()
 
 
+@pytest.mark.parametrize("rotate", [False, True])
+def test_a_new_pair_drops_a_stored_token_with_no_pair(rotate: bool) -> None:
+    merge = KeysEnvMerge({"AWS_SESSION_TOKEN": "orphan"}, _STATIC_PAIR, rotate=rotate)
+    assert merge.merged == _STATIC_PAIR
+    assert merge.removed == ("AWS_SESSION_TOKEN",)
+
+
+def test_a_new_set_keeps_a_matching_stored_token() -> None:
+    merge = KeysEnvMerge({"AWS_SESSION_TOKEN": "token"}, _TEMPORARY_SET)
+    assert merge.merged == _TEMPORARY_SET
+    assert merge.removed == ()
+
+
 def test_completing_a_stored_pair_keeps_its_session_token() -> None:
     stored = {"AWS_ACCESS_KEY_ID": "ASIASHELL", "AWS_SESSION_TOKEN": "token"}
     shell = {"AWS_ACCESS_KEY_ID": "ASIASHELL", "AWS_SECRET_ACCESS_KEY": "shell"}
