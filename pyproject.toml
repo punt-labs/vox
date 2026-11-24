@@ -447,6 +447,7 @@ application = [
     "punt_vox.doctor_desktop",
     "punt_vox.doctor_guide",
     "punt_vox.doctor_mpv",
+    "punt_vox.doctor_output",
     "punt_vox.enablement",
     "punt_vox.nudge_hook",
     "punt_vox.resolve",

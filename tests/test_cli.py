@@ -1566,7 +1566,7 @@ class TestDoctorCommand:
                 return_value=config_path,
             ),
             patch(
-                f"{_doc}.default_output_dir",
+                "punt_vox.doctor_output.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
@@ -1727,7 +1727,7 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
+                "punt_vox.doctor_output.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
@@ -1815,7 +1815,7 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
+                "punt_vox.doctor_output.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
@@ -1889,7 +1889,7 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
+                "punt_vox.doctor_output.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
