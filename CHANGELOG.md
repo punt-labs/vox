@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox doctor` probes the output dir with a private, uniquely created
+  temporary file, so it no longer overwrites or deletes an existing
+  `.doctor_test` file or writes through a symlink of that name. (PL-1431)
+
 - Fall back to `~/Music` instead of aborting when Linux's XDG user-dirs file
   is not UTF-8. (PL-1429)
 
