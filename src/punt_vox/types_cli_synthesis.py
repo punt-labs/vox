@@ -9,7 +9,7 @@ import typer
 __all__ = ["LanguageOpt", "RateOpt", "SynthesisOptions"]
 
 LanguageOpt = Annotated[
-    str | None,
+    str | None,  # Omitting --language leaves provider language selection unchanged.
     typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
 ]
 RateOpt = Annotated[
