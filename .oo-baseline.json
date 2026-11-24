@@ -990,10 +990,10 @@
   "src/punt_vox/config_text.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.67,
+    "avg_params": 0.86,
     "max_complexity": 3.0,
-    "avg_complexity": 1.5,
-    "module_size": 45.0,
+    "avg_complexity": 1.43,
+    "module_size": 51.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

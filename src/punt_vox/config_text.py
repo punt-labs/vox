@@ -21,12 +21,21 @@ class ConfigEncodingError(UnicodeDecodeError):
 
     _path: Path
 
-    @classmethod
-    def at(cls, path: Path, error: UnicodeDecodeError) -> Self:
-        """Attach the affected file without losing the original decode details."""
-        fault = cls(error.encoding, error.object, error.start, error.end, error.reason)
-        fault._path = path
-        return fault
+    def __new__(cls, path: Path, error: UnicodeDecodeError) -> Self:
+        """Bind the path and initialize the built-in decoder fields."""
+        self = super().__new__(cls)
+        UnicodeDecodeError.__init__(
+            self, error.encoding, error.object, error.start, error.end, error.reason
+        )
+        self._path = path
+        return self
+
+    if TYPE_CHECKING:
+
+        def __init__(self, path: Path, error: UnicodeDecodeError) -> None: ...
+    else:
+        # The native initializer takes codec fields, not this constructor's arguments.
+        __init__ = Exception.__init__
 
     @property
     def path(self) -> Path:
@@ -60,7 +69,7 @@ class ConfigText:
         except FileNotFoundError:
             return None
         except UnicodeDecodeError as exc:
-            raise ConfigEncodingError.at(self._path, exc) from exc
+            raise ConfigEncodingError(self._path, exc) from exc
 
     def replace(self, text: str) -> None:
         """Land all or none of the text, respecting existing permissions or umask."""
