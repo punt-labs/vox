@@ -356,27 +356,13 @@ class ProgramService:
         """
         self._channel.post(StepBack())
 
-    def pause(self) -> None:
-        """Suspend the active source in place (Z ``Pause``): only while active.
+    def pause(self) -> bool:
+        """Suspend the active source in place, or return False when off."""
+        return self._channel.apply_transport(self._suspension.pause)
 
-        Pause holds the player where it is -- the cursor stays put and never
-        auto-advances -- so it is meaningful only when a source is active; against
-        an idle daemon it is a no-op. Idempotent while already paused. The scene
-        re-push rides the change signal directly, since pause mutates no source
-        cursor and so posts no control command.
-        """
-        if self._context.current is None:
-            return
-        self._suspension.pause()
-        self._changes.emit()
-
-    def resume(self) -> None:
-        """Continue a suspended source (Z ``Resume``): only from paused.
-
-        Idempotent while already playing; the change signal re-pushes the scene.
-        """
-        self._suspension.resume()
-        self._changes.emit()
+    def resume(self) -> bool:
+        """Continue a suspended source, or return False when off."""
+        return self._channel.apply_transport(self._suspension.resume)
 
     @contextmanager
     def hold_music_for_call(self) -> Generator[None]:

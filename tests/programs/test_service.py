@@ -388,14 +388,15 @@ class TestTransport:
     async def test_t4_pause_only_from_active_then_resume(self, tmp_path: Path) -> None:
         service = await self._play_three(tmp_path)
         assert service.status().paused is False
-        service.pause()  # T4: pause from playing
+        assert service.pause() is True  # T4: pause from playing
         assert service.status().paused is True
-        service.resume()  # T4: resume from paused
+        assert service.resume() is True  # T4: resume from paused
         assert service.status().paused is False
 
-    def test_t4_pause_when_idle_is_a_no_op(self, tmp_path: Path) -> None:
+    def test_t4_pause_when_idle_is_rejected(self, tmp_path: Path) -> None:
         service = _service(tmp_path)  # nothing playing
-        service.pause()
+        assert service.pause() is False
+        assert service.resume() is False
         assert service.status().is_idle
         assert service.status().paused is False  # pause only from an active source
 
