@@ -84,16 +84,31 @@ def _git_repo(path: Path) -> Path:
     return path
 
 
-def _wait_for_port_file(run_dir: Path, daemon: subprocess.Popen[bytes]) -> int:
+def _tail(path: Path, lines: int = 40) -> str:
+    """Return the last *lines* of *path*, or a note when it does not exist yet."""
+    if not path.is_file():
+        return f"({path.name} was not written)"
+    return "\n".join(path.read_text().splitlines()[-lines:])
+
+
+def _daemon_detail(home: Path, stderr: Path) -> str:
+    log = home / ".punt-labs" / "vox" / "logs" / "vox.log"
+    return f"--- stderr ---\n{_tail(stderr)}\n--- vox.log ---\n{_tail(log)}"
+
+
+def _wait_for_port_file(
+    run_dir: Path, daemon: subprocess.Popen[bytes], home: Path, stderr: Path
+) -> int:
     deadline = time.monotonic() + _STARTUP_TIMEOUT_S
     port_file = run_dir / "serve.port"
     while time.monotonic() < deadline:
         if daemon.poll() is not None:
-            raise RuntimeError(f"voxd exited early with {daemon.returncode}")
+            msg = f"voxd exited early with {daemon.returncode}\n"
+            raise RuntimeError(msg + _daemon_detail(home, stderr))
         if port_file.is_file() and (run_dir / "serve.token").is_file():
             return int(port_file.read_text().strip())
         time.sleep(0.1)
-    raise TimeoutError("voxd did not write serve.port")
+    raise TimeoutError("voxd did not write serve.port\n" + _daemon_detail(home, stderr))
 
 
 @pytest.fixture
@@ -116,24 +131,36 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
 @contextmanager
 def _daemon(env: dict[str, str]) -> Generator[int]:
-    """Run voxd on a free port under *env*; yield the port it serves."""
+    """Run voxd on a free port under *env*; yield the port it serves.
+
+    The daemon must still be running at teardown: one that died during the
+    call fails the test with its exit code, its stderr and the tail of its log.
+    """
     port = _free_port()
-    process = subprocess.Popen(
-        [sys.executable, "-m", "punt_vox.voxd.daemon", "--port", str(port)],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    home = Path(env["HOME"])
+    stderr_path = home / "voxd.stderr"
+    with stderr_path.open("wb") as stderr:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "punt_vox.voxd.daemon", "--port", str(port)],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+        )
     try:
-        run_dir = Path(env["HOME"]) / ".punt-labs" / "vox" / "run"
-        yield _wait_for_port_file(run_dir, process)
+        run_dir = home / ".punt-labs" / "vox" / "run"
+        yield _wait_for_port_file(run_dir, process, home, stderr_path)
     finally:
+        exited = process.poll()
         process.terminate()
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
+    assert exited is None, (
+        f"voxd exited with {exited} during the test\n"
+        + _daemon_detail(home, stderr_path)
+    )
 
 
 def _script(tmp_path: Path) -> Path:
@@ -162,9 +189,22 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
     try:
         return _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
     finally:
-        # A call the CLI gave up on is still live in the daemon until stopped;
-        # with no call active the stop is refused, which is the normal case.
-        _vox(env, "call", "stop", timeout=_STOP_TIMEOUT_S)
+        _stop_call(env)
+
+
+def _stop_call(env: dict[str, str]) -> None:
+    """Stop a call the CLI may have left live; a refusal for no call is normal.
+
+    A hung stop must not replace the call's own outcome, so its timeout is
+    reported as a note, not raised over whatever the call raised.
+    """
+    try:
+        stop = _vox(env, "call", "stop", timeout=_STOP_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        msg = f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
+        raise RuntimeError(msg) from exc
+    refused = stop.returncode == 2 and "no call is active" in stop.stderr
+    assert stop.returncode == 0 or refused, stop.stdout + stop.stderr
 
 
 async def _run_call(
@@ -185,10 +225,11 @@ def _daemon_log(env: dict[str, str]) -> str:
 
 def _trace_events(report: str) -> list[str]:
     trace_line = next(
-        line for line in report.splitlines() if line.startswith("trace: ")
+        (line for line in report.splitlines() if line.startswith("trace: ")), None
     )
+    assert trace_line is not None, report
     trace = Path(trace_line.removeprefix("trace: "))
-    assert trace.is_file()
+    assert trace.is_file(), report
     return [json.loads(line)["type"] for line in trace.read_text().splitlines()]
 
 
@@ -221,6 +262,7 @@ def test_scripted_call_reaches_the_tool_result(
     assert "tmux" in daemon_log
 
     report = result.stdout + result.stderr
+    assert result.returncode == 0, report
     assert "agent: Starting a worker on that now." in report
     assert "tool: start_worker(" in report
     assert ") -> error" in report
