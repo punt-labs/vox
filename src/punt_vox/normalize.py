@@ -11,7 +11,8 @@ import re
 import unicodedata
 from typing import final
 
-from punt_vox._inline_code import VIBE_TAG_RE, InlineCode
+from punt_vox._inline_code import InlineCode
+from punt_vox._link_labels import VIBE_TAG_RE
 from punt_vox._speech_abbreviations import SpeechAbbreviations
 from punt_vox._speech_punctuation import SpeechPunctuation
 
@@ -535,12 +536,12 @@ class SpeechText:
     @classmethod
     def normalize(cls, text: str) -> str:
         """Normalize text without interpreting expressive tags."""
-        return cls._words(InlineCode.prepare_speech(text))
+        return cls._words(InlineCode.rewrite_currency(text))
 
     @classmethod
     def for_synthesis(cls, text: str, *, expressive: bool) -> str:
         """Normalize text, retaining expressive tags only for supported models."""
-        prepared = InlineCode.prepare_speech(text, vibed=True)
+        prepared = InlineCode.rewrite_currency(text, vibed=True)
         if not expressive:
             return cls._words(VIBE_TAG_RE.sub("", prepared))
         return " ".join(filter(None, cls._expressive_parts(prepared)))

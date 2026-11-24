@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, cast, final, override
+from typing import TYPE_CHECKING, NamedTuple, cast, final, override
 
 from markdown_it import MarkdownIt
 from markdown_it.rules_block import fence
 from markdown_it.rules_inline import backtick, image, link
 
+from punt_vox._link_labels import VIBE_TAG_RE, LinkSpan
 from punt_vox._markdown_offsets import MarkdownOffsets
 
 if TYPE_CHECKING:
@@ -20,8 +21,13 @@ if TYPE_CHECKING:
 
 _SOURCE_OFFSET = "vox_source_offset"
 _VIBED = "vox_vibed"
-VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 _FENCE_TAGS = re.compile(rf"(?:{VIBE_TAG_RE.pattern}[ \t]*)+(?=`{{3,}}|~{{3,}})")
+
+
+class CodeSpan(NamedTuple):
+    opening: int
+    start: int
+    end: int
 
 
 @final
@@ -39,52 +45,39 @@ class SpeechMarkdown:
     """Parse speech Markdown and retain offsets into the original input."""
 
     @classmethod
-    def link_labels(cls, text: str, *, vibed: bool) -> str:
-        """Keep inline link labels in prose and drop their destination syntax."""
-        if "](" not in text:
-            return text
-        parts: list[str] = []
-        cursor = 0
-        removals = (
-            bounds
-            for left, label_end, right in cls._link_spans(text, vibed=vibed)
-            for bounds in ((left, left + 1), (label_end, right + 1))
-        )
-        for start, end in sorted(removals):
-            parts.append(text[cursor:start])
-            cursor = end
-        parts.append(text[cursor:])
-        return "".join(parts)
-
-    @classmethod
-    def _link_spans(cls, text: str, *, vibed: bool) -> Iterator[tuple[int, int, int]]:
+    def spans(cls, text: str, *, vibed: bool) -> Iterator[CodeSpan | LinkSpan]:
+        """Yield code and link bounds from the original Markdown parse."""
+        if "`" not in text and "](" not in text:
+            return
         for token, lines in cls._inline_sources(text, vibed=vibed):
             offsets = MarkdownOffsets.from_content(text, lines, token.content)
             for child, relative in cls._source_tokens(token.children or ()):
-                if child.type != "link_open" or _SOURCE_OFFSET not in child.meta:
+                try:
+                    span = cls._source_span(child, relative, offsets)
+                except KeyError:
                     continue
-                left, label_end, right = cast(
-                    "tuple[int, int, int]", child.meta[_SOURCE_OFFSET]
-                )
-                left, label_end, right = (
-                    relative + left,
-                    relative + label_end,
-                    relative + right,
-                )
-                if left in offsets and label_end in offsets and right in offsets:
-                    yield offsets[left], offsets[label_end], offsets[right]
+                if span is not None:
+                    yield span
 
-    @classmethod
-    def code_spans(cls, text: str, *, vibed: bool) -> Iterator[tuple[int, int, int]]:
-        """Yield the opening delimiter and body boundaries of inline code."""
-        for token, lines in cls._inline_sources(text, vibed=vibed):
-            spans = tuple(cls._code_spans(token.children or ()))
-            if not spans:
-                continue
-            ticks = MarkdownOffsets.from_content(text, lines, token.content)
-            for opening, closing, width in spans:
-                if opening in ticks and closing in ticks:
-                    yield ticks[opening], ticks[opening] + width, ticks[closing]
+    @staticmethod
+    def _source_span(
+        token: Token, offset: int, positions: dict[int, int]
+    ) -> CodeSpan | LinkSpan | None:
+        if token.type == "code_inline":
+            opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
+            width = len(token.markup)
+            start = positions[offset + opening]
+            return CodeSpan(start, start + width, positions[offset + end - width])
+        if token.type == "link_open" and _SOURCE_OFFSET in token.meta:
+            opening, label_end, end = cast(
+                "tuple[int, int, int]", token.meta[_SOURCE_OFFSET]
+            )
+            return LinkSpan(
+                positions[offset + opening],
+                positions[offset + label_end],
+                positions[offset + end] + 1,
+            )
+        return None
 
     @classmethod
     def _inline_sources(
@@ -94,14 +87,6 @@ class SpeechMarkdown:
         for token in cls._MARKDOWN.parse(text, {_VIBED: vibed}):
             if token.type == "inline" and token.map is not None and token.children:
                 yield token, lines[token.map[0] : token.map[1] + 1]
-
-    @classmethod
-    def _code_spans(cls, tokens: Sequence[Token]) -> Iterator[tuple[int, int, int]]:
-        for token, offset in cls._source_tokens(tokens):
-            if token.type == "code_inline":
-                opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
-                width = len(token.markup)
-                yield offset + opening, offset + end - width, width
 
     @classmethod
     def _source_tokens(
