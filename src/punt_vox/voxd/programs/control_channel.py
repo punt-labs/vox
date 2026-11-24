@@ -26,9 +26,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode_transition_log import ModeTransitionLog
+from punt_vox.voxd.programs.program import Program
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.change_signal import ChangeSignal
@@ -91,6 +93,15 @@ class ControlChannel:
     def source(self) -> PlaybackSource:
         """Return the active source this channel is the sole writer to."""
         return self._source
+
+    def require_active(self) -> None:
+        """Reject synchronous transport for an initial or stopped Program.
+
+        Raises:
+            GuardViolationError: If the playback mode is off.
+        """
+        if isinstance(self._source, Program) and self._source.mode is Mode.OFF:
+            GuardViolationError.reject("Nothing playing.")
 
     def retarget(self, source: PlaybackSource) -> None:
         """Swap which source the sole writer animates (a switch to program/replay).

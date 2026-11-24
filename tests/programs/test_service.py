@@ -22,6 +22,7 @@ from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.library import MusicLibrary
 
 from .conftest import QuietProducer, make_service, seed_album
@@ -393,9 +394,10 @@ class TestTransport:
         service.resume()  # T4: resume from paused
         assert service.status().paused is False
 
-    def test_t4_pause_when_idle_is_a_no_op(self, tmp_path: Path) -> None:
+    def test_t4_pause_when_idle_is_rejected(self, tmp_path: Path) -> None:
         service = _service(tmp_path)  # nothing playing
-        service.pause()
+        with pytest.raises(GuardViolationError, match="Nothing playing"):
+            service.pause()
         assert service.status().is_idle
         assert service.status().paused is False  # pause only from an active source
 

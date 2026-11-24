@@ -27,6 +27,7 @@ from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.status_handler import StatusHandler
 from punt_vox.voxd.programs.stop_handler import StopHandler
+from punt_vox.voxd.programs.transport_handlers import PauseHandler, ResumeHandler
 
 from .conftest import make_service, seed_album
 
@@ -104,6 +105,29 @@ class TestMutatingHandlers:
     async def test_next_acks(self, tmp_path: Path) -> None:
         reply = await _reply(NextHandler(_service(tmp_path)), {"id": "2"})
         assert reply == {"type": "program_next", "id": "2"}
+
+    @pytest.mark.parametrize("handler", [PauseHandler, ResumeHandler])
+    @pytest.mark.parametrize("stopped_program", [False, True])
+    async def test_pause_and_resume_report_nothing_playing(
+        self,
+        tmp_path: Path,
+        handler: type[PauseHandler] | type[ResumeHandler],
+        stopped_program: bool,
+    ) -> None:
+        service = _service(tmp_path)
+        if stopped_program:
+            service.turn_on(style="trance", vibe="calm", name=None, prompts=None)
+            await service.run_once()
+            service.stop()
+            await service.run_once()
+        reply = await _reply(handler(service), {"id": "2"})
+        assert reply == {
+            "type": f"program_{handler.__name__.removesuffix('Handler').lower()}",
+            "applied": False,
+            "message": "Nothing playing.",
+            "id": "2",
+        }
+        assert service.status().mode.value == "off"
 
     async def test_select_by_tags_acks_and_plays(self, tmp_path: Path) -> None:
         seed_album(tmp_path / "programs", 1, 2, 3, style="trance", vibe="calm")

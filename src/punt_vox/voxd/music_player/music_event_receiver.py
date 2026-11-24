@@ -11,6 +11,7 @@ from punt_vox.voxd.music_player.player_event_codec import (
     PlayerEventCodec,
 )
 from punt_vox.voxd.music_player.wire import MusicTopic
+from punt_vox.voxd.programs.guard import GuardViolationError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -63,7 +64,11 @@ class MusicEventReceiver:
         with LuxFaultBoundary(
             logger, "music operation could not play; showing it in the scene"
         ) as fault:
-            event.apply(self._service)
+            try:
+                event.apply(self._service)
+            except GuardViolationError:
+                logger.info("[lux] music operation skipped: reason=guard_rejected")
+                return
         if fault.failed():
             self._surface_failure(event)
 

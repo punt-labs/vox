@@ -1,15 +1,12 @@
 """The shared base for the mutating program wire handlers (template method).
 
-Every mutating ``program_*`` handler is the same thin adapter: parse the wire
-message, hand the work to the :class:`ProgramService` (which POSTs one serialized
-:class:`ControlSignal` -- the handler never touches the Program), and reply. Only
-the parse-and-dispatch step differs per command, so it is the one abstract hook;
-the request-id plumbing, the applied ack, and the boundary error reply live here
-once.
+Every mutating ``program_*`` handler parses the wire message, hands the work to
+:class:`ProgramService`, and replies. Only parse-and-dispatch varies by command.
+An unmet synchronous playback guard is a no-op, not a malformed request.
 
 The boundary catches every *expected* domain failure and replies through
-:class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` (a bad
-request or a lost-race guard) is a rejected client request audited as ``error``,
+:class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` for a bad
+request is audited as ``error``,
 while a ``LookupError`` (``store.open`` on a deleted album dir) or an ``OSError``
 (``store.create``'s ``mkdir(exist_ok=False)`` mint-race guard, disk-full,
 permissions) is a server-side operational failure audited as ``fault``. Letting
@@ -21,9 +18,11 @@ every frame and no-ops on a gone peer. Handlers hold no session and no owner --
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Self
 
+from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -32,6 +31,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.service import ProgramService
 
 __all__ = ["ProgramCommandHandler"]
+
+logger = logging.getLogger(__name__)
 
 
 class ProgramCommandHandler(ABC):
@@ -51,19 +52,20 @@ class ProgramCommandHandler(ABC):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Parse and dispatch, replying with an ack, a rejection, or a fault.
 
-        The boundary classifies the domain failure through
-        :meth:`WireReply.reject_or_fault`: a ``ValueError`` is a rejected client
-        request (``error``), a ``LookupError``/``OSError`` a server-side
-        operational failure (``fault``). The ack and both failure frames are
-        id-stamped and gone-peer-safe, matching the store handlers.
+        Unmet playback guards return a command reply with ``applied=False``.
+        :meth:`WireReply.reject_or_fault` handles other expected failures.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
+        payload: dict[str, object] = {"type": self._WIRE_TYPE}
         try:
             self._run(msg)
+        except GuardViolationError as exc:
+            logger.info("%s skipped: reason=guard_rejected", self._WIRE_TYPE)
+            payload.update(applied=False, message=str(exc))
         except (ValueError, LookupError, OSError) as exc:
             await reply.reject_or_fault(exc)
             return
-        await reply.send({"type": self._WIRE_TYPE})
+        await reply.send(payload)
 
     @abstractmethod
     def _run(self, msg: dict[str, object], /) -> None:

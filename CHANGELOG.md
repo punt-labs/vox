@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer leaves a lock file or empty `.punt-labs/` directories behind.
   (PL-1552)
 
+- `vox music pause` and `vox music resume` report "Nothing playing." instead
+  of claiming success when music is off. (PL-1553)
+
 - `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
   text mode. JSON output is unchanged. (PL-1549)
 

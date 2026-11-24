@@ -357,24 +357,22 @@ class ProgramService:
         self._channel.post(StepBack())
 
     def pause(self) -> None:
-        """Suspend the active source in place (Z ``Pause``): only while active.
+        """Suspend the active source in place (Z ``Pause``).
 
-        Pause holds the player where it is -- the cursor stays put and never
-        auto-advances -- so it is meaningful only when a source is active; against
-        an idle daemon it is a no-op. Idempotent while already paused. The scene
-        re-push rides the change signal directly, since pause mutates no source
-        cursor and so posts no control command.
+        Raises:
+            GuardViolationError: If the current playback mode is off.
         """
-        if self._context.current is None:
-            return
+        self._channel.require_active()
         self._suspension.pause()
         self._changes.emit()
 
     def resume(self) -> None:
-        """Continue a suspended source (Z ``Resume``): only from paused.
+        """Continue a suspended source (Z ``Resume``).
 
-        Idempotent while already playing; the change signal re-pushes the scene.
+        Raises:
+            GuardViolationError: If the current playback mode is off.
         """
+        self._channel.require_active()
         self._suspension.resume()
         self._changes.emit()
 
