@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -99,6 +101,51 @@ async def test_session_vibe_does_not_reuse_literal_or_legacy_audio(
         repeat.path.unlink()
     calls = mock_elevenlabs_client.text_to_speech.stream.call_args_list
     assert [call.kwargs["text"] for call in calls] == ["[whispers] Come closer."] * 2
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_replay_pre_upgrade_cache_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+) -> None:
+    prefix = "[whispers] "
+    body = " ".join(["The last train is waiting."] * 210)
+    legacy_payload = json.dumps(
+        {
+            "version": 3,
+            "text": prefix + body,
+            "voice": "",
+            "provider": "elevenlabs",
+            "model": "eleven_v3",
+            "rate": None,
+            "language": None,
+            "stability": None,
+            "similarity": None,
+            "style": None,
+            "speaker_boost": None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    legacy_digest = hashlib.md5(legacy_payload, usedforsecurity=False).hexdigest()
+    (tmp_path / f"{legacy_digest}.mp3").write_bytes(_get_valid_mp3_bytes())
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    spec = SynthesisSpec(
+        provider="elevenlabs", model="eleven_v3", vibe_tags=prefix.strip()
+    )
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(body, spec)
+    outcome.path.unlink()
+
+    assert not outcome.cached
+    chunks = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert len(chunks) > 1
+    assert all(call.kwargs["text"].startswith(prefix) for call in chunks)
 
 
 @pytest.mark.parametrize(
