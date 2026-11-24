@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, final
 
 import typer
@@ -11,11 +9,13 @@ from typer._click.exceptions import UsageError
 from typer.core import TyperGroup
 
 from punt_vox import usage
+from punt_vox.cli_failures import CliFailures
 from punt_vox.cli_json_request import JsonRequest
 from punt_vox.commands.worker import WorkerCli
-from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from typer._click import Command, Context
 
 
@@ -43,13 +43,17 @@ class VoxGroup(TyperGroup):
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Read the output mode before Click can reject an argument."""
         self._json_requested = JsonRequest(self).requested(ctx, args)
-        with self._usage_errors():
+        with self._failure_boundary():
             return super().parse_args(ctx, args)
 
     def invoke(self, ctx: Context) -> object:
         """Include command resolution and child-command parsing in the boundary."""
-        with self._usage_errors():
+        with self._failure_boundary():
             return super().invoke(ctx)
+
+    def _failure_boundary(self) -> AbstractContextManager[None]:
+        """Use the same output mode for parser and runtime failures."""
+        return CliFailures.report(json_output=self._json_requested)
 
     def resolve_command(
         self, ctx: Context, args: list[str]
@@ -70,13 +74,3 @@ class VoxGroup(TyperGroup):
         ):
             raise UsageError(f"Missing command for '{name}'.", ctx=ctx)
         return name, command, rest
-
-    @contextmanager
-    def _usage_errors(self) -> Generator[None]:
-        try:
-            yield
-        except UsageError as exc:
-            if not self._json_requested:
-                raise
-            OutputFormatter(json_output=True).error(exc.format_message(), "")
-            raise typer.Exit(exc.exit_code) from exc
