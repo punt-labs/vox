@@ -1350,11 +1350,78 @@ class TestApplyVibeForSynthesis:
         )
         assert result == "[whisper] my function works"
 
+    def test_v3_speaks_suffix_amount_but_not_inline_code(self) -> None:
+        result = self._apply("[whisper] 5€ or `5€`.", None, "elevenlabs", "eleven_v3")
+        assert result == "[whisper] 5 euros or 5."
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("prefix", "suffix", "expected"),
+        [
+            ("$12.50", "12.50$", "12 dollars and 50 cents"),
+            ("$1.01", "1.01$", "1 dollar and 1 cent"),
+            ("-$.05", "-.05$", "minus 5 cents"),
+            ("$0.5", "0.5$", "50 cents"),
+            ("$1.00", "1.00$", "1 dollar"),
+            ("$0.00", "0.00$", "0 dollars"),
+            ("$1.005", "1.005$", "1.005 dollars"),
+            ("€12.50", "12.50€", "12 euros and 50 cents"),
+            ("€1.01", "1.01€", "1 euro and 1 cent"),
+            ("€0.50", "0.50€", "50 euro cents"),
+            ("€.01", ".01€", "1 euro cent"),
+            ("£12.50", "12.50£", "12 pounds and 50 pence"),
+            ("£1,000.25", "1,000.25£", "1,000 pounds and 25 pence"),
+            ("£1.01", "1.01£", "1 pound and 1 penny"),
+            ("£.01", ".01£", "1 penny"),
+        ],
+    )
+    def test_decimal_currency_prefix_and_suffix_speak_alike(
+        self, model: str, prefix: str, suffix: str, expected: str
+    ) -> None:
+        prefixed = self._apply(prefix, None, "elevenlabs", model)
+        suffixed = self._apply(suffix, None, "elevenlabs", model)
+        assert prefixed == suffixed == expected
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("eleven_v3", "[whisper] 5 euros."),
+            ("eleven_multilingual_v2", "5 euros."),
+        ],
+    )
+    def test_speaks_suffix_amount_adjacent_to_tag(
+        self, model: str, expected: str
+    ) -> None:
+        assert self._apply("[whisper]5€.", None, "elevenlabs", model) == expected
+
     def test_trailing_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [alert] [serious]", None, "polly", None)
         assert result == "hello"
         assert "alert" not in result
         assert "serious" not in result
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [("eleven_v3", "5 euros [laugh]"), ("eleven_multilingual_v2", "5 euros")],
+    )
+    def test_speaks_suffix_amount_before_adjacent_tag(
+        self, model: str, expected: str
+    ) -> None:
+        assert self._apply("5€[laugh]", None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("eleven_v3", "5 euros [pause] 10 years ago"),
+            ("eleven_multilingual_v2", "5 euros 10 years ago"),
+        ],
+    )
+    def test_keeps_tag_boundary_between_suffix_amount_and_number(
+        self, model: str, expected: str
+    ) -> None:
+        assert (
+            self._apply("5€[pause]10 years ago", None, "elevenlabs", model) == expected
+        )
 
     def test_inline_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [serious] world", None, "polly", None)
