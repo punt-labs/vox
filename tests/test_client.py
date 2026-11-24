@@ -1156,6 +1156,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                    "missing": [],
                 }
             ),
             *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
@@ -1181,6 +1182,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "001.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1201,6 +1203,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [{"part": "../escape.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1222,6 +1225,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "/etc/pwned",
                     "parts": [{"part": "001.mp3", "bytes": 3}],
+                    "missing": [],
                 }
             )
         )
@@ -1250,6 +1254,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [],
+                    "missing": [],
                 }
             )
         )
@@ -1325,6 +1330,7 @@ class TestVoxClientRecMusic:
                     "id": "m1",
                     "album": "warm-pads-7f3a91",
                     "parts": [],
+                    "missing": [],
                 }
             )
         )
@@ -1343,6 +1349,7 @@ class TestVoxClientRecMusic:
                         "id": "m2",
                         "album": "warm-pads-7f3a91",
                         "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                        "missing": [],
                     }
                 ),
                 *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
@@ -1372,6 +1379,7 @@ class TestVoxClientRecMusic:
                             {"part": "001.mp3", "bytes": len(first)},
                             {"part": "002.mp3", "bytes": len(second)},
                         ],
+                        "missing": [],
                     }
                 ),
                 *[json.dumps(f) for f in _fetch_frames(first, chunk=4)],
@@ -2085,7 +2093,7 @@ class TestVoxClientSyncFrameDispatch:
         # test in test_client for a real manifest covers that path.
         sync = self._sync()
         mock_ws = self._mock_ws_yielding(
-            {"type": "music_manifest", "album": "alb-3", "parts": []}
+            {"type": "music_manifest", "album": "alb-3", "parts": [], "missing": []}
         )
         with (
             patch(

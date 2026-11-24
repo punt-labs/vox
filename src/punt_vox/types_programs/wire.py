@@ -110,16 +110,6 @@ class JsonObject:
             raise self._wrong(field, "a list")
         return tuple(cast("list[object]", value))
 
-    def opt_list(self, field: str) -> tuple[object, ...]:
-        """Return an array field as a tuple, or an empty tuple when absent or null.
-
-        Raises:
-            ValueError: If a present, non-null field has the wrong type.
-        """
-        if self._data.get(field) is None:
-            return ()
-        return self.require_list(field)
-
     def opt_object(self, field: str) -> JsonObject | None:
         """Return a nested object field, or ``None`` when the key is absent or null.
 

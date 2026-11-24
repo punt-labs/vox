@@ -39,8 +39,7 @@ class ExportManifest:
         """Return the manifest in *reply*, every name validated as a bare filename.
 
         Validating daemon-supplied names before any join means a tampered frame
-        cannot write outside the destination. A reply without ``missing`` (an
-        older daemon) reports nothing missing.
+        cannot write outside the destination.
 
         Raises:
             ValueError: If the reply is malformed or a name is not a bare filename.
@@ -49,7 +48,7 @@ class ExportManifest:
         return cls(
             BareName(obj.require_str("album"), "album name").value,
             cls._names(obj.require_list("parts"), "manifest.parts"),
-            cls._names(obj.opt_list("missing"), "manifest.missing"),
+            cls._names(obj.require_list("missing"), "manifest.missing"),
         )
 
     @staticmethod

@@ -33,11 +33,9 @@ class TestExportManifest:
 
         assert manifest == ExportManifest("pads-a3f1c9", ("001.mp3",), ("002.mp3",))
 
-    def test_a_reply_without_missing_reports_none(self) -> None:
-        """An older daemon omits ``missing``; that is not a parse failure."""
-        manifest = ExportManifest.parse(_reply(["001.mp3"]))
-
-        assert manifest.missing == ()
+    def test_rejects_a_reply_without_missing(self) -> None:
+        with pytest.raises(ValueError, match="missing"):
+            ExportManifest.parse(_reply(["001.mp3"]))
 
     @pytest.mark.parametrize(
         ("parts", "missing"),
