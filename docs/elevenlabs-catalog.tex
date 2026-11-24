@@ -1,0 +1,78 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage{fuzz}
+
+\begin{document}
+\title{ElevenLabs Catalog Index: A Z Specification}
+\author{Punt Labs}
+\maketitle
+
+Scopes are credential digests; entries hold no client. The strong index
+retains up to eight entries in oldest-first order. The weak index also
+tracks entries that a caller holds after eviction. Isolated lookups and raw
+IDs do not enter either index.
+
+\begin{zed}
+  [SCOPE, ENTRY]
+\end{zed}
+
+\begin{schema}{CatalogIndex}
+  recent : \iseq SCOPE \\
+  held : SCOPE \pfun \nat_1 \\
+  live : SCOPE \pinj ENTRY
+\where
+  \# recent \leq 8 \\
+  \dom live = \ran recent \cup \dom held
+\end{schema}
+
+\begin{schema}{InitCatalog}
+  CatalogIndex'
+\where
+  recent' = \langle \rangle \\
+  held' = \emptyset \\
+  live' = \emptyset
+\end{schema}
+
+Opening a lookup is atomic under the index lock. An existing live entry is
+reused even if it is absent from the strong index. The caller's reference is
+held while it waits for or owns the entry lock.
+
+\begin{schema}{OpenLookup}
+  \Delta CatalogIndex \\
+  scope? : SCOPE \\
+  entry! : ENTRY
+\where
+  scope? \in \dom live \implies entry! = live~scope? \\
+  scope? \notin \dom live \implies entry! \notin \ran live \\
+  scope? \in \dom held \implies
+    held' = held \oplus \{scope? \mapsto held~scope? + 1\} \\
+  scope? \notin \dom held \implies
+    held' = held \cup \{scope? \mapsto 1\} \\
+  \exists ordered : \iseq SCOPE @ \\
+  \t1 ordered = (recent \filter (\ran recent \setminus \{scope?\}))
+    \cat \langle scope? \rangle \land \\
+  \t1 (\# ordered \leq 8 \implies recent' = ordered) \land \\
+  \t1 (\# ordered > 8 \implies recent' = tail~ordered) \\
+  live' = (\ran recent' \cup \dom held') \dres
+    (live \oplus \{scope? \mapsto entry!\})
+\end{schema}
+
+Finishing a lookup, including on error, releases its reference. An evicted
+entry disappears only once no caller still holds it.
+
+\begin{schema}{CloseLookup}
+  \Delta CatalogIndex \\
+  scope? : SCOPE
+\where
+  recent' = recent \\
+  scope? \in \dom held \\
+  held~scope? = 1 \implies held' = \{scope?\} \ndres held \\
+  held~scope? > 1 \implies
+    held' = held \oplus \{scope? \mapsto held~scope? - 1\} \\
+  live' = (\ran recent' \cup \dom held') \dres live
+\end{schema}
+
+The eviction-order and active-entry tests check the strong capacity and the
+live identity invariant. The entry tests check single-fetch coordination and
+release on refresh failure.
+
+\end{document}
