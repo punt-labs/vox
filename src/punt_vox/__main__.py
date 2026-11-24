@@ -589,10 +589,12 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """List or set the session voice for the active (or given) provider.
+    """List a provider's voices or set the active provider's voice.
 
     ``vox voice`` lists the roster; ``vox voice <name>`` writes to
     ``.punt-labs/vox/vox.md`` (a stray leading ``@`` is stripped).
+    ``--provider`` can list another provider's voices, but when setting a
+    voice it must match the active provider.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     _run(cmds.voice(_ctx(), name, provider))
@@ -795,7 +797,7 @@ app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 # call subcommand group (Conversation Mode; implementation in commands/call.py)
 # ---------------------------------------------------------------------------
 
-app.add_typer(CallCli.build_app(), name="call")
+app.add_typer(CallCli.build_app((_formatter, _flags)), name="call")
 
 
 # ---------------------------------------------------------------------------

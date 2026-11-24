@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox rec get` streams recordings to disk instead of keeping the entire
+  download in memory. It still verifies the download before saving it. (PL-1484)
+
+- Clarify in CLI help and docs that same-text recordings without `--name`
+  replace the earlier take and that distinct names keep takes separate. (PL-1486)
+
 - Separate panel provider/model roster fetches and atomic commits from scene
   orchestration without changing selector behavior. (PL-837)
 
@@ -31,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- `vox say --from` and `vox rec new --from` now reject a segments file with
+  no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
+  having said nothing, and skip whitespace-only segments instead of failing
+  the run. (PL-1483)
+
+- `vox enable` adds `.punt-labs/vox/vox.local.md` to the repo's `.gitignore`
+  (once, after any existing rules), so machine-local session state is never
+  committed. A symlinked `.gitignore`, which git does not read, stops enable
+  with an error instead of being written through. (PL-818)
+
+- `vox voice <name> --provider <provider>` rejects an inactive provider
+  without changing the active provider or saved voice. (PL-1487)
+
+- `vox music get` and `mic:music get` now export an album's surviving tracks
+  when a track file was deleted out of band, naming each skipped track
+  instead of failing the whole export. (PL-1476)
 
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)

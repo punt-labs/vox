@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Self, final
-
-import typer
+from typing import TYPE_CHECKING, final
 
 from punt_vox.commands.call_context import CallContextCommand
-from punt_vox.commands.voice_call import VoiceCall
 from punt_vox.commands.voice_call_cli import VoiceCallCli
+from punt_vox.commands.voice_call_status_cli import CallStatusCli
+
+if TYPE_CHECKING:
+    import typer
+
+    from punt_vox.cli_io import OutputFlags
+    from punt_vox.output_formatter import OutputFormatter
 
 __all__ = ["CallCli"]
 
@@ -25,15 +29,12 @@ class CallCli:
 
     __slots__ = ()
 
-    def __new__(cls) -> Self:
-        """Create a call cli."""
-        return super().__new__(cls)
-
-    @classmethod
-    def build_app(cls) -> typer.Typer:
+    @staticmethod
+    def build_app(
+        output: tuple[OutputFormatter, OutputFlags] | None = None,
+    ) -> typer.Typer:
         """Return the ``vox call`` Typer group with bound methods (no wrappers)."""
-        app = typer.Typer(help="Place or manage a Vox call.")
-        VoiceCallCli.register(app)
-        app.command("stop")(VoiceCall().stop)
+        app = VoiceCallCli.build_app()
+        app.command("status")(CallStatusCli(output).status)
         app.command("context")(CallContextCommand.show)
         return app
