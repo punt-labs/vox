@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.dedup import DedupHit
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = ["SynthesizeHandler"]
@@ -148,6 +149,29 @@ class _SpeechRequest:
         """
         await self._wire.audio(self.spec, payload)
 
+    async def reply_duplicate(self, hit: DedupHit) -> None:
+        """Validate and acknowledge a duplicate without a synthesis advisory."""
+        try:
+            SynthesisPipeline.normalized_text(self.text, self.spec)
+        except EmptyNormalizedTextError as exc:
+            await self.fail(exc)
+            return
+        logger.info(
+            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
+            self.request_id,
+            len(self.text),
+            hit.original_played_at,
+            hit.ttl_seconds_remaining,
+        )
+        await self._wire.send(
+            {
+                "type": "done",
+                "deduped": True,
+                "original_played_at": hit.original_played_at,
+                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+            }
+        )
+
     async def fault(self, fault: SafeFault) -> None:
         """Audit a server-side OPERATIONAL failure and send a prefix-free frame.
 
@@ -225,29 +249,7 @@ class SynthesizeHandler(MessageHandler):
         if hit is None:
             return True
 
-        async def reply_to_duplicate() -> None:
-            try:
-                SynthesisPipeline.normalized_text(req.text, req.spec)
-            except EmptyNormalizedTextError as exc:
-                await req.fail(exc)
-                return
-            logger.info(
-                "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
-                req.request_id,
-                len(req.text),
-                hit.original_played_at,
-                hit.ttl_seconds_remaining,
-            )
-            await req._wire.send(
-                {
-                    "type": "done",
-                    "deduped": True,
-                    "original_played_at": hit.original_played_at,
-                    "ttl_seconds_remaining": hit.ttl_seconds_remaining,
-                }
-            )
-
-        await reply_to_duplicate()
+        await req.reply_duplicate(hit)
         return None
 
     async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
