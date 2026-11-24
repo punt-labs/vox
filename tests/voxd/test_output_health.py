@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from threading import Event
 from typing import assert_type
@@ -112,10 +113,8 @@ def test_missing_output_requires_directory_creation_not_just_file_creation(
 ) -> None:
     root = tmp_path / "albums"
     with (
-        patch.object(
-            output_health.tempfile, "TemporaryDirectory", side_effect=PermissionError
-        ),
-        patch.object(output_health.tempfile, "TemporaryFile") as open_probe,
+        patch.object(tempfile, "TemporaryDirectory", side_effect=PermissionError),
+        patch.object(tempfile, "TemporaryFile") as open_probe,
     ):
         assert OutputHealth(root).probe()["output_dir"] == "not_writable"
 
@@ -136,7 +135,7 @@ def test_missing_output_requires_file_write_inside_created_directory(
         assert kwargs["buffering"] == 0
         raise PermissionError
 
-    with patch.object(output_health.tempfile, "TemporaryFile", side_effect=reject_file):
+    with patch.object(tempfile, "TemporaryFile", side_effect=reject_file):
         assert OutputHealth(root).probe()["output_dir"] == "not_writable"
 
     assert list(tmp_path.iterdir()) == []
