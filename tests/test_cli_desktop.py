@@ -529,7 +529,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert _install(out=tmp_path / "audio").exit_code == 0
 
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
+            config_path.name,
+            "vox",
         ]
 
     def test_failed_write_leaves_the_old_config_and_no_temp_sibling(
@@ -555,7 +556,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert "Could not write" in result.output
         assert config_path.read_text(encoding="utf-8") == original
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
+            config_path.name,
+            "vox",
         ]
 
     def test_a_symlinked_config_is_written_through_not_replaced(

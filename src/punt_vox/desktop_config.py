@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import suppress
 from typing import TYPE_CHECKING, ClassVar, Self, cast, final
 
@@ -103,7 +104,11 @@ class DesktopConfig:
         try:
             marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with suppress(FileExistsError):
-                marker.touch(mode=self._CONFIG_MODE, exist_ok=False)
+                fd = os.open(
+                    marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, self._CONFIG_MODE
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    stream.write("---\n\n---\n")
         except OSError as exc:
             raise self._error(f"Could not initialize Desktop Vox state: {exc}") from exc
         return workspace
