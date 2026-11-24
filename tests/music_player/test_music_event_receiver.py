@@ -94,7 +94,7 @@ def test_command_refusal_is_surfaced_without_exception_values(
 
 
 @pytest.mark.parametrize("command", ["pause", "resume"])
-def test_idle_transport_is_not_a_fault(
+def test_idle_transport_reprojects_without_a_fault(
     service: Mock, presenter: Mock, caplog: pytest.LogCaptureFixture, command: str
 ) -> None:
     caplog.set_level(logging.INFO)
@@ -104,7 +104,7 @@ def test_idle_transport_is_not_a_fault(
         f"music.{command}", {"extra": _PRIVATE}
     )
     transport.assert_called_once_with()
-    presenter.present_transport_failure.assert_not_called()
+    presenter.present_transport_failure.assert_called_once_with()
     assert f"received music.{command}; applying" in caplog.text
     assert all(record.levelno < logging.WARNING for record in caplog.records)
     assert _PRIVATE not in caplog.text

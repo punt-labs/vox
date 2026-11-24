@@ -60,11 +60,12 @@ class MusicEventReceiver:
 
     def _apply(self, event: PlayerEvent) -> None:
         """Apply an event, preserving refusal feedback on the scene only."""
+        applied: bool | None = None
         with LuxFaultBoundary(
             logger, "music operation could not play; showing it in the scene"
         ) as fault:
-            event.apply(self._service)
-        if fault.failed():
+            applied = event.apply(self._service)
+        if fault.failed() or applied is False:
             self._surface_failure(event)
 
     def _surface_failure(self, event: PlayerEvent) -> None:
