@@ -17,7 +17,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -114,24 +114,27 @@ def _mark_enabled(repo: Path) -> None:
     marker.write_text("", encoding="utf-8")
 
 
-def _poll_until(predicate: Callable[[], bool], *, timeout: float = 10.0) -> None:
-    """Poll *predicate* until it's true -- the spawn is backgrounded
-    (``nohup ... & disown``), so its effects land some time after the hook
-    process itself has already exited, with no parent left to bound the wait.
+def _wait_for_panel_spawn(sentinel: Path, *, timeout: float = 10.0) -> str:
+    """Read a complete invocation from the backgrounded panel stub.
+
+    The shell opens the sentinel for append before writing the record, so
+    the file can exist before the newline-terminated invocation is visible.
 
     10s, not 2s: a 15-run isolated rerun of this poll (no concurrent
     load) still missed a 2s deadline once, so 2s is not a safe bound for
-    OS scheduling of an already-disowned background process even at
-    rest. The predicate resolves in milliseconds on the happy path --
-    this loop returns as soon as it's true -- so a generous ceiling costs
-    nothing when the spawn is prompt and only matters on the rare slow
-    tail. 10s matches this file's own tolerance for hook subprocess
-    timing elsewhere (``subprocess.run(..., timeout=30)`` below).
+    OS scheduling of an already-disowned background process even at rest.
+    The loop returns as soon as the record is ready.
     """
     deadline = time.monotonic() + timeout
-    while not predicate():
+    while True:
+        try:
+            invocations = sentinel.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            invocations = ""
+        if invocations.endswith("\n"):
+            return invocations
         if time.monotonic() > deadline:
-            msg = "timed out waiting for the backgrounded panel spawn"
+            msg = f"timed out waiting for a complete panel invocation: {invocations!r}"
             raise AssertionError(msg)
         time.sleep(0.02)
 
@@ -155,7 +158,7 @@ def _path_without_vox_panel() -> str:
 
 # Sentinels from the no-spawn assertions, re-checked at module teardown. The
 # spawn is backgrounded, and this file's own polling evidence (see
-# _poll_until) is that a record can land after a 2-second window. The
+# _wait_for_panel_spawn) is that a record can land after a 2-second window. The
 # per-test window gives fast, attributed feedback; this sweep is the guard
 # sized to the observed tail.
 _NO_SPAWN_SENTINELS: list[Path] = []
@@ -496,7 +499,7 @@ class TestPanelSpawn:
         The spawn is backgrounded (``nohup ... & disown``), so its record can
         arrive after the hook process has already exited -- an instant check
         would pass before a slow leak lands, and by this file's own evidence
-        (see ``_poll_until``) even 2 seconds is not a safe bound. So the
+        (see ``_wait_for_panel_spawn``) even 2 seconds is not a safe bound. So the
         sentinel is also registered for the module-teardown sweep, which
         re-checks it long past the observed tail; this window gives fast,
         per-test attribution. The window is evidence, not the guarantee: the
@@ -531,6 +534,20 @@ class TestPanelSpawn:
         )
         return result.returncode
 
+    def test_waits_for_complete_invocation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sentinel = tmp_path / "sentinel.log"
+        record = "123 --session-pid 456\n"
+        snapshots = iter(("", record.rstrip("\n"), record))
+
+        def finish_next_write(_seconds: float) -> None:
+            sentinel.write_text(next(snapshots), encoding="utf-8")
+
+        monkeypatch.setattr(time, "sleep", finish_next_write)
+
+        assert _wait_for_panel_spawn(sentinel) == record
+
     def test_spawns_when_enabled_and_vox_panel_present(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
@@ -545,8 +562,7 @@ class TestPanelSpawn:
         rc = self._run_session_start(repo, env)
 
         assert rc == 0
-        _poll_until(sentinel.exists)
-        assert f"--session-pid {os.getpid()}" in sentinel.read_text(encoding="utf-8")
+        assert f"--session-pid {os.getpid()}" in _wait_for_panel_spawn(sentinel)
 
     def test_pgrep_guard_skips_a_second_spawn(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -560,7 +576,7 @@ class TestPanelSpawn:
         env["VOX_PANEL_SENTINEL"] = str(sentinel)
 
         assert self._run_session_start(repo, env) == 0
-        _poll_until(sentinel.exists)  # the first spawn is now alive (sleep 3)
+        _wait_for_panel_spawn(sentinel)  # the first spawn is now alive (sleep 3)
 
         assert self._run_session_start(repo, env) == 0
 
@@ -590,8 +606,7 @@ class TestPanelSpawn:
         rc = self._run_session_start(isolated_root, env)
 
         assert rc == 0, "the hook aborted before reaching the panel spawn"
-        _poll_until(sentinel.exists)
-        assert f"--session-pid {os.getpid()}" in sentinel.read_text(encoding="utf-8")
+        assert f"--session-pid {os.getpid()}" in _wait_for_panel_spawn(sentinel)
 
     def test_malformed_stdin_does_not_abort_the_hook(
         self, tmp_path: Path, isolated_root: Path
