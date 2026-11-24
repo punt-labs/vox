@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox music get` reads album metadata off the daemon event loop so slow disks
+  do not stall other requests. (PL-1539)
+
 - `vox rec get` streams recordings to disk instead of keeping the entire
   download in memory. It still verifies the download before saving it. (PL-1484)
 
@@ -37,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- `vox --json rec` reports operational errors, including an unavailable daemon,
+  as JSON on stdout, matching `vox --json music`. (PL-1538)
 
 - `vox say --from` and `vox rec new --from` validate the segment file before
   selecting a TTS provider. Invalid JSON errors name the file and location.

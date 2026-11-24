@@ -377,12 +377,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/cli_rec.py": {
-    "method_ratio": 0.962,
+    "method_ratio": 0.958,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.27,
+    "avg_params": 2.38,
     "max_complexity": 4.0,
-    "avg_complexity": 1.73,
-    "module_size": 295.0,
+    "avg_complexity": 1.71,
+    "module_size": 274.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 0.667,
     "init_violations": 0.0,
@@ -4627,6 +4627,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/programs/album_export_reader.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 2.0,
+    "module_size": 34.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/programs/album_id.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -4945,7 +4958,7 @@
     "avg_params": 1.82,
     "max_complexity": 4.0,
     "avg_complexity": 1.64,
-    "module_size": 111.0,
+    "module_size": 110.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

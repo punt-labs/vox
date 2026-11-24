@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+from threading import Event, get_ident
 from typing import TYPE_CHECKING, cast, final
 
 from starlette.websockets import WebSocketDisconnect
 
+from punt_vox.voxd.programs.album_manifest_file import AlbumManifestFile
 from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
@@ -28,7 +31,7 @@ from punt_vox.voxd.programs.producer import PartSpec, ProducerBadInputError
 from .conftest import QuietProducer, seed_album
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import os
 
     import pytest
     from starlette.websockets import WebSocket
@@ -246,6 +249,71 @@ class TestMusicNewHandler:
 
 
 class TestMusicManifestHandler:
+    async def test_sizes_tracks_off_the_daemon_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1, 2, name="pads", album_id="a3f1c9")
+        library = _library(root)
+        ws, sent = _capturing_ws()
+        track_reads: list[tuple[str, int]] = []
+        loop_thread = get_ident()
+        lstat = Path.lstat
+
+        def track_lstat(path: Path) -> os.stat_result:
+            if path.parent == root / locator and path.suffix == ".mp3":
+                track_reads.append((path.name, get_ident()))
+            return lstat(path)
+
+        monkeypatch.setattr(Path, "lstat", track_lstat)
+        await MusicManifestHandler(library)({"id": "m1", "album": "a3f1c9"}, ws)
+
+        assert sent[-1]["parts"] == [
+            {"part": "001.mp3", "bytes": 5},
+            {"part": "002.mp3", "bytes": 5},
+        ]
+        assert [name for name, _ in track_reads] == ["001.mp3", "002.mp3"]
+        assert all(thread != loop_thread for _, thread in track_reads), track_reads
+
+    async def test_concurrent_removal_is_a_rejection_not_a_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1)
+        library = _library(root)
+        ws, sent = _capturing_ws()
+        reading = asyncio.Event()
+        removed = Event()
+        loop = asyncio.get_running_loop()
+        read_saved = AlbumManifestFile.read_saved
+
+        def delayed_read(file: AlbumManifestFile) -> str:
+            loop.call_soon_threadsafe(reading.set)
+            if not removed.wait(timeout=5):
+                raise TimeoutError("album removal did not finish")
+            return read_saved(file)
+
+        monkeypatch.setattr(AlbumManifestFile, "read_saved", delayed_read)
+        msg: dict[str, object] = {"id": "m1", "album": "a3f1c9"}
+        remove_ws, remove_sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+                tasks.create_task(MusicManifestHandler(library)(msg, ws))
+                try:
+                    await reading.wait()
+                    await MusicRemoveHandler(library, frozenset)(msg, remove_ws)
+                finally:
+                    removed.set()
+
+        assert remove_sent[-1]["type"] == "removed"
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"] == "no album named 'a3f1c9'"
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
     def test_success_lists_parts(self, tmp_path: Path) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, 2, name="pads", album_id="a3f1c9")
@@ -366,7 +434,7 @@ class TestLibraryFaultClassification:
     ) -> None:
         library = _library(tmp_path / "programs")
 
-        def vanished(_self: MusicLibrary, _album_id: object) -> object:
+        async def vanished(_self: MusicLibrary, _album_id: object) -> object:
             raise LookupError("album dir vanished mid-op")
 
         monkeypatch.setattr(MusicLibrary, "manifest", vanished)
