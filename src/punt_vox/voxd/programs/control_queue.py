@@ -42,7 +42,10 @@ class ControlQueue:
         return isinstance(source, Program) and source.mode is Mode.OFF
 
     def post(self, source: PlaybackSource, signal: ControlSignal) -> bool:
-        """Reject steps while off unless a start is already ahead in the FIFO."""
+        """Reject steps while off unless a start is already ahead in the FIFO.
+
+        Return True on admission, not on application or cursor movement.
+        """
         if (
             isinstance(signal, (StepBack, StepForward))
             and self.is_off(source)

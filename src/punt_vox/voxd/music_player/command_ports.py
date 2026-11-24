@@ -33,11 +33,17 @@ class PlayerCommands(Protocol):
         ...
 
     def advance(self) -> bool:
-        """Enqueue a forward step, or return False when off."""
+        """Admit a forward step while active or with a start already queued.
+
+        Return False otherwise. Admission does not confirm cursor movement.
+        """
         ...
 
     def prev(self) -> bool:
-        """Enqueue a backward step, or return False when off."""
+        """Admit a backward step while active or with a start already queued.
+
+        Return False otherwise. Admission does not confirm cursor movement.
+        """
         ...
 
     def pause(self) -> bool:
