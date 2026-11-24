@@ -1,0 +1,113 @@
+"""Read live album rows without holding up the daemon's event loop."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from threading import Event
+from typing import TYPE_CHECKING, Self, final
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.catalog import Album, Catalog
+    from punt_vox.voxd.programs.service import ProgramService
+
+__all__ = ["AlbumListReader"]
+
+logger = logging.getLogger(__name__)
+
+type _Row = dict[str, object]
+type _Read = tuple[Album, _Row | str]
+
+
+@final
+class AlbumListReader:
+    """Give catalog listings one worker and stop cancelled scans between albums."""
+
+    __slots__ = ("_slot",)
+    _slot: asyncio.Lock
+
+    def __new__(cls) -> Self:
+        """Create a reader shared by requests to one daemon."""
+        self = super().__new__(cls)
+        self._slot = asyncio.Lock()
+        return self
+
+    async def read(self, service: ProgramService) -> list[_Row]:
+        """Snapshot and reconcile the catalog on its loop; read its rows off-loop."""
+        await self._slot.acquire()
+        stopped = Event()
+        try:
+            work = asyncio.get_running_loop().run_in_executor(
+                None, self._read_snapshot, service.catalog_albums(), stopped
+            )
+        except BaseException:
+            self._slot.release()
+            raise
+        # Keep the slot until the thread exits, even if its caller goes away.
+        work.add_done_callback(self._release_slot)
+        try:
+            reads = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            stopped.set()
+            work.add_done_callback(self._report_abandoned_failure)
+            raise
+        return self._current_rows(service.catalog, reads)
+
+    def _release_slot(self, _: asyncio.Future[list[_Read]]) -> None:
+        self._slot.release()
+
+    @staticmethod
+    def _report_abandoned_failure(work: asyncio.Future[list[_Read]]) -> None:
+        if not work.cancelled() and (error := work.exception()) is not None:
+            logger.error("Abandoned catalog read failed", exc_info=error)
+
+    @classmethod
+    def _read_snapshot(cls, albums: tuple[Album, ...], stopped: Event) -> list[_Read]:
+        reads: list[_Read] = []
+        for album in albums:
+            if stopped.is_set():
+                break
+            reads.append((album, cls._read_or_error(album)))
+        return reads
+
+    @classmethod
+    def _read_or_error(cls, album: Album) -> _Row | str:
+        """Isolate a broken album so the rest of the listing survives."""
+        try:
+            return cls._row(album)
+        except (LookupError, OSError, ValueError) as error:
+            return f"{type(error).__name__}: {error}"
+
+    @staticmethod
+    def _row(album: Album) -> _Row:
+        """Count Parts from the live manifest; fill can add them after startup."""
+        manifest = album.read()
+        tags = manifest.tags
+        return {
+            "id": manifest.id.value,
+            "format": manifest.format.label,
+            "style": tags.style,
+            "vibe": tags.vibe,
+            "name": tags.name,
+            "ready": len(manifest.ready_parts()),
+            "total": len(manifest.parts),
+            "created": manifest.created.isoformat(),
+        }
+
+    @staticmethod
+    def _current_rows(catalog: Catalog, reads: list[_Read]) -> list[_Row]:
+        """Skip removed or replaced albums and report faults for current entries."""
+        rows: list[_Row] = []
+        for album, row in reads:
+            if catalog.by_id(album.id) is not album:
+                continue
+            if isinstance(row, str):
+                logger.error(
+                    "skipping unreadable album %s at %s: %s",
+                    album.id.value,
+                    album.locator,
+                    row,
+                )
+            else:
+                rows.append(row)
+        return rows

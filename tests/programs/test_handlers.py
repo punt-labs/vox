@@ -14,13 +14,11 @@ import json
 import logging
 import shutil
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Self, cast, final
-from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import pytest
 
-from punt_vox.voxd.programs import list_handler
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
@@ -204,7 +202,7 @@ class TestListHandler:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
 
-    async def test_serializes_list_reads_and_stops_after_cancelled_batch(
+    async def test_cancelled_list_keeps_slot_until_worker_stops_reading(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = tmp_path / "programs"
@@ -217,7 +215,7 @@ class TestListHandler:
         second_started = asyncio.Event()
         resume_read = threading.Event()
         original_read = Album.read
-        to_thread = AsyncMock(wraps=asyncio.to_thread)
+        submit = Mock(wraps=loop.run_in_executor)
         reads: list[AlbumId] = []
 
         def read(album: Album) -> AlbumManifest:
@@ -230,27 +228,26 @@ class TestListHandler:
             second_started.set()
             return await _reply(handler, {"id": "8"})
 
-        monkeypatch.setattr(asyncio, "to_thread", to_thread)
-        monkeypatch.setattr(list_handler, "_READ_BATCH_SIZE", 1)
+        monkeypatch.setattr(loop, "run_in_executor", submit)
         monkeypatch.setattr(Album, "read", read)
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            loop.set_default_executor(executor)
-            async with asyncio.TaskGroup() as tasks:
-                listing = tasks.create_task(_reply(handler, {"id": "7"}))
-                try:
-                    await asyncio.wait_for(read_started.wait(), timeout=5)
-                    second = tasks.create_task(second_list())
-                    await asyncio.wait_for(second_started.wait(), timeout=5)
-                    to_thread.assert_called_once()
-                    second.cancel()
-                    listing.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await listing
-                finally:
-                    resume_read.set()
-                await asyncio.to_thread(lambda: None)  # drain the in-flight batch
+        async with asyncio.TaskGroup() as tasks:
+            listing = tasks.create_task(_reply(handler, {"id": "7"}))
+            try:
+                await asyncio.wait_for(read_started.wait(), timeout=5)
+                second = tasks.create_task(second_list())
+                await asyncio.wait_for(second_started.wait(), timeout=5)
+                submit.assert_called_once()
+                listing.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await listing
+                submit.assert_called_once()
+            finally:
+                resume_read.set()
+            reply = await asyncio.wait_for(second, timeout=5)
 
-        assert len(reads) == 1
+        assert reply["type"] == "program_list"
+        expected = [album.id for album in service.catalog_albums()]
+        assert reads == [expected[0], *expected]
 
     @pytest.mark.parametrize("read_before_remove", [False, True])
     async def test_omits_album_removed_during_read_without_logging_a_fault(
@@ -313,7 +310,7 @@ class TestListHandler:
         assert {p["id"] for p in programs} == {"a3f1c9"}  # the healthy album remains
         error_type = "AlbumNotFoundError" if missing else "ValueError"
         assert any(
-            "Unreadable Album(id=7b2e04" in (message := record.getMessage())
+            "skipping unreadable album 7b2e04" in (message := record.getMessage())
             and error_type in message
             for record in caplog.records
         )
