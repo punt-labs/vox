@@ -345,7 +345,8 @@ class TestPlacement:
         self, store: RecordStore, tmp_path: Path
     ) -> None:
         limit = os.pathconf(tmp_path, "PC_NAME_MAX")
-        name = "é" + "a" * (limit - len(os.fsencode("é")))
+        count, remaining = divmod(limit, len(os.fsencode("é")))
+        name = "é" * count + "x" * remaining
         source = tmp_path / "src.mp3"
         source.write_bytes(b"audio")
 
@@ -405,7 +406,7 @@ class TestPlacement:
         def no_copy(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("fresh synthesis must move, not copy")
 
-        monkeypatch.setattr("punt_vox.voxd.record_store.shutil.copyfileobj", no_copy)
+        monkeypatch.setattr("punt_vox.voxd.record_target.shutil.copyfileobj", no_copy)
 
         src = tmp_path / "ephemeral.mp3"
         src.write_bytes(b"fresh-audio")

@@ -58,7 +58,7 @@ class RecordHandler(MessageHandler):
         try:
             req = _SpeechRequest.from_msg(msg, websocket)
             name = parse_present_str(msg, "name")
-            self._validate_name(name, req.text)
+            await self._validate_name(name, req.text)
         except (ValueError, OSError) as exc:
             await reply.reject_or_fault(exc)
             return
@@ -105,10 +105,10 @@ class RecordHandler(MessageHandler):
             }
         )
 
-    def _validate_name(self, name: str | None, text: str) -> None:
+    async def _validate_name(self, name: str | None, text: str) -> None:
         """Check a supplied name before synthesis, including filesystem limits."""
         if name is not None:
-            self._store.resolve(name, text)
+            await asyncio.to_thread(self._store.resolve, name, text)
 
     async def _store_outcome(
         self, req: _SpeechRequest, name: str | None, outcome: SynthesisOutcome
