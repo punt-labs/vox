@@ -7,11 +7,12 @@ facts (``docs/vox-enable-disable.tex``): the tool-owned directory
 invariant is the § 2.11 biconditional -- the marker is present exactly when the
 import is present -- which every transition preserves:
 
-- ``enable``  deposits the guide, adds the import, registers settings, sets an
-  audible notify default, asks the DAEMON for a proposed starter provider
-  (design §3.8: the *daemon* chooses, never a local probe of the enabling
-  process's environment), writes that provider into ``vox.md`` when one was
-  proposed, and finally writes the marker.  Idempotent, and the upgrade path.
+- ``enable``  gitignores ``vox.local.md``, deposits the guide, adds the import,
+  registers settings, sets an audible notify default, asks the DAEMON for a
+  proposed starter provider (design §3.8: the *daemon* chooses, never a local
+  probe of the enabling process's environment), writes that provider into
+  ``vox.md`` when one was proposed, and finally writes the marker.  Idempotent,
+  and the upgrade path.
   An enabled repo is audible by default -- silence is ``disable``.
 - ``disable`` removes the import, deletes the marker, deregisters settings, and
   leaves the directory exactly as found (a frame, never a create/remove) -- the
@@ -24,8 +25,9 @@ import is present -- which every transition preserves:
 :class:`~punt_vox.deposited_files.VoxMarker`, the
 :class:`~punt_vox.deposited_files.DepositedGuide`, the
 :class:`~punt_vox.settings_registration.SettingsRegistration`, the
-:class:`~punt_vox.audible_notify.AudibleNotify` default, and the
-:class:`ProviderProposal` daemon proposal.
+:class:`~punt_vox.audible_notify.AudibleNotify` default, the
+:class:`ProviderProposal` daemon proposal, and the
+:class:`~punt_vox.gitignore_entry.GitignoreEntry` for ``vox.local.md``.
 
 :class:`ProviderProposal` is the one collaborator that reaches outside the
 repo: it opens a WebSocket to voxd, calls the ``provider_status`` op, and
@@ -48,9 +50,10 @@ from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import DURABLE_FILENAME, ConfigStore
+from punt_vox.config import DURABLE_FILENAME, EPHEMERAL_FILENAME, ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.dirs import find_repo_root
+from punt_vox.gitignore_entry import GitignoreEntry
 from punt_vox.settings_registration import SettingsRegistration
 
 if TYPE_CHECKING:
@@ -69,6 +72,9 @@ __all__ = [
 # The exact canonical repo-scope import line (§ 2.4). Byte-identical across all
 # tools and both surfaces; what ``enable`` writes and ``disable`` prunes.
 _IMPORT_LINE = "@.punt-labs/vox/CLAUDE.md"
+
+# The repo-relative path of the machine-local config ``enable`` keeps out of git.
+_LOCAL_CONFIG_IGNORE = f".punt-labs/vox/{EPHEMERAL_FILENAME}"
 
 # The transport-side faults ``ProviderProposal`` treats as "voxd not reachable".
 # Deliberately narrower than the tuple ``server.py`` uses: this catch sits ABOVE
@@ -302,7 +308,7 @@ class ProviderProposal:
 class RepoEnablement:
     """Turn vox on and off in one repo, preserving the marker-import biconditional.
 
-    Bind the six collaborators at construction; :meth:`for_repo` wires the real
+    Bind the seven collaborators at construction; :meth:`for_repo` wires the real
     per-repo paths and :meth:`for_cwd` discovers the repo from the working
     directory. Each transition writes one of the three legal states, so no
     sequence of :meth:`enable` / :meth:`disable` / :meth:`purge` can leave the
@@ -311,6 +317,7 @@ class RepoEnablement:
 
     __slots__ = (
         "_audible",
+        "_gitignore",
         "_guide",
         "_import",
         "_marker",
@@ -324,6 +331,7 @@ class RepoEnablement:
     _settings: SettingsRegistration
     _audible: AudibleNotify
     _proposal: ProviderProposal
+    _gitignore: GitignoreEntry
 
     def __new__(
         cls,
@@ -334,6 +342,7 @@ class RepoEnablement:
         settings: SettingsRegistration,
         audible: AudibleNotify,
         proposal: ProviderProposal,
+        gitignore: GitignoreEntry,
     ) -> Self:
         """Create a repo enablement."""
         self = super().__new__(cls)
@@ -343,6 +352,7 @@ class RepoEnablement:
         self._settings = settings
         self._audible = audible
         self._proposal = proposal
+        self._gitignore = gitignore
         return self
 
     @classmethod
@@ -356,6 +366,11 @@ class RepoEnablement:
             settings=SettingsRegistration(repo_root / ".claude" / "settings.json"),
             audible=AudibleNotify(vox_dir),
             proposal=ProviderProposal(ConfigStore(vox_dir)),
+            gitignore=GitignoreEntry(
+                repo_root / ".gitignore",
+                _LOCAL_CONFIG_IGNORE,
+                lock_path=repo_root / ".punt-labs" / "local" / "vox" / "gitignore.lock",
+            ),
         )
 
     @classmethod
@@ -403,8 +418,10 @@ class RepoEnablement:
     def enable(self) -> EnableOutcome:
         """Reach the Enabled state from anywhere; idempotent (also the upgrade path).
 
-        Order matters for crash-safety: guide first (so the import never points
-        at a missing guide), then the import, the settings, the audible notify
+        Order matters for crash-safety: the ``.gitignore`` entry for
+        ``vox.local.md`` first (so no later step can leave machine-local state
+        committable), then the guide (so the import never points at a missing
+        guide), then the import, the settings, the audible notify
         default, the daemon-proposed provider (§3.8), and the marker **last**.
         The marker is vox's on-signal -- the hooks gate on it -- so if any
         earlier step raises, the repo is left observably OFF (no marker) rather
@@ -426,6 +443,7 @@ class RepoEnablement:
             OSError: If an enablement artifact cannot be read, deposited, or registered.
             ValueError: If an existing repo artifact is malformed or unsafe to modify.
         """
+        self._gitignore.ensure()
         self._guide.deposit()
         self._import.register()
         self._settings.register()

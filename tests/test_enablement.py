@@ -25,6 +25,7 @@ from punt_vox.enablement import (
     ProviderProposal,
     RepoEnablement,
 )
+from punt_vox.gitignore_entry import GitignoreEntry
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
@@ -78,6 +79,35 @@ def test_enable_reaches_enabled(tmp_path: Path) -> None:
     RepoEnablement.for_repo(tmp_path).enable()
     assert _marker_present(tmp_path)
     assert _import_count(tmp_path) == 1
+
+
+_LOCAL_IGNORE = ".punt-labs/vox/vox.local.md"
+
+
+def _ignore_count(repo: Path) -> int:
+    text = (repo / ".gitignore").read_text(encoding="utf-8")
+    return text.splitlines().count(_LOCAL_IGNORE)
+
+
+def test_enable_gitignores_local_config(tmp_path: Path) -> None:
+    RepoEnablement.for_repo(tmp_path).enable()
+    assert _ignore_count(tmp_path) == 1
+
+
+def test_enable_keeps_user_gitignore_and_adds_no_duplicate(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    enablement.enable()
+    text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert text == f"node_modules/\n{_LOCAL_IGNORE}\n"
+
+
+def test_disable_leaves_gitignore_entry(tmp_path: Path) -> None:
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    enablement.disable()
+    assert _ignore_count(tmp_path) == 1
     assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
     assert _dir_present(tmp_path)
     _assert_biconditional(tmp_path)
@@ -477,7 +507,7 @@ def _wire_enablement(
 ) -> RepoEnablement:
     """Build a :class:`RepoEnablement` bound to *tmp_path* with a fake daemon.
 
-    Wires the six collaborators the way ``for_repo`` would but with the
+    Wires the seven collaborators the way ``for_repo`` would but with the
     proposal collaborator pointed at the test double, so the enable
     flow exercises the real file operations against ``tmp_path`` and
     the fake WebSocket boundary at once.
@@ -493,6 +523,9 @@ def _wire_enablement(
         settings=SettingsRegistration(tmp_path / ".claude" / "settings.json"),
         audible=AudibleNotify(vox_dir),
         proposal=proposal,
+        gitignore=GitignoreEntry(
+            tmp_path / ".gitignore", _LOCAL_IGNORE, lock_path=tmp_path / "gi.lock"
+        ),
     )
 
 
@@ -658,3 +691,9 @@ def test_marker_content_is_deterministic(tmp_path: Path) -> None:
     a = (tmp_path / ".punt-labs" / "vox" / "enabled").read_bytes()
     b = (other / ".punt-labs" / "vox" / "enabled").read_bytes()
     assert a == b
+
+
+def test_enable_leaves_no_gitignore_lock_in_repo_root(tmp_path: Path) -> None:
+    RepoEnablement.for_repo(tmp_path).enable()
+    root_locks = [p.name for p in tmp_path.glob("*.lock")]
+    assert not [name for name in root_locks if "gitignore" in name]
