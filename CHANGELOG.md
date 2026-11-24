@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Selecting Continuous notifications in the Lux Vox panel switches Mic Mode
+  to Voice, matching `vox notify continuous`. (PL-1574)
+
 - OpenAI voice listings and validation follow the selected model. The
   `gpt-4o-mini-tts` roster includes marin, cedar, ballad, and verse. (PL-1568)
 
