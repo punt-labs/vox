@@ -59,14 +59,14 @@ class SynthesisSpec:
         return (name or "").strip().removeprefix("@").strip() or None
 
     def validate(self) -> None:
-        """Validate voice settings ranges.
-
-        Raises ``ValueError`` when stability, similarity, or style is
-        outside 0.0--1.0.
+        """Validate speech rate and voice settings ranges.
 
         Raises:
-            ValueError: If stability, similarity, or style is outside 0 through 1.
+            ValueError: If rate is nonpositive or a voice setting is out of range.
         """
+        if self.rate is not None and self.rate <= 0:
+            msg = f"rate must be greater than 0, got {self.rate}"
+            raise ValueError(msg)
         for name, value in (
             ("stability", self.stability),
             ("similarity", self.similarity),

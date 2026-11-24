@@ -99,9 +99,10 @@ class ControlChannel:
     def apply_transport(self, action: Callable[[], None]) -> bool:
         """Apply and publish an in-place transport action on an active source.
 
-        The action changes suspension, not the source cursor, so it does not
-        enqueue a control signal. An off Program is a no-op; a replay Selection
-        is active by construction.
+        Return False for an off Program without running the action or emitting
+        a change. For an active Program or replay Selection, run the action,
+        emit a change, and return True. This changes suspension, not the
+        source cursor, so no control signal is enqueued.
         """
         source = self._source
         if isinstance(source, Program) and source.mode is Mode.OFF:
