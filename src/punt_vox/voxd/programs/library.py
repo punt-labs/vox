@@ -17,11 +17,10 @@ album whose Parts back the active pool or selection).
 from __future__ import annotations
 
 import contextlib
-import logging
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
-from punt_vox.voxd.programs.album_contents import AlbumContents
+from punt_vox.voxd.programs.album_export_reader import AlbumExportReader
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
@@ -36,6 +35,7 @@ from punt_vox.voxd.programs.producer import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.album_contents import AlbumContents
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.album_reservation import AlbumReservation
     from punt_vox.voxd.programs.catalog import Catalog
@@ -43,8 +43,6 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.store import PartStore, ProgramStore
 
 __all__ = ["MusicLibrary"]
-
-logger = logging.getLogger(__name__)
 
 # A hand-authored ``music new`` track has no vibe/style classification; it lands
 # under one neutral tag so the whole authored-track set groups together in
@@ -133,21 +131,22 @@ class MusicLibrary:
         with self.reserve(prompt, name) as reservation:
             return await self.produce(reservation)
 
-    def manifest(self, album_id: AlbumId) -> AlbumContents:
+    async def manifest(self, album_id: AlbumId) -> AlbumContents:
         """Return the album's on-disk name and ready parts, resolved by catalog id.
 
         The id is a catalog key, never a path; the per-part containment (a corrupt
         manifest entry can never stat outside the album dir) lives on ``AlbumContents``.
-        A ready part whose file was deleted out of band is listed as missing, not
-        raised, so the surviving parts stay exportable.
+        Missing part files are listed, so surviving parts stay exportable.
+        Catalog lookups stay on the loop; disk reads run in a worker.
 
         Raises:
             ValueError: If the album is missing or a part path is unsafe.
             OSError: If the manifest or part files cannot be read.
+            AlbumNotFoundError: If a catalogued manifest disappeared out of band.
         """
         album = self._require(album_id)
         root = ContainmentRoot(self._root / album.locator, _PART_LABEL)
-        return AlbumContents.from_album(album, root)
+        return await AlbumExportReader.read(album, root, self._require)
 
     def resolve_part(self, album_id: AlbumId, part_name: str) -> Path:
         """Resolve one album part to a contained regular file, never a symlink.

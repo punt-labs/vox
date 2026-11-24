@@ -5,7 +5,7 @@ prompt, drive the one library call, and reply through :class:`WireReply` so ever
 rejection is id-stamped and audit-logged at WARNING. The album id rides the wire
 as ``album`` and is a catalog key -- turned into an :class:`AlbumId` (which
 validates its hex shape) and resolved through the catalog, never treated as a
-path. ``music_manifest`` and ``music_remove`` reply synchronously; ``music_new``
+path. ``music_manifest`` and ``music_remove`` send one reply; ``music_new``
 sends a ``generating`` ack before the long generation so the client's response
 timeout does not fire.
 """
@@ -101,7 +101,7 @@ class MusicManifestHandler:
             if not album:
                 await reply.error("music get requires an album")
                 return
-            contents = self._library.manifest(AlbumId(album))
+            contents = await self._library.manifest(AlbumId(album))
         except _LIBRARY_FAILURES as exc:
             await reply.reject_or_fault(exc)
             return
