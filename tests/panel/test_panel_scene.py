@@ -87,13 +87,17 @@ class TestElements:
         ids = [e["id"] for e in request.elements]
         assert "vox.panel.voice_engine" in ids
         assert "vox.panel.provider" in ids
-        assert "vox.panel.model" in ids
+        assert any(
+            str(element["id"]).startswith("vox.panel.model.")
+            for element in request.elements
+        )
 
     def test_voice_engine_section_precedes_the_provider_combo(self) -> None:
         request = _scene().render_request()
         ids = [e["id"] for e in request.elements]
         assert ids.index("vox.panel.voice_engine") < ids.index("vox.panel.provider")
-        assert ids.index("vox.panel.provider") < ids.index("vox.panel.model")
+        model = next(e for e in request.elements if e.get("label") == "Model")
+        assert ids.index("vox.panel.provider") < ids.index(model["id"])
 
     def test_provider_current_is_highlighted(self) -> None:
         request = _scene(provider="openai").render_request()
@@ -107,7 +111,7 @@ class TestElements:
     def test_model_list_reflects_the_current_provider(self) -> None:
         # OpenAI's models: tts-1, tts-1-hd, gpt-4o-mini-tts.
         request = _scene(provider="openai", model="tts-1-hd").render_request()
-        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        model_combo = next(e for e in request.elements if e.get("label") == "Model")
         assert model_combo["items"] == [
             "(none)",
             "tts-1",
@@ -119,7 +123,7 @@ class TestElements:
     def test_modelless_provider_renders_the_sentinel(self) -> None:
         # Polly has no user-selectable model.
         request = _scene(provider="polly", model=None).render_request()
-        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        model_combo = next(e for e in request.elements if e.get("label") == "Model")
         assert model_combo["items"] == ["(no models)"]
         assert "handlers" not in model_combo
 
@@ -143,6 +147,6 @@ class TestElements:
         A provider without selectable models must not display ElevenLabs models.
         """
         request = _scene(provider=None, model=None).render_request()
-        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        model_combo = next(e for e in request.elements if e.get("label") == "Model")
         assert model_combo["items"] == ["(no models)"]
         assert "handlers" not in model_combo

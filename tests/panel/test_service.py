@@ -610,7 +610,7 @@ class TestApplyEvent:
         model_combo = next(
             element
             for element in scene.render_request().elements
-            if element["id"] == "vox.panel.model"
+            if element["id"] == scene.roster_combo_id(PanelTopic.MODEL)
         )
         items = model_combo["items"]
         assert isinstance(items, list)
@@ -902,6 +902,29 @@ class TestPushScene:
         assert len(rest.rendered) == 1  # installed on the fresh connection
         assert rest.patched == []
 
+    @pytest.mark.parametrize("unreachable", [False, True], ids=["refused", "down"])
+    async def test_background_refresh_waits_for_an_explicit_install_after_push_failure(
+        self, tmp_path: Path, unreachable: bool
+    ) -> None:
+        """PollInactive skips a disarmed scene until a foreground install."""
+        store = ConfigStore(tmp_path)
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        rest = cast("LuxClient", _FakeRest())
+        await service.install_scene(rest)
+
+        service.apply_event(PanelTopic.NOTIFY, {"value": 1})
+        if unreachable:
+            with pytest.raises(HubUnavailableError):
+                await service.push_scene(cast("LuxClient", _DownRest()))
+        else:
+            await service.push_scene(cast("LuxClient", _FakeRest(refuse=True)))
+
+        store.write_field("notify", "n")
+        assert not await service.reconcile()
+        assert not await service.reconcile()
+        await service.install_scene(rest)
+        assert await service.reconcile()
+
 
 class TestRefreshDoesNotReinstall:
     async def test_a_second_push_of_a_changed_scene_patches(self) -> None:
@@ -927,10 +950,9 @@ class TestRefreshDoesNotReinstall:
         assert len(rest.rendered) == 1
         assert rest.patched == []
 
-    async def test_a_provider_change_patches_the_model_combo_in_one_batch(self) -> None:
-        # The model list changes with the provider, so items and selected move
-        # together. combo validates selected against items after the whole batch,
-        # so one batch is both correct and order-insensitive.
+    async def test_a_provider_change_reinstalls_the_model_combo_with_its_selection(
+        self,
+    ) -> None:
         store = _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
         service = VoxPanelService(_FakeDaemonClient(), store)
         service.refresh()
@@ -940,10 +962,19 @@ class TestRefreshDoesNotReinstall:
         service.apply_event(PanelTopic.PROVIDER, {"value": _openai_index()})
         await service.push_scene(cast("LuxClient", rest))
 
-        model = next(
-            entry for entry in rest.patched[0] if entry["id"] == "vox.panel.model"
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        before, after = (
+            next(
+                element
+                for element in request.elements
+                if element.get("label") == "Model"
+            )
+            for request in rest.rendered
         )
-        assert set(cast("dict[str, object]", model["set"])) == {"items", "selected"}
+        assert before["id"] != after["id"]
+        assert after["items"] == ["(none)", "tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
+        assert after["selected"] == 1
 
 
 class TestInstallScene:

@@ -27,7 +27,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
 from punt_vox.lux_common import MenuEntry
 from punt_vox.panel.click_target import ClickTarget
 from punt_vox.panel.control_push import ControlPush
@@ -36,12 +35,13 @@ from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.panel.panel_settings import PanelSettings
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
+from punt_vox.panel.settings_refresh import RefreshNotices, SettingsRefresh
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.panel.voice_preview import VoicePreview
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
 
     from punt_lux import LuxClient
     from punt_lux.applets import ClickLatency
@@ -61,25 +61,22 @@ _ENTRY = MenuEntry("vox-panel", "Vox", PanelScene.FRAME_ID)
 class VoxPanelService:
     """A session's Vox settings entry: read settings, apply a change, show the scene."""
 
-    _client: PanelDaemonClient
-    _store: SettingsStore
+    _refresh: SettingsRefresh
     _settings: PanelSettings
     _push: PanelPush
     _voice_preview: VoicePreview
     __slots__ = (
-        "_client",
         "_push",
+        "_refresh",
         "_settings",
-        "_store",
         "_voice_preview",
     )
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         """Create a vox panel service."""
         self = super().__new__(cls)
-        self._client = client
-        self._store = store
         self._settings = PanelSettings(client, store)
+        self._refresh = SettingsRefresh(client, store)
         self._push = PanelPush()
         self._voice_preview = VoicePreview(client, store, logger)
         return self
@@ -120,37 +117,35 @@ class VoxPanelService:
         """Show the held scene outright, the whole tree at once (a menu click)."""
         await self._push.install(client, self._settings.scene().render_request())
 
-    async def push_scene(self, client: LuxClient) -> None:
+    async def push_scene(self, client: LuxClient, *, background: bool = False) -> None:
         """Refresh the installed scene with the currently-held one."""
-        await self._push.refresh(client, self._settings.scene().render_request())
+        await self._push.refresh(
+            client, self._settings.scene().render_request(), background=background
+        )
 
     async def correct_scene(self, client: LuxClient) -> None:
         """Reinstall the held scene in full, snapping back an optimistic widget.
 
         Reached only after a control-change failure that a widget already
         applied client-side before voxd answered -- see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct` for why a diff-based
+        :class:`~punt_vox.panel.panel_push.PanelPush` for why a diff-based
         refresh cannot express this correction.
         """
-        await self._push.correct(client, self._settings.scene().render_request())
+        await self.install_scene(client)
 
-    def refresh(self) -> None:
+    def refresh(self, *, external: bool = False) -> bool:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
-        self._resync(
-            PanelNotice.silent(),
-            on_read_failure=PanelNotice.voxd_unavailable(),
-            on_rejection=PanelNotice.voxd_rejected,
-        )
+        return self._refresh.refresh(self._settings, external=external)
+
+    async def reconcile(self) -> bool:
+        """Check external settings for an installed panel; report if it needs a push."""
+        if not self._push.has_confirmed_scene:
+            return False
+        return await asyncio.to_thread(self.refresh, external=True)
 
     def recover_from_write_failure(self, field: str) -> None:
         """Re-sync from the real settings after a failed persist, and flag the scene."""
-        self._resync(
-            PanelNotice.write_failed(field),
-            on_read_failure=PanelNotice.write_failed_and_voxd_unavailable(field),
-            on_rejection=lambda detail: PanelNotice.write_failed_and_voxd_rejected(
-                field, detail
-            ),
-        )
+        self._refresh.refresh(self._settings, RefreshNotices.write_failure(field))
 
     def note_rejection(self, detail: str) -> None:
         """Flag the scene with voxd's refusal, keeping the last-known settings.
@@ -242,44 +237,6 @@ class VoxPanelService:
             self._settings.note(PanelNotice.no_voice_selected())
             return ControlPush.REFRESH
         return self._settings.note_preview(self._voice_preview.play(voice))
-
-    def _resync(
-        self,
-        notice: PanelNotice,
-        *,
-        on_read_failure: PanelNotice,
-        on_rejection: Callable[[str], PanelNotice],
-    ) -> None:
-        """Read fresh settings, retaining the last-known state if voxd is down.
-
-        A rejected roster still leaves the config available so the panel
-        can show the model picker and let the user choose a supported model.
-
-        *on_read_failure* and *on_rejection* are the caller's choice, not
-        hardcoded generic notices: ``recover_from_write_failure`` already
-        has a specific "couldn't save X" notice in flight, and if the
-        resync meant to confirm the reverted value also finds voxd down
-        OR gets refused, that specific write-failure context must not be
-        silently replaced by a generic one blaming an unrelated
-        subsystem -- the caller supplies a composed notice for each.
-        """
-        before = self._settings.snapshot()
-        fresh = PanelState.read(self._store)
-        try:
-            fresh = fresh.with_roster(self._client)
-        except VoxdRejectionError as exc:
-            # Daemon was reached and refused the roster fetch. The caller
-            # supplies the composition so a write-failure in flight is not
-            # dropped when the confirming read also hits a rejection.
-            logger.warning("vox-panel: voxd refused the resync: %s", exc)
-            notice = on_rejection(str(exc))
-        except VoxdConnectionError:
-            logger.warning(
-                "vox-panel: voxd unreachable during resync: %s",
-                on_read_failure.message,
-            )
-            fresh, notice = before, on_read_failure
-        self._settings.replace_if_current(before, fresh, notice)
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:

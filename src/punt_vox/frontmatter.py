@@ -52,10 +52,20 @@ class Frontmatter:
         """
         FrontmatterBlock.validate_value(value)
 
-    def read_fields(self) -> dict[str, str]:
-        """Return all non-empty frontmatter fields, or ``{}`` if unreadable."""
-        block = self._file.readable_block()
+    def read_fields(self, *, strict: bool = False) -> dict[str, str]:
+        """Read all fields; strict reads wait for writes and raise on errors."""
+        block = self._read_strictly() if strict else self._file.readable_block()
         return {} if block is None else block.fields()
+
+    def _read_strictly(self) -> FrontmatterBlock | None:
+        """Wait for any cooperating writer before accepting a snapshot."""
+        lock = ConfigLock(self.path).sibling()
+        if not lock.path.exists():
+            block = self._file.fenced_block()
+            if not lock.path.exists():
+                return block
+        with lock.held():
+            return self._file.fenced_block()
 
     def read_field(self, field: str, *, strict: bool = False) -> str | None:
         """Return a single frontmatter field, or ``None`` if absent.

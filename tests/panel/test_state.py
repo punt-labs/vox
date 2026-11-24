@@ -79,6 +79,35 @@ class TestRead:
         assert state.voice == "roger"
         assert state.roster == ("aria", "roger")
 
+    def test_refreshes_the_roster_for_a_new_selection_missing_from_it(self) -> None:
+        client = _FakeClient(["aria", "roger"])
+        store = _FakeStore(_config(provider="elevenlabs"))
+        previous = PanelState(
+            notify="y",
+            speak="y",
+            voice="aria",
+            roster=("aria",),
+            provider="elevenlabs",
+        )
+
+        state = PanelState.read(store).with_roster(client, previous=previous)
+        assert state.voice == "roger"
+        assert state.roster == ("aria", "roger")
+        assert PanelState.read(store).with_roster(client, previous=state) == state
+        assert client.call_count == 1
+
+    def test_refreshes_the_roster_when_the_model_changes(self) -> None:
+        client = _FakeClient(["roger", "aria"])
+        previous = PanelState.read(
+            _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))
+        ).with_roster(client)
+        state = PanelState.read(
+            _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
+        ).with_roster(client, previous=previous)
+        assert client.call_count == 2
+        assert client.last_model_arg == "eleven_flash_v2_5"
+        assert state.roster == previous.roster
+
     def test_reads_provider_and_model_from_config(self) -> None:
         client = _FakeClient(["marin"])
         state = PanelState.read(

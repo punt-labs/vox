@@ -1,8 +1,7 @@
-"""``PanelState`` -- the panel's settings, read once and held between clicks.
+"""``PanelState`` -- the panel's last confirmed settings.
 
 Held by :class:`~punt_vox.panel.service.VoxPanelService` so a click's visible
-answer never waits on a fresh read: the state is refreshed off the loop and
-projected onto a scene only when someone is about to look at it.
+answer never waits on a fresh read. The state is refreshed off the loop.
 """
 
 from __future__ import annotations
@@ -55,12 +54,24 @@ class PanelState:
             model=cls._normalise(cfg.model),
         )
 
-    def with_roster(self, client: RosterClient) -> Self:
-        """Read the voice roster for the configured provider and model."""
+    def with_roster(
+        self, client: RosterClient, *, previous: PanelState | None = None
+    ) -> Self:
+        """Read the current roster, reusing a compatible confirmed roster."""
         if self.provider is None:
             return self
-        roster = client.voices(VoiceTarget(self.provider, self.model))
-        return replace(self, roster=tuple(roster))
+        if previous is not None and self._can_reuse_roster(previous):
+            return replace(self, roster=previous.roster)
+        return replace(
+            self, roster=tuple(client.voices(VoiceTarget(self.provider, self.model)))
+        )
+
+    def _can_reuse_roster(self, previous: PanelState) -> bool:
+        return (
+            (self.provider, self.model) == (previous.provider, previous.model)
+            and bool(previous.roster)
+            and (self.voice in (None, previous.voice) or self.voice in previous.roster)
+        )
 
     def with_notify(self, code: str) -> Self:
         """Return a copy with ``notify`` set to ``code``."""
