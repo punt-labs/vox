@@ -278,7 +278,7 @@ class FakeService:
         self.applied.append((topic, payload))
         return ControlPush.REFRESH if self.apply_returns else ControlPush.NONE
 
-    async def push_scene(self, client: object) -> None:
+    async def push_scene(self, client: object, *, background: bool = False) -> None:
         self.pushed += 1
 
     async def install_scene(self, client: object) -> None:

@@ -16,18 +16,20 @@ whether Lux kept the old scene, applied the new one, or lost both.
 
 A snapshot names a settings object, not just its value. Its target is
 the provider and optional model; its revision names the target and
-\emph{ordered} voice roster. Revisions are modeled as exact identities:
+\emph{ordered} voice roster. A roster key denotes a whole sequence:
+swapping distinct voices changes that key, even when membership stays
+the same. Revisions are modeled as exact identities:
 digest collisions are outside the model. The revision need not change
 on a voice-only or notice-only update. Notices themselves are abstracted
 to whether a scene refresh was requested. The saved target abstracts
 config fields that the write precondition examines, not the whole file.
 
 \begin{zed}
-  [SNAPSHOT, TARGET, REVISION]
+  [SNAPSHOT, TARGET, ROSTER, REVISION]
 \also
   SceneState ::= neverShown | installed | disarmed
 \also
-  Work ::= idle | pushDue
+  Work ::= idle | pollPushDue | foregroundPushDue | correctionDue
 \also
   Outcome ::= accepted | failed
 \also
@@ -36,21 +38,26 @@ config fields that the write precondition examines, not the whole file.
   Plan ::= noPush | patch | fullInstall
 \also
   NoticeChange ::= noticeSame | noticeChanged
+\also
+  RecoveryRead ::= diskSnapshot | keepSnapshot
 \end{zed}
 
 \begin{axdef}
   targetOf : SNAPSHOT \fun TARGET \\
+  rosterOf : SNAPSHOT \fun ROSTER \\
   revisionOf : SNAPSHOT \fun REVISION
 \where
   \forall a, b : SNAPSHOT @ \\
   \quad~ revisionOf(a) = revisionOf(b)
-    \implies targetOf(a) = targetOf(b)
+    \iff (targetOf(a), rosterOf(a)) = (targetOf(b), rosterOf(b))
 \end{axdef}
 
 \section{State and initialization}
 
 The optional confirmed render is the local patch base, not the
-display's observed state. Both inactive modes have no patch base; we
+display's observed state. An in-flight menu acknowledgement has its own
+captured render; its result is not yet confirmed. Both inactive modes
+have no patch base; we
 distinguish them by history even though \texttt{LiveScene} represents
 both with \texttt{None}. The optional capture records the reference used
 by \texttt{replace\_if\_current}. The audit relation is ghost state: it
@@ -59,7 +66,7 @@ roster-indexed write. Its diagonal invariant rules out stale writes.
 
 \begin{schema}{PanelRefresh}
   phase : SceneState \\
-  shown, capture : \power SNAPSHOT \\
+  shown, capture, menu : \power SNAPSHOT \\
   held : SNAPSHOT \\
   saved : TARGET \\
   work : Work \\
@@ -67,8 +74,9 @@ roster-indexed write. Its diagonal invariant rules out stale writes.
 \where
   \# shown \leq 1 \\
   \# capture \leq 1 \\
+  \# menu \leq 1 \\
   phase = installed \iff shown \neq \emptyset \\
-  capture \neq \emptyset \implies phase = installed \land work = idle \\
+  capture \neq \emptyset \implies work = idle \\
   writes \subseteq \id REVISION
 \end{schema}
 
@@ -78,6 +86,7 @@ roster-indexed write. Its diagonal invariant rules out stale writes.
   phase' = neverShown \\
   shown' = \emptyset \\
   capture' = \emptyset \\
+  menu' = \emptyset \\
   work' = idle \\
   writes' = \emptyset
 \end{schema}
@@ -88,8 +97,10 @@ An external edit does not synchronously alter the panel. A poll starts
 only with an installed scene, and captures the held settings by
 identity. To exercise the compare-and-replace seam, the model allows
 another publisher to replace the held snapshot during the read without
-going through the runner. Normal runner callbacks, including clicks,
-are serialized by its routing lock.
+going through the runner. Routed reads and control commits are
+serialized by the runner's lock; the menu acknowledgement deliberately
+precedes that lock and can overlap a poll. A poll does not start a read
+while a scene push is in flight.
 
 \begin{schema}{ExternalEdit}
   \Delta PanelRefresh \\
@@ -97,22 +108,26 @@ are serialized by its routing lock.
 \where
   saved' = target? \\
   phase' = phase \land shown' = shown \land held' = held \\
-  capture' = capture \land work' = work \land writes' = writes
+  capture' = capture \land work' = work \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
 \begin{schema}{PollInactive}
   \Xi PanelRefresh
 \where
-  phase \neq installed \land work = idle
+  (phase \neq installed \lor menu \neq \emptyset) \\
+  work = idle \land capture = \emptyset
 \end{schema}
 
 \begin{schema}{StartPoll}
   \Delta PanelRefresh
 \where
   phase = installed \land work = idle \land capture = \emptyset \\
+  menu = \emptyset \\
   capture' = \{held\} \\
   phase' = phase \land shown' = shown \land held' = held \\
-  saved' = saved \land work' = work \land writes' = writes
+  saved' = saved \land work' = work \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
 \begin{schema}{ConcurrentPublish}
@@ -122,7 +137,8 @@ are serialized by its routing lock.
   capture \neq \emptyset \land next? \neq held \\
   held' = next? \\
   phase' = phase \land shown' = shown \land saved' = saved \\
-  capture' = capture \land work' = work \land writes' = writes
+  capture' = capture \land work' = work \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
 Here \emph{next} is the snapshot proposed by the read. An equal-value
@@ -140,9 +156,9 @@ neither settings nor notices and schedules no push.
   capture = \{held\} \\
   held' = next? \land capture' = \emptyset \\
   work' = \IF next? \neq held \lor notice? = noticeChanged
-    \THEN pushDue \ELSE idle \\
+    \THEN pollPushDue \ELSE idle \\
   phase' = phase \land shown' = shown \land saved' = saved \\
-  writes' = writes
+  writes' = writes \land menu' = menu
 \end{schema}
 
 \begin{schema}{DiscardPoll}
@@ -151,7 +167,8 @@ neither settings nor notices and schedules no push.
   capture \neq \emptyset \land capture \neq \{held\} \\
   capture' = \emptyset \\
   phase' = phase \land shown' = shown \land held' = held \\
-  saved' = saved \land work' = work \land writes' = writes
+  saved' = saved \land work' = work \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
 \section{Publishing to Lux}
@@ -163,8 +180,11 @@ such a push. Different revisions imply
 different widget IDs and cannot be patched in place. A patch refusal
 can fall back to a full install; \emph{outcome} below is the eventual
 result, after any fallback. Any final refusal or transport loss
-disarms polling. A foreground install (menu click or corrective
-re-push) can arm it again; a poll alone cannot.
+disarms polling. The push lock makes scene writes sequential. A poll
+that began while installed rechecks the patch base after a concurrent
+menu install completes; only foreground work may arm a disarmed
+scene. The menu's follow-up read under the routing lock is abstracted
+away here; it is foreground work, not a polling tick.
 
 \begin{schema}{PushRefresh}
   \Delta PanelRefresh \\
@@ -172,7 +192,9 @@ re-push) can arm it again; a poll alone cannot.
   outcome? : Outcome \\
   plan! : Plan
 \where
-  work = pushDue \\
+  menu = \emptyset \\
+  work = foregroundPushDue \\
+  \lor (work = pollPushDue \land phase = installed) \\
   phase \neq installed \implies change? = differentTree \\
   (\exists old : shown @ revisionOf(old) \neq revisionOf(held))
     \implies change? = differentTree \\
@@ -182,18 +204,50 @@ re-push) can arm it again; a poll alone cannot.
   phase' = \IF outcome? = accepted \THEN installed \ELSE disarmed \\
   shown' = \IF outcome? = accepted \THEN \{held\} \ELSE \emptyset \\
   work' = idle \land capture' = capture \\
-  held' = held \land saved' = saved \land writes' = writes
+  held' = held \land saved' = saved \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
-\begin{schema}{ForegroundInstall}
+\begin{schema}{SkipDisarmedPollPush}
+  \Delta PanelRefresh
+\where
+  work = pollPushDue \land menu = \emptyset \land phase \neq installed \\
+  work' = idle \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  saved' = saved \land capture' = capture \land writes' = writes \\
+  menu' = menu
+\end{schema}
+
+\begin{schema}{BeginMenuInstall}
+  \Delta PanelRefresh
+\where
+  menu = \emptyset \\
+  menu' = \{held\} \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  saved' = saved \land capture' = capture \land writes' = writes \\
+  work' = work
+\end{schema}
+
+\begin{schema}{CompleteMenuInstall}
   \Delta PanelRefresh \\
   outcome? : Outcome
 \where
-  capture = \emptyset \land work = idle \\
+  menu \neq \emptyset \\
+  phase' = \IF outcome? = accepted \THEN installed \ELSE disarmed \\
+  shown' = \IF outcome? = accepted \THEN menu \ELSE \emptyset \\
+  held' = held \land saved' = saved \land writes' = writes \\
+  capture' = capture \land work' = work \land menu' = \emptyset
+\end{schema}
+
+\begin{schema}{CorrectScene}
+  \Delta PanelRefresh \\
+  outcome? : Outcome
+\where
+  work = correctionDue \land menu = \emptyset \\
   phase' = \IF outcome? = accepted \THEN installed \ELSE disarmed \\
   shown' = \IF outcome? = accepted \THEN \{held\} \ELSE \emptyset \\
   held' = held \land saved' = saved \land writes' = writes \\
-  capture' = capture \land work' = work
+  capture' = capture \land work' = idle \land menu' = menu
 \end{schema}
 
 \section{Roster-indexed events}
@@ -211,21 +265,40 @@ queued events can arrive even after disarm. The foreground correction
 or re-push that follows a routed event is modeled separately.
 
 \begin{schema}{RejectStaleRevision}
-  \Xi PanelRefresh \\
+  \Delta PanelRefresh \\
   revision? : \power REVISION
 \where
   capture = \emptyset \land work = idle \\
   \# revision? \leq 1 \\
-  revision? \neq \{revisionOf(held)\}
+  revision? \neq \{revisionOf(held)\} \\
+  work' = correctionDue \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  capture' = capture \land saved' = saved \land writes' = writes \\
+  menu' = menu
 \end{schema}
 
 \begin{schema}{RejectStaleTarget}
-  \Xi PanelRefresh \\
-  revision? : REVISION
+  \Delta PanelRefresh \\
+  revision? : REVISION \\
+  recovered? : SNAPSHOT \\
+  read? : RecoveryRead
 \where
   capture = \emptyset \land work = idle \\
-  revision? = revisionOf(held) \land targetOf(held) \neq saved
+  revision? = revisionOf(held) \land targetOf(held) \neq saved \\
+  held' = \IF read? = diskSnapshot \THEN recovered? \ELSE held \\
+  phase' = phase \land shown' = shown \land saved' = saved \\
+  capture' = capture \land work' = correctionDue \land writes' = writes \\
+  menu' = menu
 \end{schema}
+
+A target mismatch takes the write-failure recovery path, unlike a
+revision mismatch. It does not write, but it rereads the actual
+config and roster under the runner's routing lock before the
+corrective full install. A roster refusal can still yield a disk
+snapshot with no roster; an unreadable file or unavailable daemon
+retains the held snapshot. The write-failure notice accompanies either
+outcome. The file can change again after the recovery read, so the
+recovered target is not required to equal the latest saved target.
 
 \begin{schema}{CommitRosterChoice}
   \Delta PanelRefresh \\
@@ -237,7 +310,7 @@ or re-push that follows a routed event is modeled separately.
   held' = next? \land saved' = targetOf(next?) \\
   writes' = writes \cup \{revision? \mapsto revisionOf(held)\} \\
   phase' = phase \land shown' = shown \\
-  capture' = capture \land work' = pushDue
+  capture' = capture \land work' = foregroundPushDue \land menu' = menu
 \end{schema}
 
 The provider picker does not use a roster revision. A successful
@@ -254,7 +327,7 @@ roster fetch that must already have succeeded.
   targetOf(next?) \neq targetOf(held) \\
   held' = next? \land saved' = targetOf(next?) \\
   phase' = phase \land shown' = shown \land writes' = writes \\
-  capture' = capture \land work' = pushDue
+  capture' = capture \land work' = foregroundPushDue \land menu' = menu
 \end{schema}
 
 \section{Consequences and test correspondence}
@@ -269,6 +342,9 @@ and Model picks after both external and in-panel provider changes.
 before polling, then sends Voice and Model events from the old scene.
 \item[PollInactive] The service test requires a foreground install
 before polling resumes after either a push refusal or unavailability.
+\item[SkipDisarmedPollPush] The runner seam test lets a menu install
+fail while a poll is reading and verifies that the poll does not
+attempt a replacement install.
 \end{description}
 
 This policy prioritizes not pushing blindly after losing the patch

@@ -906,6 +906,7 @@ class TestPushScene:
     async def test_background_refresh_waits_for_an_explicit_install_after_push_failure(
         self, tmp_path: Path, unreachable: bool
     ) -> None:
+        """PollInactive skips a disarmed scene until a foreground install."""
         store = ConfigStore(tmp_path)
         service = VoxPanelService(_FakeDaemonClient(), store)
         rest = cast("LuxClient", _FakeRest())

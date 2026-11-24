@@ -19,10 +19,13 @@ same path a panel control's own event handler would.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import TYPE_CHECKING, cast, final
 from unittest.mock import MagicMock
 
 import pytest
+from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok, OpError
 
 from panel.doubles import PANEL_LOGGER
@@ -205,6 +208,7 @@ class TestRunnerServiceSeam:
     async def test_stale_openai_click_preserves_and_restores_espeak(
         self, tmp_path: Path, topic: PanelTopic
     ) -> None:
+        """RejectStaleTarget rereads disk before correction without writing."""
         store = ConfigStore(tmp_path)
         store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
         client = MagicMock(spec=VoxClientSync)
@@ -247,6 +251,7 @@ class TestRunnerServiceSeam:
     async def test_a_delayed_roster_event_resyncs_without_writing(
         self, tmp_path: Path, external: bool
     ) -> None:
+        """RejectStaleRevision resyncs a delayed event without writing."""
         store = ConfigStore(tmp_path)
         store.write_fields(
             {"provider": "elevenlabs", "model": "eleven_v3", "voice": "benno"}
@@ -294,6 +299,96 @@ class TestRunnerServiceSeam:
         assert store.read().voice == "nova"
         await runner.changed(PanelTopic.MODEL, {"element_id": new_model, "value": 2})
         assert store.read().model == "tts-1-hd"
+
+    async def test_a_first_menu_install_is_not_confirmed_until_it_answers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        service.prefetch()
+        rest = _Rest()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def fail_after_wait(
+            accessor: _SceneAccessor, request: RenderRequest
+        ) -> SceneShown | OpError:
+            started.set()
+            await release.wait()
+            raise HubUnavailableError("menu install did not land")
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        monkeypatch.setattr(_SceneAccessor, "show", fail_after_wait)
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        click = asyncio.create_task(runner.clicked())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            store.write_field("voice", "aria")
+            assert not await service.reconcile()
+        finally:
+            release.set()
+            await click
+        assert service.scene().voice == "benno"
+
+    async def test_a_menu_install_failure_during_poll_does_not_rearm_polling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SkipDisarmedPollPush cannot reinstall after a concurrent refusal."""
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        loop = asyncio.get_running_loop()
+        reading, release = asyncio.Event(), threading.Event()
+        client = MagicMock(spec=VoxClientSync)
+
+        def voices(target: VoiceTarget) -> list[str]:
+            if target.provider == "elevenlabs":
+                return ["benno", "aria"]
+            loop.call_soon_threadsafe(reading.set)
+            assert release.wait(5)
+            return ["af"]
+
+        client.voices.side_effect = voices
+        service = VoxPanelService(client, store)
+        service.prefetch()
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        await service.install_scene(rest_factory())
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        calls: list[RenderRequest] = []
+
+        async def failed_install(
+            accessor: _SceneAccessor, request: RenderRequest
+        ) -> SceneShown | OpError:
+            calls.append(request)
+            raise HubUnavailableError("menu install lost Lux")
+
+        monkeypatch.setattr(_SceneAccessor, "show", failed_install)
+        store.write_fields({"provider": "espeak", "voice": "af"})
+        poll = asyncio.create_task(runner.reconciled())
+        try:
+            await asyncio.wait_for(reading.wait(), timeout=5)
+            await runner.clicked()
+        finally:
+            release.set()
+            await poll
+        assert service.scene().provider == "espeak"
+        assert len(calls) == 1
+        assert not await service.reconcile()
 
     async def test_an_external_voice_write_patches_only_an_installed_panel(
         self, tmp_path: Path

@@ -117,9 +117,11 @@ class VoxPanelService:
         """Show the held scene outright, the whole tree at once (a menu click)."""
         await self._push.install(client, self._settings.scene().render_request())
 
-    async def push_scene(self, client: LuxClient) -> None:
+    async def push_scene(self, client: LuxClient, *, background: bool = False) -> None:
         """Refresh the installed scene with the currently-held one."""
-        await self._push.refresh(client, self._settings.scene().render_request())
+        await self._push.refresh(
+            client, self._settings.scene().render_request(), background=background
+        )
 
     async def correct_scene(self, client: LuxClient) -> None:
         """Reinstall the held scene in full, snapping back an optimistic widget.

@@ -85,7 +85,7 @@ class PanelPush:
     @property
     def has_confirmed_scene(self) -> bool:
         """Return whether a background push has a confirmed scene to refresh."""
-        return self._live.armed
+        return not self._lock.locked() and self._live.armed
 
     async def install(self, client: LuxClient, request: RenderRequest) -> None:
         """Show ``request`` in full, whether or not it changed.
@@ -96,15 +96,21 @@ class PanelPush:
         async with self._lock:
             await self._complete(client, self._live.install(request))
 
-    async def refresh(self, client: LuxClient, request: RenderRequest) -> None:
+    async def refresh(
+        self, client: LuxClient, request: RenderRequest, *, background: bool = False
+    ) -> None:
         """Carry ``request`` onto the installed scene by the cheapest correct push.
 
         Nothing at all when the render is unchanged, a field patch when values
         moved, a full install only when the element roster or the frame shell
         changed and no patch could express it.
+
+        A background refresh rechecks the patch base after any foreground
+        install finishes: losing it during the read must not rearm polling.
         """
         async with self._lock:
-            await self._complete(client, self._live.plan(request))
+            if self._live.armed or not background:
+                await self._complete(client, self._live.plan(request))
 
     async def _complete(self, client: LuxClient, push: ScenePush) -> None:
         """Complete ``push``, logging a refusal.

@@ -99,10 +99,10 @@ class PanelRunner:
         try:
             async with (
                 self._routing,
-                self._guard.rejection("an external settings refresh"),
+                self._guard.rejection("an external settings refresh", background=True),
             ):
                 if await self._service.reconcile():
-                    await self._guard.repush()
+                    await self._guard.repush(background=True)
         except Exception:
             self._logger.exception("an external settings refresh failed")
 

@@ -33,6 +33,7 @@ class _Roster:
 
 class TestPanelSettings:
     def test_an_old_resync_cannot_replace_newer_settings(self, tmp_path: Path) -> None:
+        """DiscardPoll leaves the latest snapshot and notice untouched."""
         settings = PanelSettings(_Roster(), ConfigStore(tmp_path))
         before = settings.snapshot()
         current = before.with_provider("espeak", roster=("en",), model=None, voice="en")
