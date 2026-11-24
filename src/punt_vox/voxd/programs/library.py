@@ -16,12 +16,11 @@ album whose Parts back the active pool or selection).
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
-from punt_vox.voxd.programs.album_contents import AlbumContents
+from punt_vox.voxd.programs.album_export import AlbumExport
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
@@ -36,6 +35,7 @@ from punt_vox.voxd.programs.producer import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.album_contents import AlbumContents
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.album_reservation import AlbumReservation
     from punt_vox.voxd.programs.catalog import Catalog
@@ -136,17 +136,17 @@ class MusicLibrary:
 
         The id is a catalog key, never a path; the per-part containment (a corrupt
         manifest entry can never stat outside the album dir) lives on ``AlbumContents``.
-        A ready part whose file was deleted out of band is listed as missing, not
-        raised, so the surviving parts stay exportable. The catalog lookup stays on
-        the event loop; the live manifest read and track stats run in a worker.
+        Missing part files are listed, so surviving parts stay exportable.
+        Catalog lookups stay on the loop; disk reads run in a worker.
 
         Raises:
             ValueError: If the album is missing or a part path is unsafe.
             OSError: If the manifest or part files cannot be read.
+            AlbumNotFoundError: If a catalogued manifest disappeared out of band.
         """
         album = self._require(album_id)
         root = ContainmentRoot(self._root / album.locator, _PART_LABEL)
-        return await asyncio.to_thread(AlbumContents.from_album, album, root)
+        return await AlbumExport.read(album, root, self._require)
 
     def resolve_part(self, album_id: AlbumId, part_name: str) -> Path:
         """Resolve one album part to a contained regular file, never a symlink.
