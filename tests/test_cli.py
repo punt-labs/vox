@@ -1239,12 +1239,12 @@ class TestLogCommand:
                 "unknown provider 'definitely-bogus'. "
                 "Allowed: elevenlabs, openai, polly, say, espeak"
             ),
-            "",
+            "Error: ",
         ),
         (
             ["model", "definitely-bogus"],
             "unknown model 'definitely-bogus' for provider 'elevenlabs'",
-            "",
+            "Error: ",
         ),
         (["voice", "@"], "voice name is empty", ""),
         (

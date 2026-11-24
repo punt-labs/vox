@@ -48,12 +48,8 @@ class ProviderCommand:
 
         if name not in PROVIDER_NAMES:
             allowed = ", ".join(PROVIDER_NAMES)
-            message = f"unknown provider {name!r}. Allowed: {allowed}"
-            return CommandResult(
-                text=message,
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
+            return CommandResult.failure(
+                f"unknown provider {name!r}. Allowed: {allowed}"
             )
 
         if cfg.provider == name:
@@ -61,12 +57,7 @@ class ProviderCommand:
 
         voice_default = Cascade.fetch_first_voice(ctx.client, name)
         if isinstance(voice_default, RosterError):
-            return CommandResult(
-                text=f"Error: {voice_default.message}",
-                json_data={"error": voice_default.message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(voice_default.message)
 
         model_default = Cascade.default_model(name)
 
@@ -79,13 +70,7 @@ class ProviderCommand:
                 }
             )
         except ValueError as exc:
-            message = str(exc)
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(str(exc))
         return CommandResult(
             text=f"Provider: {name}",
             json_data={
