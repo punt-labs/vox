@@ -220,9 +220,9 @@ class SynthesizeHandler(MessageHandler):
     ) -> bool | None:
         """Check the once-dedup window.
 
-        Return ``None`` when the request was a dedup hit (a 'done' reply was sent
-        and the caller must stop); otherwise return whether this call recorded a
-        dedup entry that a later failure must roll back.
+        Return ``None`` after replying to a dedup hit, whether acknowledged or
+        rejected; otherwise return whether this call recorded a dedup entry
+        that a later failure must roll back.
         """
         if once is None or once <= 0:
             return False
