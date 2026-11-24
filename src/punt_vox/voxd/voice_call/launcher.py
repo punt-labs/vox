@@ -7,7 +7,6 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools
@@ -180,7 +179,7 @@ class CallLauncher:
     async def _input(msg: dict[str, object]) -> CallInput:
         if "script" in msg:
             return await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
-        return MicInput.from_wire(msg, MicAudioSource(PortAudio()))
+        return MicInput.from_wire(msg, MicAudioSource.with_portaudio())
 
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)

@@ -24,7 +24,6 @@ from conversation_mode._mic_fakes import FAKE_DEVICE, FakeBackend, FakeInputStre
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -203,7 +202,7 @@ async def test_default_source_opens_and_closes_a_portaudio_stream(
             query_devices=_device_info("Built-in", 44100.0),
         ),
     )
-    gen = MicAudioSource(PortAudio()).chunks()
+    gen = MicAudioSource.with_portaudio().chunks()
     next_chunk = asyncio.create_task(anext(gen))
     await _advance_to_first_await()
     (stream,) = created

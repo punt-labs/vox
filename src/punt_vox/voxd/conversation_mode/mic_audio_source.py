@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
 
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
 from punt_vox.voxd.conversation_mode.mic_capture import MicCapture
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -76,6 +77,11 @@ class MicAudioSource:
         self._sample_rate_hz = sample_rate_hz
         self._chunk_s = chunk_s
         return self
+
+    @classmethod
+    def with_portaudio(cls) -> Self:
+        """Create the production source: the system microphone through PortAudio."""
+        return cls(PortAudio())
 
     def open(self) -> MicCapture:
         """Open the device now and return the capture that streams from it.
