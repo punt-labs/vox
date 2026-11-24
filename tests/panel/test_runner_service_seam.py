@@ -346,8 +346,24 @@ class TestRunnerServiceSeam:
         assert service.scene().notice == PanelNotice.control_rejected("voice")
 
     @pytest.mark.parametrize("external", [True, False], ids=["poll", "menu"])
+    @pytest.mark.parametrize(
+        ("bad_config", "diagnostic"),
+        [
+            pytest.param(b"\xff", "UnicodeDecodeError", id="invalid-utf8"),
+            pytest.param(
+                b"---\nprovider: elevenlabs\nvoice: aria\n",
+                "no closing ---",
+                id="unclosed-frontmatter",
+            ),
+        ],
+    )
     async def test_an_unreadable_config_cannot_replace_confirmed_settings(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, external: bool
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        external: bool,
+        bad_config: bytes,
+        diagnostic: str,
     ) -> None:
         store = ConfigStore(tmp_path, durable_only=True)
         store.write_fields({"provider": "elevenlabs", "voice": "benno"})
@@ -357,14 +373,14 @@ class TestRunnerServiceSeam:
         path = tmp_path / "vox.md"
         original = path.read_bytes()
 
-        path.write_bytes(b"\xff")
+        path.write_bytes(bad_config)
         if external:
             assert await service.reconcile()
         else:
             assert service.refresh()
         assert service.scene().voice == "benno"
         assert service.scene().notice == PanelNotice.config_unreadable()
-        assert "UnicodeDecodeError" in caplog.text
+        assert diagnostic in caplog.text
         assert not await service.reconcile()
 
         path.write_bytes(original)

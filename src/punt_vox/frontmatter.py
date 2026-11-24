@@ -61,11 +61,11 @@ class Frontmatter:
         """Wait for any cooperating writer before accepting a snapshot."""
         lock = ConfigLock(self.path).sibling()
         if not lock.path.exists():
-            block = self._file.block()
+            block = self._file.fenced_block()
             if not lock.path.exists():
                 return block
         with lock.held():
-            return self._file.block()
+            return self._file.fenced_block()
 
     def read_field(self, field: str, *, strict: bool = False) -> str | None:
         """Return a single frontmatter field, or ``None`` if absent.
