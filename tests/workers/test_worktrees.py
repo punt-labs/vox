@@ -172,3 +172,40 @@ def test_discard_removes_a_worktree_still_locked_from_its_creation(
         text=True,
     )
     assert probe.returncode == 1
+
+
+def test_discard_removes_a_worktree_whose_git_file_vanished(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A deadline-killed add can leave the directory without its .git file.
+
+    git refuses to remove such a worktree ("'.git' does not exist"), so the
+    admin entry under .git/worktrees and the checked-out branch would stay.
+    """
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    branch = f"vox-worker/{worker_id}"
+    WorkerWorktrees().create(repo, worktree, branch)
+    (worktree / ".git").unlink()
+    WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert not worktree.exists()
+    assert not _is_listed(repo, worktree)
+    assert not any((repo / ".git" / "worktrees").glob("*")) or not any(
+        worker_id in entry.read_text()
+        for entry in (repo / ".git" / "worktrees").glob("*/gitdir")
+    )
+    probe = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 1

@@ -154,6 +154,7 @@ class WorkerWorktrees:
         failures = DiscardError()
         failures.attempt("remove", lambda: self._unregister(project, worktree))
         failures.attempt("rmtree", lambda: self._remove_tree(worktree))
+        failures.attempt("admin", lambda: self._remove_admin_entry(project, worktree))
         failures.attempt(
             "branch", lambda: self._delete_branch(project, f"vox-worker/{owner}")
         )
@@ -162,17 +163,49 @@ class WorkerWorktrees:
             raise failures
 
     def _unregister(self, project: Path, worktree: Path) -> None:
-        if self._registered(project, worktree):
-            # Two --force: git locks a worktree ("initializing") while adding
-            # it, and a run killed at the deadline leaves that lock in place.
-            self._git(
-                project, "worktree", "remove", "--force", "--force", str(worktree)
-            )
+        if not self._registered(project, worktree):
+            return
+        if worktree.is_dir() and not (worktree / ".git").exists():
+            # git refuses to remove a directory whose .git file is gone
+            # ("validation failed"); the admin step drops its entry instead.
+            # A directory that is wholly missing git unregisters itself.
+            return
+        # Two --force: git locks a worktree ("initializing") while adding
+        # it, and a run killed at the deadline leaves that lock in place.
+        self._git(project, "worktree", "remove", "--force", "--force", str(worktree))
 
     @staticmethod
     def _remove_tree(worktree: Path) -> None:
         if worktree.exists():
             shutil.rmtree(worktree)
+
+    def _remove_admin_entry(self, project: Path, worktree: Path) -> None:
+        """Drop this worker's own ``.git/worktrees`` entry when git would not.
+
+        An add killed at the deadline can leave the directory without its
+        ``.git`` file; ``git worktree remove`` then fails validation and the
+        admin entry keeps the branch checked out. Only the entry whose
+        ``gitdir`` names this worktree is removed, never the repository's
+        other entries.
+        """
+        if not self._registered(project, worktree):
+            return
+        admin = self._admin_dir(project)
+        if admin is None:
+            return
+        wanted = {str(worktree / ".git"), str(worktree.resolve() / ".git")}
+        for entry in admin.iterdir():
+            gitdir = entry / "gitdir"
+            if gitdir.is_file() and gitdir.read_text().strip() in wanted:
+                shutil.rmtree(entry)
+
+    # PY-TS-14: None when the repository has no worktrees directory yet.
+    def _admin_dir(self, project: Path) -> Path | None:
+        common = Path(self._git(project, "rev-parse", "--git-common-dir").strip())
+        if not common.is_absolute():
+            common = project / common
+        admin = common / "worktrees"
+        return admin if admin.is_dir() else None
 
     def _delete_branch(self, project: Path, branch: str) -> None:
         if self._has_branch(project, branch):
