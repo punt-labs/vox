@@ -80,6 +80,15 @@ def test_a_reply_that_is_not_json_is_a_protocol_error() -> None:
         VoxdExchange.decode("not json")
 
 
+@pytest.mark.parametrize("frame", [[], 1, "x", True, None])
+def test_a_json_reply_that_is_not_an_object_is_a_protocol_error(
+    frame: object,
+) -> None:
+    exchange, _ = _exchange(frame)
+    with pytest.raises(VoxdProtocolError, match="expected a JSON object from voxd"):
+        asyncio.run(exchange.reply(timeout=1))
+
+
 def test_a_silent_daemon_times_out_naming_the_op() -> None:
     exchange, ws = _exchange()
 
@@ -117,6 +126,17 @@ def test_a_chunk_stream_is_reassembled_in_order() -> None:
         return await exchange.reassemble(_later(1))
 
     assert asyncio.run(run()) == b"abcdefg"
+
+
+def test_a_non_object_fetch_frame_is_a_protocol_error() -> None:
+    begin, _, end = _fetch_frames(b"abc", chunk=3)
+    exchange, _ = _exchange(begin, [], end)
+
+    async def run() -> bytes:
+        return await exchange.reassemble(_later(1))
+
+    with pytest.raises(VoxdProtocolError, match="expected a JSON object from voxd"):
+        asyncio.run(run())
 
 
 def test_an_out_of_order_chunk_is_a_protocol_error() -> None:

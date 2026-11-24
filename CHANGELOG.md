@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Treat non-object JSON replies from voxd as protocol errors. Status reports
+  the daemon as `unknown` instead of crashing. (PL-1422)
+
 - Preserve currency and signs when speaking attached amounts, rates, compact
   amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
   `$5-$10`. (PL-1414)
