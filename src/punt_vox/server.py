@@ -464,8 +464,10 @@ def unmute(
     """
     _session.refresh_from_config()
 
-    # Validate voice settings via SynthesisSpec (single validation path).
-    SynthesisSpec(stability=stability, similarity=similarity, style=style).validate()
+    # Validate rate and voice settings via SynthesisSpec (single validation path).
+    SynthesisSpec(
+        rate=rate, stability=stability, similarity=similarity, style=style
+    ).validate()
 
     # ephemeral is accepted for callers but voxd cleans up internally today.
     _ = ephemeral

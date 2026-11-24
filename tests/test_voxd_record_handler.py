@@ -359,6 +359,35 @@ class TestRecordHandler:
         assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
         synth.synthesize_to_file.assert_not_called()
 
+    @pytest.mark.parametrize("rate", [0, -10])
+    def test_nonpositive_rate_is_an_error(self, tmp_path: Path, rate: int) -> None:
+        """A wire rate of 0 or below is rejected before the ack, so no provider
+        call is made and nothing lands in the store."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock()
+        store = _store(tmp_path)
+        handler = RecordHandler(synthesis=synth, store=store)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "provider": "elevenlabs",
+            "rate": rate,
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": f"rate must be greater than 0, got {rate}",
+            }
+        ]
+        synth.synthesize_to_file.assert_not_called()
+        assert not store.root.exists() or not any(store.root.iterdir())
+
     def test_non_string_voice_is_a_clean_error(self, tmp_path: Path) -> None:
         """A non-string typed field yields an error frame before the ack; the
         parse must not escape the handler and tear the connection down."""

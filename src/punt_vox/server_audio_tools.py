@@ -202,10 +202,13 @@ class RecTool:
     def _new(self, args: RecArgs) -> str:
         """Synthesize speech into the store; return a bare id per segment."""
         session = self._session_provider()
-        # Reject bad voice settings before any round-trip as a clean {"error"}
-        # envelope (the sibling verbs' contract), not a bare exception.
+        # Reject a bad rate or voice setting before any round-trip as a clean
+        # {"error"} envelope (the sibling verbs' contract), not a bare exception.
         spec = SynthesisSpec(
-            stability=args.stability, similarity=args.similarity, style=args.style
+            rate=args.rate,
+            stability=args.stability,
+            similarity=args.similarity,
+            style=args.style,
         )
         try:
             spec.validate()

@@ -245,6 +245,39 @@ class TestSynthesizeParseGuard:
         mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("rate", [0, -10])
+    async def test_nonpositive_rate_is_rejected_before_synthesis(
+        self, rate: int
+    ) -> None:
+        """A wire rate of 0 or below is an id-stamped error, never sent to a
+        provider."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        mock_synth.try_direct_play = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "espeak",
+            "rate": rate,
+        }
+        await handler(msg, ws)
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "1",
+                "message": f"rate must be greater than 0, got {rate}",
+            }
+        ]
+        mock_synth.try_direct_play.assert_not_called()
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "api_key",
         [

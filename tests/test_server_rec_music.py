@@ -290,6 +290,17 @@ def test_rec_new_bad_voice_setting_returns_clean_error() -> None:
     assert fake.calls == []  # rejected before any round-trip
 
 
+@pytest.mark.parametrize("rate", [0, -10])
+def test_rec_new_nonpositive_rate_returns_clean_error(rate: int) -> None:
+    """A rate of 0 or below is the {"error"} envelope, before any round-trip."""
+    fake = _FakeClient()
+
+    result = json.loads(_rec(fake).new(text="hi", rate=rate))
+
+    assert result == {"error": f"rate must be greater than 0, got {rate}"}
+    assert fake.calls == []
+
+
 def test_rec_new_daemon_error_surfaces_as_clean_error() -> None:
     client = MagicMock()
     client.record.side_effect = VoxdConnectionError("not running")
