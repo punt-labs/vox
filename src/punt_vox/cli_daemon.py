@@ -219,15 +219,15 @@ class DaemonCli:
             raise typer.Exit(code=reading.exit_code)
 
     @classmethod
-    def probe_status(cls) -> str:
-        """Read and record the top-level CLI's liveness-only daemon status.
+    def probe_status(cls) -> DaemonStatus:
+        """Read and record the top-level CLI's daemon status.
 
         It classifies a failure as ``vox daemon status`` does for a configured
         daemon, so the two never disagree on ``not running``.
         """
-        state = cls._client_status().state
-        cls._log_status("vox status", state)
-        return state.value.replace("_", " ")
+        reading = cls._client_status()
+        cls._log_status("vox status", reading.state)
+        return reading
 
     @staticmethod
     def _log_status(
