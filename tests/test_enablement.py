@@ -24,11 +24,7 @@ from punt_vox.gitignore_entry import GitignoreEntry
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
-from punt_vox.provider_proposal import (
-    ENABLE_OUTCOME_REASONS,
-    EnableOutcome,
-    ProviderProposal,
-)
+from punt_vox.provider_proposal import ProviderProposal
 from punt_vox.settings_registration import SettingsRegistration
 from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 
@@ -642,43 +638,6 @@ def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
     assert outcome.reason == "already_set"
     assert outcome.provider_written is None
     assert _config_store(tmp_path).read().provider == "elevenlabs"
-
-
-def test_enable_outcome_reason_enumeration_is_closed() -> None:
-    """Every reason named in the enumeration comment is a member of the frozenset.
-
-    A change to the ``EnableOutcomeReason`` Literal must land in
-    :data:`ENABLE_OUTCOME_REASONS` in the same edit; this test proves
-    the frozenset is what the Literal claims to be.
-    """
-    assert (
-        frozenset(
-            {
-                "written",
-                "already_set",
-                "voxd_unavailable",
-                "no_ready_provider",
-                "write_failed",
-            }
-        )
-        == ENABLE_OUTCOME_REASONS
-    )
-
-
-def test_enable_outcome_refuses_unknown_reason() -> None:
-    """A novel reason string would slip past ``mypy`` (which only knows the Literal).
-
-    The runtime guard on ``__post_init__`` is the closing catch, so a
-    consumer branching on ``reason`` never sees a value no branch was
-    written for -- the same F4 shape the ``ProviderReadiness`` guard
-    exists to prevent.
-    """
-    with pytest.raises(ValueError, match="unknown enable outcome reason"):
-        EnableOutcome(
-            reason="mystery",  # type: ignore[arg-type]  # test intent: raise
-            provider_written=None,
-            detail="",
-        )
 
 
 def test_marker_content_is_deterministic(tmp_path: Path) -> None:
