@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 from pathlib import Path
-from typing import ClassVar, Self, cast, final
+from typing import ClassVar, Self, final
 
 from punt_vox.keys import parse_keys_env
 from punt_vox.paths import keys_env_file
@@ -53,36 +52,6 @@ class DesktopInstaller:
         self._provider = provider
         self._audio_dir = audio_dir
         return self
-
-    @classmethod
-    def registration(cls) -> str:
-        """Return the Claude Desktop registration state as one operator-visible line.
-
-        Four states are surfaced so the operator sees exactly what
-        ``vox desktop uninstall`` would (or would not) clean up:
-
-        - ``"registered"`` -- a ``vox`` entry lives under ``mcpServers``.
-        - ``"not registered"`` -- config exists, no ``vox`` entry (or the top
-          level is not an object, so no ``mcpServers`` map can be present).
-        - ``"no config"`` -- the config file does not exist.
-        - ``"config unreadable"`` -- the file exists but is malformed or
-          permission-denied. Surfaced distinctly from ``not registered``
-          because the operator cannot conclude anything about the
-          registration from a file the CLI cannot parse.
-        """
-        config_path = cls.config_path()
-        if not config_path.exists():
-            return "no config"
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return "config unreadable"
-        if not isinstance(data, dict):
-            return "not registered"
-        servers = cast("dict[str, object]", data).get("mcpServers")
-        if isinstance(servers, dict) and "vox" in servers:
-            return "registered"
-        return "not registered"
 
     @classmethod
     def config_path(cls) -> Path:
@@ -200,10 +169,19 @@ class DesktopInstaller:
         the installer's interactive shell, so a key merely exported in this
         process is invisible to it -- only ``keys.env`` (written by
         ``vox daemon install``, read by ``DaemonConfig.load_keys``) counts.
+        A missing, unreadable, or non-UTF-8 file means no key is usable.
         """
-        if not self.requires_credential():
+        key_var = _PROVIDER_KEY_VARS.get(self._provider)
+        if key_var is None:
             return True
-        return self._keys_env_has(_PROVIDER_KEY_VARS[self._provider])
+        path = keys_env_file()
+        if not path.is_file():
+            return False
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return False
+        return bool(parse_keys_env(text).get(key_var))
 
     def credential_guidance(self) -> str:
         """Return operator guidance for a key the daemon cannot yet reach.
@@ -229,20 +207,3 @@ class DesktopInstaller:
             f"{key_var} and run 'vox daemon install' to store it there, "
             f"or choose --provider say/espeak/polly."
         )
-
-    @staticmethod
-    def _keys_env_has(key_var: str) -> bool:
-        """Return whether ``keys.env`` holds a non-empty value for *key_var*.
-
-        Reading the daemon's credential file is a system boundary: a
-        missing, unreadable, or non-UTF-8 file means "the daemon has no
-        usable key", not a crash.
-        """
-        path = keys_env_file()
-        if not path.is_file():
-            return False
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return False
-        return bool(parse_keys_env(text).get(key_var))

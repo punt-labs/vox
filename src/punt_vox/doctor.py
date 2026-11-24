@@ -23,14 +23,11 @@ from punt_vox.client_errors import (
     VoxdRefusedError,
 )
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.dirs import (
-    _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
-    default_output_dir,
-)
 from punt_vox.doctor_call import CallChecks
 from punt_vox.doctor_desktop import DesktopCheck
 from punt_vox.doctor_guide import GuideCheck
 from punt_vox.doctor_mpv import MpvCheck
+from punt_vox.doctor_output import OutputDirCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
@@ -140,9 +137,9 @@ class DoctorCheck:
         """Check espeak on Linux when no cloud API keys are set."""
         if platform.system() != "Linux":
             return []
-        if any(os.environ.get(k) for k in ("ELEVENLABS_API_KEY", "OPENAI_API_KEY")):
+        if any(map(os.environ.get, ("ELEVENLABS_API_KEY", "OPENAI_API_KEY"))):
             return []
-        if shutil.which("espeak-ng") or shutil.which("espeak"):
+        if any(map(shutil.which, ("espeak-ng", "espeak"))):
             # Out of jail: report presence, never the binary's install path.
             return [CheckResult.ok("espeak: present (offline fallback)")]
         return [
@@ -211,9 +208,10 @@ class DoctorCheck:
 
         Every credentials error message points here (``... run `vox doctor```).
         The daemon owns the verdict -- ``ProviderCredentials.report_all`` walks
-        the same requirement dispatch the resolution gate uses, so a provider
-        this reports ready is exactly a provider ``mic:unmute`` will not refuse
-        for credentials reasons, and vice versa. An unready provider is a
+        the same requirement dispatch the resolution gate uses, and ``verify``
+        then confirms each ready provider with an authenticated live call
+        (``LiveCheck``), so a present but rejected or expired key reports not
+        ready with the provider's reason rather than ``ready``. An unready provider is a
         warning rather than a hard fail because a single-provider host is a
         normal configuration; only the state-declared provider being
         unavailable is fatal, and that surfaces at synthesis.
@@ -225,7 +223,7 @@ class DoctorCheck:
         """
         client = self._client or VoxClientSync()
         try:
-            payload = client.provider_status()
+            payload = client.provider_status(verify=True)
         except VoxdConnectionError as exc:
             # Daemon down or unreachable is already a fail from
             # ``check_daemon_health``; here it would be a duplicate hard-fail
@@ -293,19 +291,12 @@ class DoctorCheck:
         return []
 
     def check_music_dir(self) -> list[CheckResult]:
-        """Check the music dir -- present/absent verdict, no abs path.
+        """Check the music dir that normally holds the output root.
 
-        An in-jail path under the ``output`` root, reported as a relative verdict
-        so its absolute prefix never crosses to a client.
+        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
-        if not music_dir.is_dir():
-            return [
-                CheckResult.warn(
-                    "output music dir: absent — created on first 'vox record'"
-                )
-            ]
-        return []
+        return OutputDirCheck().music_dir()
 
     def check_uvx(self) -> CheckResult:
         """Check for uvx -- present/absent verdict, no host path (out of jail)."""
@@ -326,21 +317,12 @@ class DoctorCheck:
         return DesktopCheck().run()
 
     def check_output_dir(self) -> list[CheckResult]:
-        """Check the output dir -- writable verdict, no abs path or raw OSError.
+        """Check the output data root is present and writable.
 
-        The dir *is* the ``output`` data root, so its own label is the name; the
-        absolute path and the raw ``OSError`` stay out of the client-facing reply.
+        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
+        ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
-        out_dir = default_output_dir()
-        if out_dir.is_dir():
-            try:
-                test_file = out_dir / ".doctor_test"
-                test_file.write_text("ok")
-                test_file.unlink()
-                return [CheckResult.ok("output: writable")]
-            except OSError:
-                return [CheckResult.fail("output: not writable — check permissions")]
-        return [CheckResult.warn("output: absent — created on first 'vox record'")]
+        return OutputDirCheck().output_dir()
 
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.

@@ -7,22 +7,29 @@ Used by the MCP server, hook handlers, and CLI commands.
 from __future__ import annotations
 
 import contextlib
+import io
 import logging
 import os
 import shutil
 import tempfile
 import uuid
 from collections.abc import Generator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
+    from typing import IO
 
-from punt_vox.bare_name import BareName
+from punt_vox.album_export import AlbumExport as AlbumExport, ExportManifest
 from punt_vox.client_errors import (
     VoxdProtocolError,
+)
+from punt_vox.client_results import (
+    CacheStatus as CacheStatus,
+    RecordingSummary as RecordingSummary,
+    RecordResult as RecordResult,
+    SynthesizeResult as SynthesizeResult,
 )
 from punt_vox.client_transport import VoxdTransport
 from punt_vox.types_programs import (
@@ -34,149 +41,10 @@ from punt_vox.types_programs import (
     PromptSet,
 )
 from punt_vox.types_provider import ProviderStatusPayload
+from punt_vox.types_recording import RecordingFetchRequest
 from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Result types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class RecordResult:
-    """Locator for a recording the daemon stored -- never a client path.
-
-    ``record`` captures to the daemon-owned store; the client never names a
-    daemon path. ``id`` and ``name`` are the store reference (the store
-    filename) a caller passes to :meth:`VoxClient.play` or
-    :meth:`VoxClient.fetch`. ``store_path`` is that reference expressed
-    relative to the daemon's data root (``recordings/foo.mp3``) -- a logical
-    locator with no absolute prefix, never a path on the client's own disk.
-    ``byte_count`` is the size the daemon wrote; ``cached`` reports a cache hit.
-    """
-
-    id: str
-    name: str
-    store_path: Path
-    byte_count: int
-    cached: bool = False
-
-    @classmethod
-    def from_audio(cls, terminal: dict[str, Any]) -> Self:  # a decoded frame
-        """Build the locator from ``record``'s terminal ``audio`` frame.
-
-        Raises ``VoxdProtocolError`` for any other frame, a missing field, or
-        a non-integer byte count -- never a raw ``ValueError`` a CLI or tool
-        catch would miss.
-
-        Raises:
-            VoxdProtocolError: If the response is not a complete, valid audio result.
-        """
-        if terminal.get("type") != "audio":
-            raise VoxdProtocolError(
-                f"Expected 'audio' response, got '{terminal.get('type')}'"
-            )
-        for field in ("name", "path", "bytes"):
-            if field not in terminal:
-                raise VoxdProtocolError(f"'audio' response missing {field!r}")
-        try:
-            byte_count = int(terminal["bytes"])
-        except (TypeError, ValueError) as exc:
-            raise VoxdProtocolError(
-                f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
-            ) from exc
-        store_name = str(terminal["name"])
-        return cls(
-            id=store_name,
-            name=store_name,
-            store_path=Path(str(terminal["path"])),
-            byte_count=byte_count,
-            cached=bool(terminal.get("cached", False)),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RecordingSummary:
-    """One recording in the store's list: its bare name and byte count."""
-
-    name: str
-    byte_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class CacheStatus:
-    """The daemon cache's size, described to a client.
-
-    ``path`` is the daemon cache directory relativized to its data root
-    (``cache``) -- a logical name with no absolute prefix, so a remote client
-    learns the location, never the daemon's home or username. ``entries`` and
-    ``size_bytes`` count the ``.mp3`` and orphaned ``.tmp`` files there, mirroring
-    the daemon's own ``cache_status`` return.
-    """
-
-    entries: int
-    size_bytes: int
-    path: Path
-
-    @classmethod
-    def from_wire(cls, obj: JsonObject) -> Self:
-        """Build a cache status from a ``cache_status`` reply, raising on a bad row.
-
-        Raises:
-            ValueError: If a supplied wire field is missing, malformed, or has the wrong
-                type.
-        """
-        return cls(
-            entries=obj.require_int("entries"),
-            size_bytes=obj.require_int("size_bytes"),
-            path=Path(obj.require_str("path")),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SynthesizeResult:
-    """Result of a ``synthesize`` call on voxd.
-
-    ``deduped`` is True when the caller passed an ``once=<ttl>`` window and
-    the server found an identical text already played within it -- the
-    audio was NOT re-played; treat it as success, not an error. Non-deduped
-    results leave ``original_played_at`` and ``ttl_seconds_remaining`` None.
-
-    ``cached`` reports whether voxd served the audio from its
-    content-addressed cache (True) or synthesized it fresh (False) -- the
-    observability signal a caller asserts to confirm a cache hit. A dedup
-    short-circuit leaves it False since no synthesis path ran.
-    """
-
-    request_id: str
-    deduped: bool = False
-    original_played_at: float | None = None
-    ttl_seconds_remaining: float | None = None
-    cached: bool = False
-
-    @classmethod
-    def from_terminal(cls, request_id: str, terminal: dict[str, Any]) -> Self:
-        """Build the result from ``synthesize``'s last frame (empty: none came).
-
-        Raises:
-            ValueError: If a deduplication timestamp is not numeric.
-            TypeError: If a deduplication timestamp is null or cannot become seconds.
-        """
-        if not terminal.get("deduped"):
-            return cls(request_id, cached=bool(terminal.get("cached", False)))
-        return cls(
-            request_id,
-            deduped=True,
-            original_played_at=cls._seconds(terminal, "original_played_at"),
-            ttl_seconds_remaining=cls._seconds(terminal, "ttl_seconds_remaining"),
-        )
-
-    @staticmethod
-    def _seconds(terminal: dict[str, Any], key: str) -> float | None:
-        """Return *key* as seconds; ``None`` when the dedup frame omits it."""
-        return float(terminal[key]) if key in terminal else None
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +53,10 @@ class SynthesizeResult:
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
+# provider_status with verify runs each provider's live check in parallel,
+# each bounded by LiveCheck's 10s deadline on the daemon, after waiting out any
+# synthesis holding the env lock; leave headroom for both.
+_TIMEOUT_PROVIDER_CHECK = 30.0
 # play waits for the host-side playback to FINISH (not just enqueue) so a
 # failure surfaces, so its deadline must cover a full track. Bounded like the
 # record cap so a wedged daemon is still detected within ten minutes.
@@ -209,9 +81,10 @@ _RECORD_TIMEOUT_MAX = 600.0
 # wedged provider is detected. Generous, matching the record ceiling.
 _TIMEOUT_MUSIC_NEW = 600.0
 
-# ---------------------------------------------------------------------------
-# Async client
-# ---------------------------------------------------------------------------
+
+def _recording_fetch(ref: str) -> dict[str, object]:
+    msg = RecordingFetchRequest(type="fetch", id=uuid.uuid4().hex[:12], ref=ref)
+    return dict(msg)
 
 
 class VoxClient:
@@ -236,7 +109,6 @@ class VoxClient:
     :class:`~punt_vox.VoxError`
     (:class:`~punt_vox.VoxdConnectionError` when the daemon is unreachable,
     :class:`~punt_vox.VoxdProtocolError` on an unexpected reply).
-    A non-object JSON reply instead raises ``AttributeError``.
 
     With no *host*/*port*/*token*, the client resolves them from the
     ``VOXD_HOST``/``VOXD_PORT``/``VOXD_TOKEN`` environment variables and the
@@ -315,9 +187,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
             ValueError: If a deduplication timestamp is not numeric.
             TypeError: If a deduplication timestamp is null or cannot become seconds.
         """
@@ -347,9 +218,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         msg: dict[str, object] = {"type": "chime", "signal": signal}
         await self._transport.send_and_drain(
@@ -376,9 +246,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
@@ -418,9 +287,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         msg: dict[str, object] = {
             "type": "play",
@@ -444,16 +312,25 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
-        msg: dict[str, object] = {
-            "type": "fetch",
-            "id": uuid.uuid4().hex[:12],
-            "ref": ref,
-        }
-        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
+        with io.BytesIO() as sink:
+            await self._transport.fetch_into(
+                _recording_fetch(ref), sink, timeout=_TIMEOUT_FETCH
+            )
+            return sink.getvalue()
+
+    async def fetch_into(self, ref: str, sink: IO[bytes]) -> int:
+        """Copy a stored recording to *sink* and return its verified byte count.
+
+        Writes run on the calling event loop; supply a fast sink such as a
+        buffer or a local file on a dedicated loop. The timeout covers frame
+        reads, not a blocked write. The caller owns flushing and cleanup.
+        """
+        return await self._transport.fetch_into(
+            _recording_fetch(ref), sink, timeout=_TIMEOUT_FETCH
+        )
 
     async def fetch_part(self, album_id: str, part: str) -> bytes:
         """Return one album part's bytes, reassembled from the chunked stream.
@@ -465,9 +342,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         msg: dict[str, object] = {
             "type": "fetch",
@@ -475,7 +351,9 @@ class VoxClient:
             "album": album_id,
             "part": part,
         }
-        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
+        with io.BytesIO() as sink:
+            await self._transport.fetch_into(msg, sink, timeout=_TIMEOUT_FETCH)
+            return sink.getvalue()
 
     # -- recordings store (rec group) ---------------------------------------
 
@@ -485,24 +363,16 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("rec_list")
         with self._wire_guard():
             obj = JsonObject.coerce(resp, "rec_list")
             return tuple(
-                self._recording_row(JsonObject.coerce(item, "rec_list.entries"))
+                RecordingSummary.from_wire(JsonObject.coerce(item, "rec_list.entries"))
                 for item in obj.require_list("entries")
             )
-
-    @staticmethod
-    def _recording_row(row: JsonObject) -> RecordingSummary:
-        """Parse one ``rec_list`` entry (name + bytes) from the wire."""
-        return RecordingSummary(
-            name=row.require_str("name"), byte_count=row.require_int("bytes")
-        )
 
     async def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store (a hostile/absent ref raises).
@@ -510,9 +380,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         await self._command("rec_remove", ref=ref)
 
@@ -529,9 +398,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("cache_status")
         with self._wire_guard():
@@ -543,9 +411,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("cache_clear")
         with self._wire_guard():
@@ -561,9 +428,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("set_log_level", level=level)
         with self._wire_guard():
@@ -584,7 +450,6 @@ class VoxClient:
             VoxdProtocolError: If the daemon does not return an album response.
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
         """
         fields: dict[str, object] = {"base_prompt": prompts.base}
         if name is not None:
@@ -609,13 +474,12 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         await self._command("music_remove", album=album_id)
 
-    async def music_get(self, album_id: str, dest_dir: Path) -> Path:
+    async def music_get(self, album_id: str, dest_dir: Path) -> AlbumExport:
         """Copy an album into *dest_dir* as ``<album-name>/`` of its parts.
 
         Fetches the manifest and refuses an album with no ready parts before
@@ -624,46 +488,32 @@ class VoxClient:
         collision guard. With parts to write, it creates the album directory
         (refusing a collision, D-1), then chunk-fetches every part and writes it
         atomically. On any failure the half-written directory is removed, so a
-        fault leaves nothing.
+        fault leaves nothing. Parts the daemon reports missing on disk (deleted
+        out of band) are skipped and named on the returned export.
 
         Raises:
             ValueError: If the album has no parts to fetch.
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
             OSError: If the destination cannot be created or written.
             FileExistsError: If the destination album directory already exists.
         """
-        manifest = await self._command("music_manifest", album=album_id)
+        reply = await self._command("music_manifest", album=album_id)
         with self._wire_guard():
-            obj = JsonObject.coerce(manifest, "music_manifest")
-            # Validate daemon-supplied names as bare filenames before joining, so
-            # a tampered frame cannot write outside dest_dir (guard raises pre-mkdir).
-            album_name = BareName(obj.require_str("album"), "album name").value
-            parts = [
-                BareName(
-                    JsonObject.coerce(item, "manifest.parts").require_str("part"),
-                    "part name",
-                ).value
-                for item in obj.require_list("parts")
-            ]
-        if not parts:
-            # The manifest lists only ready parts, so an empty list means the album
-            # is still generating -- fail before mkdir so the CWD is left untouched.
-            msg = f"album {album_id} has no ready parts to export (still generating)"
-            raise ValueError(msg)
-        target = dest_dir / album_name
+            manifest = ExportManifest.parse(reply)  # names validated pre-mkdir
+        manifest.require_parts(album_id)  # fail before mkdir: CWD left untouched
+        target = dest_dir / manifest.album
         target.mkdir(parents=True)  # exist_ok=False: a collision raises (D-1)
         try:
-            for part in parts:
+            for part in manifest.parts:
                 data = await self.fetch_part(album_id, part)
                 self._write_atomically(target / part, data)
         except BaseException:
             shutil.rmtree(target, ignore_errors=True)
             raise
-        return target
+        return AlbumExport(target, manifest.missing)
 
     @staticmethod
     def _write_atomically(dest: Path, data: bytes) -> None:
@@ -691,7 +541,6 @@ class VoxClient:
             VoxdProtocolError: If the response does not contain a voices list.
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
         """
         msg: dict[str, object] = {"type": "voices", "provider": provider}
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
@@ -706,9 +555,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._transport.send_and_recv(
             {"type": "health"}, timeout=_TIMEOUT_SHORT
@@ -716,7 +564,7 @@ class VoxClient:
         return HealthStatus.from_wire(resp)
 
     async def provider_status(
-        self, provider: str | None = None
+        self, provider: str | None = None, *, verify: bool = False
     ) -> ProviderStatusPayload:
         """Return the daemon's per-provider readiness verdict and its preferred name.
 
@@ -738,17 +586,26 @@ class VoxClient:
         one WebSocket round-trip per ``mic:status`` call is the right
         cost for a live answer.
 
+        *verify* (``vox doctor``) asks the daemon to confirm each ready
+        provider with an authenticated live call, so a present but
+        rejected key reports ``check_failed`` rather than ``ready``.
+
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
-        fields: dict[str, object] = {}
+        msg: dict[str, object] = {
+            "type": "provider_status",
+            "id": uuid.uuid4().hex[:12],
+        }
         if provider is not None:
-            fields["provider"] = provider
-        resp = await self._command("provider_status", **fields)
+            msg["provider"] = provider
+        if verify:
+            msg["verify"] = True
+        deadline = _TIMEOUT_PROVIDER_CHECK if verify else _TIMEOUT_SHORT
+        resp = await self._transport.send_and_recv(msg, timeout=deadline)
         with self._wire_guard():
             return ProviderStatusPayload.from_wire(
                 JsonObject.coerce(resp, "provider_status")
@@ -776,9 +633,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("program_status")
         with self._wire_guard():
@@ -798,9 +654,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         fields: dict[str, object] = {}
         if style is not None:
@@ -820,9 +675,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         return self._outcome(await self._command("program_stop"))
 
@@ -832,9 +686,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         return self._outcome(await self._command("program_next"))
 
@@ -844,9 +697,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         return self._outcome(await self._command("program_prev"))
 
@@ -856,9 +708,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         return self._outcome(await self._command("program_pause"))
 
@@ -868,9 +719,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         return self._outcome(await self._command("program_resume"))
 
@@ -887,9 +737,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         fields: dict[str, object] = {}
         if album_id is not None:
@@ -908,9 +757,8 @@ class VoxClient:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         resp = await self._command("program_list")
         with self._wire_guard():

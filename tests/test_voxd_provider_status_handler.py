@@ -11,13 +11,17 @@ drift between the wire shape and the client's decoder surfaces here.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.providers.credentials import ProviderCredentials
+from punt_vox.providers.live_check import LiveCheck
+from punt_vox.types import HealthCheck
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
+
+    from punt_vox.types import TTSProvider
 
 
 def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
@@ -161,3 +165,85 @@ class TestMalformedFrame:
         assert reply["type"] == "error"
         assert reply["id"] == "p9"
         assert "must be a string" in cast("str", reply["message"])
+
+
+def _live_check_rejecting(name: str) -> LiveCheck:
+    """Return a :class:`LiveCheck` whose provider *name* rejects its key."""
+
+    @final
+    class _Provider:
+        __slots__ = ("_provider",)
+        _provider: str
+
+        def __new__(cls, provider: str) -> Self:
+            self = super().__new__(cls)
+            self._provider = provider
+            return self
+
+        def check_health(self) -> list[HealthCheck]:
+            if self._provider == name:
+                return [HealthCheck(passed=False, message=f"{name}: key rejected")]
+            return [HealthCheck(passed=True, message=f"{self._provider}: ok")]
+
+    def build(provider: str) -> TTSProvider:
+        return cast("TTSProvider", _Provider(provider))
+
+    return LiveCheck(build=build)
+
+
+class TestVerify:
+    """``verify: true`` confirms each ready row with a live check."""
+
+    def test_rejected_key_is_not_ready_and_not_preferred(self) -> None:
+        handler = ProviderStatusHandler(
+            _fixed_credentials(), live_check=_live_check_rejecting("elevenlabs")
+        )
+        ws, sent = _capturing_ws()
+        asyncio.run(
+            handler({"type": "provider_status", "id": "v1", "verify": True}, ws)
+        )
+        (reply,) = sent
+        rows = {
+            cast("str", row["name"]): row
+            for row in cast("list[dict[str, object]]", reply["providers"])
+        }
+        assert rows["elevenlabs"] == {
+            "name": "elevenlabs",
+            "ready": False,
+            "reason": "check_failed",
+            "detail": "elevenlabs: key rejected",
+        }
+        assert rows["say"]["ready"] is True
+        assert reply["preferred"] == "say"
+
+    def test_without_verify_no_live_call_is_made(self) -> None:
+        def explode(provider: str) -> TTSProvider:
+            raise AssertionError(provider)
+
+        handler = ProviderStatusHandler(
+            _fixed_credentials(), live_check=LiveCheck(build=explode)
+        )
+        ws, sent = _capturing_ws()
+        asyncio.run(handler({"type": "provider_status", "id": "v2"}, ws))
+        assert sent[0]["preferred"] == "elevenlabs"
+
+    def test_wrong_typed_verify_is_rejected(self) -> None:
+        handler = ProviderStatusHandler(_fixed_credentials())
+        ws, sent = _capturing_ws()
+        asyncio.run(
+            handler({"type": "provider_status", "id": "v3", "verify": "yes"}, ws)
+        )
+        assert sent[0]["type"] == "error"
+
+    def test_verify_with_a_named_provider_is_rejected(self) -> None:
+        # preferred would otherwise name a provider this reply never checked.
+        handler = ProviderStatusHandler(_fixed_credentials())
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {
+            "type": "provider_status",
+            "id": "v4",
+            "provider": "openai",
+            "verify": True,
+        }
+        asyncio.run(handler(msg, ws))
+        assert sent[0]["type"] == "error"

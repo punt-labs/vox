@@ -6,19 +6,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Self, final
 
-from punt_vox.keys import HEADER_CARRIED_KEY_NAMES, PROVIDER_KEY_NAMES, parse_keys_env
-from punt_vox.service.key_value_policy import ValuePolicy
+from punt_vox.keys import PROVIDER_KEY_NAMES, parse_keys_env
+from punt_vox.service.key_admission import AwsCredentials, KeyAdmission
 from punt_vox.service.keys_env_report import KeyNotice, KeysEnvReport
 
-# Values sent as HTTP header content (HEADER_CARRIED_KEY_NAMES) must be
-# printable non-space ASCII, which also rejects a pasted smart quote. The AWS
-# secret key only signs and never goes on the wire. The region does reach the
-# wire, as part of the endpoint host name, but botocore validates it against its
-# own host-label pattern before building a request, so it, the secret key, and
-# the plain settings (profile, provider) need only stay on their own line.
-_POLICIES = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, ValuePolicy.header_safe())
-_SETTING_POLICY = ValuePolicy.printable()
-_EMPTY = "empty in the environment"
+_DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
+_AWS_DIFFERS = "the stored AWS key pair differs (--rotate-keys replaces it)"
+_AWS_UNPAIRED = "the environment has no whole AWS key pair to rotate to"
 _HEADER = (
     "# vox provider keys — loaded by voxd at startup\n"
     "# Written by: vox daemon install\n"
@@ -28,33 +22,51 @@ _HEADER = (
 
 @final
 class KeysEnvMerge:
-    """The stored keys overlaid with the environment's, and a notice per skip.
+    """The stored keys with the environment's added, and a notice per skip.
 
-    Each value is stripped first, as both readers strip it. An empty or
-    whitespace-only value never removes a stored key: a failed secret lookup
-    exports ``KEY=""`` rather than unsetting it, and must not wipe a working
-    credential. A value its :class:`ValuePolicy` refuses is skipped too, which
-    stops any line break smuggling extra ``key=value`` lines into the file.
+    Each value is stripped first, as both readers strip it, then written only
+    if :class:`KeyAdmission` admits it: an empty or refused value never
+    removes a stored key.
+
+    A credential that differs from the stored one replaces it only when
+    *rotate* is set: a stale key exported by the installing shell must not
+    silently replace a working one. Otherwise the stored value is kept and
+    noted. A setting (profile, region, provider) still follows the shell. The
+    AWS credentials are kept or replaced as one set (see :class:`AwsCredentials`).
     """
 
-    __slots__ = ("_merged", "_notices")
+    __slots__ = ("_aws", "_held", "_merged", "_notices", "_removed", "_rotated")
 
+    _aws: AwsCredentials
+    _held: dict[str, str]
     _merged: dict[str, str]
     _notices: list[KeyNotice]
+    _removed: tuple[str, ...]
+    _rotated: list[str]
 
-    def __new__(cls, stored: Mapping[str, str], env: Mapping[str, str]) -> Self:
-        """Create a keys env merge."""
+    def __new__(
+        cls, stored: Mapping[str, str], env: Mapping[str, str], *, rotate: bool = False
+    ) -> Self:
+        """Create a keys env merge; *rotate* lets env values replace stored ones."""
         self = super().__new__(cls)
         self._merged = {key: value for key, value in stored.items() if value}
         self._notices = []
-        for key in sorted(PROVIDER_KEY_NAMES & env.keys()):
-            self._take(key, env[key].strip())
+        self._rotated = []
+        taken = {key: env[key].strip() for key in PROVIDER_KEY_NAMES & env.keys()}
+        self._aws = AwsCredentials(self._merged, taken)
+        self._held = self._held_over(taken, rotate=rotate)
+        for key in sorted(taken):
+            self._take(key, taken[key])
+        self._removed = self._aws.stale(self._merged)
+        self._drop(self._removed)
         return self
 
     @classmethod
-    def over_text(cls, text: str, env: Mapping[str, str]) -> Self:
+    def over_text(
+        cls, text: str, env: Mapping[str, str], *, rotate: bool = False
+    ) -> Self:
         """Return the merge of *env* onto the keys stored in keys.env *text*."""
-        return cls(parse_keys_env(text), env)
+        return cls(parse_keys_env(text), env, rotate=rotate)
 
     @property
     def merged(self) -> Mapping[str, str]:
@@ -66,6 +78,16 @@ class KeysEnvMerge:
         """Return one notice per environment key that was not written."""
         return tuple(self._notices)
 
+    @property
+    def rotated(self) -> tuple[str, ...]:
+        """Return the keys whose stored value an environment value replaced."""
+        return tuple(self._rotated)
+
+    @property
+    def removed(self) -> tuple[str, ...]:
+        """Return the stored AWS keys dropped with the key pair that replaced them."""
+        return self._removed
+
     def text(self) -> str:
         """Return the keys.env content: the header, then sorted ``key=value`` lines."""
         body = "\n".join(f"{k}={v}" for k, v in sorted(self._merged.items()))
@@ -73,20 +95,42 @@ class KeysEnvMerge:
 
     def report(self, path: Path) -> KeysEnvReport:
         """Return the operator-facing account of this merge written to *path*."""
-        return KeysEnvReport(path, self.notices)
+        return KeysEnvReport(
+            path, tuple(self._notices), tuple(self._rotated), self._removed
+        )
 
     def _take(self, key: str, value: str) -> None:
         """Write *value* for *key*, or note why not and leave the stored value."""
-        reason = self._reason_to_skip(key, value)
+        reason = KeyAdmission.refusal(key, value) or self._kept_over(key, value)
         if reason is None:
             self._merged[key] = value
         else:
-            self._notices.append(KeyNotice(key, reason, key in self._merged))
+            kept = key in self._merged
+            aws_stay = not kept and self._aws.covers(key)
+            self._notices.append(KeyNotice(key, reason, kept, aws_stay))
+
+    def _held_over(self, taken: Mapping[str, str], *, rotate: bool) -> dict[str, str]:
+        """Return the *taken* credentials kept off the file, each with why."""
+        differing = self._differing(self._merged, taken)
+        if rotate:
+            unpaired = self._aws.drift(differing) if self._aws.unpaired() else ()
+            return dict.fromkeys(unpaired, _AWS_UNPAIRED)
+        held = dict.fromkeys(self._aws.drift(differing), _AWS_DIFFERS)
+        return held | dict.fromkeys(differing, _DIFFERS)
 
     @staticmethod
-    def _reason_to_skip(key: str, value: str) -> str | None:
-        """Return why *value* is not written for *key*; ``None`` means write it."""
-        if not value:
-            return _EMPTY
-        refusal = _POLICIES.get(key, _SETTING_POLICY).refusal(value)
-        return None if refusal is None else f"refused: {refusal}"
+    def _differing(stored: Mapping[str, str], taken: Mapping[str, str]) -> set[str]:
+        """Return the *taken* credentials whose value would replace a *stored* one."""
+        return {k for k, v in taken.items() if KeyAdmission.replaces(stored, k, v)}
+
+    def _kept_over(self, key: str, value: str) -> str | None:
+        """Return why a differing stored credential stays; record it when rotated."""
+        reason = self._held.get(key)
+        if reason is None and KeyAdmission.replaces(self._merged, key, value):
+            self._rotated.append(key)
+        return reason
+
+    def _drop(self, keys: tuple[str, ...]) -> None:
+        """Remove *keys* from the merged keys."""
+        for key in keys:
+            del self._merged[key]

@@ -22,12 +22,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self, final
 
 import typer
 
-from punt_vox.client_errors import (
-    VoxdConnectionError,
-    VoxdProtocolError,
-    VoxdRefusedError,
-    VoxError,
-)
+from punt_vox.client_errors import VoxdRefusedError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.service import (
     DaemonLifecycle,
@@ -44,7 +39,7 @@ if TYPE_CHECKING:
     from punt_vox.output_formatter import OutputFormatter
     from punt_vox.service.lifecycle_report import LifecycleReport
 
-__all__ = ["DaemonCli", "build_daemon_app"]
+__all__ = ["DaemonCli"]
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +55,13 @@ _Verbose = Annotated[
 ]
 _Quiet = Annotated[
     bool, typer.Option("--quiet", "-q", help="Suppress non-JSON output.")
+]
+_RotateKeys = Annotated[
+    bool,
+    typer.Option(
+        "--rotate-keys",
+        help="Replace stored keys.env values with different ones from the shell.",
+    ),
 ]
 
 
@@ -84,9 +86,20 @@ class DaemonCli:
         self._flags = flags
         return self
 
+    @classmethod
+    def typer_app(cls, formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
+        """Return the ``vox daemon`` Typer group with bound verbs (no wrappers)."""
+        cli = cls(formatter, flags)
+        app = typer.Typer(help="Manage the vox daemon service.", no_args_is_help=True)
+        verbs = (cli.install, cli.uninstall, cli.start, cli.stop, cli.restart)
+        for verb in (*verbs, cli.status):
+            app.command(verb.__name__)(verb)
+        return app
+
     def install(
         self,
         *,
+        rotate_keys: _RotateKeys = False,
         json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
@@ -99,9 +112,15 @@ class DaemonCli:
         the systemd unit. Running under sudo yourself would cause per-user
         state to land under ``/root/.punt-labs/vox/`` -- wrong on both
         platforms.
+
+        Provider keys set in the shell are copied into ``keys.env``, but a key
+        already stored there is kept when the shell's value differs, unless
+        ``--rotate-keys`` asks to replace it.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        self._service(svc_install, "installed", "Install")
+        self._service(
+            lambda: svc_install(rotate_keys=rotate_keys), "installed", "Install"
+        )
 
     def uninstall(
         self,
@@ -223,17 +242,16 @@ class DaemonCli:
         if reading.exit_code:
             raise typer.Exit(code=reading.exit_code)
 
-    @staticmethod
-    def probe_status(client: VoxClientSync) -> str:
-        """Read and record the top-level CLI's liveness-only daemon status."""
-        state = DaemonState.NOT_RUNNING
-        try:
-            client.health()
-            state = DaemonState.RUNNING
-        except (VoxdConnectionError, VoxdProtocolError):
-            pass
-        DaemonCli._log_status("vox status", state)
-        return state.value.replace("_", " ")
+    @classmethod
+    def probe_status(cls) -> DaemonStatus:
+        """Read and record the top-level CLI's daemon status.
+
+        It classifies a failure as ``vox daemon status`` does for a configured
+        daemon, so the two never disagree on ``not running``.
+        """
+        reading = cls._client_status()
+        cls._log_status("vox status", reading.state)
+        return reading
 
     @staticmethod
     def _log_status(
@@ -261,7 +279,7 @@ class DaemonCli:
 
     @staticmethod
     def _client_status() -> DaemonStatus:
-        """Return the configured daemon's reading.
+        """Return the reading of the daemon the client reaches.
 
         Only a refused connection is ``not_running``: nothing listens there.
         A rejection, a malformed reply, a timeout or any other failure means
@@ -281,19 +299,3 @@ class DaemonCli:
             return DaemonLifecycle.for_this_host()
         except LifecycleRefusedError as exc:
             raise typer.BadParameter(str(exc)) from exc
-
-
-def build_daemon_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
-    """Return the ``vox daemon`` Typer group with bound verbs (no wrappers)."""
-    cli = DaemonCli(formatter, flags)
-    app = typer.Typer(
-        help="Manage the vox daemon service.",
-        no_args_is_help=True,
-    )
-    app.command("install")(cli.install)
-    app.command("uninstall")(cli.uninstall)
-    app.command("start")(cli.start)
-    app.command("stop")(cli.stop)
-    app.command("restart")(cli.restart)
-    app.command("status")(cli.status)
-    return app

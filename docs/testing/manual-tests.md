@@ -72,7 +72,7 @@ Use the **CLI** (`vox say`) to generate a block that clearly exceeds the 5,000-c
 vox say "$(python3 -c 'print("This is the first sentence, long enough to carry weight. Here is a second sentence with several more words in it. And a third sentence to add length. " * 60)')"
 ```
 
-`core.py:split_text()` splits on sentence boundaries; the daemon synthesizes each chunk in parallel and stitches them back into one stream. (To keep the listen short while still exercising split+merge, set `TTS_PROVIDER=openai` — its 4,096 limit chunks a smaller block — or run `vox rec new "<long text>"` then `vox rec get <id>` and inspect the single merged file.)
+`core.py:split_text()` splits on sentence boundaries; the daemon synthesizes each chunk in parallel and stitches them back into one stream. (To keep the listen short while still exercising split+merge, use `vox say --provider openai --voice alloy "<long text>"` — its 4,096 limit chunks a smaller block — or run `vox rec new "<long text>"` then `vox rec get <id>` and inspect the single merged file.)
 
 **Ask the operator:** "Did the whole passage play as one continuous stream with natural sentence pauses and no audible seam or gap at the chunk boundaries?"
 
@@ -160,7 +160,7 @@ Confirm the daemon refuses hostile input and protects a playing album:
 ```bash
 vox rec get "../escape.mp3"; echo "exit=$?"     # hostile ref → clean error, non-zero exit, nothing written
 vox music remove "$album"; echo "exit=$?"       # album from step 10 is playing → refused ("is playing")
-vox music off 2>/dev/null || true               # stop playback
+vox music stop                                 # stop playback
 vox music remove "$album"; echo "exit=$?"       # now stopped → removes cleanly (exit 0)
 ```
 

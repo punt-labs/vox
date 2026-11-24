@@ -1,193 +1,182 @@
-"""Tests for resolve_voice_and_language in resolve.py.
-
-The helper functions split_leading_expressive_tags, strip_expressive_tags,
-and apply_vibe are covered by tests/test_server.py.  This file targets the
-six conditional paths and three edge cases in resolve_voice_and_language.
-"""
+"""Tests for leading expressive tags and session vibe application."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
+from punt_vox.resolve import (
+    apply_vibe,
+    split_leading_expressive_tags,
+    strip_expressive_tags,
+)
 
-from punt_vox.resolve import resolve_voice_and_language
-from punt_vox.types import TTSProvider, VoiceNotFoundError
-
-
-def _make_provider(
-    *,
-    default_voice: str = "Rachel",
-    resolve_voice_return: str | None = "Rachel",
-    infer_language_return: str | None = "en",
-    get_default_voice_return: str = "Rachel",
-) -> MagicMock:
-    """Return a MagicMock configured to satisfy the TTSProvider protocol.
-
-    Sets all protocol attributes explicitly so no MagicMock object leaks
-    into string-interpolated log calls or equality assertions.
-    """
-    mock: MagicMock = MagicMock(spec=TTSProvider)
-    mock.default_voice = default_voice
-    mock.resolve_voice.return_value = resolve_voice_return
-    mock.infer_language_from_voice.return_value = infer_language_return
-    mock.get_default_voice.return_value = get_default_voice_return
-    return mock
+if TYPE_CHECKING:
+    import pytest
 
 
-class TestResolveVoiceAndLanguage:
-    """Six paths and three edge cases for resolve_voice_and_language."""
+class TestApplyVibe:
+    """Tests for apply_vibe text injection."""
 
-    # ------------------------------------------------------------------
-    # P1: explicit voice + explicit language
-    # ------------------------------------------------------------------
+    def test_prepends_tags(self, hermetic_config: Path) -> None:
+        local_md = hermetic_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[excited]"\n---\n')
+        result = apply_vibe("Hello world", expressive_tags=True)
+        assert result == "[excited] Hello world"
 
-    def test_explicit_voice_and_language(self) -> None:
-        """Validate language, resolve voice with both; do not infer language."""
-        provider = _make_provider()
-        voice, language = resolve_voice_and_language(provider, "Joanna", "en")
+    def test_multiple_tags(self, hermetic_config: Path) -> None:
+        (hermetic_config / "vox.local.md").write_text(
+            '---\nvibe_tags: "[frustrated] [sighs]"\n---\n'
+        )
+        result = apply_vibe("Hello world", expressive_tags=True)
+        assert result == "[frustrated] [sighs] Hello world"
 
-        # resolve_voice return value is discarded; voice stays as the input.
-        assert voice == "Joanna"
-        assert language == "en"
-        provider.resolve_voice.assert_called_once_with("Joanna", "en")
-        provider.infer_language_from_voice.assert_not_called()
-        provider.get_default_voice.assert_not_called()
+    def test_skips_prepend_when_text_starts_with_tag(
+        self, hermetic_config: Path
+    ) -> None:
+        (hermetic_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe("[calm] Already tagged", expressive_tags=True)
+        assert result == "[calm] Already tagged"
 
-    # ------------------------------------------------------------------
-    # P2: explicit voice + no language
-    # ------------------------------------------------------------------
+    def test_skips_prepend_when_text_starts_with_different_tag(
+        self, hermetic_config: Path
+    ) -> None:
+        (hermetic_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe("[excited] Different tag", expressive_tags=True)
+        assert result == "[excited] Different tag"
 
-    def test_explicit_voice_infers_language(self) -> None:
-        """Resolve voice without language; infer language from the voice."""
-        provider = _make_provider(infer_language_return="en")
-        voice, language = resolve_voice_and_language(provider, "Joanna", None)
+    def test_skips_prepend_when_tag_contains_punctuation(
+        self, hermetic_config: Path
+    ) -> None:
+        (hermetic_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe("[dramatic tone] Something important", expressive_tags=True)
+        assert result == "[dramatic tone] Something important"
 
-        # resolve_voice return value is discarded; voice stays as the input.
-        assert voice == "Joanna"
-        assert language == "en"
-        provider.resolve_voice.assert_called_once_with("Joanna")
-        provider.infer_language_from_voice.assert_called_once_with("Joanna")
-        provider.get_default_voice.assert_not_called()
+    def test_passthrough_when_no_tags(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import punt_vox.config as cfg
 
-    # ------------------------------------------------------------------
-    # P3: no voice + explicit language
-    # ------------------------------------------------------------------
+        missing = tmp_path / "missing_dir"
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", missing)
+        assert apply_vibe("Hello world", expressive_tags=True) == "Hello world"
 
-    def test_language_only_uses_provider_default(self) -> None:
-        """Get default voice for the language; resolve with both."""
-        provider = _make_provider(get_default_voice_return="Vicki")
-        provider.resolve_voice.return_value = "Vicki"
+    def test_skips_tags_when_not_supported(self, hermetic_config: Path) -> None:
+        local_md = hermetic_config / "vox.local.md"
+        local_md.write_text('---\nvibe_tags: "[excited]"\n---\n')
+        result = apply_vibe("Hello world", expressive_tags=False)
+        assert result == "Hello world"
 
-        with patch("punt_vox.config.ConfigStore.read_field", return_value=None):
-            voice, language = resolve_voice_and_language(provider, None, "de")
+    def test_strips_leading_tags_when_not_supported(
+        self, hermetic_config: Path
+    ) -> None:
+        result = apply_vibe("[serious] Hello world", expressive_tags=False)
+        assert result == "Hello world"
 
-        assert voice == "Vicki"
-        assert language == "de"
-        provider.get_default_voice.assert_called_once_with("de")
-        provider.resolve_voice.assert_called_once_with("Vicki", "de")
-        provider.infer_language_from_voice.assert_not_called()
+    def test_strips_multiple_leading_tags_when_not_supported(
+        self, hermetic_config: Path
+    ) -> None:
+        result = apply_vibe("[serious] [calm] Hello world", expressive_tags=False)
+        assert result == "Hello world"
 
-    # ------------------------------------------------------------------
-    # P4: no voice + no language
-    # ------------------------------------------------------------------
+    def test_preserves_text_when_only_tags(self, hermetic_config: Path) -> None:
+        result = apply_vibe("[serious]", expressive_tags=False)
+        assert result == "[serious]"
 
-    def test_no_inputs_uses_provider_default(self) -> None:
-        """Use provider.default_voice; resolve and infer language."""
-        provider = _make_provider(default_voice="Rachel", infer_language_return="en")
+    def test_override_tags_win_over_config(self, hermetic_config: Path) -> None:
+        (hermetic_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe(
+            "Hello world",
+            expressive_tags=True,
+            override_tags="[excited]",
+        )
+        assert result == "[excited] Hello world"
 
-        with patch("punt_vox.config.ConfigStore.read_field", return_value=None):
-            voice, language = resolve_voice_and_language(provider, None, None)
+    def test_override_tags_empty_falls_through_to_config(
+        self, hermetic_config: Path
+    ) -> None:
+        (hermetic_config / "vox.local.md").write_text('---\nvibe_tags: "[calm]"\n---\n')
+        result = apply_vibe("Hello world", expressive_tags=True, override_tags="")
+        assert result == "[calm] Hello world"
 
-        assert voice == "Rachel"
-        assert language == "en"
-        provider.resolve_voice.assert_called_once_with("Rachel")
-        provider.infer_language_from_voice.assert_called_once_with("Rachel")
 
-    # ------------------------------------------------------------------
-    # P5: voice from config + VoiceNotFoundError (fallback succeeds)
-    # ------------------------------------------------------------------
+class TestStripExpressiveTags:
+    """Tests for strip_expressive_tags — the underlying primitive."""
 
-    def test_config_voice_fallback_on_not_found(self) -> None:
-        """Log warning and fall back to default_voice when config voice fails."""
-        provider = _make_provider(default_voice="Rachel", infer_language_return="en")
-        # First call raises (config voice rejected); second call succeeds.
-        provider.resolve_voice.side_effect = [
-            VoiceNotFoundError("session-voice", []),
-            "Rachel",
-        ]
+    def test_strips_single_leading_tag(self) -> None:
+        assert strip_expressive_tags("[serious] Hello world") == "Hello world"
 
-        with patch(
-            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
-        ):
-            voice, language = resolve_voice_and_language(provider, None, None)
+    def test_strips_multiple_leading_tags(self) -> None:
+        assert strip_expressive_tags("[serious] [calm] Hello world") == "Hello world"
 
-        assert voice == "Rachel"
-        assert language == "en"
-        assert provider.resolve_voice.call_count == 2
+    def test_strips_tag_with_leading_whitespace(self) -> None:
+        assert strip_expressive_tags("   [excited] Hello") == "Hello"
 
-    # ------------------------------------------------------------------
-    # P6: explicit voice + VoiceNotFoundError (re-raise)
-    # ------------------------------------------------------------------
+    def test_strips_tag_with_punctuation_inside(self) -> None:
+        assert (
+            strip_expressive_tags("[dramatic tone] Important message")
+            == "Important message"
+        )
 
-    def test_explicit_voice_raises_on_not_found(self) -> None:
-        """Re-raise VoiceNotFoundError when the voice came from the caller."""
-        provider = _make_provider()
-        provider.resolve_voice.side_effect = VoiceNotFoundError("Bad", [])
+    def test_passes_through_text_with_no_tags(self) -> None:
+        assert strip_expressive_tags("Hello world") == "Hello world"
 
-        with pytest.raises(VoiceNotFoundError):
-            resolve_voice_and_language(provider, "Bad", None)
+    def test_only_strips_leading_tags_not_embedded(self) -> None:
+        assert strip_expressive_tags("Hello [serious] world") == "Hello [serious] world"
 
-    # ------------------------------------------------------------------
-    # E1: invalid language code — real validate_language, not mocked
-    # ------------------------------------------------------------------
+    def test_returns_original_when_stripping_would_empty_text(self) -> None:
+        # Degenerate case: text was nothing but tags. Returning empty would
+        # produce silence, which is worse than speaking the literal text.
+        assert strip_expressive_tags("[serious]") == "[serious]"
 
-    def test_invalid_language_raises(self) -> None:
-        """Pass an invalid language code; validate_language raises ValueError."""
-        provider = _make_provider()
+    def test_returns_original_when_stripping_would_leave_only_whitespace(self) -> None:
+        assert strip_expressive_tags("[serious]   ") == "[serious]   "
 
-        with pytest.raises(ValueError, match="Invalid language code"):
-            resolve_voice_and_language(provider, "Joanna", "xx-invalid")
+    def test_empty_string_passes_through(self) -> None:
+        assert strip_expressive_tags("") == ""
 
-    # ------------------------------------------------------------------
-    # E2: config voice fails, language provided — fallback uses language
-    # ------------------------------------------------------------------
 
-    def test_config_voice_fallback_with_language(self) -> None:
-        """After fallback to default_voice, resolve with the provided language."""
-        provider = _make_provider(default_voice="Rachel")
-        provider.resolve_voice.side_effect = [
-            VoiceNotFoundError("session-voice", []),
-            "Rachel",
-        ]
+class TestSplitLeadingExpressiveTags:
+    """Tests for split_leading_expressive_tags — the (tags, body) splitter."""
 
-        with patch(
-            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
-        ):
-            voice, language = resolve_voice_and_language(provider, None, "en")
+    def test_splits_single_leading_tag(self) -> None:
+        tags, body = split_leading_expressive_tags("[serious] Hello world")
+        assert tags == "[serious]"
+        # _LEADING_TAGS_RE consumes the whitespace after the bracket
+        # via the trailing \s* in its pattern.
+        assert body == "Hello world"
 
-        assert voice == "Rachel"
-        assert language == "en"
-        # Second resolve_voice call must include language.
-        provider.resolve_voice.assert_any_call("Rachel", "en")
+    def test_splits_multiple_leading_tags(self) -> None:
+        tags, body = split_leading_expressive_tags("[serious] [calm] Hello world")
+        assert tags == "[serious] [calm]"
+        assert body == "Hello world"
 
-    # ------------------------------------------------------------------
-    # E3: config voice fails, no language — fallback infers language
-    # ------------------------------------------------------------------
+    def test_splits_tag_with_leading_whitespace(self) -> None:
+        tags, body = split_leading_expressive_tags("   [excited] Hello")
+        assert tags == "[excited]"
+        assert body == "Hello"
 
-    def test_config_voice_fallback_no_language(self) -> None:
-        """After fallback to default_voice with no language, infer from voice."""
-        provider = _make_provider(default_voice="Rachel", infer_language_return="en")
-        provider.resolve_voice.side_effect = [
-            VoiceNotFoundError("session-voice", []),
-            "Rachel",
-        ]
+    def test_splits_tag_with_punctuation_inside(self) -> None:
+        tags, body = split_leading_expressive_tags("[dramatic tone] Important message")
+        assert tags == "[dramatic tone]"
+        assert body == "Important message"
 
-        with patch(
-            "punt_vox.config.ConfigStore.read_field", return_value="session-voice"
-        ):
-            voice, language = resolve_voice_and_language(provider, None, None)
+    def test_no_tags_returns_empty_tags_and_full_text(self) -> None:
+        tags, body = split_leading_expressive_tags("Hello world")
+        assert tags == ""
+        assert body == "Hello world"
 
-        assert voice == "Rachel"
-        assert language == "en"
-        provider.infer_language_from_voice.assert_called_once_with("Rachel")
+    def test_only_splits_leading_not_embedded(self) -> None:
+        tags, body = split_leading_expressive_tags("Hello [serious] world")
+        assert tags == ""
+        assert body == "Hello [serious] world"
+
+    def test_tags_only_input(self) -> None:
+        tags, body = split_leading_expressive_tags("[serious]")
+        assert tags == "[serious]"
+        assert body == ""
+
+    def test_empty_string(self) -> None:
+        tags, body = split_leading_expressive_tags("")
+        assert tags == ""
+        assert body == ""

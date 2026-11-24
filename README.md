@@ -222,7 +222,9 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox notify continuous` | Also announce real-time signals |
 | `vox speak n` | Chimes only (`vox speak y` turns speech back on) |
 | `vox voice` | List the voices for the active provider |
+| `vox voice --provider openai` | List OpenAI voices without switching providers |
 | `vox voice matilda` | Set the session voice |
+| `vox voice alloy --provider openai` | Set the session voice only if OpenAI is active |
 | `vox provider` | List the five providers and mark the current one |
 | `vox provider openai` | Set the TTS provider |
 | `vox model` | List the models the current provider offers |
@@ -240,6 +242,12 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox rec play 5b9fc536a112.mp3` | Play a stored recording on the daemon's machine |
 | `vox rec get 5b9fc536a112.mp3` | Copy a recording into the current directory |
 | `vox rec remove 5b9fc536a112.mp3` | Delete a recording from the store |
+
+Without `--name`, the recording id depends only on the text. Recording the
+same text again silently replaces the earlier take, even if you change the
+voice or rate. Use a different `--name` for each take (for example,
+`--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
+`--name` only works for a single text segment.
 
 #### Music
 
@@ -378,12 +386,11 @@ AWS_DEFAULT_REGION=us-east-1
 # AWS_SECRET_ACCESS_KEY=...
 # AWS_DEFAULT_REGION=us-east-1
 
-# Optional: pin a specific provider.
-# Auto-detect order: ElevenLabs > OpenAI > Polly > say (macOS) / espeak (Linux).
+# Optional: prefer this provider when enabling a repo, if the provider is ready.
 TTS_PROVIDER=elevenlabs
 ```
 
-`vox daemon install` also copies into `keys.env` any provider keys set in the shell that runs the install, so keys set in `.envrc` or similar before installing work too. After install, edit the file directly.
+`vox daemon install` also copies into `keys.env` any provider keys set in the shell that runs the install, so keys set in `.envrc` or similar before installing work too. A key already stored in `keys.env` is kept when the shell holds a different value, and the install output names it; run `vox daemon install --rotate-keys` to replace stored keys with the shell's. Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still follow the shell. After install, edit the file directly.
 
 #### 3. Restart the Daemon
 
@@ -393,7 +400,15 @@ vox daemon restart
 
 Run it as your normal user, **not** under `sudo`. On **macOS** it needs no password, because `voxd` is a user LaunchAgent. On **Linux** it asks for your `sudo` password once, only for the `systemctl` call that manages the system service.
 
-#### 4. Verify
+#### 4. Select the Provider in Your Repository
+
+Adding credentials does not change a repository's existing provider. From the repository you want to switch, run, for example:
+
+```bash
+vox provider elevenlabs
+```
+
+#### 5. Verify
 
 Report system checks and per-provider readiness:
 
@@ -429,7 +444,7 @@ ElevenLabs is the only provider with expressive tags, so `/vibe` changes the voi
 | macOS say | — | samantha | No setup on macOS, works offline |
 | espeak-ng | — | en | No setup on Linux, works offline |
 
-Auto-detection order: ElevenLabs > OpenAI > Polly (if AWS credentials are valid) > say (macOS) / espeak (Linux).
+During setup, if no preferred provider is ready, vox tries ElevenLabs > OpenAI > Polly (if AWS credentials are valid) > say (macOS) / espeak (Linux).
 
 ### Per-Call API Keys for Billing Isolation
 
@@ -481,8 +496,7 @@ Calls with a per-call key skip the synthesis cache, so every call reaches the pr
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TTS_PROVIDER` | Force a specific provider | auto-detect |
-| `TTS_MODEL` | Model override | provider default |
+| `TTS_PROVIDER` | Preferred ready provider during setup (for example, `vox enable`); does not override `vox.md` at runtime | First ready provider |
 | `VOX_OUTPUT_DIR` | Output directory | `~/Music/vox/` |
 | `VOX_API_KEY` | Per-call provider key for `vox say` | none |
 | `VOXD_HOST` | Remote voxd host (client) | `127.0.0.1` |

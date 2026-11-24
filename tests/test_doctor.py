@@ -288,6 +288,26 @@ class TestCheckProviderReadiness:
         assert results[0].passed is True
         assert any("openai: ready" in r.message for r in results[1:])
 
+    def test_asks_the_daemon_to_verify_keys_live(self) -> None:
+        # A present key is not an accepted key, so doctor asks the
+        # daemon for its authenticated check rather than the presence gate.
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.return_value = self._payload(
+            (
+                ProviderReadiness(
+                    name="elevenlabs",
+                    ready=False,
+                    reason="check_failed",
+                    detail="ElevenLabs subscription: API key rejected (HTTP 401)",
+                ),
+            ),
+            preferred=None,
+        )
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        mock_client.provider_status.assert_called_once_with(verify=True)
+        line = next(r for r in results if "elevenlabs" in r.message)
+        assert "API key rejected (HTTP 401)" in line.message
+
     def test_unready_provider_is_a_warn_not_a_fail(self) -> None:
         # A single-provider host is a normal configuration -- only the
         # state-declared provider being unavailable is a hard failure,
@@ -390,28 +410,20 @@ class TestCheckUvx:
 
 
 # ---------------------------------------------------------------------------
-# check_output_dir
+# check_music_dir / check_output_dir
 # ---------------------------------------------------------------------------
 
 
-class TestCheckOutputDir:
-    def test_writable_dir_reports_verdict_no_path(self, tmp_path: Path) -> None:
-        with patch("punt_vox.doctor.default_output_dir", return_value=tmp_path):
-            results = DoctorCheck().check_output_dir()
-        assert len(results) == 1
-        assert results[0].passed is True
-        assert results[0].message == "output: writable"
-        assert str(tmp_path) not in results[0].message  # no absolute path
-
-    def test_missing_dir(self, tmp_path: Path) -> None:
-        missing = tmp_path / "nonexistent"
-        with patch("punt_vox.doctor.default_output_dir", return_value=missing):
-            results = DoctorCheck().check_output_dir()
-        assert len(results) == 1
-        assert results[0].passed is False
-        assert results[0].symbol == "⚠"
-        assert "absent" in results[0].message
-        assert str(missing) not in results[0].message  # no absolute path
+def test_dir_checks_delegate_to_output_dir_check() -> None:
+    """The verdicts are tested in test_doctor_output; doctor only schedules."""
+    music = CheckResult.warn("output music dir: absent")
+    output = CheckResult.ok("output: writable")
+    with (
+        patch("punt_vox.doctor.OutputDirCheck.music_dir", return_value=[music]),
+        patch("punt_vox.doctor.OutputDirCheck.output_dir", return_value=[output]),
+    ):
+        assert DoctorCheck().check_music_dir() == [music]
+        assert DoctorCheck().check_output_dir() == [output]
 
 
 # ---------------------------------------------------------------------------
@@ -706,7 +718,7 @@ class TestRunAll:
         config_path = tmp_path / "sekret-home" / "config.json"
         with (
             patch("punt_vox.doctor.shutil.which", return_value=which_path),
-            patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
+            patch("punt_vox.doctor_output.default_output_dir", return_value=tmp_path),
             patch(
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,

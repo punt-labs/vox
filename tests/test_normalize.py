@@ -292,6 +292,9 @@ class TestAcronymSpacing:
     def test_acronym_in_camel(self) -> None:
         assert normalize_for_speech("HTMLParser") == "H T M L parser"
 
+    def test_known_abbreviation_in_camel(self) -> None:
+        assert normalize_for_speech("parseSTDERR") == "parse standard error"
+
     def test_acronym_with_punctuation(self) -> None:
         assert normalize_for_speech("(CLI)") == "C L I"
 
@@ -339,6 +342,120 @@ class TestSymbolStripping:
         normalized = normalize_for_speech(text)
         assert normalized == expected
         assert normalize_for_speech(normalized) == normalized
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("$5off", "5 dollars off"),
+            ("-$5off", "minus 5 dollars off"),
+            ("$5/repo", "5 dollars per repository"),
+            ("$5/month", "5 dollars per month"),
+            ("$5/user/month", "5 dollars per user per month"),
+            ("-₹5/घंटा", "minus 5 rupees per घंटा"),
+            ("€5/cafe\u0301", "5 euros per cafe\u0301"),
+            ("$10k", "10 thousand dollars"),
+            ("$1thousand", "1 thousand dollars"),
+            ("$1million", "1 million dollars"),
+            ("$1billion", "1 billion dollars"),
+            ("$1trillion", "1 trillion dollars"),
+            ("$5-$10", "5 dollars to 10 dollars"),
+            ("$5\u201310", "5 to 10 dollars"),
+            ("$5k\u201310", "5 thousand to 10 thousand dollars"),
+            ("$5\u201310K", "5 to 10 thousand dollars"),
+            ("$500,000\u20131M", "500,000 to 1 million dollars"),
+            ("$5k\u201310million/month", "5 thousand to 10 million dollars per month"),
+            ("£.50\u20131.25/day", "0.50 to 1.25 pounds per day"),
+            ("$10k/month", "10 thousand dollars per month"),
+            ("$5-$10/month", "5 dollars to 10 dollars per month"),
+            ("$5k-$10k", "5 thousand dollars to 10 thousand dollars"),
+            ("(+€1/day),", "plus 1 euro per day,"),
+            ("\u2212£1.5K", "minus 1.5 thousand pounds"),
+            ("-$10\u2013-$5", "minus 10 dollars to minus 5 dollars"),
+            (
+                "Use `$5off` then pay $5off.",
+                "Use dollar sign 5 off then pay 5 dollars off.",
+            ),
+            ("Use /tmp/$5off", "Use /tmp/$5off"),
+        ],
+    )
+    def test_attached_and_compound_currency(self, text: str, expected: str) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
+            (
+                "Use `$1suffix prefix$2` then pay $5",
+                "Use dollar sign 1 suffix prefix dollar sign 2 then pay 5 dollars",
+            ),
+            (
+                "Use ``printf ` $1 $2`` then pay -$5",
+                "Use printf dollar sign 1 dollar sign 2 then pay minus 5 dollars",
+            ),
+            ("Use (`$1`), not $1", "Use dollar sign 1, not 1 dollar"),
+            ("Use `_-$5._`, not -$5", "Use minus dollar sign 5., not minus 5 dollars"),
+            ("Use `arg\n$1` then pay $5", "Use arg dollar sign 1 then pay 5 dollars"),
+            (r"Use \ `$1\` then pay -$5", "Use dollar sign 1 then pay minus 5 dollars"),
+            (r"Use \`$1\` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ``$1` then pay -$5", "Use 1 dollar then pay minus 5 dollars"),
+            ("Use ` here\n\nPay -$5 there `", "Use here Pay minus 5 dollars there"),
+            (
+                "Use ` here\n# Heading\nPay -$5 there `",
+                "Use here Heading Pay minus 5 dollars there",
+            ),
+            (
+                "```sh\necho\n\n```\nPay -$5 here\n```sh\necho\n\n```",
+                "sh echo Pay minus 5 dollars here sh echo",
+            ),
+            (
+                "- Use ` here\n- Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            (
+                "> Use ` here\n>\n> Pay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            ("Use `$1\n> pay $5`", "Use 1 dollar pay 5 dollars"),
+            (
+                "- Use ` here\n    - Pay $1 there `",
+                "Use here Pay 1 dollar there",
+            ),
+            (
+                "Use ` here\n***\nPay -$5 there `",
+                "Use here Pay minus 5 dollars there",
+            ),
+            ("Use `/tmp/$1`", "Use /tmp/$1"),
+            ("Use /tmp/`$1`", "Use /tmp/`$1"),
+            ("Use /tmp/`$1 $2`", "Use /tmp/`$1 dollar sign 2"),
+            ("Use /tmp/ `$1`", "Use /tmp dollar sign 1"),
+            ("Use `../prices/$5`", "Use ../prices/$5"),
+            ("Use `./price reports/$5`", "Use ./price reports/$5"),
+            ("Use `./price $5`", "Use ./price dollar sign 5"),
+            ("Use `“/tmp/$5”` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (
+                "Use `$HOME/prices/$5` then pay $5",
+                "Use HOME/prices/$5 then pay 5 dollars",
+            ),
+            (r"Use `\/tmp/$5` then pay $5", "Use /tmp/$5 then pay 5 dollars"),
+            (r"Use `prices\/$5` then pay $5", r"Use prices\/$5 then pay 5 dollars"),
+            (
+                "Use `echo $((total/$2))` then pay $5",
+                "Use echo total/dollar sign 2 then pay 5 dollars",
+            ),
+            (
+                "Use ` here\nTitle\n=====\nPay -$5 there `",
+                "Use here Title Pay minus 5 dollars there",
+            ),
+            ("```\nx\n```\t\nUse `$5` now", "x Use dollar sign 5 now"),
+        ],
+    )
+    def test_currency_bypassed_only_inside_code_spans(
+        self, text: str, expected: str
+    ) -> None:
+        assert normalize_for_speech(text) == expected
+        assert normalize_for_speech(expected) == expected
 
     @pytest.mark.parametrize(
         ("text", "expected"),

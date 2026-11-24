@@ -27,21 +27,24 @@ class KeysEnvWriter:
         """Create a keys env writer."""
         return super().__new__(cls)
 
-    def write(self, env: Mapping[str, str], keys_path: Path) -> KeysEnvReport:
+    def write(
+        self, env: Mapping[str, str], keys_path: Path, *, rotate: bool = False
+    ) -> KeysEnvReport:
         """Write ``keys.env`` at *keys_path* (mode 0600), merging existing keys.
 
-        Preserves stored keys the caller did not override; an empty value never
-        removes one (see :class:`KeysEnvMerge`), and an existing file that cannot
+        Preserves every stored key unless *rotate* lets a different environment
+        value replace it; an empty value never removes one (see
+        :class:`KeysEnvMerge`), and an existing file that cannot
         be read raises ``SystemExit`` instead of being overwritten. The write is
         atomic (0600 temp file + fsync + ``os.replace``), so a crash leaves no
         partial file and the secret is never wider than 0600.
 
         Return the report of every environment key not written, by name and
-        reason; each one is also logged.
+        reason (each one is also logged), and of every stored key rotated.
         """
         self._harden_parent(keys_path)
         self._reject_irregular(keys_path)
-        merge = KeysEnvMerge.over_text(self._stored_text(keys_path), env)
+        merge = KeysEnvMerge.over_text(self._stored_text(keys_path), env, rotate=rotate)
         for notice in merge.notices:
             logger.warning("%s", notice)  # names and reasons only, never values
         # mode=0o600 forces the secret's perms even over an existing wider file;

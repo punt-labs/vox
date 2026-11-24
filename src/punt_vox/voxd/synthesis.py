@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import Callable
 from typing import Self
 
 from punt_vox import usage
-from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
+from punt_vox.normalize import SpeechText
 from punt_vox.providers import get_provider
 from punt_vox.types import (
     AudioProviderId,
@@ -68,6 +67,11 @@ class SynthesisPipeline:
         self._playback_mutex = playback_mutex
         return self
 
+    @property
+    def env_lock(self) -> asyncio.Lock:
+        """Return the lock held while a caller's API key is in the environment."""
+        return self._env_lock
+
     # -- Static helpers ----------------------------------------------------
 
     @staticmethod
@@ -115,60 +119,14 @@ class SynthesisPipeline:
         provider_name: str,
         model: str | None,
     ) -> str:
-        """Compose the final synthesis text from raw input + vibe + capability.
-
-        Takes the user's RAW ``raw_text`` (NOT yet normalized). The order of
-        operations matters because :func:`punt_vox.normalize.normalize_for_speech`
-        discards brackets via its non-prosody-punctuation filter. If we let
-        normalization run first, ``[serious] hello`` becomes ``serious hello``
-        and the literal word survives into TTS input.
-
-        Non-expressive path:
-            Strip ALL vibe tags (any position) via ``VIBE_TAG_RE.sub(...)``,
-            collapse/trim whitespace, then normalize the cleaned text. If the
-            input contains only tags, return the empty string.
-
-        Expressive path:
-            Split text into tag / non-tag segments via ``VIBE_TAG_RE``,
-            normalize only the non-tag segments, reassemble with tags intact,
-            then prepend session ``vibe_tags``.
-        """
+        """Normalize raw input and apply vibe tags according to model capability."""
         expressive = SynthesisPipeline.model_supports_expressive_tags(
             provider_name, model
         )
-
-        if not expressive:
-            # Remove tags at ANY position via the regex directly -- bypass
-            # strip_vibe_tags's guard (which returns original text when
-            # stripping leaves nothing). For tags-only input like "[serious]"
-            # the correct result is empty, not the bare word "serious".
-            cleaned = VIBE_TAG_RE.sub("", raw_text)
-            cleaned = re.sub(r"  +", " ", cleaned).strip()
-            return normalize_for_speech(cleaned) if cleaned else ""
-
-        # Expressive: normalize around tags so they survive at any position.
-        # VIBE_TAG_RE has one capturing group, so split() interleaves:
-        #   even indices -> plain text, odd indices -> tag word (no brackets).
-        segments = VIBE_TAG_RE.split(raw_text)
-        rebuilt: list[str] = []
-        for i, seg in enumerate(segments):
-            if i % 2 == 0:
-                # Plain text segment -- normalize it.
-                normed = normalize_for_speech(seg)
-                if normed:
-                    rebuilt.append(normed)
-            else:
-                # Captured tag word -- restore brackets.
-                rebuilt.append(f"[{seg}]")
-
-        body = " ".join(rebuilt)
-
-        parts: list[str] = []
-        if vibe_tags:
-            parts.append(vibe_tags.strip())
-        if body:
-            parts.append(body)
-        return " ".join(parts)
+        body = SpeechText.for_synthesis(raw_text, expressive=expressive)
+        if expressive and vibe_tags:
+            return " ".join(filter(None, (vibe_tags.strip(), body)))
+        return body
 
     # -- Instance methods --------------------------------------------------
 
@@ -243,9 +201,6 @@ class SynthesisPipeline:
         provider_name = spec.provider or ""
         model = spec.model
 
-        # apply_vibe_for_synthesis takes RAW text and runs normalize_for_speech
-        # on the body itself (after splitting leading bracket tags off, which
-        # would otherwise be eaten by normalization).
         normalized = self.apply_vibe_for_synthesis(
             text, spec.vibe_tags, provider_name, model
         )

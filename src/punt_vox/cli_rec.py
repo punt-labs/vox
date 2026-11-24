@@ -12,7 +12,6 @@ path.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -29,9 +28,14 @@ from websockets.exceptions import WebSocketException
 
 from punt_vox.bare_name import BareName
 from punt_vox.cli_io import OutputFlags, TextInput
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    FetchWriteError,
+    VoxdConnectionError,
+    VoxdProtocolError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.recording_download import RecordingDownload
 from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import (
@@ -41,6 +45,7 @@ from punt_vox.types_synthesis_errors import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import IO
 
     from punt_vox.client import RecordingSummary, RecordResult
 
@@ -73,8 +78,8 @@ class RecordGateway(Protocol):
         """Play recording *ref* on the daemon host."""
         ...
 
-    def get(self, ref: str) -> bytes:
-        """Return recording *ref*'s bytes, reassembled from the chunked stream."""
+    def get_into(self, ref: str, sink: IO[bytes]) -> int:
+        """Stream recording *ref* into *sink* and return the verified byte count."""
         ...
 
     def remove(self, ref: str) -> None:
@@ -107,9 +112,9 @@ class ClientRecordGateway:
         """Play recording *ref* on the daemon host via the ``play`` op."""
         self._client.play(ref)
 
-    def get(self, ref: str) -> bytes:
-        """Return recording *ref*'s bytes via the chunked ``fetch`` op."""
-        return self._client.fetch(ref)
+    def get_into(self, ref: str, sink: IO[bytes]) -> int:
+        """Stream recording *ref* via the chunked ``fetch`` op."""
+        return self._client.fetch_into(ref, sink)
 
     def remove(self, ref: str) -> None:
         """Delete recording *ref* via the ``rec_remove`` op."""
@@ -134,16 +139,14 @@ _NameOpt = Annotated[
     str | None,
     typer.Option(
         "--name",
-        help="Bare filename to store under (no path). Default: content-addressed.",
+        help="Bare filename. Unnamed same-text takes overwrite. Use distinct names.",
     ),
 ]
 _ProviderOpt = Annotated[
     str | None,
-    typer.Option("--provider", envvar="TTS_PROVIDER", help="TTS provider."),
+    typer.Option("--provider", help="TTS provider."),
 ]
-_ModelOpt = Annotated[
-    str | None, typer.Option("--model", envvar="TTS_MODEL", help="Model name.")
-]
+_ModelOpt = Annotated[str | None, typer.Option("--model", help="Model name.")]
 _StabilityOpt = Annotated[
     float | None, typer.Option("--stability", help="ElevenLabs stability (0.0-1.0).")
 ]
@@ -230,6 +233,11 @@ class RecCli:
         Reads text from the TEXT argument, ``--from`` (a JSON segments file), or
         stdin. Prints only the store id -- no path, no host. Act on it with
         ``rec play``/``rec get``/``rec remove``.
+
+        Without --name, recording the same text reuses the same id and
+        silently replaces the earlier take, even if synthesis settings change.
+        Pass a different --name for each take to keep them separate.
+        --name only works for a single text segment.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         boost = speaker_boost if speaker_boost else None
@@ -274,12 +282,12 @@ class RecCli:
     ) -> None:
         """List the store's recording ids, one per line (``--json`` for bytes)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        entries = self._run(lambda g: g.recordings())
-        if not entries:
-            self._formatter.emit({"recordings": []}, "No recordings.")
-            return
-        rows = [{"id": e.name, "bytes": e.byte_count} for e in entries]
-        listing = "\n".join(e.name for e in entries)
+        rows: list[dict[str, str | int]] = []
+        names: list[str] = []
+        for entry in self._run(lambda g: g.recordings()):
+            rows.append({"id": entry.name, "bytes": entry.byte_count})
+            names.append(entry.name)
+        listing = "\n".join(names) or "No recordings."
         self._formatter.emit({"recordings": rows}, listing)
 
     def play(
@@ -308,19 +316,24 @@ class RecCli:
         """Copy recording *ref* into the current directory under its store name."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         dest = Path.cwd() / self._bare_ref(ref)
-        if dest.exists():
-            # Fast-fail the common case before the slow fetch; _land_no_clobber's
-            # exclusive link is the race-free guarantee. The name is the store's,
-            # not the user's choosing, so a silent overwrite is data loss.
-            self._fail(f"rec get: ./{ref} exists")
-        data = self._run(lambda g: g.get(ref))
         try:
-            self._land_no_clobber(dest, data)
+            count = RecordingDownload(dest).save(
+                lambda sink: self._fetch_download(ref, sink)
+            )
         except FileExistsError:
-            self._fail(f"rec get: ./{ref} exists")  # raced in after the check
+            self._fail(f"rec get: ./{ref} exists")
         except OSError as exc:
             self._fail(f"cannot write {dest}: {exc}")
-        self._formatter.emit({"path": str(dest), "bytes": len(data)}, f"./{ref}")
+        self._formatter.emit({"path": str(dest), "bytes": count}, f"./{ref}")
+
+    def _fetch_download(self, ref: str, sink: IO[bytes]) -> int:
+        """Report gateway errors separately from errors writing to the sink."""
+        try:
+            return self._gateway_factory().get_into(ref, sink)
+        except FetchWriteError:
+            raise
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
 
     def remove(
         self,
@@ -379,25 +392,6 @@ class RecCli:
             self._fail("--name must not be empty")
         if name and len(segments) > 1:
             self._fail("--name supports a single segment only")
-
-    @staticmethod
-    def _land_no_clobber(dest: Path, data: bytes) -> None:
-        """Write *data* to *dest*, refusing to clobber a file already there.
-
-        ``os.open`` with ``O_CREAT | O_EXCL`` atomically reserves the name and
-        raises ``FileExistsError`` if it already exists, so a file racing in
-        after the caller's absence check is never clobbered. Unlike
-        ``os.link``, it needs no hard-link support (FAT/exFAT, network, FUSE). A
-        mid-write fault *or* interrupt unlinks *dest* and re-raises, leaving none.
-        """
-        fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-        except BaseException:
-            # BaseException, not just OSError: a SIGINT mid-write must strand nothing.
-            dest.unlink(missing_ok=True)
-            raise
 
 
 def build_rec_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:

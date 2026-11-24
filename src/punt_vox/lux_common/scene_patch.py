@@ -33,7 +33,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Self, cast, final
 
 if TYPE_CHECKING:
@@ -41,21 +40,25 @@ if TYPE_CHECKING:
 
     from punt_lux import RenderRequest
 
+    # Mypy rejects overriding object.__hash__ with None.
+    _UNHASHABLE = object.__hash__
+else:
+    _UNHASHABLE = None
+
 __all__ = ["ElementPatch", "ScenePatchSet", "SceneTree"]
 
 # Structure, not state: ``kind`` and ``id`` identify the element, and the two
 # container fields are descended into rather than set (luxd refuses both).
 _STRUCTURAL_FIELDS: Final = frozenset({"kind", "id", "children", "tabs"})
 _CONTAINER_FIELDS: Final = ("children", "tabs")
-# Stands in for a node that is not an element wire dict at all. It carries no id,
-# so it counts as unidentified and forces a re-install rather than being dropped.
-_OPAQUE: Final[Mapping[str, object]] = MappingProxyType({})
 
 
 @final
 @dataclass(frozen=True, slots=True)
 class ElementPatch:
     """One element's changed fields, in the order the current render emitted them."""
+
+    __hash__ = _UNHASHABLE
 
     element_id: str
     # PY-TS-14: wire boundary -- element field values are open per kind and are
@@ -71,6 +74,8 @@ class ElementPatch:
 @dataclass(frozen=True, slots=True)
 class ScenePatchSet:
     """The ordered element patches taking an installed scene to a newer render."""
+
+    __hash__ = _UNHASHABLE
 
     patches: tuple[ElementPatch, ...]
 
@@ -95,6 +100,8 @@ class SceneTree:
     unaddressable element re-installs rather than silently skipping it.
     """
 
+    __hash__ = _UNHASHABLE
+
     elements: tuple[tuple[str, Mapping[str, object]], ...]
     unidentified: int
 
@@ -118,23 +125,19 @@ class SceneTree:
         appears in one render and vanishes in the other is a roster change the
         patch seam cannot express, so it re-installs instead.
 
-        Ids must also be unique. Diffing addresses elements by id, so a repeated
-        one would silently collapse to whichever came last and the other's changes
-        would never be emitted. Checking this tree's ids covers both, since the
-        two carry identical id tuples by the time the check runs.
+        Ids must also be unique. Indexing the previous tree by id must not
+        collapse any entries, and those keys must still match this tree's ids
+        exactly, in order.
         """
-        ids = self.ids
-        if (
-            self.unidentified
-            or previous.unidentified
-            or ids != previous.ids
-            or len(set(ids)) != len(ids)
-        ):
-            return False
         before = dict(previous.elements)
-        return all(
-            self._state_fields(element) == self._state_fields(before[element_id])
-            for element_id, element in self.elements
+        return (
+            not (self.unidentified or previous.unidentified)
+            and len(before) == len(previous.elements)
+            and self.ids == tuple(before)
+            and all(
+                self._state_fields(element) == self._state_fields(before[element_id])
+                for element_id, element in self.elements
+            )
         )
 
     def patches_against(self, previous: SceneTree) -> ScenePatchSet:
@@ -162,10 +165,8 @@ class SceneTree:
         registering, so the tree re-installs instead of skipping it.
         """
         for node in elements:
-            if not isinstance(node, Mapping):
-                yield "", _OPAQUE
-                continue
-            element = cast("Mapping[str, object]", node)
+            wire = cast("Mapping[str, object]", node)
+            element = wire if isinstance(node, Mapping) else dict[str, object]()
             element_id = element.get("id")
             yield (element_id if isinstance(element_id, str) else ""), element
             for field in _CONTAINER_FIELDS:

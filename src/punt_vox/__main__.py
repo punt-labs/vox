@@ -15,19 +15,19 @@ import typer
 
 from punt_vox import __version__, commands as cmds
 from punt_vox.api_key_resolver import ApiKeyResolver
-from punt_vox.cli_daemon import DaemonCli, build_daemon_app
+from punt_vox.cli_daemon import DaemonCli
 from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_group import VoxGroup
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
+from punt_vox.cli_status import StatusCli
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
 from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
@@ -60,18 +60,6 @@ cache_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(cache_app, name="cache")
-
-# ---------------------------------------------------------------------------
-# Display constants
-# ---------------------------------------------------------------------------
-
-_PROVIDER_DISPLAY = {
-    "elevenlabs": "ElevenLabs",
-    "polly": "Polly",
-    "openai": "OpenAI",
-    "say": "Say",
-    "espeak": "eSpeak",
-}
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -150,7 +138,6 @@ ProviderOpt = Annotated[
     str | None,
     typer.Option(
         "--provider",
-        envvar="TTS_PROVIDER",
         help=(
             "TTS provider (elevenlabs, polly, openai, say, espeak)."
             " Default: this repo's vox.md provider (vox provider <name>)."
@@ -161,7 +148,6 @@ ModelOpt = Annotated[
     str | None,
     typer.Option(
         "--model",
-        envvar="TTS_MODEL",
         help="Model name (e.g. eleven_v3, tts-1). Provider-specific.",
     ),
 ]
@@ -603,10 +589,12 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """List or set the session voice for the active (or given) provider.
+    """List a provider's voices or set the active provider's voice.
 
     ``vox voice`` lists the roster; ``vox voice <name>`` writes to
     ``.punt-labs/vox/vox.md`` (a stray leading ``@`` is stripped).
+    ``--provider`` can list another provider's voices, but when setting a
+    voice it must match the active provider.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     _run(cmds.voice(_ctx(), name, provider))
@@ -644,44 +632,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
-
-    # Probe liveness only; provider selection comes from repo state.
-    daemon_status = DaemonCli.probe_status(VoxClientSync())
-
-    provider_name = cfg.provider or "unknown"
-    display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
-    desktop_reg = DesktopInstaller.registration()
-
-    info: dict[str, str | None] = {
-        "daemon": daemon_status,
-        "provider": provider_name,
-        "voice": cfg.voice or None,
-        "notify": cfg.notify,
-        "speak": cfg.speak,
-        "vibe_mode": cfg.vibe_mode,
-        "vibe": cfg.vibe,
-        "vibe_tags": cfg.vibe_tags,
-        # The effective level (global vox log setting, or a repo override), not
-        # this dir's raw field -- so status reflects what the daemon/clients use.
-        "log_level": ConfigStore.resolve_log_level(),
-        "desktop": desktop_reg,
-    }
-
-    text_lines = [
-        f"Daemon:    {daemon_status}",
-        f"Provider:  {display_name}",
-        f"Voice:     {info['voice'] or '(default)'}",
-        f"Notify:    {info['notify']}",
-        f"Speak:     {info['speak']}",
-        f"Vibe mode: {info['vibe_mode']}",
-        f"Log level: {info['log_level']}",
-        f"Desktop:   {desktop_reg}",
-    ]
-    if cfg.vibe:
-        text_lines.append(f"Vibe:      {cfg.vibe}")
-    if cfg.vibe_tags:
-        text_lines.append(f"Tags:      {cfg.vibe_tags}")
-    _formatter.emit(info, "\n".join(text_lines))
+    StatusCli.emit(_formatter, cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -846,14 +797,14 @@ app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 # call subcommand group (Conversation Mode; implementation in commands/call.py)
 # ---------------------------------------------------------------------------
 
-app.add_typer(CallCli.build_app(), name="call")
+app.add_typer(CallCli.build_app((_formatter, _flags)), name="call")
 
 
 # ---------------------------------------------------------------------------
 # daemon subcommand group (implementation in cli_daemon)
 # ---------------------------------------------------------------------------
 
-app.add_typer(build_daemon_app(_formatter, _flags), name="daemon")
+app.add_typer(DaemonCli.typer_app(_formatter, _flags), name="daemon")
 
 
 # ---------------------------------------------------------------------------

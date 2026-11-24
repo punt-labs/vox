@@ -17,6 +17,7 @@ from punt_observe.logging.handler import PrivateFileHandler
 
 from punt_vox import logging_config, paths
 from punt_vox.config import ConfigStore
+from punt_vox.voxd import DaemonHealth, PlaybackQueue
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Barrier
@@ -99,19 +100,28 @@ def test_level_switch_changes_file_only(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_live_daemon_level_switch_writes_debug() -> None:
     logging_config.configure_daemon_logging()
+    health = DaemonHealth(PlaybackQueue(), lambda: 0, 0)
+    assert health.full_payload()["log_level"] == "info"
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     logger = logging.getLogger("punt_vox.live_daemon")
     logger.debug("hidden daemon debug")
     logging_config.apply_log_level(logging.DEBUG)
+    assert health.full_payload()["log_level"] == "debug"
     logger.debug("visible daemon debug")
     logging_config.apply_log_level(logging.INFO)
+    assert health.full_payload()["log_level"] == "info"
     logger.debug("hidden again daemon debug")
     contents = (paths.log_dir() / "vox.log").read_text()
     assert "visible daemon debug" in contents
     assert "hidden daemon debug" not in contents
     assert "hidden again daemon debug" not in contents
     assert all(isinstance(h, PrivateFileHandler) for h in root.handlers)
+
+
+def test_daemon_level_is_unavailable_without_file_handler() -> None:
+    with patch.object(logging, "getHandlerByName", return_value=None):
+        assert logging_config.daemon_log_level() is None
 
 
 def test_verbose_overrides_config() -> None:

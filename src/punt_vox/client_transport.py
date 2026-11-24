@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import websockets
 import websockets.asyncio.client
@@ -23,6 +23,9 @@ import websockets.asyncio.client
 from punt_vox.client_connect_failure import ConnectFailure
 from punt_vox.client_endpoint import VoxdEndpoint
 from punt_vox.client_exchange import VoxdExchange
+
+if TYPE_CHECKING:
+    from typing import IO
 
 logger = logging.getLogger(__name__)
 
@@ -154,39 +157,30 @@ class VoxdTransport:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         async with self._exchange(msg) as exchange:
             return await exchange.reply(timeout)
 
-    async def fetch_stream(self, msg: dict[str, object], *, timeout: float) -> bytes:
-        """Send a fetch request and reassemble the chunked stream into bytes.
+    async def fetch_into(
+        self, msg: dict[str, object], sink: IO[bytes], *, timeout: float
+    ) -> int:
+        """Send a fetch request and stream the chunks into *sink*.
 
-        Consumes ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end``, appending
-        one frame at a time so client memory holds only the reassembled file plus
-        a single chunk. The running total is checked against the declared byte
-        count and the sha256 is verified, so a short, reordered, or corrupted
-        stream raises. A mid-stream ``error`` frame surfaces as a
-        :class:`VoxdRejectionError`, and the partial buffer is discarded.
-
-        On ANY mid-stream fault the connection is discarded (see
-        :meth:`_exchange`): the daemon may still be sending this fetch's
-        remaining chunk frames, which would otherwise desync the next request
-        on the reused connection. A fault leaves no partial file and no stale
-        frames behind.
+        Return the byte count after verification. On failure, discard the
+        connection to drop unread frames; the caller owns and cleans up *sink*.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
+            OSError: If writing to the sink fails.
         """
         async with self._exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
-            return await exchange.reassemble(deadline)
+            return await exchange.receive_fetch(deadline, sink)
 
     async def send_and_drain(
         self,
@@ -209,16 +203,15 @@ class VoxdTransport:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         responses: list[dict[str, Any]] = []
         expected = early_terminal or terminal_type
         async with self._exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
             while True:
-                resp = exchange.decode(await exchange.recv_before(deadline, expected))
+                resp = await exchange.recv_before(deadline, expected)
                 responses.append(resp)
                 resp_type = resp.get("type")
                 if resp_type == terminal_type:

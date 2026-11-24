@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import re
 import socket
@@ -122,7 +123,9 @@ def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
 
     async def run() -> object:
         if call == "fetch":
-            return await transport.fetch_stream({"type": "rec_get"}, timeout=0.05)
+            return await transport.fetch_into(
+                {"type": "rec_get"}, io.BytesIO(), timeout=0.05
+            )
         return await transport.send_and_drain(
             {"type": "synthesize"}, timeout=0.05, early_terminal="playing"
         )
@@ -135,6 +138,22 @@ def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
         pytest.raises(VoxdProtocolError, match=re.escape(expected)),
     ):
         asyncio.run(run())
+
+
+def test_a_non_object_playback_frame_is_a_protocol_error() -> None:
+    ws = AsyncMock()
+    ws.transport = MagicMock()
+    ws.recv.side_effect = ['{"type":"playing"}', "1"]
+    transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
+
+    with (
+        patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            AsyncMock(return_value=ws),
+        ),
+        pytest.raises(VoxdProtocolError, match="expected a JSON object from voxd"),
+    ):
+        asyncio.run(transport.send_and_drain({"type": "synthesize"}, timeout=1))
 
 
 class _LateRosterDaemon:

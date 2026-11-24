@@ -132,17 +132,21 @@ class ServiceInstaller:
     # Install
     # ------------------------------------------------------------------
 
-    def install(self) -> str:
+    def install(self, *, rotate_keys: bool = False) -> str:
         """Install voxd as a system service.  Return a status message.
 
-        Must be run as a normal user, not as root or under ``sudo``.
+        Must be run as a normal user, not as root or under ``sudo``. A stored
+        ``keys.env`` value is replaced by a different environment value only
+        when *rotate_keys* is set.
 
         Raises:
             SystemExit: If service installation fails.
         """
         self._refuse_root("install")
         try:
-            return self._install(self.backend_for(self.detect_platform()))
+            return self._install(
+                self.backend_for(self.detect_platform()), rotate_keys=rotate_keys
+            )
         except _SERVICE_ERRORS as exc:
             raise SystemExit(f"vox daemon install failed: {exc}") from exc
 
@@ -159,13 +163,15 @@ class ServiceInstaller:
         )
         raise SystemExit(msg)
 
-    def _install(self, backend: InstallableBackend) -> str:
+    def _install(self, backend: InstallableBackend, *, rotate_keys: bool) -> str:
         """Stop any previous voxd, install the unit, and verify it serves."""
         HealthVerifier.preflight(os.environ)
         user = getpass.getuser()
         args = self._voxd_exec_args()
         state_root = self._ensure_user_dirs()
-        keys = self._keys_writer.write(os.environ, _paths_keys_env_file())
+        keys = self._keys_writer.write(
+            os.environ, _paths_keys_env_file(), rotate=rotate_keys
+        )
         logger.info("Wrote provider keys to %s", keys.path)
 
         # Stop any previous voxd through the manager first, so launchd's

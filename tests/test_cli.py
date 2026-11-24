@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
@@ -19,7 +19,7 @@ from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
-from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.cli_daemon import DaemonCli
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
@@ -92,6 +92,38 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.usefixtures("conflicting_provider_environment")
+    @pytest.mark.parametrize(
+        ("provider_args", "expected"),
+        [
+            ([], ("elevenlabs", "eleven_v3", "adam")),
+            (["--provider", "polly"], ("polly", None, None)),
+            (
+                ["--provider", "openai", "--model", "tts-1-hd"],
+                ("openai", "tts-1-hd", None),
+            ),
+        ],
+        ids=["repo-default", "explicit-provider", "explicit-model"],
+    )
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_provider_ignores_environment(
+        self,
+        mock_client_cls: MagicMock,
+        provider_args: list[str],
+        expected: tuple[str, str | None, str | None],
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        result = CliRunner().invoke(app, ["say", "hello", *provider_args])
+
+        assert result.exit_code == 0, result.output
+        synthesize.assert_called_once()
+        spec = synthesize.call_args.args[1]
+        assert (spec.provider, spec.model, spec.voice) == expected
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_basic(
         self,
@@ -1198,22 +1230,26 @@ class TestVoiceCommand:
         assert result.exit_code == 0
         assert "roger (current)" in result.output
 
+    @pytest.mark.usefixtures("conflicting_provider_environment")
+    @pytest.mark.parametrize(
+        ("provider_args", "expected"),
+        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        ids=["repo-default", "explicit-flag"],
+    )
     @patch(f"{_CLI}.VoxClientSync")
-    def test_voice_no_arg_passes_provider(
+    def test_voice_provider_ignores_environment(
         self,
         mock_client_cls: MagicMock,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        provider_args: list[str],
+        expected: str,
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        monkeypatch.delenv("TTS_PROVIDER", raising=False)
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
         runner = CliRunner()
-        result = runner.invoke(app, ["voice", "--provider", "polly"])
+        result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with("polly")
+        mock_client_cls.return_value.voices.assert_called_once_with(expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(
@@ -1334,7 +1370,7 @@ class TestVersionCommand:
 
 
 class TestStatusCommand:
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_status_daemon_running(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
@@ -1344,33 +1380,60 @@ class TestStatusCommand:
 
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = HealthStatus.from_wire(
-            {"provider": "elevenlabs"}
+            {"provider": "elevenlabs", "log_level": "debug"}
         )
 
         runner = CliRunner()
         result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        assert "Daemon" in result.output
-        assert "running" in result.output
+        assert "Daemon:    running\n" in result.output
+        assert "Log level: debug\n" in result.output
+        mock_instance.health.assert_called_once_with()
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_status_daemon_not_running(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         import punt_vox.config as cfg
-        from punt_vox.client_errors import VoxdConnectionError
+        from punt_vox.client_errors import VoxdRefusedError
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
 
         mock_instance = mock_client_cls.return_value
-        mock_instance.health.side_effect = VoxdConnectionError("not running")
+        mock_instance.health.side_effect = VoxdRefusedError("refused")
 
         runner = CliRunner()
         result = runner.invoke(app, ["status"])
 
         assert result.exit_code == 0
-        assert "not running" in result.output
+        assert "Daemon:    not running\n" in result.output
+        assert "Log level: unknown (daemon not reachable)\n" in result.output
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output)["log_level"] == "unknown"
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_daemon_did_not_report_level(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+
+        result = CliRunner().invoke(app, ["status"])
+
+        assert result.exit_code == 0
+        assert "Daemon:    running\n" in result.output
+        assert "Log level: unknown (daemon did not report a level)\n" in result.output
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_daemon_health_unavailable(self, mock_client_cls: MagicMock) -> None:
+        mock_client_cls.return_value.health.side_effect = VoxdProtocolError("bad reply")
+
+        result = CliRunner().invoke(app, ["status"])
+
+        assert result.exit_code == 0
+        assert "Daemon:    unknown\n" in result.output
+        assert "Log level: unknown (daemon health unavailable)\n" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1480,7 +1543,7 @@ class TestDoctorCommand:
         # Create Music dir so the Music-directory doctor check passes.
         (tmp_path / "Music").mkdir(exist_ok=True)
         # Create output dir so the output-directory doctor check passes.
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
@@ -1503,8 +1566,8 @@ class TestDoctorCommand:
                 return_value=config_path,
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
@@ -1513,7 +1576,7 @@ class TestDoctorCommand:
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1645,7 +1708,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1664,15 +1727,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1733,7 +1796,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1752,15 +1815,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1807,7 +1870,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1826,15 +1889,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -2365,7 +2428,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_quiet_suppresses_status(self, mock_client_cls: MagicMock) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
@@ -2377,7 +2440,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         assert result.output.strip() == ""
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_json_still_emits_with_quiet(self, mock_client_cls: MagicMock) -> None:
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = HealthStatus.from_wire(
@@ -2389,6 +2452,7 @@ class TestGlobalFlags:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data
+        assert data["daemon"] == "running"
 
     def test_verbose_quiet_mutual_exclusion(self) -> None:
         runner = CliRunner()
@@ -2404,16 +2468,82 @@ class TestGlobalFlags:
         data = json.loads(result.output)
         assert "version" in data
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
         # Status reads provider from local vox.md, not daemon health. This runner has no
         # provider configured, so the JSON field is unknown.
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"log_level": "debug"}
+        )
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data
+        assert data["daemon"] == "running"
+        assert data["log_level"] == "debug"
+
+    @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
+    @patch("punt_vox.desktop_install.platform")
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_reports_unsupported_desktop(
+        self,
+        mock_client_cls: MagicMock,
+        mock_platform: MagicMock,
+        json_output: bool,
+    ) -> None:
+        mock_platform.system.return_value = "Windows"
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"log_level": "debug"}
+        )
+        result = CliRunner().invoke(
+            app, ["status", "--json"] if json_output else ["status"]
+        )
+
+        assert result.exit_code == 0, result.exception
+        if json_output:
+            payload = json.loads(result.stdout)
+            assert payload["desktop"] == "platform unsupported"
+            assert payload["daemon"] == "running"
+            assert payload["log_level"] == "debug"
+        else:
+            assert "Desktop:   platform unsupported" in result.stdout
+            assert "Daemon:    running" in result.stdout
+            assert "Log level: debug" in result.stdout
+
+    @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_reports_non_utf8_desktop_config(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        hermetic_config: Path,
+        json_output: bool,
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        (hermetic_config / "vox.local.md").write_text(
+            "---\nvibe: calm\nvibe_tags: focus\n---\n", encoding="utf-8"
+        )
+        config_path = tmp_path / "claude_desktop_config.json"
+        config_path.write_bytes(b"\xff")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
+        ):
+            result = CliRunner().invoke(
+                app, ["status", "--json"] if json_output else ["status"]
+            )
+
+        assert result.exit_code == 0, result.exception
+        if json_output:
+            payload = json.loads(result.stdout)
+            assert payload["desktop"] == "config unreadable"
+            assert payload["vibe"] == "calm"
+            assert payload["vibe_tags"] == "focus"
+        else:
+            assert "Desktop:   config unreadable" in result.stdout
+            assert "Vibe:      calm" in result.stdout
+            assert "Tags:      focus" in result.stdout
 
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
@@ -2698,6 +2828,26 @@ class TestDaemonStatusCommand:
         assert result.exit_code == 1
         assert payload["status"] == "unknown"
 
+    def test_remote_non_object_json_reply_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VOXD_HOST", "127.0.0.1")
+        monkeypatch.setenv("VOXD_PORT", "8421")
+        ws = AsyncMock()
+        ws.transport = MagicMock()
+        ws.recv.return_value = "[]"
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            AsyncMock(return_value=ws),
+        ):
+            result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        ws.send.assert_awaited_once_with(json.dumps({"type": "health"}))
+        assert result.exit_code == 1
+        assert json.loads(result.output) == {
+            "status": "unknown",
+            "reason": "expected a JSON object from voxd",
+        }
+
     def test_refused_as_root_exits_2(self) -> None:
         refusal = LifecycleRefusedError("vox daemon must run as your normal user")
         with patch(f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host", side_effect=refusal):
@@ -2935,9 +3085,27 @@ class TestDaemonLifecycleCommands:
 
     def test_daemon_verb_set(self) -> None:
         """The daemon group: install, uninstall, start, stop, restart, status."""
-        group = build_daemon_app(MagicMock(), MagicMock())
+        group = DaemonCli.typer_app(MagicMock(), MagicMock())
         verbs = {c.name for c in group.registered_commands}
         assert verbs == {"install", "uninstall", "start", "stop", "restart", "status"}
+
+    @pytest.mark.parametrize(
+        ("argv", "rotate"),
+        [
+            pytest.param([], False, id="default-keeps-stored-keys"),
+            pytest.param(["--rotate-keys"], True, id="rotate-keys"),
+        ],
+    )
+    def test_install_passes_rotate_keys_to_the_service(
+        self,
+        argv: list[str],
+        rotate: bool,
+    ) -> None:
+        """``--rotate-keys`` is the only way install replaces a stored key."""
+        with patch(f"{_CLI_DAEMON}.svc_install", return_value="ok") as svc:
+            result = CliRunner().invoke(app, ["daemon", "install", *argv])
+        assert result.exit_code == 0
+        svc.assert_called_once_with(rotate_keys=rotate)
 
     @pytest.mark.parametrize(
         ("verb", "key", "target"),
@@ -2957,3 +3125,19 @@ class TestDaemonLifecycleCommands:
         payload = json.loads(result.output)
         assert payload[key] is False
         assert "launchctl bootstrap" in payload["reason"]
+
+    @pytest.mark.parametrize(
+        ("verb", "key", "target"),
+        [
+            ("install", "installed", "svc_install"),
+            ("uninstall", "uninstalled", "svc_uninstall"),
+        ],
+    )
+    def test_install_success_json_reports_the_message(
+        self, verb: str, key: str, target: str
+    ) -> None:
+        """A successful install/uninstall emits ``{key: true, message}``."""
+        with patch(f"{_CLI_DAEMON}.{target}", return_value="voxd done"):
+            result = CliRunner().invoke(app, ["daemon", verb, "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output) == {key: True, "message": "voxd done"}

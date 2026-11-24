@@ -192,8 +192,11 @@ class ProviderCredentials:
         )
         return frozenset(api_keys) | _AWS_HEADER_VARS
 
-    def preferred(self) -> str | None:
+    def preferred(self, excluding: frozenset[str] = frozenset()) -> str | None:
         """Return the provider a fresh repo should adopt, or ``None`` if none.
+
+        *excluding* names providers a live check found unusable despite a
+        satisfied local requirement, so the proposal skips them.
 
         The proposal answered here reaches clients through the
         ``provider_status`` wire op;
@@ -206,10 +209,10 @@ class ProviderCredentials:
         # actually ready; otherwise we walk the fixed order rather
         # than proposing a value that will refuse on first use.
         env = os.environ.get("TTS_PROVIDER", "").strip().lower()
-        if env and env in self._requirements and self._requirements[env].satisfied():
-            return env
-        for name in _PREFERRED_ORDER:
-            if self._requirements[name].satisfied():
+        candidates = (env, *_PREFERRED_ORDER) if env else _PREFERRED_ORDER
+        for name in candidates:
+            requirement = self._requirements.get(name)
+            if name not in excluding and requirement and requirement.satisfied():
                 return name
         return None
 

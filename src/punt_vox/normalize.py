@@ -9,49 +9,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import final
 
+from punt_vox._inline_code import VIBE_TAG_RE, InlineCode
+from punt_vox._speech_abbreviations import SpeechAbbreviations
 from punt_vox._speech_punctuation import SpeechPunctuation
-
-# ---------------------------------------------------------------------------
-# Abbreviation dictionary — whole-word expansions
-# ---------------------------------------------------------------------------
-
-_ABBREVIATIONS: dict[str, str] = {
-    # Programmer terms
-    "stderr": "standard error",
-    "stdout": "standard output",
-    "stdin": "standard input",
-    "eof": "E O F",
-    "env": "environment",
-    "dir": "directory",
-    "config": "configuration",
-    "args": "arguments",
-    "params": "parameters",
-    "auth": "authentication",
-    "repo": "repository",
-    "src": "source",
-    "tmp": "temporary",
-    "deps": "dependencies",
-    "impl": "implementation",
-    "init": "initialize",
-    "ctx": "context",
-    # Internet slang
-    "lol": "laughing out loud",
-    "rofl": "rolling on the floor laughing",
-    "lmao": "laughing my ass off",
-    "lmfao": "laughing my head off",
-    "smh": "shaking my head",
-    "tbh": "to be honest",
-    "imo": "in my opinion",
-    "imho": "in my humble opinion",
-    "fwiw": "for what it's worth",
-    "afaik": "as far as I know",
-    "brb": "be right back",
-    "ttyl": "talk to you later",
-    "ftw": "for the win",
-    "omg": "oh my god",
-    "wtf": "what the heck",
-}
 
 # ---------------------------------------------------------------------------
 # Pronounceable acronyms — TTS engines handle these as words
@@ -513,16 +475,9 @@ _CAMEL_BOUNDARY = re.compile(
     r"|(?<=[0-9])(?=[a-zA-Z])"  # foo2bar → foo2 bar (combined: foo 2 bar)
 )
 
-# Tokens that look like file paths — leave these alone.
-_FILE_PATH_RE = re.compile(r"^[~/.]?/")
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
-
-VIBE_TAG_RE = re.compile(r"\[([a-z]+)\]")
 
 
 def strip_vibe_tags(text: str) -> str:
@@ -561,7 +516,7 @@ def normalize_for_speech(text: str) -> str:
 
     Transforms applied per token (whitespace-delimited):
 
-    1. **Currency amounts** — spoken with their sign and currency unit.
+    1. **Currency amounts** — spoken as money in prose and literally in code.
     2. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
     3. **snake_case** — underscores replaced with spaces, parts processed
        individually for abbreviation expansion.
@@ -570,42 +525,66 @@ def normalize_for_speech(text: str) -> str:
 
     Idempotent: running twice produces the same result.
     """
-    return " ".join(filter(None, map(_normalize_token, text.split())))
+    return SpeechText.normalize(text)
 
 
-def _normalize_token(token: str) -> str:
-    """Normalize a single whitespace-delimited token."""
-    core, suffix = SpeechPunctuation.split(token)
+@final
+class SpeechText:
+    """Normalize raw speech text without losing inline code context."""
 
-    # File paths: keep core as-is but still strip non-speech wrapping
-    if not core or _FILE_PATH_RE.match(core):
-        return core + suffix
+    @classmethod
+    def normalize(cls, text: str) -> str:
+        """Normalize text without interpreting expressive tags."""
+        return cls._words(InlineCode.rewrite_currency(text))
 
-    if "_" in core:
-        return " ".join(map(_expand_snake_part, filter(None, core.split("_")))) + suffix
+    @classmethod
+    def for_synthesis(cls, text: str, *, expressive: bool) -> str:
+        """Normalize text, retaining expressive tags only for supported models."""
+        prepared = InlineCode.rewrite_currency(text, vibed=True)
+        if not expressive:
+            return cls._words(VIBE_TAG_RE.sub("", prepared))
+        return " ".join(filter(None, cls._expressive_parts(prepared)))
 
-    parts = _CAMEL_BOUNDARY.split(core)
-    if len(parts) > 1:
-        return _expand_parts(parts) + suffix
-    return _ABBREVIATIONS.get(core.lower(), _space_acronym(core)) + suffix
+    @classmethod
+    def _expressive_parts(cls, text: str) -> list[str]:
+        parts: list[str] = []
+        cursor = 0
+        for tag in VIBE_TAG_RE.finditer(text):
+            parts.extend((cls._words(text[cursor : tag.start()]), tag[0]))
+            cursor = tag.end()
+        parts.append(cls._words(text[cursor:]))
+        return parts
+
+    @classmethod
+    def _words(cls, text: str) -> str:
+        return " ".join(filter(None, map(cls._token, text.split())))
+
+    @classmethod
+    def _token(cls, token: str) -> str:
+        core, suffix = SpeechPunctuation.split(token)
+        return " ".join(map(cls._identifier, core.split())) + suffix
+
+    @staticmethod
+    def _identifier(core: str) -> str:
+        if SpeechPunctuation.is_path(core):
+            return core
+        if "_" in core:
+            return " ".join(map(_expand_snake_part, filter(None, core.split("_"))))
+        if len(parts := _CAMEL_BOUNDARY.split(core)) > 1:
+            return " ".join(map(_expand_part, parts))
+        return SpeechAbbreviations.expand(core) or _space_acronym(core)
 
 
 def _expand_snake_part(part: str) -> str:
     """Look up the whole snake_case part before splitting it further."""
-    return _ABBREVIATIONS.get(part.lower()) or _expand_parts(
-        _CAMEL_BOUNDARY.split(part)
+    return SpeechAbbreviations.expand(part) or " ".join(
+        map(_expand_part, _CAMEL_BOUNDARY.split(part))
     )
-
-
-def _expand_parts(parts: list[str]) -> str:
-    """Expand and rejoin identifier pieces."""
-    return " ".join(map(_expand_part, parts))
 
 
 def _expand_part(part: str) -> str:
     """Expand a single sub-token after identifier splitting."""
-    expanded = _ABBREVIATIONS.get(part.lower())
-    if expanded:
+    if expanded := SpeechAbbreviations.expand(part):
         return expanded
     # ALL_CAPS: space out acronyms so TTS spells them letter-by-letter,
     # unless the word is pronounceable (real word or known acronym).

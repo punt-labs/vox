@@ -9,10 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The unused voice and language resolver. Default voice selection is unchanged.
+
 - The unused append-log factory and stderr reporter from `PrivateState`.
   The shared observability package supplies the active append sink.
 
 ### Changed
+
+- `vox rec get` streams recordings to disk instead of keeping the entire
+  download in memory. It still verifies the download before saving it. (PL-1484)
+
+- Clarify in CLI help and docs that same-text recordings without `--name`
+  replace the earlier take and that distinct names keep takes separate. (PL-1486)
+
+- Separate panel provider/model roster fetches and atomic commits from scene
+  orchestration without changing selector behavior. (PL-837)
+
+- Resolve non-repo config locks and SessionStart panel logs through the shared
+  per-user paths without moving them. (PL-1444)
 
 - Vox call now has one implementation. The CLI and plugin both use
   the daemon's ElevenLabs call and persistent workers. Retired the former
@@ -23,6 +37,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- `vox enable` adds `.punt-labs/vox/vox.local.md` to the repo's `.gitignore`
+  (once, after any existing rules), so machine-local session state is never
+  committed. A symlinked `.gitignore`, which git does not read, stops enable
+  with an error instead of being written through. (PL-818)
+
+- `vox voice <name> --provider <provider>` rejects an inactive provider
+  without changing the active provider or saved voice. (PL-1487)
+
+- `vox music get` and `mic:music get` now export an album's surviving tracks
+  when a track file was deleted out of band, naming each skipped track
+  instead of failing the whole export. (PL-1476)
+
+- Tag radio skips saved albums deleted from disk while the daemon is running
+  and plays the remaining matches. (PL-856)
+
+- `vox call --script` on a file that is not UTF-8 now gives a usage error
+  telling you to save it as UTF-8, instead of a `UnicodeDecodeError`
+  traceback. `vox say --from` reports the same message. (PL-1472)
+
+- `vox doctor` now confirms each configured provider with an authenticated
+  live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
+  credentials, now reports not ready with the provider's reason instead of
+  `ready`, and is never the preferred provider. (PL-834)
+
+- Lux scene trees and patches now report themselves as unhashable while
+  retaining structural equality.
+
+- Local `vox daemon` lifecycle commands ignore invalid `serve.port` hints
+  and no longer crash while clearing a stale hint with thousands of digits.
+  (PL-1432)
+
+- `vox daemon install` (and `install.sh`) no longer replaces a key stored in
+  `keys.env` with a different value from the installing shell, which could
+  swap a working key for a revoked one and fail speech with HTTP 401. The
+  stored key is kept and the install output names it; `vox daemon install
+  --rotate-keys` replaces it and reports each key it replaced. AWS key pairs
+  and session tokens are kept or replaced together, and rotation needs a
+  whole new key pair from the shell. Values are never shown.
+  Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still
+  follow the shell. (PL-1322)
+
+- `vox status` reports the running daemon's live log level after `vox log`,
+  or `unknown` when the daemon can't report it. (PL-854)
+
+- `vox status` and `vox status --json` report Claude Desktop as
+  `platform unsupported` instead of failing on platforms where Vox cannot
+  locate its config. (PL-804)
+
+- Reject malformed daemon discovery ports before connecting, so status reports
+  an unknown daemon state rather than mistaking it for a stopped daemon. (PL-1421)
+
+- Keep the daemon responsive to other requests while it hashes a large store
+  file before sending it. (PL-1430)
+
+- Stop hashing a download when the daemon receives a WebSocket disconnect,
+  including while the request is still waiting for a digest slot. (PL-1433)
+
+- Treat non-object JSON replies from voxd as protocol errors. Instead of
+  crashing, `vox status` reports `unknown`. `vox daemon status` reports
+  `unresponsive` for an identified local daemon and `unknown` for an
+  explicitly configured endpoint. (PL-1422)
+
+- `vox say --provider <other>` without `--voice` now uses that provider's
+  default voice instead of failing with `VoiceNotFoundError` on the saved
+  voice of the configured provider. (PL-799)
+
+- `vox doctor` probes the output dir with a private, uniquely created
+  temporary file, so it no longer overwrites or deletes an existing
+  `.doctor_test` file or writes through a symlink of that name. (PL-1431)
+
+- Fall back to `~/Music` instead of aborting when Linux's XDG user-dirs file
+  is not UTF-8. (PL-1429)
+
+- Preserve currency and signs when speaking attached amounts, rates, compact
+  amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
+  `$5-$10`. (PL-1414)
+
+- `vox say`, `vox rec new`, and voice listings from `vox voice` use the
+  repo's configured provider unless given an explicit `--provider` flag.
+  `TTS_PROVIDER` only guides provider selection during setup. To override
+  the model for one request, use `--model` instead of `TTS_MODEL`.
+  (PL-1151, PL-1150)
+
+- Speak inline-code amounts such as `$1` literally without changing prose
+  prices. (PL-1413)
+
+- `vox status` reports the daemon as `unknown`, not `not running`, when vox
+  cannot tell: an unreadable or malformed `serve.port`, a malformed
+  `VOXD_PORT`, a rejected handshake or a bad reply. Only a refused connection
+  or an unpublished local `serve.port` is `not running`. (PL-1187)
+
+- Updating settings preserves existing CRLF line endings and the Markdown
+  body. (PL-1142)
+
+- `vox status --json` reports `config unreadable` instead of crashing when the
+  Claude Desktop config contains invalid UTF-8. (PL-1420)
 
 - `vox call stop` and foreground hangup no longer stop a replacement call
   that started after the original call ended. (PL-1380)

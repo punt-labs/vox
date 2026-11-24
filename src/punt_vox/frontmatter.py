@@ -5,10 +5,14 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.frontmatter_block import FrontmatterBlock
+from punt_vox.paths import run_dir
 from punt_vox.sibling_lock import SiblingLock
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -61,17 +65,22 @@ class Frontmatter:
         """Write a single key-value pair into the frontmatter."""
         self.write_fields({key: value})
 
-    def write_fields(self, updates: dict[str, str]) -> None:
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        # A plain update has no precondition; checked writes opt in.
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         """Write multiple key-value pairs in a single read-write cycle.
 
-        Every value is validated up front, so the serialization invariant
-        is enforced by the class that serializes -- a caller bypassing
-        ``ConfigStore`` still cannot corrupt the frontmatter (PY-EH-1).
+        A check runs against the current block under the write lock. Checked
+        writes never rebuild a malformed block from just the updates.
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
         with self._lock().held():
-            self._write_fields(updates)
+            self._write_fields(updates, check)
 
     def _lock(self) -> SiblingLock:
         """Share a local-state lock across every spelling of the config path."""
@@ -82,32 +91,47 @@ class Frontmatter:
             lock_path = directory.parent / "local" / "vox" / f"{target.name}.lock"
         else:
             digest = hashlib.sha256(str(target).encode()).hexdigest()
-            lock_path = (
-                Path.home() / ".punt-labs" / "vox" / "run" / "config-locks" / digest
-            )
+            lock_path = run_dir() / "config-locks" / digest
         return SiblingLock(target, lock_path=lock_path, mode=0o666)
 
-    def _write_fields(self, updates: dict[str, str]) -> None:
+    def _write_fields(
+        self,
+        updates: dict[str, str],
+        check: Callable[[dict[str, str]], None] | None,  # None for plain updates.
+    ) -> None:
         """Read and write the config while holding its local-state lock."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-
-        if not self._path.exists():
+        # Read strictly on write: rebuilding an unreadable file from just
+        # the updates would destroy the existing fields we need to preserve.
+        try:
+            held = self._read_block()
+        except FileNotFoundError:
+            if check is not None:
+                check({})
             self._path.write_text(
                 FrontmatterBlock.rendered(updates).text, encoding="utf-8"
             )
             return
 
-        # Read strictly on write: rebuilding an unreadable file from just
-        # the updates would destroy the existing fields we need to preserve.
-        held = self._read_block()
-        if held.accepts(updates):
-            written = held.with_fields(updates)
-        else:
-            logger.warning("Malformed config (no closing ---): %s", self._path)
-            written = FrontmatterBlock.rendered(updates)
-
-        self._path.write_text(written.text, encoding="utf-8")
+        written = self._updated_block(held, updates, check)
+        self._path.write_text(written.text, encoding="utf-8", newline="")
         self._log_write(updates)
+
+    def _updated_block(
+        self,
+        block: FrontmatterBlock,
+        updates: dict[str, str],
+        check: Callable[[dict[str, str]], None] | None,  # Only plain writes can repair.
+    ) -> FrontmatterBlock:
+        if check is not None:
+            check(block.fields())
+        if block.accepts(updates):
+            return block.with_fields(updates)
+        if check is not None:
+            msg = f"Malformed config (no closing ---): {self._path}"
+            raise ValueError(msg)
+        logger.warning("Malformed config (no closing ---): %s", self._path)
+        return FrontmatterBlock.rendered(updates)
 
     def _log_write(self, updates: dict[str, str]) -> None:
         """Log one INFO summary per write, with the per-field detail at DEBUG.
@@ -123,7 +147,7 @@ class Frontmatter:
 
     def _read_block(self) -> FrontmatterBlock:
         """Parse the file as UTF-8, propagating I/O and decode errors."""
-        return FrontmatterBlock(self._path.read_text(encoding="utf-8"))
+        return FrontmatterBlock(self._path.read_text(encoding="utf-8", newline=""))
 
     def _readable_block(self) -> FrontmatterBlock | None:
         """Return the file's frontmatter, or ``None`` if absent or unreadable.

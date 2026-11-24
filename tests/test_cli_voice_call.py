@@ -346,7 +346,17 @@ def test_an_unreadable_script_is_a_usage_error(tmp_path: Path) -> None:
         CallCli.build_app(), ["--script", str(tmp_path / "missing.jsonl")]
     )
     assert result.exit_code == 2
-    assert "cannot read" in result.output
+    assert "Cannot read --script file" in unstyle(result.output)
+
+
+def test_a_non_utf8_script_is_a_usage_error(tmp_path: Path) -> None:
+    script = tmp_path / "greet.jsonl"
+    script.write_bytes(b"\xffnot-json\n")
+    with patch.object(DaemonControl, "request") as request:
+        result = runner.invoke(CallCli.build_app(), ["--script", str(script)])
+    assert result.exit_code == 2, result.output
+    assert "save it as UTF-8" in " ".join(unstyle(result.output).split())
+    request.assert_not_called()
 
 
 def test_the_status_line_truncates_long_turns() -> None:
