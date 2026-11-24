@@ -24,3 +24,26 @@ def test_split_currency_token(token: str, core: str, suffix: str) -> None:
 
 def test_combining_mark_after_trailing_underscore() -> None:
     assert SpeechPunctuation.split("foo_\u0301") == ("foo", "")
+
+
+@pytest.mark.parametrize(
+    ("token", "core", "suffix"),
+    [
+        ("C++", "C plus plus", ""),
+        ("C#", "C sharp", ""),
+        ("F#.", "F sharp", "."),
+        ("(C++),", "C plus plus", ","),
+        ("`C#`", "C sharp", ""),
+        ("Notepad++", "Notepad plus plus", ""),
+    ],
+)
+def test_split_keeps_language_name_marks(token: str, core: str, suffix: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, suffix)
+
+
+@pytest.mark.parametrize(
+    ("token", "core"),
+    [("#include", "include"), ("SHA#", "SHA"), ("C++17", "C++17")],
+)
+def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, "")
