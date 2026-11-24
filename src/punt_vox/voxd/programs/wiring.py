@@ -21,18 +21,13 @@ from punt_vox.voxd.programs.library_handlers import (
     MusicRemoveHandler,
 )
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.sleeper import RealSleeper
 from punt_vox.voxd.programs.status_handler import StatusHandler
 from punt_vox.voxd.programs.stop_handler import StopHandler
-from punt_vox.voxd.programs.transport_handlers import (
-    PauseHandler,
-    PrevHandler,
-    ResumeHandler,
-)
+from punt_vox.voxd.programs.transport_handler import TransportHandler
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,10 +80,7 @@ class ProgramSubsystem:
         return {
             "program_on": OnHandler(service),
             "program_stop": StopHandler(service),
-            "program_next": NextHandler(service),
-            "program_prev": PrevHandler(service),
-            "program_pause": PauseHandler(service),
-            "program_resume": ResumeHandler(service),
+            **TransportHandler.handlers(service),
             "program_select": SelectHandler(service),
             "program_list": ListHandler(service),
             "program_status": StatusHandler(service),

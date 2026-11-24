@@ -39,11 +39,13 @@ class _FakeCommands:
     def stop(self) -> None:
         self.stops += 1
 
-    def advance(self) -> None:
+    def advance(self) -> bool:
         self.nexts += 1
+        return True
 
-    def prev(self) -> None:
+    def prev(self) -> bool:
         self.prevs += 1
+        return True
 
     def pause(self) -> bool:
         self.pauses += 1
