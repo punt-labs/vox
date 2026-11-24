@@ -381,17 +381,20 @@ def test_get_writes_into_cwd_under_store_name(
 
 
 @pytest.mark.parametrize(
-    ("error", "raised"),
+    ("error", "raised", "message"),
     [
-        (VoxdProtocolError("fetch sha256 mismatch"), typer.Exit),
-        (KeyboardInterrupt(), KeyboardInterrupt),
+        (VoxdProtocolError("fetch sha256 mismatch"), typer.Exit, "sha256 mismatch"),
+        (OSError(errno.ENOSPC, "disk full"), typer.Exit, "cannot write {dest}:"),
+        (KeyboardInterrupt(), KeyboardInterrupt, ""),
     ],
 )
 def test_get_cleans_up_a_failed_staging_write(
     error: BaseException,
     raised: type[BaseException],
+    message: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -410,6 +413,7 @@ def test_get_cleans_up_a_failed_staging_write(
     assert gateway.get_into.call_args.args[1].closed
     assert list(tmp_path.iterdir()) == []
     formatter.emit.assert_not_called()
+    assert message.format(dest=tmp_path / "rec.mp3") in capsys.readouterr().err
 
 
 def test_get_collision_errors_and_leaves_existing_file(
@@ -462,55 +466,6 @@ def test_get_file_racing_in_mid_fetch_is_not_clobbered(
         cli.get("rec.mp3")
     assert raced.read_bytes() == b"RACED-IN"
     assert list(tmp_path.iterdir()) == [raced]
-
-
-@pytest.mark.parametrize(
-    ("error", "raised"),
-    [
-        (OSError(errno.ENOSPC, "disk full"), typer.Exit),
-        (KeyboardInterrupt(), KeyboardInterrupt),
-    ],
-)
-def test_get_publish_failure_removes_partial_output(
-    error: BaseException,
-    raised: type[BaseException],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    def failed_copy(staged: IO[bytes], dest: IO[bytes]) -> NoReturn:
-        dest.write(staged.read(2))
-        raise error
-
-    monkeypatch.setattr("os.link", _no_hardlinks)
-    monkeypatch.setattr("punt_vox.recording_download.shutil.copyfileobj", failed_copy)
-    cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": b"DATA"}))
-
-    with pytest.raises(raised):
-        cli.get("rec.mp3")
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_get_does_not_require_hardlink_support(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The landing can fall back to O_EXCL on FAT/network mounts."""
-    monkeypatch.chdir(tmp_path)
-
-    monkeypatch.setattr("os.link", _no_hardlinks)
-    payload_bytes = b"\xff\xfb\x90\x00" * 5
-    cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": payload_bytes}))
-
-    cli.get("rec.mp3")
-
-    assert (tmp_path / "rec.mp3").read_bytes() == payload_bytes
-    assert list(tmp_path.iterdir()) == [tmp_path / "rec.mp3"]
-
-
-def _no_hardlinks(*_args: object, **_kwargs: object) -> NoReturn:
-    raise OSError(errno.ENOTSUP, "hard links unsupported")
 
 
 @pytest.mark.parametrize(

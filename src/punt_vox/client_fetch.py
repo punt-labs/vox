@@ -74,20 +74,25 @@ class FetchVerifier:
             VoxdProtocolError: If the chunk frame, sequence number, or encoded data is
                 invalid, or the bytes exceed the announced size.
         """
+        data = self._chunk_bytes(frame, seq)
+        self._received += len(data)
+        if self._received > self._declared:
+            raise self._size_mismatch()
+        self._hash.update(data)
+        return data
+
+    @staticmethod
+    def _chunk_bytes(frame: dict[str, object], seq: int) -> bytes:
+        """Decode the payload only after validating frame type and sequence."""
         if frame.get("type") != "chunk" or frame.get("seq") != seq:
             raise VoxdProtocolError(
                 f"expected chunk seq {seq}, got "
                 f"{frame.get('type')!r} seq {frame.get('seq')!r}"
             )
         try:
-            data = base64.b64decode(str(frame["data"]), validate=True)
+            return base64.b64decode(str(frame["data"]), validate=True)
         except (KeyError, ValueError, TypeError) as exc:
             raise VoxdProtocolError(f"chunk {seq} has invalid base64: {exc}") from exc
-        self._received += len(data)
-        if self._received > self._declared:
-            raise self._size_mismatch()
-        self._hash.update(data)
-        return data
 
     def finish(self, frame: dict[str, object]) -> int:  # a decoded wire frame
         """Return the byte count once ``fetch_end`` arrives and the stream checks out.

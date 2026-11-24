@@ -6,11 +6,11 @@ import errno
 import os
 import shutil
 import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
     from typing import IO
 
 
@@ -29,25 +29,14 @@ class RecordingDownload:
         return self
 
     def save(self, fetch: Callable[[IO[bytes]], int]) -> int:
-        """Publish only after fetch verification and successful close."""
-        # Closing flushes the data; exiting the context unlinks the staging file.
-        with tempfile.NamedTemporaryFile(
-            dir=self._dest.parent, prefix=".vox-rec-", delete_on_close=False
-        ) as staged:
+        """Verify and flush the download before opening the final path."""
+        if self._dest.exists(follow_symlinks=False):
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), self._dest)
+        with tempfile.TemporaryFile(dir=self._dest.parent) as staged:
             count = fetch(staged)
-            staged.close()
-            self._publish(Path(staged.name))
+            staged.seek(0)
+            self._copy_exclusive(staged)
             return count
-
-    def _publish(self, staged: Path) -> None:
-        """Land without clobbering, even on a filesystem without hard links."""
-        try:
-            self._dest.hardlink_to(staged)
-        except OSError as exc:
-            if exc.errno not in (errno.ENOSYS, errno.ENOTSUP, errno.EPERM, errno.EXDEV):
-                raise
-            with staged.open("rb") as source:
-                self._copy_exclusive(source)
 
     def _copy_exclusive(self, staged: IO[bytes]) -> None:
         """Reserve the final name and remove it if copying fails."""

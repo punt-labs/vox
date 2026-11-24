@@ -53,7 +53,6 @@ _GATEWAY_ERRORS = (
     VoxdConnectionError,
     VoxdProtocolError,
     WebSocketException,
-    OSError,
     ValueError,
 )
 
@@ -202,7 +201,7 @@ class RecCli:
         """Run *op* against a fresh gateway, exiting cleanly on a gateway fault."""
         try:
             return op(self._gateway_factory())
-        except _GATEWAY_ERRORS as exc:
+        except (*_GATEWAY_ERRORS, OSError) as exc:
             self._fail(str(exc))
 
     def new(
@@ -307,16 +306,16 @@ class RecCli:
         """Copy recording *ref* into the current directory under its store name."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         dest = Path.cwd() / self._bare_ref(ref)
-        if dest.exists():
-            self._fail(f"rec get: ./{ref} exists")
         try:
             count = RecordingDownload(dest).save(
-                lambda sink: self._run(lambda g: g.get_into(ref, sink))
+                lambda sink: self._gateway_factory().get_into(ref, sink)
             )
         except FileExistsError:
-            self._fail(f"rec get: ./{ref} exists")  # raced in after the check
+            self._fail(f"rec get: ./{ref} exists")
         except OSError as exc:
             self._fail(f"cannot write {dest}: {exc}")
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
         self._formatter.emit({"path": str(dest), "bytes": count}, f"./{ref}")
 
     def remove(
