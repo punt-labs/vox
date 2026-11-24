@@ -66,6 +66,8 @@ def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
         ("-3%", "-3 percent", ""),
         ("5\u201310%!", "5\u201310 percent", "!"),
         ("`100%`", "100 percent", ""),
+        ("1,000%", "1,000 percent", ""),
+        ("\u22122%", "\u22122 percent", ""),
     ],
 )
 def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -> None:
