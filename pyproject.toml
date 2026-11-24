@@ -364,6 +364,7 @@ adapters = [
     "punt_vox.client_transport",
     "punt_vox.config",
     "punt_vox.deposited_files",
+    "punt_vox.desktop_config",
     "punt_vox.desktop_install",
     "punt_vox.desktop_registration",
     "punt_vox.dirs",
