@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
-from punt_vox.voxd.pcm_output import OutputDeviceLostError, sounddevice_output_stream
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
 from punt_vox.voxd.pcm_silent import SilentOutputStream
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
@@ -55,22 +55,6 @@ async def test_closing_an_idle_sink_stops_the_device_thread() -> None:
     report = await sink.close()
     assert report.played.ms == 0
     assert not report.device_lost
-
-
-def test_env_var_silent_selects_the_device_with_a_warning(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.setenv("VOX_PCM_OUTPUT", "silent")
-    with caplog.at_level("WARNING", logger="punt_vox.voxd.pcm_silent"):
-        factory = SilentOutputStream.from_env(sounddevice_output_stream)
-    assert factory is SilentOutputStream
-    assert "VOX_PCM_OUTPUT=silent" in caplog.text
-
-
-def test_env_var_unset_keeps_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("VOX_PCM_OUTPUT", raising=False)
-    factory = SilentOutputStream.from_env(sounddevice_output_stream)
-    assert factory is sounddevice_output_stream
 
 
 def test_the_playback_queue_reads_the_env_var(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,17 +17,23 @@ reads them once per use, so a test sets them in the daemon's environment:
 - ``VOX_PCM_OUTPUT=silent`` plays the agent's voice through
   :class:`~punt_vox.voxd.pcm_silent.SilentOutputStream` instead of PortAudio,
   so a host with no sound card still plays, cuts and plays out agent audio.
-  The playback queue reads it through
-  :meth:`~punt_vox.voxd.pcm_silent.SilentOutputStream.from_env`, because the
-  device is chosen there, not in the voice agent.
+  Unset or empty is the default device; any other value fails with a
+  :class:`ValueError` naming the variable, so a misspelt switch never falls
+  back to PortAudio and surfaces later as an open error that does not name
+  it. The playback queue reads it, because the device is chosen there.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Final, final
+from typing import TYPE_CHECKING, Final, final
 from urllib.parse import urlsplit
+
+from punt_vox.voxd.pcm_silent import SilentOutputStream
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.pcm_output import OutputStreamFactory
 
 __all__ = [
     "LOOPBACK_HOSTS",
@@ -38,6 +44,7 @@ __all__ = [
 
 BASE_URL_ENV: Final = "VOX_CONVAI_BASE_URL"
 LOOPBACK_ENV: Final = "VOX_CALL_ALLOW_LOOPBACK"
+PCM_OUTPUT_ENV: Final = "VOX_PCM_OUTPUT"
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "::1"})
 """The literal loopback IPs both overrides accept; names never resolve here."""
 LOOPBACK_ORIGINS: Final = frozenset(("ws", host) for host in LOOPBACK_HOSTS)
@@ -108,3 +115,19 @@ class CallOverrides:
                 "%s=1: plaintext loopback ElevenLabs sockets are trusted", LOOPBACK_ENV
             )
         return value == "1"
+
+    @staticmethod
+    def pcm_output(default: OutputStreamFactory) -> OutputStreamFactory:
+        """Return the output device the environment names, else *default*.
+
+        Unset or empty is *default*; ``silent`` is the silent device, with one
+        warning; anything else raises :class:`ValueError` naming the variable.
+        """
+        value = os.environ.get(PCM_OUTPUT_ENV, "")
+        if value == "":
+            return default
+        if value != "silent":
+            msg = f"{PCM_OUTPUT_ENV} must be unset or silent, not {value!r}"
+            raise ValueError(msg)
+        logger.warning("%s=silent: agent audio is not played", PCM_OUTPUT_ENV)
+        return SilentOutputStream

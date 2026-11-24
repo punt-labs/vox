@@ -12,21 +12,19 @@ and only the sound is missing. ``VOX_PCM_OUTPUT=silent`` selects it; see
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.pcm_audio import BYTES_PER_FRAME
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.voxd.pcm_output import OutputCallback, OutputStreamFactory
+    from punt_vox.voxd.pcm_output import OutputCallback
 
-__all__ = ["PCM_OUTPUT_ENV", "SilentOutputStream"]
+__all__ = ["SilentOutputStream"]
 
-PCM_OUTPUT_ENV: Final = "VOX_PCM_OUTPUT"
 logger = logging.getLogger(__name__)
 
 
@@ -66,14 +64,6 @@ class SilentOutputStream:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         return self
-
-    @classmethod
-    def from_env(cls, default: OutputStreamFactory) -> OutputStreamFactory:
-        """Return this device when ``VOX_PCM_OUTPUT=silent``, else *default*."""
-        if os.environ.get(PCM_OUTPUT_ENV) != "silent":
-            return default
-        logger.warning("%s=silent: agent audio is not played", PCM_OUTPUT_ENV)
-        return cls
 
     def start(self) -> None:
         """Begin pulling blocks on the device thread."""

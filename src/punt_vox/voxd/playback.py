@@ -16,9 +16,9 @@ from typing import Self
 
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
 from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
-from punt_vox.voxd.pcm_silent import SilentOutputStream
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
+from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class PlaybackQueue:
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
-        self._output_stream = SilentOutputStream.from_env(output_stream)
+        self._output_stream = CallOverrides.pcm_output(output_stream)
         return self
 
     # -- Properties ----------------------------------------------------------
