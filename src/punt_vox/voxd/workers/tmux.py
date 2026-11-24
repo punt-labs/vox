@@ -112,21 +112,37 @@ class TmuxWorkerProvider:
         return TmuxProbe.missing(result)
 
     def stop(self, handle: str) -> None:
-        """Kill the session and its pane process group."""
-        if self._run("has-session", "-t", f"={handle}", check=False).returncode == 0:
-            pane = self._run(
-                "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
-            )
-            if pane.returncode != 0:
-                return
-            pid = int(pane.stdout.strip())
-            try:
-                group = os.getpgid(pid)
-            except ProcessLookupError:
-                group = None
-            self._run("kill-session", "-t", f"={handle}", check=False)
-            if group is not None:
-                TmuxProbe.wait_for_exit(group)
+        """Kill the session and its pane process group.
+
+        An absent session is a finished stop. A session that exists but whose
+        pane cannot be read or killed raises, so a rollback never records a
+        possibly live pane as stopped and removes its worktree.
+
+        Raises:
+            RuntimeError: If the liveness probe fails for a reason other than
+                absence, or the session exists and cannot be killed.
+        """
+        if self._session_missing(
+            handle, self._run("has-session", "-t", f"={handle}", check=False)
+        ):
+            return
+        group = self._pane_group(handle)
+        if self._run("kill-session", "-t", f"={handle}", check=False).returncode != 0:
+            raise RuntimeError("Worker session could not be killed")
+        if group is not None:
+            TmuxProbe.wait_for_exit(group)
+
+    # PY-TS-14: None when the pane's process is already gone; nothing to wait for.
+    def _pane_group(self, handle: str) -> int | None:
+        pane = self._run(
+            "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
+        )
+        if pane.returncode != 0:
+            raise RuntimeError("Worker session could not be killed")
+        try:
+            return os.getpgid(int(pane.stdout.strip()))
+        except ProcessLookupError:
+            return None
 
     # PY-TS-14: transport relays the profile's open JSON snapshot schema unchanged.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:

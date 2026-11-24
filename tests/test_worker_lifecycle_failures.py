@@ -21,6 +21,7 @@ from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 
@@ -296,3 +297,33 @@ def test_launch_error_message_has_its_paths_scrubbed(tmp_path: Path) -> None:
     assert (
         record.last_report["launch_error"] == "OSError: [Errno 28] no space: '<path>'"
     )
+
+
+def test_tmux_kill_failure_on_rollback_keeps_the_worktree(tmp_path: Path) -> None:
+    """The real provider: a refused kill leaves state starting and the checkout."""
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    policy = _fake_policy(tmp_path, worktrees)
+    records = WorkerRecords(tmp_path / "workers")
+    registry = WorkerRegistry(
+        policy, records, {"tmux": TmuxWorkerProvider()}, {"test": TrivialProfile()}
+    )
+    with (
+        patch.object(TmuxWorkerProvider, "start", side_effect=OSError("launch failed")),
+        patch.object(
+            TmuxWorkerProvider,
+            "_run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 0, "123\n", ""),
+                subprocess.CompletedProcess([], 1, "", "server exited unexpectedly"),
+            ],
+        ),
+        patch("punt_vox.voxd.workers.tmux.os.getpgid", return_value=123),
+        pytest.raises(OSError, match="launch failed"),
+    ):
+        registry.start("edit", str(tmp_path), provider="tmux", harness="test")
+    record = registry.list()[0]
+    worktrees.discard.assert_not_called()
+    assert record.state == "starting"
+    assert record.last_report["stop_error"] == "RuntimeError"
+    assert record.last_report["discard_skipped"] == "provider stop failed"

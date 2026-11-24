@@ -526,3 +526,77 @@ def test_disallow_matches_a_stored_entry_by_resolved_path(tmp_path: Path) -> Non
     assert policy.disallow(RepoSpellings(str(repo))) == ("   ", str(tmp_path / "x"))
     with pytest.raises(ValueError, match="not allowlisted"):
         policy.disallow(RepoSpellings(str(repo)))
+
+
+def _stop_sequence(
+    *,
+    has_session: subprocess.CompletedProcess[str],
+    pane: subprocess.CompletedProcess[str],
+    kill: subprocess.CompletedProcess[str],
+) -> list[subprocess.CompletedProcess[str]]:
+    return [has_session, pane, kill]
+
+
+def test_stop_raises_when_a_live_session_cannot_be_killed() -> None:
+    """A pane that may still be live must never be reported stopped."""
+    with (
+        patch.object(
+            TmuxWorkerProvider,
+            "_run",
+            side_effect=_stop_sequence(
+                has_session=subprocess.CompletedProcess([], 0, "", ""),
+                pane=subprocess.CompletedProcess([], 0, "123\n", ""),
+                kill=subprocess.CompletedProcess(
+                    [], 1, "", "server exited unexpectedly"
+                ),
+            ),
+        ),
+        patch("punt_vox.voxd.workers.tmux.os.getpgid", return_value=123),
+        patch.object(TmuxProbe, "wait_for_exit") as finish,
+        pytest.raises(RuntimeError, match=r"^Worker session could not be killed$"),
+    ):
+        TmuxWorkerProvider().stop("worker")
+    finish.assert_not_called()
+
+
+def test_stop_raises_when_the_pane_pid_cannot_be_read() -> None:
+    with (
+        patch.object(
+            TmuxWorkerProvider,
+            "_run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0, "", ""),
+                subprocess.CompletedProcess([], 1, "", "no current target"),
+            ],
+        ),
+        pytest.raises(RuntimeError, match=r"^Worker session could not be killed$"),
+    ):
+        TmuxWorkerProvider().stop("worker")
+
+
+def test_stop_raises_when_has_session_fails_for_another_reason() -> None:
+    with (
+        patch.object(
+            TmuxWorkerProvider,
+            "_run",
+            side_effect=[
+                subprocess.CompletedProcess(
+                    [], 1, "", "error connecting to /tmp/tmux (Permission denied)"
+                ),
+            ],
+        ),
+        pytest.raises(RuntimeError, match="liveness probe"),
+    ):
+        TmuxWorkerProvider().stop("worker")
+
+
+def test_stop_of_an_absent_session_is_a_no_op() -> None:
+    with patch.object(
+        TmuxWorkerProvider,
+        "_run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, "", "can't find session: worker"),
+        ],
+    ) as run:
+        TmuxWorkerProvider().stop("worker")
+    assert run.call_count == 1
