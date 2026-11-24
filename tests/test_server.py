@@ -41,6 +41,7 @@ from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
+from punt_vox.voice_target import VoiceTarget
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -425,6 +426,20 @@ class TestUnmute:
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
+
+    def test_forwards_synthesis_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        client = MagicMock()
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        client.synthesize.side_effect = synthesize
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: client)
+
+        result = json.loads(unmute(text="hello", rate=120))
+
+        assert result[0]["warning"] == warning
 
     def test_unconfigured_provider_returns_error_envelope(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1133,7 +1148,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         import punt_vox.server as srv
 
         with pytest.raises(VoxdConnectionError):
-            srv._voxd_client().voices("elevenlabs")
+            srv._voxd_client().voices(VoiceTarget("elevenlabs"))
 
 
 # ---------------------------------------------------------------------------
@@ -1991,6 +2006,35 @@ class TestRefreshFromConfig:
         srv._session.refresh_from_config()
 
         assert srv._session._vibe == "should-survive"
+
+    def test_provider_switch_clears_the_previous_model(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        srv._session.model = "gpt-4o-mini-tts"
+        ConfigStore(_refresh_config).write_fields(
+            {"provider": "polly", "model": "", "voice": "Joanna"}
+        )
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "polly"
+        assert srv._session.model is None
+
+    def test_model_loads_when_provider_is_a_session_override(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        ConfigStore(_refresh_config).write_field("model", "gpt-4o-mini-tts")
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "openai"
+        assert srv._session.model == "gpt-4o-mini-tts"
 
 
 class TestRefreshIntegrationWithTools:

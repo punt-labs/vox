@@ -19,27 +19,39 @@ same path a panel control's own event handler would.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import TYPE_CHECKING, cast, final
+from unittest.mock import MagicMock
 
-from punt_lux.operations import Ok
+import pytest
+from punt_lux import HubUnavailableError
+from punt_lux.operations import Ok, OpError
 
 from panel.doubles import PANEL_LOGGER
-from punt_vox.client_errors import VoxdConnectionError
-from punt_vox.config import VoxConfig
+from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.panel.panel_guard import PanelGuard
+from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.panel_runner import PanelRunner
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.server_switches import PROVIDER_NAMES
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
-    from punt_lux.operations import OpError, UpdateRequest
+    from punt_lux.operations import UpdateRequest
 
     from punt_vox.client import SynthesizeResult
     from punt_vox.panel.ports import HubListener
     from punt_vox.types_synthesis import SynthesisSpec
+    from punt_vox.voice_target import VoiceTarget
 
 
 def _config(voice: str | None, provider: str | None) -> VoxConfig:
@@ -66,10 +78,12 @@ class _Store:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(self, key: str, value: str) -> None:
-        self.written[key] = value
-
-    def write_fields(self, updates: dict[str, str]) -> None:
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         self.written.update(updates)
 
 
@@ -83,15 +97,32 @@ class _RosterFailsAfterPrefetch:
     click mid-flight.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, error: VoxdConnectionError | VoxdRejectionError | None = None
+    ) -> None:
         self.call_count = 0
+        self._error = (
+            error if error is not None else VoxdConnectionError("voxd unreachable")
+        )
 
-    def voices(self, provider: str | None = None) -> list[str]:
+    def voices(self, provider: VoiceTarget) -> list[str]:
         self.call_count += 1
         if self.call_count > 1:
-            msg = "voxd unreachable"
-            raise VoxdConnectionError(msg)
+            raise self._error
         return ["benno", "aria"]
+
+    def synthesize(
+        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
+    ) -> SynthesizeResult:
+        raise NotImplementedError
+
+
+@final
+class _ProviderRosters:
+    def voices(self, target: VoiceTarget) -> list[str]:
+        return (
+            ["benno", "aria"] if target.provider == "elevenlabs" else ["alloy", "nova"]
+        )
 
     def synthesize(
         self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
@@ -160,8 +191,453 @@ def _selected(request: RenderRequest, element_id: str) -> object:
     raise AssertionError(msg)
 
 
+def _engine_combo(request: RenderRequest, label: str) -> tuple[str, object]:
+    for element in request.elements:
+        if element.get("label") == label:
+            return str(element["id"]), element["selected"]
+        if element.get("id") == "vox.panel.voice.row":
+            for child in cast("list[dict[str, object]]", element["children"]):
+                if child.get("label") == label:
+                    return str(child["id"]), child["selected"]
+    raise AssertionError(label)
+
+
 class TestRunnerServiceSeam:
     """A real ``VoxPanelService`` driven through a real ``PanelRunner``."""
+
+    @pytest.mark.parametrize("topic", [PanelTopic.VOICE, PanelTopic.MODEL])
+    async def test_stale_openai_click_preserves_and_restores_espeak(
+        self, tmp_path: Path, topic: PanelTopic
+    ) -> None:
+        """RejectStaleTarget rereads disk before correction without writing."""
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        client = MagicMock(spec=VoxClientSync)
+        rosters = {"openai": ["alloy", "ash"], "espeak": ["af"]}
+
+        def voices(target: VoiceTarget) -> list[str]:
+            return rosters[target.provider]
+
+        client.voices.side_effect = voices
+        service = VoxPanelService(client, store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        guard = PanelGuard(service, rest_factory, PANEL_LOGGER)
+        runner = PanelRunner(service, rest_factory, guard, PANEL_LOGGER)
+        await runner.warmed()
+        await service.push_scene(rest_factory())
+        assert len(rest.rendered) == 1
+        assert _selected(rest.rendered[0], "vox.panel.provider") == (
+            PROVIDER_NAMES.index("openai") + 1
+        )
+
+        store.write_fields({"provider": "espeak", "model": "", "voice": "af"})
+        expected = store.read()
+        element_id, _ = _engine_combo(rest.rendered[0], topic.field_name.capitalize())
+        await runner.changed(topic.value, {"element_id": element_id, "value": 2})
+
+        assert store.read() == expected
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.provider") == (
+            PROVIDER_NAMES.index("espeak") + 1
+        )
+        assert service.scene().model is None
+        assert service.scene().voice == "af"
+
+    @pytest.mark.parametrize("external", [True, False], ids=["external", "panel"])
+    async def test_a_delayed_roster_event_resyncs_without_writing(
+        self, tmp_path: Path, external: bool
+    ) -> None:
+        """RejectStaleRevision resyncs a delayed event without writing."""
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"provider": "elevenlabs", "model": "eleven_v3", "voice": "benno"}
+        )
+        service = VoxPanelService(_ProviderRosters(), store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        await runner.warmed()
+        await service.install_scene(rest_factory())
+        old_voice, _ = _engine_combo(rest.rendered[0], "Voice")
+        old_model, _ = _engine_combo(rest.rendered[0], "Model")
+
+        if external:
+            store.write_fields(
+                {"provider": "openai", "model": "tts-1", "voice": "alloy"}
+            )
+            await runner.reconciled()
+        else:
+            await runner.changed(
+                PanelTopic.PROVIDER, {"value": PROVIDER_NAMES.index("openai") + 1}
+            )
+
+        confirmed = store.read()
+        renders_before = len(rest.rendered)
+        await runner.changed(PanelTopic.VOICE, {"element_id": old_voice, "value": 2})
+        assert store.read() == confirmed
+        await runner.changed(PanelTopic.MODEL, {"element_id": old_model, "value": 2})
+        assert store.read() == confirmed
+        assert len(rest.rendered) == renders_before + 2
+
+        new_voice, voice_selected = _engine_combo(rest.rendered[-1], "Voice")
+        new_model, model_selected = _engine_combo(rest.rendered[-1], "Model")
+        assert (new_voice, new_model) != (old_voice, old_model)
+        assert (voice_selected, model_selected) == (1, 1)
+        await runner.changed(PanelTopic.VOICE, {"element_id": new_voice, "value": 2})
+        assert store.read().voice == "nova"
+        await runner.changed(PanelTopic.MODEL, {"element_id": new_model, "value": 2})
+        assert store.read().model == "tts-1-hd"
+
+    async def test_a_first_menu_install_is_not_confirmed_until_it_answers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        service.prefetch()
+        rest = _Rest()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def fail_after_wait(
+            accessor: _SceneAccessor, request: RenderRequest
+        ) -> SceneShown | OpError:
+            started.set()
+            await release.wait()
+            raise HubUnavailableError("menu install did not land")
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        monkeypatch.setattr(_SceneAccessor, "show", fail_after_wait)
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        click = asyncio.create_task(runner.clicked())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            store.write_field("voice", "aria")
+            assert not await service.reconcile()
+        finally:
+            release.set()
+            await click
+        assert service.scene().voice == "benno"
+
+    async def test_a_menu_install_failure_during_poll_does_not_rearm_polling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SkipDisarmedPollPush cannot reinstall after a concurrent refusal."""
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        loop = asyncio.get_running_loop()
+        reading, release = asyncio.Event(), threading.Event()
+        client = MagicMock(spec=VoxClientSync)
+
+        def voices(target: VoiceTarget) -> list[str]:
+            if target.provider == "elevenlabs":
+                return ["benno", "aria"]
+            loop.call_soon_threadsafe(reading.set)
+            assert release.wait(5)
+            return ["af"]
+
+        client.voices.side_effect = voices
+        service = VoxPanelService(client, store)
+        service.prefetch()
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        await service.install_scene(rest_factory())
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        calls: list[RenderRequest] = []
+        installing, fail_install, refreshing = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        refresh = PanelPush.refresh
+
+        async def failed_install(
+            accessor: _SceneAccessor, request: RenderRequest
+        ) -> SceneShown | OpError:
+            calls.append(request)
+            installing.set()
+            await fail_install.wait()
+            raise HubUnavailableError("menu install lost Lux")
+
+        async def track_refresh(
+            push: PanelPush,
+            client: LuxClient,
+            request: RenderRequest,
+            *,
+            background: bool = False,
+        ) -> None:
+            refreshing.set()
+            await refresh(push, client, request, background=background)
+
+        monkeypatch.setattr(_SceneAccessor, "show", failed_install)
+        monkeypatch.setattr(PanelPush, "refresh", track_refresh)
+        store.write_fields({"provider": "espeak", "voice": "af"})
+        poll = asyncio.create_task(runner.reconciled())
+        click: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(reading.wait(), timeout=5)
+            click = asyncio.create_task(runner.clicked())
+            await asyncio.wait_for(installing.wait(), timeout=5)
+            release.set()
+            await asyncio.wait_for(refreshing.wait(), timeout=5)
+            assert not poll.done()
+        finally:
+            release.set()
+            fail_install.set()
+            if click is not None:
+                await click
+            await poll
+        assert service.scene().provider == "espeak"
+        assert len(calls) == 1
+        assert not await service.reconcile()
+
+    async def test_an_external_voice_write_patches_only_an_installed_panel(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        client = _RosterFailsAfterPrefetch()
+        service = VoxPanelService(client, store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        guard = PanelGuard(service, rest_factory, PANEL_LOGGER)
+        runner = PanelRunner(service, rest_factory, guard, PANEL_LOGGER)
+        await runner.warmed()
+        await runner.reconciled()
+        assert rest.rendered == []
+        assert rest.patched == []
+
+        await service.install_scene(rest_factory())
+        ConfigStore(tmp_path).write_field("voice", "aria")
+        await runner.reconciled()
+        await runner.reconciled()
+
+        assert client.call_count == 1
+        assert len(rest.rendered) == 1
+        assert len(rest.patched) == 1
+        assert not isinstance(rest.patched[0], OpError)
+        assert rest.patched[0].to_wire() == [
+            {"id": _engine_combo(rest.rendered[0], "Voice")[0], "set": {"selected": 2}}
+        ]
+
+    async def test_a_reverted_external_edit_clears_only_the_poll_warning(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_field("provider", "elevenlabs")
+        service = VoxPanelService(_RosterFailsAfterPrefetch(), store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+
+        store.write_field("provider", "espeak")
+        assert await service.reconcile()
+        assert service.scene().notice == PanelNotice.voxd_unavailable()
+
+        store.write_field("provider", "elevenlabs")
+        assert await service.reconcile()
+        assert not service.scene().notice.is_present
+
+        service.note_control_rejected("voice")
+        store.write_field("voice", "aria")
+        assert await service.reconcile()
+        assert service.scene().notice == PanelNotice.control_rejected("voice")
+
+    async def test_a_refused_external_roster_fetch_keeps_the_confirmed_picker(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(
+            _RosterFailsAfterPrefetch(VoxdRejectionError("roster refused")), store
+        )
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+        before = service.scene()
+
+        store.write_fields({"provider": "openai", "voice": "alloy"})
+        assert await service.reconcile()
+        assert service.scene().notice == PanelNotice.voxd_rejected("roster refused")
+        assert service.scene().roster == before.roster
+        assert service.scene().provider == before.provider
+        assert service.scene().voice == before.voice
+
+    async def test_an_external_rejected_model_can_be_repaired_on_the_first_pick(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        voices = _ProviderRosters.voices
+
+        def reject_unknown_model(
+            client: _ProviderRosters, target: VoiceTarget
+        ) -> list[str]:
+            if target.model == "unknown-model":
+                msg = "unknown model"
+                raise VoxdRejectionError(msg)
+            return voices(client, target)
+
+        monkeypatch.setattr(_ProviderRosters, "voices", reject_unknown_model)
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        rest = _Rest()
+
+        def rest_factory() -> LuxClient:
+            return cast("LuxClient", rest)
+
+        runner = PanelRunner(
+            service,
+            rest_factory,
+            PanelGuard(service, rest_factory, PANEL_LOGGER),
+            PANEL_LOGGER,
+        )
+        await runner.warmed()
+        await service.install_scene(rest_factory())
+        store.write_field("model", "unknown-model")
+        await runner.reconciled()
+        assert service.scene().notice == PanelNotice.voxd_rejected("unknown model")
+        model_id, _ = _engine_combo(rest.rendered[-1], "Model")
+        await runner.changed(PanelTopic.MODEL, {"element_id": model_id, "value": 2})
+        assert store.read().model == "tts-1-hd"
+
+    async def test_an_external_valid_model_with_a_roster_refusal_keeps_the_picker(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "alloy"})
+        reason = "OpenAI credentials unavailable"
+        client = MagicMock(spec=VoxClientSync)
+        client.voices.side_effect = [["alloy", "ash"], VoxdRejectionError(reason)]
+        service = VoxPanelService(client, store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+
+        store.write_field("model", "tts-1-hd")
+        assert await service.reconcile()
+        scene = service.scene()
+        assert scene.notice == PanelNotice.voxd_rejected(reason)
+        assert scene.model == "tts-1"
+        assert scene.roster == ("alloy", "ash")
+        assert scene.voice == "alloy"
+
+    async def test_an_unreadable_config_and_control_notices_both_show(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path, durable_only=True)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_ProviderRosters(), store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+        control_notice = PanelNotice.control_rejected("voice")
+        service.note_control_rejected("voice")
+        assert service.scene().notice == control_notice
+        path = tmp_path / "vox.md"
+        original = path.read_bytes()
+
+        path.write_bytes(b"\xff")
+        assert await service.reconcile()
+        unreadable = PanelNotice.config_unreadable()
+        assert (
+            service.scene().notice.message
+            == f"{control_notice.message}\n{unreadable.message}"
+        )
+
+        service.note_control_rejected("model")
+        latest_control = PanelNotice.control_rejected("model")
+        assert (
+            service.scene().notice.message
+            == f"{latest_control.message}\n{unreadable.message}"
+        )
+
+        path.write_bytes(original)
+        assert await service.reconcile()
+        assert service.scene().notice == latest_control
+
+    @pytest.mark.parametrize("external", [True, False], ids=["poll", "menu"])
+    @pytest.mark.parametrize(
+        ("bad_config", "diagnostic"),
+        [
+            pytest.param(b"\xff", "UnicodeDecodeError", id="invalid-utf8"),
+            pytest.param(
+                b"---\nprovider: elevenlabs\nvoice: aria\n",
+                "no closing ---",
+                id="unclosed-frontmatter",
+            ),
+        ],
+    )
+    async def test_an_unreadable_config_cannot_replace_confirmed_settings(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        external: bool,
+        bad_config: bytes,
+        diagnostic: str,
+    ) -> None:
+        store = ConfigStore(tmp_path, durable_only=True)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_RosterFailsAfterPrefetch(), store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+        path = tmp_path / "vox.md"
+        original = path.read_bytes()
+
+        path.write_bytes(bad_config)
+        if external:
+            assert await service.reconcile()
+        else:
+            assert service.refresh()
+        assert service.scene().voice == "benno"
+        assert service.scene().notice == PanelNotice.config_unreadable()
+        assert diagnostic in caplog.text
+        assert not await service.reconcile()
+
+        path.write_bytes(original)
+        assert await service.reconcile()
+        assert service.scene().voice == "benno"
+        assert not service.scene().notice.is_present
+
+    async def test_an_unreadable_local_file_does_not_block_durable_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        store = ConfigStore(tmp_path, durable_only=True)
+        store.write_fields({"provider": "elevenlabs", "voice": "benno"})
+        service = VoxPanelService(_RosterFailsAfterPrefetch(), store)
+        service.prefetch()
+        await service.install_scene(cast("LuxClient", _Rest()))
+
+        (tmp_path / "vox.local.md").write_bytes(b"\xff")
+        store.write_field("voice", "aria")
+        assert await service.reconcile()
+        assert service.scene().voice == "aria"
+        assert not service.scene().notice.is_present
 
     async def test_a_roster_fetch_failure_during_a_provider_commit_corrects(
         self,

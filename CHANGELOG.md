@@ -53,6 +53,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `start_worker` gives up on `git worktree add` after 90 s with a spoken
   error instead of hanging the call, and a launch that fails removes its own
   worktree and branch instead of leaving them behind. (PL-1496)
+- Hooks on machines without `jq` decode the payload's `cwd` instead of
+  cutting it at the first quote, so a repo path with a quote, backslash or
+  non-ASCII name no longer silently drops the Stop and other notifications.
+  (PL-1595)
+
+- Warn when ElevenLabs ignores a non-default speech rate in `vox say`,
+  `vox rec new`, and the corresponding MCP and daemon replies. (PL-1570)
+
+- Selecting Continuous notifications in the Lux Vox panel switches Mic Mode
+  to Voice, matching `vox notify continuous`. (PL-1574)
+
+- OpenAI voice listings and validation follow the selected model. The
+  `gpt-4o-mini-tts` roster includes marin, cedar, ballad, and verse. (PL-1568)
+
+- SessionEnd resets the auto-vibe counter even when notifications are off
+  (`notify=n`), so the count no longer carries into the next session. (PL-1567)
+
+- `vox say` and `vox rec new` report `Error: empty text after normalization`
+  when the requested model leaves nothing to synthesize, without contacting
+  the speech provider. (PL-1566)
 
 - `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
   and `--quiet` (`-q`) after the subcommand. (PL-1560)

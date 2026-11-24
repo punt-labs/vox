@@ -329,10 +329,9 @@ class SessionConfig:
         always take the config value -- the config file is the source of
         truth since CLI and hooks write there directly.
 
-        For voice, provider, and model the MCP tool may have set a value
-        that was not persisted to config (e.g. an in-tool override).  Only
-        overwrite self when config has a non-None value so those
-        overrides survive.
+        A configured provider owns its model, including an unset model.
+        With no configured provider, preserve in-tool overrides unless
+        config supplies a value.
         """
         config_dir = _find_config_dir()
         if config_dir is None:
@@ -352,8 +351,8 @@ class SessionConfig:
         if cfg.voice is not None:
             self._voice = cfg.voice
         if cfg.provider is not None:
-            self._provider = cfg.provider
-        if cfg.model is not None:
+            self._provider, self._model = cfg.provider, cfg.model
+        elif cfg.model is not None:
             self._model = cfg.model
 
 
@@ -518,13 +517,10 @@ def unmute(
             "voice": seg_spec.voice,
             "provider": seg_spec.provider,
             "cached": result.cached,
+            **result.dedup_fields(),
         }
-        if result.deduped:
-            entry["deduped"] = True
-            if result.original_played_at is not None:
-                entry["original_played_at"] = result.original_played_at
-            if result.ttl_seconds_remaining is not None:
-                entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+        if result.warning is not None:
+            entry["warning"] = result.warning
         return entry
 
     return batch.render(defaults, handler=_synth_handler, error_label="Synthesis")

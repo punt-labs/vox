@@ -37,6 +37,7 @@ from punt_vox.service.lifecycle_report import (
 )
 from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -98,6 +99,52 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("quiet_position", [None, "global", "command"])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_ignored_rate_warning_goes_to_stderr_with_json_output(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        command: list[str],
+        quiet_position: str | None,
+    ) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult("r1", "r1", Path("recordings/r1"), 100, warning=warning)
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
+
+        args = [
+            *command,
+            "hello",
+            "--provider",
+            "elevenlabs",
+            "--rate",
+            "120",
+            "--json",
+        ]
+        if quiet_position == "global":
+            args.insert(0, "--quiet")
+        elif quiet_position == "command":
+            args.append("--quiet")
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        stdout = json.loads(result.stdout)
+        assert stdout["id"] == "r1"
+        assert "warning" not in stdout
+        if quiet_position is None:
+            assert result.stderr == f"Warning: {warning}\n"
+        else:
+            assert result.stderr == ""
+
     @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
     @pytest.mark.parametrize("rate", ["0", "-1"])
     @patch("punt_vox.cli_rec.VoxClientSync")
@@ -1117,6 +1164,68 @@ class TestApiKeyInputPaths:
 
 
 class TestVibeCommand:
+    @pytest.mark.parametrize(
+        ("mood", "tag"),
+        [
+            ("whispering", "[whispering]"),
+            ("[telling   a secret]", "[telling a secret]"),
+        ],
+    )
+    def test_manual_vibe_reaches_synthesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, tag: str
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        ConfigStore(config_dir).write_fields(
+            {"provider": "elevenlabs", "model": "eleven_v3"}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["vibe", mood])
+        assert result.exit_code == 0, result.output
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc")
+
+        with patch("punt_vox.__main__.VoxClientSync") as client:
+            client.return_value.synthesize.side_effect = synthesize
+            result = runner.invoke(app, ["say", "Hello"])
+
+        assert result.exit_code == 0, result.output
+        assert client.return_value.synthesize.call_args.args[1].vibe_tags == tag
+
+    @pytest.mark.parametrize(
+        ("mood", "error"),
+        [
+            (" ", "Mood must contain a spoken delivery cue."),
+            ("[]", "Mood must contain a spoken delivery cue."),
+            ('say "hi"', "config values must not contain"),
+            ("say\nhi", "config values must not contain"),
+        ],
+    )
+    def test_vibe_rejects_invalid_cue(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, error: str
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+
+        result = CliRunner().invoke(app, ["vibe", mood])
+
+        assert result.exit_code == 2, result.output
+        assert error in click.unstyle(result.output)
+        assert not (tmp_path / "vox.local.md").exists()
+
+    def test_vibe_surfaces_unreadable_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        local = tmp_path / "vox.local.md"
+        local.write_bytes(b"\xff")
+
+        result = CliRunner().invoke(app, ["vibe", "whispering"])
+
+        assert isinstance(result.exception, UnicodeDecodeError)
+        assert local.read_bytes() == b"\xff"
+
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
@@ -1134,6 +1243,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
@@ -1141,6 +1251,7 @@ class TestVibeCommand:
         assert "auto" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "auto"' in local
+        assert 'vibe_tags: ""' in local
         # A mode change resets the nudge cadence to a clean N-prompt runway.
         assert 'vibe_nudge_turns: "0"' in local
 
@@ -1149,6 +1260,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
@@ -1156,6 +1268,7 @@ class TestVibeCommand:
         assert "off" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "off"' in local
+        assert 'vibe_tags: ""' in local
         assert 'vibe_nudge_turns: "0"' in local
 
 
@@ -1377,7 +1490,7 @@ class TestVoiceCommand:
         )
         assert config.read_text() == original
         mock_client_cls.return_value.voices.assert_called_once_with(
-            provider="elevenlabs"
+            VoiceTarget("elevenlabs")
         )
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -1406,8 +1519,8 @@ class TestVoiceCommand:
         config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
         switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
 
-        def switch_provider(*, provider: str) -> list[str]:
-            assert provider == "elevenlabs"
+        def switch_provider(provider: VoiceTarget) -> list[str]:
+            assert provider.provider == "elevenlabs"
             config.write_text(switched)
             return ["roger"]
 
@@ -1498,7 +1611,10 @@ class TestVoiceCommand:
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
-        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        [
+            ([], VoiceTarget("elevenlabs", "eleven_v3")),
+            (["--provider", "polly"], VoiceTarget("polly")),
+        ],
         ids=["repo-default", "explicit-flag"],
     )
     @patch(f"{_CLI}.VoxClientSync")
@@ -1506,7 +1622,7 @@ class TestVoiceCommand:
         self,
         mock_client_cls: MagicMock,
         provider_args: list[str],
-        expected: str,
+        expected: VoiceTarget,
     ) -> None:
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
@@ -1514,7 +1630,7 @@ class TestVoiceCommand:
         result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with(provider=expected)
+        mock_client_cls.return_value.voices.assert_called_once_with(expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(

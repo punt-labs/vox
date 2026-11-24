@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import logging
 import ssl
 from collections import OrderedDict
 from pathlib import Path
@@ -411,31 +410,29 @@ class TestElevenLabsProviderCheckHealth:
         assert not checks[1].passed
 
 
-class TestElevenLabsProviderRateMessage:
-    def test_logs_debug_when_rate_not_100(
+class TestElevenLabsProviderRate:
+    @pytest.mark.parametrize("rate", [90, 100, 120])
+    def test_rate_does_not_change_sdk_request_or_audio(
         self,
         elevenlabs_provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
         tmp_output_dir: Path,
-        caplog: pytest.LogCaptureFixture,
+        rate: int,
     ) -> None:
-        request = SynthesisRequest(text="test", voice="matilda", rate=90)
-        out = tmp_output_dir / "rate.mp3"
-        with caplog.at_level(logging.DEBUG):
-            elevenlabs_provider.synthesize(request, out)
-        assert "does not support rate adjustment" in caplog.text
-        assert "rate=90" in caplog.text
-
-    def test_no_message_at_rate_100(
-        self,
-        elevenlabs_provider: ElevenLabsProvider,
-        tmp_output_dir: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        request = SynthesisRequest(text="test", voice="matilda", rate=100)
-        out = tmp_output_dir / "rate100.mp3"
-        with caplog.at_level(logging.DEBUG):
-            elevenlabs_provider.synthesize(request, out)
-        assert "does not support rate adjustment" not in caplog.text
+        stream = mock_elevenlabs_client.text_to_speech.stream
+        default = tmp_output_dir / "default.mp3"
+        requested = tmp_output_dir / "requested.mp3"
+        elevenlabs_provider.synthesize(
+            SynthesisRequest(text="test", voice="matilda", stability=0.5), default
+        )
+        elevenlabs_provider.synthesize(
+            SynthesisRequest(text="test", voice="matilda", stability=0.5, rate=rate),
+            requested,
+        )
+        default_call, requested_call = stream.call_args_list
+        assert requested_call == default_call
+        assert requested_call.kwargs["voice_settings"].speed is None
+        assert requested.read_bytes() == default.read_bytes()
 
 
 class TestElevenLabsProviderDefaultModel:

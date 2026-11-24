@@ -14,7 +14,10 @@ from punt_vox.panel.voice_preview import VoicePreview
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.panel.ports import PanelDaemonClient, SettingsStore
+    from punt_vox.voice_target import VoiceTarget
 
 _LOGGER = logging.getLogger("test.voice-preview")
 
@@ -28,7 +31,7 @@ class _Daemon:
         self._error = error
         self.spoken: list[tuple[str, SynthesisSpec | None]] = []
 
-    def voices(self, provider: str | None = None) -> list[str]:
+    def voices(self, provider: VoiceTarget) -> list[str]:
         raise NotImplementedError
 
     def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> object:
@@ -64,10 +67,12 @@ class _Store:
             vibe_tags=None,
         )
 
-    def write_field(self, key: str, value: str) -> None:
-        raise NotImplementedError
-
-    def write_fields(self, updates: dict[str, str]) -> None:
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         raise NotImplementedError
 
 

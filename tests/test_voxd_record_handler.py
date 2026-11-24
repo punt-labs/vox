@@ -189,6 +189,34 @@ class TestRecordHandler:
         assert "name" in audio and "path" in audio
         assert "data" not in audio  # no base64 audio frame crosses the wire
 
+    def test_nondefault_elevenlabs_rate_warns_without_changing_recording(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "source.mp3"
+        data = b"\xff\xfb\x90\x00" * 8
+        src.write_bytes(data)
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            _handler(store, src)(
+                {
+                    "id": "r1",
+                    "text": "hi",
+                    "provider": "elevenlabs",
+                    "rate": 120,
+                },
+                ws,
+            )
+        )
+
+        ack, audio = sent
+        assert "warning" not in ack
+        assert (
+            audio["warning"] == "ElevenLabs ignores the requested speech rate (120%)."
+        )
+        assert (store.root / str(audio["name"])).read_bytes() == data
+
     @pytest.mark.parametrize("mib", [1, 3, 5])
     def test_arbitrarily_long_record_has_no_ceiling(
         self, tmp_path: Path, mib: int
@@ -380,6 +408,36 @@ class TestRecordHandler:
 
         assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
         synth.synthesize_to_file.assert_not_called()
+
+    async def test_empty_normalized_text_rejects_after_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+        handler = RecordHandler(
+            synthesis=SynthesisPipeline(playback_mutex=asyncio.Lock()), store=store
+        )
+        cache_lookup = MagicMock(side_effect=AssertionError("unexpected cache lookup"))
+        provider_factory = MagicMock(
+            side_effect=AssertionError("unexpected provider call")
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.synthesis.SynthesisCache.for_request", cache_lookup
+        )
+        monkeypatch.setattr("punt_vox.voxd.synthesis.get_provider", provider_factory)
+
+        await handler(
+            {"type": "record", "id": "r1", "text": "[warm]", "provider": "openai"},
+            ws,
+        )
+
+        assert sent == [
+            {"type": "recording", "id": "r1"},
+            {"type": "error", "id": "r1", "message": "empty text after normalization"},
+        ]
+        cache_lookup.assert_not_called()
+        provider_factory.assert_not_called()
+        assert not store.root.exists()
 
     @pytest.mark.parametrize("rate", [0, -10])
     def test_nonpositive_rate_is_an_error(self, tmp_path: Path, rate: int) -> None:

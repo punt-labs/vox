@@ -89,7 +89,7 @@ class VoxPanelApplet:
         Hub connection over.
         """
         identity = AppletIdentity.for_session(_PROGRAM, session_pid)
-        store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
+        store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR, durable_only=True)
         service = VoxPanelService(VoxClientSync(), store)
         return VoxPanelLeg(identity.client, service, topics=_TOPICS)
 

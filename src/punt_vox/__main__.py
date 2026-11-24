@@ -44,14 +44,12 @@ from punt_vox.types_cli_options import (
     StyleOpt,
     VoiceOpt,
 )
+from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
-
-    # Annotation-only; keeps `client` off __main__'s runtime import graph.
-    from punt_vox.client import SynthesizeResult
 
 logger = logging.getLogger(__name__)
 
@@ -189,18 +187,6 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 # ---------------------------------------------------------------------------
 
 
-def _dedup_fields(result: SynthesizeResult) -> dict[str, object]:
-    """Return the dedup annotations for a played result, empty if fresh."""
-    if not result.deduped:
-        return {}
-    fields: dict[str, object] = {"deduped": True}
-    if result.original_played_at is not None:
-        fields["original_played_at"] = result.original_played_at
-    if result.ttl_seconds_remaining is not None:
-        fields["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-    return fields
-
-
 def _speak_segments(
     segments: list[str],
     spec: SynthesisSpec,
@@ -214,8 +200,8 @@ def _speak_segments(
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
-        payload: dict[str, object] = {"id": result.request_id, **_dedup_fields(result)}
-        _formatter.emit(payload, seg_text)
+        payload: dict[str, object] = {"id": result.request_id, **result.dedup_fields()}
+        _formatter.emit(payload, seg_text, warning=result.warning)
 
 
 @app.command()
@@ -284,34 +270,32 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
         str,
         typer.Argument(
             help=(
-                "Mood word (e.g. 'excited', 'weary') pinned as manual, "
+                "Spoken delivery cue (e.g. 'excited', 'telling a secret'), "
                 "'auto' (mood follows session signals), or 'off' (neutral)."
             )
         ),
     ],
 ) -> None:
-    """Set the session mood the voice director translates into voice tags.
+    """Set the session mood for spoken delivery.
 
-    The daemon resolves the mood into 1-3 expressive tags (e.g. [excited],
-    [weary]) that ride the next synthesis call. A mode change ('auto' or
-    'off') resets the nudge cadence.
+    A manual mood is used as an expressive cue (e.g. [excited]) by ElevenLabs
+    v3. Other speech models do not apply it. 'auto' and 'off' clear the cue
+    and reset the nudge cadence.
 
     Example: vox vibe excited
     Example: vox vibe auto
 
     See also: vox status (current mood), mic:vibe (MCP peer).
     """
-    # Route through VibeChange so the CLI and MCP tool share one transition rule
-    # (a mode change resets the nudge cadence).
-    is_mode = mood in ("auto", "off")
-    change = VibeChange(
-        mood=None if is_mode else mood, tags=None, mode=mood if is_mode else "manual"
-    )
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(change.resolve())
-    if is_mode:
-        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
-    else:
+    try:
+        updates = VibeChange.from_cli(mood).resolve()
+        ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(updates)
+    except ConfigValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="mood") from exc
+    if updates["vibe_mode"] == "manual":
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+    else:
+        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
 
 
 # ---------------------------------------------------------------------------

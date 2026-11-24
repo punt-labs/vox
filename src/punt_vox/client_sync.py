@@ -44,6 +44,8 @@ from punt_vox.types_synthesis import SynthesisSpec
 if TYPE_CHECKING:
     from typing import IO
 
+    from punt_vox.voice_target import VoiceTarget
+
 __all__ = ["VoxClientSync"]
 
 
@@ -231,8 +233,8 @@ class VoxClientSync:
         """Copy a recording into a caller-owned sink and return its verified size."""
         return self._drive(lambda c: c.fetch_into(ref, sink))
 
-    def voices(self, provider: str) -> list[str]:
-        """List *provider*'s voice roster; the wire always carries a provider.
+    def voices(self, target: VoiceTarget) -> list[str]:
+        """List the target's voices, using its default model if unspecified.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -240,7 +242,7 @@ class VoxClientSync:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        return self._drive(lambda c: c.voices(provider))
+        return self._drive(lambda c: c.voices(target))
 
     def health(
         self, *, timeout: float | None = None, output_dirs: bool = False

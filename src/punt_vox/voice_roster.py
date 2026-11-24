@@ -15,8 +15,8 @@ from punt_vox.voices import VOICE_BLURBS
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.cascade import RosterClient
     from punt_vox.types_voice_roster import FeaturedVoice
+    from punt_vox.voice_target import RosterClient, VoiceTarget
 
 __all__ = ["RosterError", "VoiceRoster"]
 
@@ -28,9 +28,9 @@ class VoiceRoster:
     __slots__ = ()
 
     @staticmethod
-    def fetch(client: RosterClient, provider: str) -> list[str] | RosterError:
+    def fetch(client: RosterClient, target: VoiceTarget) -> list[str] | RosterError:
         """Fetch advertised names, rejecting malformed roster replies."""
-        roster = Cascade.fetch_roster(client, provider)
+        roster = Cascade.fetch_roster(client, target)
         if isinstance(roster, RosterError):
             return roster
         if not VoiceRoster._is_voice_list(roster):
@@ -44,12 +44,14 @@ class VoiceRoster:
         )
 
     @staticmethod
-    def selection_error(client: RosterClient, provider: str, name: str) -> str | None:
+    def selection_error(
+        client: RosterClient, target: VoiceTarget, name: str
+    ) -> str | None:
         """Return a selection error, or None for an advertised name or raw ID."""
         match_id = SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch
-        if provider.lower() == "elevenlabs" and match_id(name):
+        if target.provider.lower() == "elevenlabs" and match_id(name):
             return None
-        roster = VoiceRoster.fetch(client, provider)
+        roster = VoiceRoster.fetch(client, target)
         if isinstance(roster, RosterError):
             return roster.message
         key = name.lower()
@@ -58,21 +60,16 @@ class VoiceRoster:
         return None
 
     @staticmethod
-    def provider_check(provider: str) -> Callable[[dict[str, str]], None]:
-        """Build a check that rejects a removed or changed config provider."""
-        return partial(VoiceRoster._require_same_provider, provider)
+    def selection_check(target: VoiceTarget) -> Callable[[dict[str, str]], None]:
+        """Build the MCP config check for the provider and model that were read."""
+        return partial(VoiceRoster._require_current, target)
 
     @staticmethod
-    def _require_same_provider(provider: str, fields: dict[str, str]) -> None:
+    def _require_current(target: VoiceTarget, fields: dict[str, str]) -> None:
         active = fields.get("provider")
         if not active:
             raise ProviderNotConfiguredError.for_mcp()
-        if active.lower() != provider.lower():
-            msg = (
-                f"The active provider changed from {provider!r} to {active!r}. "
-                "Retry setting the voice."
-            )
-            raise ValueError(msg)
+        target.require_current(fields)
 
     @staticmethod
     def featured(provider: str | None, roster: list[str]) -> list[FeaturedVoice]:

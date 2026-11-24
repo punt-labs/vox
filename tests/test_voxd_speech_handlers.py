@@ -8,8 +8,9 @@ import contextlib
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -246,6 +247,56 @@ class TestSynthesizeParseGuard:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("text", "fields", "dedup_hit"),
+        [
+            ("[warm]", {"provider": "openai"}, False),
+            ("[warm]", {"provider": "espeak"}, False),
+            ("[warm]", {"provider": "openai"}, True),
+            (
+                "_",
+                {
+                    "provider": "elevenlabs",
+                    "model": "eleven_v3",
+                    "vibe_tags": "[warm]",
+                },
+                False,
+            ),
+        ],
+        ids=["file", "direct", "dedup-hit", "expressive-vibe"],
+    )
+    async def test_empty_normalized_text_is_rejected(
+        self, text: str, fields: dict[str, str], dedup_hit: bool
+    ) -> None:
+        """Empty normalized text never reaches the cache or either provider path."""
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        dedup = OnceDedup()
+        handler = _make_synthesize_handler(once_dedup=dedup)
+        msg: dict[str, object] = {"id": "1", "text": text, **fields}
+        if dedup_hit:
+            dedup.check_and_record(text, 60)
+            msg["once"] = 60
+
+        with (
+            patch("punt_vox.voxd.synthesis.SynthesisCache.for_request") as cache_lookup,
+            patch(
+                "punt_vox.voxd.synthesis.get_provider",
+                side_effect=RuntimeError("provider rejected blank text"),
+            ) as provider_factory,
+        ):
+            cache_lookup.side_effect = RuntimeError("unexpected cache lookup")
+            await handler(msg, ws)
+
+        ws.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "1", "message": "empty text after normalization"}
+        )
+        cache_lookup.assert_not_called()
+        provider_factory.assert_not_called()
+        if dedup_hit:
+            assert dedup.check_and_record(text, 60) is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("field", "value", "message"),
         [
             ("rate", 0, "rate must be greater than 0, got 0"),
@@ -432,6 +483,80 @@ class TestHandleSynthesizeOnceFlag:
         return handler, synthesis_calls
 
     @pytest.mark.asyncio
+    async def test_once_retries_failed_queued_playback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A nonzero player exit releases once without delaying the playing frame."""
+        frames: list[dict[str, object]] = []
+        queued = asyncio.Event()
+
+        async def capture(frame: dict[str, object]) -> None:
+            frames.append(frame)
+            if frame["type"] == "playing":
+                queued.set()
+
+        first = tmp_path / "first.mp3"
+        retry = tmp_path / "retry.mp3"
+        for path in (first, retry):
+            path.write_bytes(b"audio")
+
+        def player_command(path: Path) -> list[str]:
+            script = (
+                "raise SystemExit(7)"
+                if path == first
+                else "import time; time.sleep(0.08)"
+            )
+            return [sys.executable, "-c", script]
+
+        synthesis = MagicMock(spec=SynthesisPipeline)
+        synthesis.synthesize_to_file = AsyncMock(
+            side_effect=[
+                SynthesisOutcome(path, cached=False) for path in (first, retry)
+            ]
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.playback.AudioFile.player_command",
+            player_command,
+        )
+        playback = PlaybackQueue()
+        handler = _make_synthesize_handler(synthesis=synthesis, playback=playback)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock(side_effect=capture)
+        msg: dict[str, object] = {
+            "id": "first",
+            "text": "retry after a player failure",
+            "provider": "elevenlabs",
+            "once": 600,
+        }
+
+        async with asyncio.timeout(5):
+            request = asyncio.create_task(handler(msg, websocket))
+            try:
+                await queued.wait()
+                assert playback.queue_size == 1
+                assert not request.done()
+                consumer = asyncio.create_task(playback.consumer())
+                try:
+                    await request
+                    result = playback.last_result
+                    assert result is not None and result.rc == 7
+                    await handler({**msg, "id": "retry"}, websocket)
+                finally:
+                    consumer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer
+            finally:
+                request.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await request
+
+        assert frames[2] == {"id": "retry", "type": "playing", "cached": False}
+        result = playback.last_result
+        assert result is not None and result.ok
+        await handler({**msg, "id": "after-success"}, websocket)
+        assert frames[-1]["deduped"] is True
+
+    @pytest.mark.asyncio
     async def test_once_null_does_not_dedupe(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -480,6 +605,7 @@ class TestHandleSynthesizeOnceFlag:
             "text": "wall msg",
             "provider": "elevenlabs",
             "once": 600,
+            "rate": 120,
         }
         await handler(msg2, ws)
 
@@ -492,6 +618,7 @@ class TestHandleSynthesizeOnceFlag:
         deduped = deduped_msgs[0]
         assert deduped["id"] == "b"
         assert deduped["type"] == "done"
+        assert "warning" not in deduped
         assert "original_played_at" in deduped
         assert "ttl_seconds_remaining" in deduped
         assert deduped["ttl_seconds_remaining"] > 0
@@ -533,6 +660,8 @@ class TestHandleSynthesizeCachedSignal:
         monkeypatch: pytest.MonkeyPatch,
         *,
         cached: bool,
+        provider: str = "elevenlabs",
+        rate: int | None = None,
     ) -> list[dict[str, object]]:
         """Run the handler once with a stubbed outcome; return sent messages."""
 
@@ -560,7 +689,8 @@ class TestHandleSynthesizeCachedSignal:
                     "type": "synthesize",
                     "id": "x",
                     "text": "hi",
-                    "provider": "elevenlabs",
+                    "provider": provider,
+                    "rate": rate,
                 },
                 ws,
             )
@@ -578,6 +708,38 @@ class TestHandleSynthesizeCachedSignal:
         playing = [m for m in sent if m.get("type") == "playing"]
         assert len(playing) == 1
         assert playing[0]["cached"] is False
+
+    @pytest.mark.parametrize(
+        ("provider", "rate", "warns"),
+        [
+            ("elevenlabs", 120, True),
+            ("ElevenLabs", 120, True),
+            ("elevenlabs", 100, True),
+            ("elevenlabs", 90, False),
+            ("elevenlabs", None, False),
+            ("openai", 120, False),
+            ("polly", 120, False),
+        ],
+    )
+    def test_warns_only_for_nondefault_elevenlabs_rate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: str,
+        rate: int | None,
+        *,
+        warns: bool,
+    ) -> None:
+        sent = self._drive_with_cached(
+            monkeypatch, cached=True, provider=provider, rate=rate
+        )
+        assert [frame["type"] for frame in sent] == ["playing", "done"]
+        for frame in sent:
+            if warns:
+                assert frame["warning"] == (
+                    f"ElevenLabs ignores the requested speech rate ({rate}%)."
+                )
+            else:
+                assert "warning" not in frame
 
 
 async def test_queued_cache_hit_survives_eviction(
