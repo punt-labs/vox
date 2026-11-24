@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from punt_vox.dirs import (
     DEFAULT_CONFIG_DIR,
-    _parse_xdg_user_dir,  # pyright: ignore[reportPrivateUsage]
+    _read_xdg_music_dir,  # pyright: ignore[reportPrivateUsage]
     _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
     default_output_dir,
     find_config_dir,
@@ -142,38 +142,34 @@ class TestFindConfigDir:
 
 
 # ---------------------------------------------------------------------------
-# _parse_xdg_user_dir
+# XDG music directory
 # ---------------------------------------------------------------------------
 
 
-class TestParseXdgUserDir:
+class TestReadXdgMusicDir:
     def test_parses_music_dir(self, tmp_path: Path) -> None:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_MUSIC_DIR="$HOME/Musik"\n')
-        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
-            result = _parse_xdg_user_dir("XDG_MUSIC_DIR")
+        result = _read_xdg_music_dir(tmp_path)
         assert result == tmp_path / "Musik"
 
     def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
-        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
-            result = _parse_xdg_user_dir("XDG_MUSIC_DIR")
+        result = _read_xdg_music_dir(tmp_path)
         assert result is None
 
     def test_returns_none_when_key_missing(self, tmp_path: Path) -> None:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_DESKTOP_DIR="$HOME/Desktop"\n')
-        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
-            result = _parse_xdg_user_dir("XDG_MUSIC_DIR")
+        result = _read_xdg_music_dir(tmp_path)
         assert result is None
 
     def test_expands_home(self, tmp_path: Path) -> None:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_MUSIC_DIR="$HOME/Music"\n')
-        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
-            result = _parse_xdg_user_dir("XDG_MUSIC_DIR")
+        result = _read_xdg_music_dir(tmp_path)
         assert result == tmp_path / "Music"
 
 

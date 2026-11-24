@@ -11,6 +11,7 @@ from pathlib import Path
 _REPO_SUBDIR = Path(".punt-labs") / "vox"
 
 DEFAULT_CONFIG_DIR = _REPO_SUBDIR  # Path(".punt-labs/vox")
+_XDG_MUSIC_SETTING = re.compile(r'^XDG_MUSIC_DIR="([^"]*)"', re.MULTILINE)
 
 
 def find_repo_root(start: Path | None = None) -> Path | None:
@@ -36,13 +37,13 @@ def find_config_dir(start: Path | None = None) -> Path | None:
     return None
 
 
-def _parse_xdg_user_dir(key: str) -> Path | None:
-    """Parse a single key from ~/.config/user-dirs.dirs.
+def _read_xdg_music_dir(home: Path) -> Path | None:
+    """Read XDG_MUSIC_DIR from the given user's XDG file.
 
-    Returns None if the file is missing, unreadable, or not UTF-8,
-    or if the key isn't found.
+    Return None if the file is missing, unreadable, or not UTF-8, or if the
+    key isn't found.
     """
-    dirs_file = Path.home() / ".config" / "user-dirs.dirs"
+    dirs_file = home / ".config" / "user-dirs.dirs"
     if not dirs_file.is_file():
         return None
     try:
@@ -50,13 +51,13 @@ def _parse_xdg_user_dir(key: str) -> Path | None:
     except (OSError, UnicodeDecodeError):
         return None
 
-    # Expected line format: XDG_MUSIC_DIR="$HOME/Music"
-    match = re.search(rf'^{re.escape(key)}="([^"]*)"', text, re.MULTILINE)
+    match = _XDG_MUSIC_SETTING.search(text)
     if not match:
         return None
 
+    raw = match.group(1)
     # Expand $HOME -- the only variable XDG user-dirs.dirs uses
-    resolved = match.group(1).replace("$HOME", str(Path.home()))
+    resolved = raw.replace("$HOME", str(home))
     return Path(resolved)
 
 
@@ -68,14 +69,12 @@ def _resolve_music_dir() -> Path:
     macOS:   ~/Music
     Windows: %USERPROFILE%\Music
     """
-    if sys.platform == "linux":
-        xdg = _parse_xdg_user_dir("XDG_MUSIC_DIR")
-        if xdg is not None:
-            return xdg
+    home = Path.home()
+    xdg = _read_xdg_music_dir(home) if sys.platform == "linux" else None
     # Cross-platform fallback: ~/Music exists on macOS by default,
     # is the conventional location on Linux, and is the standard
     # media library on Windows.
-    return Path.home() / "Music"
+    return xdg if xdg is not None else home / "Music"
 
 
 def default_output_dir() -> Path:
