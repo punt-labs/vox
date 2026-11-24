@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox status` reports the running daemon's live log level after `vox log`,
+  or `unknown` when the daemon can't report it. (PL-854)
+
 - `vox say --provider <other>` without `--voice` now uses that provider's
   default voice instead of failing with `VoiceNotFoundError` on the saved
   voice of the configured provider. (PL-799)

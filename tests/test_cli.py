@@ -1380,7 +1380,7 @@ class TestStatusCommand:
 
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = HealthStatus.from_wire(
-            {"provider": "elevenlabs"}
+            {"provider": "elevenlabs", "log_level": "debug"}
         )
 
         runner = CliRunner()
@@ -1388,6 +1388,8 @@ class TestStatusCommand:
 
         assert result.exit_code == 0
         assert "Daemon:    running\n" in result.output
+        assert "Log level: debug\n" in result.output
+        mock_instance.health.assert_called_once_with()
 
     @patch("punt_vox.cli_daemon.VoxClientSync")
     def test_status_daemon_not_running(
@@ -1406,6 +1408,32 @@ class TestStatusCommand:
 
         assert result.exit_code == 0
         assert "Daemon:    not running\n" in result.output
+        assert "Log level: unknown (daemon not reachable)\n" in result.output
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        assert json.loads(result.output)["log_level"] == "unknown"
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_daemon_did_not_report_level(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+
+        result = CliRunner().invoke(app, ["status"])
+
+        assert result.exit_code == 0
+        assert "Daemon:    running\n" in result.output
+        assert "Log level: unknown (daemon did not report a level)\n" in result.output
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_daemon_health_unavailable(self, mock_client_cls: MagicMock) -> None:
+        mock_client_cls.return_value.health.side_effect = VoxdProtocolError("bad reply")
+
+        result = CliRunner().invoke(app, ["status"])
+
+        assert result.exit_code == 0
+        assert "Daemon:    unknown\n" in result.output
+        assert "Log level: unknown (daemon health unavailable)\n" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -2444,13 +2472,16 @@ class TestGlobalFlags:
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
         # Status reads provider from local vox.md, not daemon health. This runner has no
         # provider configured, so the JSON field is unknown.
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"log_level": "debug"}
+        )
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "provider" in data
         assert data["daemon"] == "running"
+        assert data["log_level"] == "debug"
 
     @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
     @patch(f"{_CLI}.VoxClientSync")
