@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
+  text mode. JSON output is unchanged. (PL-1549)
+
 - `vox --json rec` reports operational errors, including an unavailable daemon,
   as JSON on stdout, matching `vox --json music`. (PL-1538)
 
