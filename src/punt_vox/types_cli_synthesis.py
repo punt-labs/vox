@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-__all__ = ["SynthesisOptions"]
+import typer
+
+__all__ = ["LanguageOpt", "RateOpt", "SynthesisOptions"]
+
+LanguageOpt = Annotated[
+    str | None,
+    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
+]
+RateOpt = Annotated[
+    int,
+    typer.Option(
+        "--rate", help="Positive speech rate percentage (e.g. 90 = 90% speed)."
+    ),
+]
 
 
 class SynthesisOptions(TypedDict):

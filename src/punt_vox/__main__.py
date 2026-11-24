@@ -23,7 +23,7 @@ from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.cli_status import StatusCli
-from punt_vox.cli_synthesis import CliSynthesis, LanguageOpt, RateOpt
+from punt_vox.cli_synthesis import CliSynthesis
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
@@ -32,6 +32,7 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.types_cli_synthesis import LanguageOpt, RateOpt
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
