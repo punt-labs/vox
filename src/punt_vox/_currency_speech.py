@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import final
 
 from punt_vox._currency_grammar import SCALES, UNITS, CurrencyGrammar
+from punt_vox._currency_patterns import CurrencyPatterns
 
 _SIGNS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
 _MINOR_UNITS = {"$": ("cent", "cents"), "€": ("cent", "cents"), "£": ("penny", "pence")}
@@ -39,8 +40,7 @@ class CurrencySpeech:
 
     @classmethod
     def _speak_amount(cls, match: re.Match[str], prefix: str = "") -> str:
-        symbol, amount = match[prefix + "symbol"], match[prefix + "amount"]
-        sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
+        symbol, amount, sign = CurrencyPatterns.prose_fields(match, prefix)
         word = match[prefix + "word"] or ""
         scale = SCALES.get(word.lower(), "")
         suffix = "" if scale else word
@@ -70,7 +70,7 @@ class CurrencySpeech:
 
     @classmethod
     def _speak_bare_end(cls, match: re.Match[str]) -> str:
-        if not (end := match["bare_end"]):
+        if not (end := CurrencyPatterns.bare_end(match)):
             return ""
         end_scale = SCALES.get((match["bare_scale"] or match["word"] or "").lower(), "")
         return " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
