@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say --from` and `vox rec new --from` now reject a segments file with
+  no text (`[]`, `[""]`) as a usage error instead of exiting 0 having said
+  nothing. (PL-1483)
+
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
 

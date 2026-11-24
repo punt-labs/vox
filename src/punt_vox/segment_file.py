@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from itertools import starmap
 from pathlib import Path
 from typing import Self, cast
 
@@ -25,23 +26,21 @@ class SegmentFile:
         return self
 
     def segments(self) -> list[str]:
-        """Parse a JSON segments file into a list of text strings."""
-        raw = self._read_json()
-        if not isinstance(raw, list):
-            raise typer.BadParameter("--from file must contain a JSON array.")
-        items = cast("list[object]", raw)
-        return [
-            text
-            for i, item in enumerate(items)
-            if (text := self._segment_text(i, item))
-        ]
+        """Parse a JSON segments file into its non-empty text strings."""
+        texts = starmap(self._segment_text, enumerate(self._items()))
+        if segments := list(filter(bool, texts)):
+            return segments
+        raise typer.BadParameter("--from file has no text to speak.")
 
-    def _read_json(self) -> object:
-        """Read UTF-8 JSON, translating malformed input into CLI usage errors."""
+    def _items(self) -> list[object]:
+        """Read the UTF-8 JSON array, translating bad input into usage errors."""
         try:
-            return json.loads(OptionFile(self._path, "--from").text())
+            raw = json.loads(OptionFile(self._path, "--from").text())
         except json.JSONDecodeError as exc:
             raise typer.BadParameter("--from file must contain valid JSON.") from exc
+        if not isinstance(raw, list):
+            raise typer.BadParameter("--from file must contain a JSON array.")
+        return cast("list[object]", raw)
 
     @staticmethod
     def _segment_text(index: int, item: object) -> str:

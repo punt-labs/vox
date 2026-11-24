@@ -15,9 +15,8 @@ class TestSegmentFile:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ([], []),
-            (["", {"text": ""}], []),
             (["héllo", {"text": "世界"}], ["héllo", "世界"]),
+            (["", "kept"], ["kept"]),
         ],
     )
     def test_segments(
@@ -26,6 +25,16 @@ class TestSegmentFile:
         path = tmp_path / "segments.json"
         path.write_text(json.dumps(raw), encoding="utf-8")
         assert SegmentFile(path).segments() == expected
+
+    @pytest.mark.parametrize(
+        "raw", [[], [""], ["", {"text": ""}]], ids=["empty", "blank", "mixed-blank"]
+    )
+    def test_no_text_is_usage_error(self, tmp_path: Path, raw: list[object]) -> None:
+        path = tmp_path / "segments.json"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(typer.BadParameter) as raised:
+            SegmentFile(path).segments()
+        assert str(raised.value) == "--from file has no text to speak."
 
     @pytest.mark.parametrize(
         "error",
