@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say` and `vox rec new` report `Error: empty text after normalization`
+  when the requested model leaves nothing to synthesize, without contacting
+  the speech provider. (PL-1566)
+
 - `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
   and `--quiet` (`-q`) after the subcommand. (PL-1560)
 
