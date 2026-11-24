@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands import Ctx, voice
 from punt_vox.config import ConfigStore
+from punt_vox.sibling_lock import SiblingLock
 
 
 def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
@@ -105,6 +108,67 @@ class TestList:
 class TestSet:
     """A name given -- normalize and write to config."""
 
+    async def test_rejects_inactive_provider_without_writing(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        ctx.store.write_field("voice", "matilda")
+        config_path = tmp_path / "vox.md"
+        before = config_path.read_bytes()
+
+        result = await voice(ctx, "alloy", provider="openai")
+
+        assert result.exit_code == 1
+        assert result.error is True
+        assert "openai" in result.text
+        assert "elevenlabs" in result.text
+        assert result.json_data is not None
+        assert result.text == f"Error: {result.json_data['error']}"
+        assert config_path.read_bytes() == before
+
+    async def test_rejects_provider_switched_before_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        config_path = tmp_path / "vox.md"
+        switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
+        acquire = SiblingLock._acquire
+
+        def after_provider_switch(lock: SiblingLock, descriptor: int) -> None:
+            # A peer's provider cascade finished just before we got the lock.
+            config_path.write_bytes(switched)
+            acquire(lock, descriptor)
+
+        monkeypatch.setattr(SiblingLock, "_acquire", after_provider_switch)
+
+        result = await voice(ctx, "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "the active provider is 'openai'" in result.text
+        assert config_path.read_bytes() == switched
+
+    async def test_checked_write_preserves_uneditable_config(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "vox.md"
+        original = b'---\nprovider: "elevenlabs"\n'
+        config_path.write_bytes(original)
+
+        result = await voice(_ctx(tmp_path), "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "no closing ---" in result.text
+        assert config_path.read_bytes() == original
+
+    @pytest.mark.parametrize("provider", ["elevenlabs", "ElevenLabs", ""])
+    async def test_allows_active_or_empty_provider_option(
+        self, tmp_path: Path, provider: str
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        result = await voice(ctx, "matilda", provider=provider)
+        assert result.error is False
+        assert ctx.store.read().voice == "matilda"
+
     async def test_writes_normalized_voice(self, tmp_path: Path) -> None:
         result = await voice(_ctx(tmp_path), "matilda")
         assert result.error is False
@@ -125,7 +189,10 @@ class TestSet:
         assert result.exit_code == 1
         assert "empty" in result.text
 
-    async def test_unconfigured_provider_refuses_set(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("has_config", [True, False])
+    async def test_unconfigured_provider_refuses_set(
+        self, tmp_path: Path, has_config: bool
+    ) -> None:
         """Setting a voice with no provider configured refuses, never writes.
 
         A voice name is provider-scoped, so writing ``matilda`` into
@@ -134,14 +201,19 @@ class TestSet:
         with ``vox model``'s set-refusal; unlike the list branch, setting
         needs an authoritative provider.
         """
-        # Overwrite the seeded vox.md to remove the provider entry.
-        (tmp_path / "vox.md").write_text("---\n---\n")
+        config_path = tmp_path / "vox.md"
+        original = b"---\n---\n"
+        if has_config:
+            config_path.write_bytes(original)
         client = MagicMock()
         result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), "matilda")
         assert result.error is True
         assert result.exit_code == 1
         assert "no TTS provider" in result.text
-        assert ConfigStore(tmp_path).read_field("voice") is None
+        if has_config:
+            assert config_path.read_bytes() == original
+        else:
+            assert not config_path.exists()
         client.voices.assert_not_called()
 
     async def test_config_write_error_returns_envelope(self, tmp_path: Path) -> None:
