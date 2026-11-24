@@ -965,6 +965,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/panel/panel_settings.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.018,
+    "avg_lcom": 0.018
+  },
   "src/punt_vox/panel/ports.py": {
     "efferent_coupling": 0.0,
     "public_names": 5.0,
@@ -1004,8 +1011,8 @@
     "efferent_coupling": 12.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.693,
-    "avg_lcom": 0.693
+    "max_lcom": 0.596,
+    "avg_lcom": 0.596
   },
   "src/punt_vox/panel/state.py": {
     "efferent_coupling": 1.0,
@@ -2978,8 +2985,8 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.667,
-    "avg_lcom": 0.667
+    "max_lcom": 0.4,
+    "avg_lcom": 0.4
   },
   "src/punt_vox/voxd/speech_handlers.py": {
     "efferent_coupling": 10.0,
@@ -3523,6 +3530,13 @@
   "src/punt_vox/voxd/workers/wiring.py": {
     "efferent_coupling": 9.0,
     "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/ws_session.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0

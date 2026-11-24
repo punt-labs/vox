@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 import hmac
-import json
 import logging
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
-from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.ws_session import WebSocketSession
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.types import MessageHandler
 
 __all__ = ["WebSocketRouter"]
 
@@ -81,7 +83,7 @@ class WebSocketRouter:
         logger.debug("Client connected (total: %d)", self._client_count)
 
         try:
-            await self._serve(websocket)
+            await WebSocketSession(websocket, self._handlers).serve()
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -89,46 +91,6 @@ class WebSocketRouter:
         finally:
             self._client_count -= 1
             logger.debug("Client disconnected (total: %d)", self._client_count)
-
-    async def _serve(self, websocket: WebSocket) -> None:
-        """Receive text frames until the peer closes, routing each to a handler."""
-        while websocket.application_state == WebSocketState.CONNECTED:
-            # A client can close the socket after its "playing" ack while this
-            # loop awaits receive_text(); the state guard preempts Starlette's
-            # RuntimeError on the closed socket.
-            raw = await websocket.receive_text()
-            await self._dispatch_frame(websocket, raw)
-
-    async def _dispatch_frame(self, websocket: WebSocket, raw: str) -> None:
-        """Parse one text frame and invoke its handler, replying on any error."""
-        try:
-            msg = json.loads(raw)
-        except json.JSONDecodeError:
-            await websocket.send_json(
-                {"type": "error", "id": "", "message": "invalid JSON"}
-            )
-            return
-
-        if not isinstance(msg, dict):
-            await websocket.send_json(
-                {"type": "error", "id": "", "message": "expected JSON object"}
-            )
-            return
-
-        msg_type = str(msg.get("type", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        handler = self._handlers.get(msg_type)
-        if handler is None:
-            msg_id = str(msg.get("id", ""))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "id": msg_id,
-                    "message": f"unknown message type: {msg_type}",
-                }
-            )
-            return
-
-        await handler(msg, websocket)  # pyright: ignore[reportUnknownArgumentType]
 
     # -- Auth ------------------------------------------------------------------
 
