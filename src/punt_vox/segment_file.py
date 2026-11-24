@@ -8,6 +8,8 @@ from typing import Self, cast
 
 import typer
 
+from punt_vox.option_file import OptionFile
+
 
 class SegmentFile:
     """Own the decoding and validation of a --from JSON segments file."""
@@ -37,13 +39,7 @@ class SegmentFile:
     def _read_json(self) -> object:
         """Read UTF-8 JSON, translating malformed input into CLI usage errors."""
         try:
-            return json.loads(self._path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise typer.BadParameter(
-                f"Cannot read --from file: {exc.strerror or str(exc)}."
-            ) from exc
-        except UnicodeDecodeError as exc:
-            raise typer.BadParameter("--from file must contain valid UTF-8.") from exc
+            return json.loads(OptionFile(self._path, "--from").text())
         except json.JSONDecodeError as exc:
             raise typer.BadParameter("--from file must contain valid JSON.") from exc
 

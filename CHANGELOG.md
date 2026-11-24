@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox call --script` on a file that is not UTF-8 now gives a usage error
+  telling you to save it as UTF-8, instead of a `UnicodeDecodeError`
+  traceback. `vox say --from` reports the same message. (PL-1472)
+
 - Speak trailing currency signs on standalone prose amounts (`5€`, `12.50$`)
   as money, without changing prefix amounts, decimal commas, or inline code.
   (PL-1473)
