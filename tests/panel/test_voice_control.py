@@ -18,7 +18,7 @@ def _children(wire: dict[str, object]) -> tuple[dict[str, object], dict[str, obj
 class TestToDict:
     def test_wire_shape_is_columns_group_of_combo_and_button(self) -> None:
         control = VoiceControl(roster=("aria", "roger"), current="roger")
-        wire = control.to_dict()
+        wire = control.to_dict(element_id="vox.panel.voice")
         assert wire["kind"] == "group"
         assert wire["layout"] == "columns"
         combo, button = _children(wire)
@@ -35,12 +35,12 @@ class TestToDict:
 
     def test_none_current_selects_first_index(self) -> None:
         control = VoiceControl(roster=("aria", "roger"), current=None)
-        combo, _ = _children(control.to_dict())
+        combo, _ = _children(control.to_dict(element_id="vox.panel.voice"))
         assert combo["selected"] == 0
 
     def test_unknown_current_selects_first_index(self) -> None:
         control = VoiceControl(roster=("aria", "roger"), current="nobody")
-        combo, _ = _children(control.to_dict())
+        combo, _ = _children(control.to_dict(element_id="vox.panel.voice"))
         assert combo["selected"] == 0
 
     def test_an_empty_roster_renders_both_halves_inert(self) -> None:
@@ -49,7 +49,7 @@ class TestToDict:
         A provider without a voice roster must not offer another provider's voices.
         """
         control = VoiceControl(roster=(), current=None)
-        combo, button = _children(control.to_dict())
+        combo, button = _children(control.to_dict(element_id="vox.panel.voice"))
         assert combo["items"] == ["(no voices)"]
         assert combo["selected"] == 0
         assert "handlers" not in combo

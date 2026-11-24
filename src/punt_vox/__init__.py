@@ -19,6 +19,7 @@ from punt_vox.types_programs import (
     PromptSet,
 )
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 __all__ = [
     "CommandOutcome",
@@ -28,6 +29,7 @@ __all__ = [
     "PromptSet",
     "SynthesisSpec",
     "SynthesizeResult",
+    "VoiceTarget",
     "VoxClient",
     "VoxClientSync",
     "VoxError",
