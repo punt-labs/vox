@@ -53,6 +53,7 @@ _GATEWAY_ERRORS = (
     VoxdConnectionError,
     VoxdProtocolError,
     WebSocketException,
+    OSError,
     ValueError,
 )
 
@@ -201,7 +202,7 @@ class RecCli:
         """Run *op* against a fresh gateway, exiting cleanly on a gateway fault."""
         try:
             return op(self._gateway_factory())
-        except (*_GATEWAY_ERRORS, OSError) as exc:
+        except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
 
     def new(

@@ -139,9 +139,12 @@ def test_new_empty_name_rejected_before_wire() -> None:
     assert fake.calls == []  # never reached the gateway
 
 
-def test_new_daemon_error_is_clean_exit() -> None:
+@pytest.mark.parametrize(
+    "error", [VoxdProtocolError("provider down"), OSError("offline")]
+)
+def test_new_daemon_error_is_clean_exit(error: Exception) -> None:
     gateway = MagicMock()
-    gateway.new.side_effect = VoxdProtocolError("provider down")
+    gateway.new.side_effect = error
     cli = RecCli(MagicMock(spec=OutputFormatter), lambda: gateway)
 
     with pytest.raises(typer.Exit):
@@ -385,13 +388,13 @@ def test_get_writes_into_cwd_under_store_name(
     [
         (VoxdProtocolError("fetch sha256 mismatch"), typer.Exit, "sha256 mismatch"),
         (OSError(errno.ENOSPC, "disk full"), typer.Exit, "cannot write {dest}:"),
-        (KeyboardInterrupt(), KeyboardInterrupt, ""),
+        (KeyboardInterrupt(), KeyboardInterrupt, None),
     ],
 )
 def test_get_cleans_up_a_failed_staging_write(
     error: BaseException,
     raised: type[BaseException],
-    message: str,
+    message: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -413,7 +416,11 @@ def test_get_cleans_up_a_failed_staging_write(
     assert gateway.get_into.call_args.args[1].closed
     assert list(tmp_path.iterdir()) == []
     formatter.emit.assert_not_called()
-    assert message.format(dest=tmp_path / "rec.mp3") in capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    if message is None:
+        assert stderr == ""
+    else:
+        assert message.format(dest=tmp_path / "rec.mp3") in stderr
 
 
 def test_get_collision_errors_and_leaves_existing_file(
