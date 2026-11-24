@@ -478,3 +478,43 @@ def test_explicit_model_override_wins_even_when_provider_also_overridden() -> No
 
     assert spec.provider == "openai"
     assert spec.model == "tts-1"
+
+
+@pytest.mark.parametrize(
+    ("state_provider", "override_provider"),
+    [(sp, op) for sp, _ in _PROVIDER_MODELS for op, _ in _PROVIDER_MODELS if op != sp],
+)
+def test_per_call_provider_override_drops_states_voice(
+    state_provider: str, override_provider: str
+) -> None:
+    """``--provider B`` against state provider A synthesizes with B's default voice.
+
+    Voice names are provider-scoped exactly like models: ``adam`` is an
+    ElevenLabs voice, so carrying it into an espeak or polly request fails
+    with ``VoiceNotFoundError`` instead of using that provider's default.
+    """
+    state = _State(provider=state_provider, voice="adam")
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider=override_provider))
+
+    assert spec.provider == override_provider
+    assert spec.voice is None
+
+
+def test_per_call_override_matching_state_provider_keeps_states_voice() -> None:
+    """A redundant ``--provider`` naming state's provider still inherits the voice."""
+    state = _State(provider="  elevenlabs  ", voice="adam")
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider="elevenlabs"))
+
+    assert spec.voice == "adam"
+
+
+def test_explicit_voice_override_wins_even_when_provider_also_overridden() -> None:
+    """A per-call ``voice`` override is kept across a provider override."""
+    state = _State(provider="elevenlabs", voice="adam")
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider="espeak", voice="en-us"))
+
+    assert spec.provider == "espeak"
+    assert spec.voice == "en-us"

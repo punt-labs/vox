@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say --provider <other>` without `--voice` now uses that provider's
+  default voice instead of failing with `VoiceNotFoundError` on the saved
+  voice of the configured provider. (PL-799)
+
 - Preserve currency and signs when speaking attached amounts, rates, compact
   amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
   `$5-$10`. (PL-1414)
