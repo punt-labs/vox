@@ -14,7 +14,7 @@ import pytest
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient
-from punt_vox.types import SynthesisRequest
+from punt_vox.types import SynthesisRequest, VoiceNotFoundError
 
 
 class TestElevenLabsSharedCatalog:
@@ -86,6 +86,15 @@ class TestElevenLabsSharedCatalog:
         self, monkeypatch: pytest.MonkeyPatch, mock_elevenlabs_client: MagicMock
     ) -> None:
         monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        initial = mock_elevenlabs_client.voices.get_all.return_value.voices
+        new_voice = SimpleNamespace(name="Aria", voice_id="A" * 20)
+        renamed_voice = SimpleNamespace(name="Matilda", voice_id="B" * 20)
+        mock_elevenlabs_client.voices.get_all.side_effect = [
+            SimpleNamespace(voices=[*initial]),
+            SimpleNamespace(voices=[*initial]),
+            SimpleNamespace(voices=[*initial]),
+            SimpleNamespace(voices=[renamed_voice, initial[1], new_voice]),
+        ]
         with patch(
             "punt_vox.providers.elevenlabs_client.ElevenLabs",
             return_value=mock_elevenlabs_client,
@@ -93,11 +102,12 @@ class TestElevenLabsSharedCatalog:
             first = ElevenLabsProvider()
             assert first.resolve_voice("matilda") == "matilda"
             assert "aria" not in first.list_voices()
-            mock_elevenlabs_client.voices.get_all.return_value.voices.append(
-                SimpleNamespace(name="Aria", voice_id="A" * 20)
-            )
-
+            with pytest.raises(VoiceNotFoundError):
+                first.resolve_voice("aria")
             assert "aria" in ElevenLabsProvider().list_voices()
+            catalog = ElevenLabsCatalog(ElevenLabsClient())
+            assert catalog.resolve("aria") == ("aria", "A" * 20)
+            assert catalog.resolve("matilda") == ("matilda", "B" * 20)
 
     def test_eviction_preserves_an_entry_held_by_a_lookup(
         self, monkeypatch: pytest.MonkeyPatch
