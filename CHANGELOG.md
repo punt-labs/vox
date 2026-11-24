@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tag radio skips saved albums deleted from disk while the daemon is running
+  and plays the remaining matches. (PL-856)
+
 - `vox call --script` on a file that is not UTF-8 now gives a usage error
   telling you to save it as UTF-8, instead of a `UnicodeDecodeError`
   traceback. `vox say --from` reports the same message. (PL-1472)
