@@ -202,8 +202,13 @@ class TestListHandler:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
 
+    @pytest.mark.parametrize("worker_fails", [False, True])
     async def test_cancelled_list_keeps_slot_until_worker_stops_reading(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        worker_fails: bool,
     ) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, album_id="a3f1c9")
@@ -222,6 +227,8 @@ class TestListHandler:
             reads.append(album.id)
             loop.call_soon_threadsafe(read_started.set)
             assert resume_read.wait(timeout=5), "listing was not cancelled"
+            if worker_fails and len(reads) == 1:
+                raise RuntimeError("worker read failed")
             return original_read(album)
 
         async def second_list() -> dict[str, object]:
@@ -248,6 +255,21 @@ class TestListHandler:
         assert reply["type"] == "program_list"
         expected = [album.id for album in service.catalog_albums()]
         assert reads == [expected[0], *expected]
+        assert ("Abandoned catalog read failed" in caplog.messages) == worker_fails
+
+    async def test_failed_worker_releases_slot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seed_album(tmp_path / "programs", 1)
+        handler = ListHandler(_service(tmp_path))
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                Album, "read", Mock(side_effect=RuntimeError("worker read failed"))
+            )
+            with pytest.raises(RuntimeError, match="worker read failed"):
+                await _reply(handler, {"id": "7"})
+        reply = await asyncio.wait_for(_reply(handler, {"id": "8"}), timeout=5)
+        assert len(cast("list[object]", reply["programs"])) == 1
 
     @pytest.mark.parametrize("read_before_remove", [False, True])
     async def test_omits_album_removed_during_read_without_logging_a_fault(
