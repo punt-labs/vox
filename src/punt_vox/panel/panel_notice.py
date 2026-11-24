@@ -28,6 +28,11 @@ class PanelNotice(LuxNotice):
     __slots__ = ()
 
     @classmethod
+    def config_unreadable(cls) -> Self:
+        """Return the warning shown when the config files could not be read."""
+        return cls("⚠ Vox settings unreadable -- showing the last known settings")
+
+    @classmethod
     def voxd_unavailable(cls) -> Self:
         """Return the warning shown when voxd could not be reached."""
         return cls("⚠ voxd is unreachable -- showing the last known settings")

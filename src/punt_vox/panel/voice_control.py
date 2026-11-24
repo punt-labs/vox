@@ -23,7 +23,6 @@ from punt_vox.panel.topics import PanelTopic
 __all__ = ["VoiceControl"]
 
 _ROW_ID: Final = "vox.panel.voice.row"
-_COMBO_ID: Final = "vox.panel.voice"
 _PREVIEW_ID: Final = "vox.panel.voice.preview"
 _PREVIEW_GLYPH: Final = "▶"
 _EMPTY_LABEL: Final = "(no voices)"
@@ -37,13 +36,13 @@ class VoiceControl:
     roster: tuple[str, ...]
     current: str | None
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self, *, element_id: str) -> dict[str, object]:
         """Return the combo and its preview button as one ``columns`` group."""
         return {
             "kind": "group",
             "id": _ROW_ID,
             "layout": "columns",
-            "children": [self._combo(), self._preview_button()],
+            "children": [self._combo(element_id), self._preview_button()],
         }
 
     def voice_for_index(self, index: int) -> str:
@@ -55,7 +54,7 @@ class VoiceControl:
             items=self.roster, current=self.current, empty_label=_EMPTY_LABEL
         )
 
-    def _combo(self) -> dict[str, object]:
+    def _combo(self, element_id: str) -> dict[str, object]:
         """Return the voice combo; an empty roster renders it inert.
 
         A control with nothing to pick does not publish, so it cannot send
@@ -64,7 +63,7 @@ class VoiceControl:
         choices = self._choices()
         combo: dict[str, object] = {
             "kind": "combo",
-            "id": _COMBO_ID,
+            "id": element_id,
             "label": "Voice",
             "items": choices.wire_items(),
             "selected": choices.selected_index(),

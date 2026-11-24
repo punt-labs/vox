@@ -22,6 +22,8 @@ size must be correct from the panel's very first render.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import ClassVar, final
 
@@ -33,6 +35,7 @@ from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.provider_control import ProviderControl
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
+from punt_vox.panel.topics import PanelTopic
 from punt_vox.panel.voice_control import VoiceControl
 from punt_vox.server_switches import PROVIDER_NAMES
 
@@ -65,6 +68,12 @@ class PanelScene:
     model: str | None = None
     notice: PanelNotice = field(default_factory=PanelNotice.silent)
 
+    def roster_combo_id(self, topic: PanelTopic) -> str:
+        """Bind a roster-indexed combo to the options that give indices meaning."""
+        roster = json.dumps((self.provider, self.model, self.roster))
+        revision = hashlib.sha256(roster.encode()).hexdigest()[:16]
+        return f"{self.FRAME_ID}.{topic.field_name}.{revision}"
+
     def render_request(self) -> RenderRequest:
         """Return the whole panel scene: status, radios, Voice engine trio."""
         elements = [
@@ -77,8 +86,10 @@ class PanelScene:
             ProviderControl(providers=PROVIDER_NAMES, current=self.provider).to_dict(),
             ModelControl(
                 models=MODEL_TABLE.available(self.provider), current=self.model
-            ).to_dict(),
-            VoiceControl(roster=self.roster, current=self.voice).to_dict(),
+            ).to_dict(element_id=self.roster_combo_id(PanelTopic.MODEL)),
+            VoiceControl(roster=self.roster, current=self.voice).to_dict(
+                element_id=self.roster_combo_id(PanelTopic.VOICE)
+            ),
         ]
         return RenderRequest(
             scene_id=_SCENE_ID,

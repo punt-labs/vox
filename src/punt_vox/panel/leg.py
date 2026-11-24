@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["VoxPanelLeg"]
 
 _HUB_RETRY_SECONDS = 2.0
+_SETTINGS_POLL_SECONDS = 1.0
 _HUB_UNAVAILABLE_MESSAGE = "luxd is not running yet; the panel will retry"
 
 
@@ -81,9 +82,17 @@ class VoxPanelLeg:
 
     async def serve(self) -> None:
         """Hold the leg until cancelled, reaching for luxd again when it drops."""
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(self._poll_settings())
+            while True:
+                await self._listen_once()
+                await asyncio.sleep(_HUB_RETRY_SECONDS)
+
+    async def _poll_settings(self) -> None:
+        """Check disk settings without overlapping polls or delaying the listener."""
         while True:
-            await self._listen_once()
-            await asyncio.sleep(_HUB_RETRY_SECONDS)
+            await asyncio.sleep(_SETTINGS_POLL_SECONDS)
+            await self._runner.reconciled()
 
     async def _listen_once(self) -> None:
         """Build one connection, subscribe, and listen until it ends; never die.

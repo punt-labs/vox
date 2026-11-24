@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import click
 import pytest
@@ -28,6 +28,7 @@ from punt_vox.client_errors import (
     VoxdRejectionError,
 )
 from punt_vox.client_results import RecordResult, SynthesizeResult
+from punt_vox.config import ConfigStore
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -36,6 +37,7 @@ from punt_vox.service.lifecycle_report import (
 )
 from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1162,6 +1164,68 @@ class TestApiKeyInputPaths:
 
 
 class TestVibeCommand:
+    @pytest.mark.parametrize(
+        ("mood", "tag"),
+        [
+            ("whispering", "[whispering]"),
+            ("[telling   a secret]", "[telling a secret]"),
+        ],
+    )
+    def test_manual_vibe_reaches_synthesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, tag: str
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        ConfigStore(config_dir).write_fields(
+            {"provider": "elevenlabs", "model": "eleven_v3"}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["vibe", mood])
+        assert result.exit_code == 0, result.output
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc")
+
+        with patch("punt_vox.__main__.VoxClientSync") as client:
+            client.return_value.synthesize.side_effect = synthesize
+            result = runner.invoke(app, ["say", "Hello"])
+
+        assert result.exit_code == 0, result.output
+        assert client.return_value.synthesize.call_args.args[1].vibe_tags == tag
+
+    @pytest.mark.parametrize(
+        ("mood", "error"),
+        [
+            (" ", "Mood must contain a spoken delivery cue."),
+            ("[]", "Mood must contain a spoken delivery cue."),
+            ('say "hi"', "config values must not contain"),
+            ("say\nhi", "config values must not contain"),
+        ],
+    )
+    def test_vibe_rejects_invalid_cue(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, error: str
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+
+        result = CliRunner().invoke(app, ["vibe", mood])
+
+        assert result.exit_code == 2, result.output
+        assert error in click.unstyle(result.output)
+        assert not (tmp_path / "vox.local.md").exists()
+
+    def test_vibe_surfaces_unreadable_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        local = tmp_path / "vox.local.md"
+        local.write_bytes(b"\xff")
+
+        result = CliRunner().invoke(app, ["vibe", "whispering"])
+
+        assert isinstance(result.exception, UnicodeDecodeError)
+        assert local.read_bytes() == b"\xff"
+
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
@@ -1179,6 +1243,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
@@ -1186,6 +1251,7 @@ class TestVibeCommand:
         assert "auto" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "auto"' in local
+        assert 'vibe_tags: ""' in local
         # A mode change resets the nudge cadence to a clean N-prompt runway.
         assert 'vibe_nudge_turns: "0"' in local
 
@@ -1194,6 +1260,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
@@ -1201,6 +1268,7 @@ class TestVibeCommand:
         assert "off" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "off"' in local
+        assert 'vibe_tags: ""' in local
         assert 'vibe_nudge_turns: "0"' in local
 
 
@@ -1422,7 +1490,7 @@ class TestVoiceCommand:
         )
         assert config.read_text() == original
         mock_client_cls.return_value.voices.assert_called_once_with(
-            provider="elevenlabs"
+            VoiceTarget("elevenlabs")
         )
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -1451,8 +1519,8 @@ class TestVoiceCommand:
         config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
         switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
 
-        def switch_provider(*, provider: str) -> list[str]:
-            assert provider == "elevenlabs"
+        def switch_provider(provider: VoiceTarget) -> list[str]:
+            assert provider.provider == "elevenlabs"
             config.write_text(switched)
             return ["roger"]
 
@@ -1543,7 +1611,10 @@ class TestVoiceCommand:
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
-        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        [
+            ([], VoiceTarget("elevenlabs", "eleven_v3")),
+            (["--provider", "polly"], VoiceTarget("polly")),
+        ],
         ids=["repo-default", "explicit-flag"],
     )
     @patch(f"{_CLI}.VoxClientSync")
@@ -1551,7 +1622,7 @@ class TestVoiceCommand:
         self,
         mock_client_cls: MagicMock,
         provider_args: list[str],
-        expected: str,
+        expected: VoiceTarget,
     ) -> None:
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
@@ -1559,7 +1630,7 @@ class TestVoiceCommand:
         result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with(provider=expected)
+        mock_client_cls.return_value.voices.assert_called_once_with(expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(
@@ -1744,6 +1815,118 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Daemon:    unknown\n" in result.output
         assert "Log level: unknown (daemon health unavailable)\n" in result.output
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_names_the_allowlisted_worker_repos(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """Workers: is the daemon's allowlist, by last path segment."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        repos = ["/srv/lux", "/srv/vox-demo"]
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            return_value=repos,
+        ) as request:
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   lux, vox-demo\n" in result.output
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] == repos
+        assert "worker_repos_error" not in payload
+        assert request.await_args_list == [call("repos"), call("repos")]
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_says_how_to_allowlist_when_none_is(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (none allowlisted; run vox worker allow <path>)\n" in (
+            result.output
+        )
+        assert json.loads(as_json.output)["worker_repos"] == []
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_never_reads_the_allowlist_from_local_config(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """The daemon's view, never the CLI host's config file."""
+        mock_client_cls.return_value.health.side_effect = VoxdRefusedError("refused")
+        ConfigStore(ConfigStore.global_dir()).write_field(
+            "worker_repos", repr(["/srv/vox-demo"])
+        )
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=VoxdConnectionError("refused"),
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   unknown (daemon not reachable)\n" in result.output
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == "daemon not reachable"
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_reports_a_malformed_worker_allowlist(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """A daemon refusal is an error, never an empty allowlist."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=VoxdProtocolError(
+                "worker_repos must be a list of repository paths"
+            ),
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (worker_repos must be a list of repository paths)\n" in (
+            result.output
+        )
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == (
+            "worker_repos must be a list of repository paths"
+        )
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_renders_a_fault_reply_and_a_bad_shape_as_the_error_line(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """M8: whatever the daemon answers short of a list is the error line."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=[VoxdProtocolError("vox.md: Permission denied"), "/a"],
+        ):
+            fault = CliRunner().invoke(app, ["status", "--json"])
+            shape = CliRunner().invoke(app, ["status", "--json"])
+        assert fault.exit_code == 0, fault.output
+        assert json.loads(fault.output)["worker_repos_error"] == (
+            "vox.md: Permission denied"
+        )
+        assert shape.exit_code == 0, shape.output
+        payload = json.loads(shape.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == "expected a list of paths"
 
 
 # ---------------------------------------------------------------------------
