@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Buffer
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
 
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ, AudioChunk
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MicAudioSource"]
+__all__ = ["InputDevice", "MicAudioSource"]
 
 # Match the voice call transport's 20 ms audio frames.
 _CHUNK_S = 0.02
@@ -58,6 +59,20 @@ class InputStreamFactory(Protocol):
     ) -> InputStreamHandle: ...
 
 
+@dataclass(frozen=True, slots=True)
+class InputDevice:
+    """The input device PortAudio opens by default, as it reports itself."""
+
+    name: str
+    default_samplerate_hz: float
+
+
+class InputDeviceQuery(Protocol):
+    """Looks up the default input device; the production one asks PortAudio."""
+
+    def __call__(self) -> InputDevice: ...
+
+
 @runtime_checkable
 class InputStreamHandle(Protocol):
     """The context-manager surface :class:`MicAudioSource` needs from a stream."""
@@ -75,10 +90,16 @@ class MicAudioSource:
     stream context releases the audio device.
     """
 
-    __slots__ = ("_chunk_s", "_input_stream_factory", "_sample_rate_hz")
+    __slots__ = (
+        "_chunk_s",
+        "_input_device_query",
+        "_input_stream_factory",
+        "_sample_rate_hz",
+    )
     _sample_rate_hz: int
     _chunk_s: float
     _input_stream_factory: InputStreamFactory
+    _input_device_query: InputDeviceQuery
 
     def __new__(
         cls,
@@ -86,13 +107,24 @@ class MicAudioSource:
         sample_rate_hz: int = SAMPLE_RATE_HZ,
         chunk_s: float = _CHUNK_S,
         input_stream_factory: InputStreamFactory | None = None,
+        input_device_query: InputDeviceQuery | None = None,
     ) -> Self:
-        """Create a mic audio source."""
+        """Create a mic audio source; None for either hook selects PortAudio."""
         self = super().__new__(cls)
         self._sample_rate_hz = sample_rate_hz
         self._chunk_s = chunk_s
         self._input_stream_factory = input_stream_factory or cls._open_stream
+        self._input_device_query = input_device_query or cls._default_device
         return self
+
+    def device(self) -> InputDevice:
+        """Return the default input device as PortAudio reports it.
+
+        Raises:
+            OSError: When PortAudio has no default input device.
+        """
+        query = self._input_device_query
+        return query()
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
         """Capture indefinitely, yielding one :class:`AudioChunk` per block.
@@ -107,6 +139,13 @@ class MicAudioSource:
         replay a corrected value against.
         """
         block_frames = max(1, round(self._chunk_s * self._sample_rate_hz))
+        device = self.device()
+        logger.info(
+            "Call input device: %s (default %.0f Hz), capturing at %d Hz",
+            device.name,
+            device.default_samplerate_hz,
+            self._sample_rate_hz,
+        )
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes] = asyncio.Queue()
 
@@ -125,6 +164,17 @@ class MicAudioSource:
             while True:
                 pcm = await queue.get()
                 yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
+
+    @staticmethod
+    def _default_device() -> InputDevice:
+        """Ask PortAudio for the default input device, loading it on demand."""
+        from sounddevice import PortAudioError, query_devices
+
+        try:
+            info = query_devices(kind="input")
+        except PortAudioError as exc:
+            raise OSError(f"no default input device: {exc}") from exc
+        return InputDevice(str(info["name"]), float(info["default_samplerate"]))
 
     @staticmethod
     def _open_stream(

@@ -10,9 +10,25 @@ from __future__ import annotations
 
 from typing import Self, final
 
-from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamFactory
+from punt_vox.voxd.conversation_mode.mic_audio_source import (
+    InputDevice,
+    InputStreamFactory,
+)
 
-__all__ = ["FakeCallbackFlags", "FakeInputStream", "fake_input_stream_factory"]
+__all__ = [
+    "FAKE_DEVICE",
+    "FakeCallbackFlags",
+    "FakeInputStream",
+    "fake_device_query",
+    "fake_input_stream_factory",
+]
+
+FAKE_DEVICE = InputDevice("Fake Microphone", 48_000.0)
+
+
+def fake_device_query() -> InputDevice:
+    """Report :data:`FAKE_DEVICE` as the default input device."""
+    return FAKE_DEVICE
 
 
 @final
