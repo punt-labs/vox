@@ -86,6 +86,13 @@ def test_inaccessible_output_root_is_not_reported_as_absent(tmp_path: Path) -> N
     assert verdict == {"output_dir": "not_writable", "music_dir_missing": False}
 
 
+def test_missing_working_directory_blocks_relative_output_root() -> None:
+    with patch.object(Path, "lstat", side_effect=FileNotFoundError):
+        verdict = OutputHealth(Path("albums")).probe()
+
+    assert verdict["output_dir"] == "not_writable"
+
+
 def test_missing_output_beneath_unwritable_ancestor_is_not_creatable(
     tmp_path: Path,
 ) -> None:
@@ -104,11 +111,35 @@ def test_missing_output_requires_directory_creation_not_just_file_creation(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "albums"
-    with patch(
-        "punt_vox.voxd.output_health.tempfile.TemporaryDirectory",
-        side_effect=PermissionError,
+    with (
+        patch.object(
+            output_health.tempfile, "TemporaryDirectory", side_effect=PermissionError
+        ),
+        patch.object(output_health.tempfile, "TemporaryFile") as open_probe,
     ):
         assert OutputHealth(root).probe()["output_dir"] == "not_writable"
+
+    open_probe.assert_not_called()
+
+
+def test_missing_output_requires_file_write_inside_created_directory(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "albums"
+
+    def reject_file(**kwargs: object) -> None:
+        directory = kwargs["dir"]
+        assert isinstance(directory, str)
+        probe_dir = Path(directory)
+        assert probe_dir.parent == tmp_path
+        assert probe_dir.is_dir()
+        assert kwargs["buffering"] == 0
+        raise PermissionError
+
+    with patch.object(output_health.tempfile, "TemporaryFile", side_effect=reject_file):
+        assert OutputHealth(root).probe()["output_dir"] == "not_writable"
+
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize(
