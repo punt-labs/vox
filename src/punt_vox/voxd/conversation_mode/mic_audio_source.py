@@ -65,7 +65,14 @@ class MicAudioSource:
         sample_rate_hz: int = SAMPLE_RATE_HZ,
         chunk_s: float = _CHUNK_S,
     ) -> Self:
-        """Create a mic audio source over ``backend``."""
+        """Create a mic audio source over ``backend``.
+
+        Raises:
+            ValueError: When ``chunk_s`` is not positive: a zero-length chunk
+                would never advance the silence probe.
+        """
+        if chunk_s <= 0:
+            raise ValueError(f"chunk_s must be positive, not {chunk_s}")
         self = super().__new__(cls)
         self._backend = backend
         self._sample_rate_hz = sample_rate_hz

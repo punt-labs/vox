@@ -215,3 +215,10 @@ async def test_default_source_opens_and_closes_a_portaudio_stream(
     assert stream.kwargs["dtype"] == "int16"
     assert chunk.pcm == b"\x01\x00" * 320
     assert stream.closed
+
+
+@pytest.mark.parametrize("chunk_s", [0.0, -0.02])
+def test_a_non_positive_chunk_duration_is_refused(chunk_s: float) -> None:
+    """A zero-length chunk would never advance the silence probe."""
+    with pytest.raises(ValueError, match="chunk_s must be positive"):
+        MicAudioSource(FakeBackend(), chunk_s=chunk_s)
