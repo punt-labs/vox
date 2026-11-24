@@ -48,7 +48,7 @@ class CurrencyGrammar:
         return re.compile(
             rf"{_PROSE_AMOUNT}(?P<word>{word})?"
             rf"(?:[-\u2013]{_RANGE_END_AMOUNT}(?P<end_word>{word})?"
-            rf"|\u2013(?P<bare_end>{CurrencyPatterns.NUMBER})(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
+            rf"|{CurrencyPatterns.BARE_RANGE}(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
             rf"(?P<rates>(?:/{word})*)"
         )
 

@@ -70,7 +70,7 @@ class CurrencySpeech:
 
     @classmethod
     def _speak_bare_end(cls, match: re.Match[str]) -> str:
-        if not (end := match["bare_end"]):
+        if not (end := CurrencyPatterns.bare_end(match)):
             return ""
         end_scale = SCALES.get((match["bare_scale"] or match["word"] or "").lower(), "")
         return " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))

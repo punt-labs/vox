@@ -21,15 +21,30 @@ class CurrencyPatterns:
     """Build money patterns without extending currency notation in code."""
 
     NUMBER = rf"{_WHOLE}(?:\.\d+)?|\.\d+"
+    BARE_RANGE = (
+        rf"(?:\u2013|-(?(comma_decimal)|(?(euro)(?={_EURO_DECIMAL})|(?!))))"
+        rf"(?P<bare_end>(?(euro)(?P<bare_comma_decimal>{_EURO_DECIMAL})|(?!))|{NUMBER})"
+    )
 
-    @staticmethod
-    def prose_fields(match: re.Match[str], prefix: str) -> tuple[str, str, str]:
+    @classmethod
+    def prose_fields(cls, match: re.Match[str], prefix: str) -> tuple[str, str, str]:
         """Read the currency symbol, canonical number, and sign."""
-        number = match[prefix + "amount"]
-        if match[prefix + "comma_decimal"]:
-            number = ".".join(number.rsplit(",", 1))
+        number = cls._canonical_number(
+            match[prefix + "amount"], match[prefix + "comma_decimal"]
+        )
         sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
         return match[prefix + "symbol"], number, sign
+
+    @classmethod
+    def bare_end(cls, match: re.Match[str]) -> str:
+        """Read the canonical number for a range end with no currency sign."""
+        return cls._canonical_number(
+            match["bare_end"] or "", match["bare_comma_decimal"]
+        )
+
+    @staticmethod
+    def _canonical_number(number: str, comma_decimal: str | None) -> str:
+        return ".".join(number.rsplit(",", 1)) if comma_decimal else number
 
     @classmethod
     def code_amount(cls, symbols: str) -> str:
