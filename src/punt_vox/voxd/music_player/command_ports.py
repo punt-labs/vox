@@ -32,12 +32,12 @@ class PlayerCommands(Protocol):
         """Halt the active source, returning the player to idle (Stop)."""
         ...
 
-    def advance(self) -> None:
-        """User transport next: step the replay cursor forward (Next)."""
+    def advance(self) -> bool:
+        """Enqueue a forward step, or return False when off."""
         ...
 
-    def prev(self) -> None:
-        """User transport prev: step the replay cursor back (Prev)."""
+    def prev(self) -> bool:
+        """Enqueue a backward step, or return False when off."""
         ...
 
     def pause(self) -> bool:

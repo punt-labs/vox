@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, NotRequired, Self, TypedDict
+from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
 
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -46,7 +46,7 @@ class ProgramCommandHandler(ABC):
 
     __slots__ = ("_service",)
     _service: ProgramService
-    _WIRE_TYPE: ClassVar[str]
+    _wire_type: str
     """The reply ``type`` (and inbound message type) this handler answers."""
 
     def __new__(cls, service: ProgramService) -> Self:
@@ -62,14 +62,14 @@ class ProgramCommandHandler(ABC):
         :meth:`WireReply.reject_or_fault` handles other expected failures.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
-        payload: _ProgramReply = {"type": self._WIRE_TYPE}
+        payload: _ProgramReply = {"type": self._wire_type}
         try:
             outcome = self._run(msg)
         except (ValueError, LookupError, OSError) as exc:
             await reply.reject_or_fault(exc)
             return
         if outcome is not None:
-            logger.info("%s skipped: reason=not_applied", self._WIRE_TYPE)
+            logger.info("%s skipped: reason=not_applied", self._wire_type)
             payload["applied"] = outcome.applied
             payload["message"] = outcome.message
         await reply.send(dict(payload))

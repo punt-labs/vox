@@ -74,9 +74,9 @@ class StopMusic:
 class Prev:
     """Transport prev -- ``music.prev`` projected onto the deterministic step-back."""
 
-    def apply(self, service: PlayerCommands) -> None:
-        """Step the replay cursor back one part (Z ``Prev``)."""
-        service.prev()
+    def apply(self, service: PlayerCommands) -> bool:
+        """Enqueue a step back one part (Z ``Prev``)."""
+        return service.prev()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused prev (names no album; double dispatch)."""
@@ -88,9 +88,9 @@ class Prev:
 class Next:
     """Transport next -- ``music.next`` projected onto the deterministic step."""
 
-    def apply(self, service: PlayerCommands) -> None:
-        """Step the replay cursor forward one part (Z ``Next``)."""
-        service.advance()
+    def apply(self, service: PlayerCommands) -> bool:
+        """Enqueue a step forward one part (Z ``Next``)."""
+        return service.advance()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused next (names no album; double dispatch)."""
