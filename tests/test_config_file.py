@@ -101,3 +101,27 @@ def test_the_fenced_read_passes_a_fenced_or_missing_file(tmp_path: Path) -> None
     block = ConfigFile(path).fenced_block()
     assert block is not None
     assert block.fields() == {"voice": "charlie"}
+
+
+@pytest.mark.parametrize(("umask", "mode"), [(0o077, 0o600), (0o022, 0o644)])
+def test_a_new_file_honours_the_umask(tmp_path: Path, umask: int, mode: int) -> None:
+    """A new config lands as a plain create would, so a 077 umask keeps it private."""
+    path = tmp_path / "vox.local.md"
+    previous = os.umask(umask)
+    try:
+        ConfigFile(path).replace(FrontmatterBlock(_FENCED))
+    finally:
+        os.umask(previous)
+    assert path.stat().st_mode & 0o777 == mode
+
+
+def test_an_existing_private_file_stays_private(tmp_path: Path) -> None:
+    path = tmp_path / "vox.local.md"
+    path.write_text(_FENCED, encoding="utf-8")
+    path.chmod(0o600)
+    previous = os.umask(0o022)
+    try:
+        ConfigFile(path).replace(FrontmatterBlock('---\nvoice: "fin"\n---\n'))
+    finally:
+        os.umask(previous)
+    assert path.stat().st_mode & 0o777 == 0o600

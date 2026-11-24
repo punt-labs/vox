@@ -106,11 +106,20 @@ class ConfigFile:
         space partway leaves every setting the file held, never a truncated
         file with nothing in it. An existing file is first opened for
         writing, because the rename needs only the directory and would
-        otherwise replace a file its owner made read-only.
+        otherwise replace a file its owner made read-only; it keeps its
+        mode. A new file takes the mode a plain create would under the
+        current umask.
 
         Raises:
             OSError: If the file or its directory cannot be written.
         """
         if self._path.exists():
             os.close(os.open(self._path, os.O_WRONLY | os.O_CLOEXEC))
-        AtomicFile(self._path).replace(block.text)
+            AtomicFile(self._path).replace(block.text)
+            return
+        # A new file lands as a plain create would: the umask, read at call
+        # time since it can change, decides whether session state stays
+        # private, not a fixed mode.
+        umask = os.umask(0)
+        os.umask(umask)
+        AtomicFile(self._path).replace(block.text, mode=0o666 & ~umask)
