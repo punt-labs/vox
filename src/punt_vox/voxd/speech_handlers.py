@@ -5,15 +5,11 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from starlette.websockets import WebSocket, WebSocketDisconnect
-
 from punt_vox.providers.api_key import ApiKeyCheck
-from punt_vox.providers.caller_errors import CALLER_ERRORS
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
@@ -25,6 +21,8 @@ from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
+    _SYNTHESIS_REJECTIONS,
+    EmptyNormalizedTextError,
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
@@ -33,6 +31,8 @@ from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from starlette.websockets import WebSocket
 
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
@@ -53,6 +53,10 @@ class _SpeechRequest:
     spec: SynthesisSpec
     request_id: str
     websocket: WebSocket
+
+    @property
+    def _wire(self) -> WireReply:
+        return WireReply(self.websocket, self.request_id)
 
     @classmethod
     def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
@@ -92,12 +96,8 @@ class _SpeechRequest:
             api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
         spec.validate()
-        return cls(
-            text=text,
-            spec=spec,
-            request_id=str(msg.get("id", "")),
-            websocket=websocket,
-        )
+        request_id = str(msg.get("id", ""))
+        return cls(text=text, spec=spec, request_id=request_id, websocket=websocket)
 
     async def synthesize(
         self,
@@ -117,7 +117,7 @@ class _SpeechRequest:
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except Exception as exc:
-            if not isinstance(exc, CALLER_ERRORS):
+            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
                 logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
             await self.fail(exc)
@@ -126,14 +126,14 @@ class _SpeechRequest:
     async def fail(self, result: Exception | int) -> None:
         """Reply to a failed synthesis, or a direct play that exited nonzero.
 
-        A :data:`CALLER_ERRORS` member (F2-F5, or a CA bundle TLS cannot use) is
-        diagnosable and caller-side, so it crosses the wire verbatim through
-        :meth:`reject` rather than getting laundered to "operation failed" by
+        Invalid speech and known provider errors are diagnosable and
+        caller-side, so they cross the wire verbatim through
+        :meth:`WireReply.error` rather than getting laundered to "operation failed" by
         :meth:`fault` (design §3.5). Any other exception, or a nonzero exit
         code, is a daemon-side fault.
         """
-        if isinstance(result, CALLER_ERRORS):
-            await self.reject(result)
+        if isinstance(result, _SYNTHESIS_REJECTIONS):
+            await self._wire.error(result)
         elif isinstance(result, Exception):
             await self.fault(SafeFault.from_exception(result))
         else:
@@ -146,7 +146,7 @@ class _SpeechRequest:
         disconnect-safe send the store handlers use, instead of a raw
         ``send_json`` that raises out of the handler when the client has left.
         """
-        await WireReply(self.websocket, self.request_id).send(payload)
+        await self._wire.send(payload)
 
     async def fault(self, fault: SafeFault) -> None:
         """Audit a server-side OPERATIONAL failure and send a prefix-free frame.
@@ -158,22 +158,7 @@ class _SpeechRequest:
         The *fault* carries a prefix-free wire message and the raw log detail, so
         no absolute prefix reaches the client.
         """
-        await WireReply(self.websocket, self.request_id).fault(fault)
-
-    async def reject(self, cause: ValueError) -> None:
-        """Audit a client-side rejection and send the cause's message verbatim.
-
-        A synthesis whose named provider has no credentials, whose voice
-        the provider does not offer, or whose credentials the provider
-        rejects on the wire is a CALLER-side failure: state named
-        something the daemon cannot honour. Routing through
-        :meth:`WireReply.error` (the ``error`` frame + WARNING
-        ``rejected op`` audit line) crosses the sentence verbatim
-        rather than laundering it to ``"operation failed"``. The whole
-        F2/F3/F5 promise (design §3.5) is that a diagnosable failure
-        reaches the caller with a message they can act on.
-        """
-        await WireReply(self.websocket, self.request_id).error(cause)
+        await self._wire.fault(fault)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -215,16 +200,12 @@ class SynthesizeHandler(MessageHandler):
         if dedup_recorded is None:
             return
 
-        logger.info(
-            "Synthesize: id=%r chars=%d",
-            req.request_id,
-            len(req.text),
-        )
+        logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
         await self._dispatch(req, dedup_recorded=dedup_recorded)
 
     async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
         """Play a local provider directly, else synthesize to a file and enqueue."""
-        local = (req.spec.provider or "") in _LOCAL_PROVIDERS
+        local = req.spec.provider in _LOCAL_PROVIDERS
         if local and await self._play_local(req, dedup_recorded=dedup_recorded):
             return
         await self._synthesize_and_enqueue(req, dedup_recorded=dedup_recorded)
@@ -234,30 +215,39 @@ class SynthesizeHandler(MessageHandler):
     ) -> bool | None:
         """Check the once-dedup window.
 
-        Return ``None`` when the request was a dedup hit (a 'done' reply was sent
-        and the caller must stop); otherwise return whether this call recorded a
-        dedup entry that a later failure must roll back.
+        Return ``None`` after replying to a dedup hit, whether acknowledged or
+        rejected; otherwise return whether this call recorded a dedup entry
+        that a later failure must roll back.
         """
         if once is None or once <= 0:
             return False
         hit = self._once_dedup.check_and_record(req.text, float(once))
         if hit is None:
             return True
-        logger.info(
-            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
-            req.request_id,
-            len(req.text),
-            hit.original_played_at,
-            hit.ttl_seconds_remaining,
-        )
-        await req.reply(
-            {
-                "type": "done",
-                "deduped": True,
-                "original_played_at": hit.original_played_at,
-                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
-            }
-        )
+
+        async def reply_to_duplicate() -> None:
+            try:
+                SynthesisPipeline.normalized_text(req.text, req.spec)
+            except EmptyNormalizedTextError as exc:
+                await req.fail(exc)
+                return
+            logger.info(
+                "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
+                req.request_id,
+                len(req.text),
+                hit.original_played_at,
+                hit.ttl_seconds_remaining,
+            )
+            await req.reply(
+                {
+                    "type": "done",
+                    "deduped": True,
+                    "original_played_at": hit.original_played_at,
+                    "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+                }
+            )
+
+        await reply_to_duplicate()
         return None
 
     async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
@@ -274,9 +264,9 @@ class SynthesizeHandler(MessageHandler):
             return False
         if result == 0:
             await req.reply({"type": "done"})
-            return True
-        self._rollback(req, dedup_recorded=dedup_recorded)
-        await req.fail(result)
+        else:
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            await req.fail(result)
         return True
 
     async def _synthesize_and_enqueue(
@@ -291,11 +281,10 @@ class SynthesizeHandler(MessageHandler):
             return
 
         # `cached` rides the 'playing' response (the client's terminal).
-        done_event = asyncio.Event()
         item = PlaybackItem(
             path=outcome.path,
             request_id=req.request_id,
-            notify=done_event,
+            notify=asyncio.Event(),
             discard=outcome.discard,
         )
         try:
@@ -304,9 +293,8 @@ class SynthesizeHandler(MessageHandler):
             outcome.discard()
             raise
         await req.reply({"type": "playing", "cached": outcome.cached})
-        await done_event.wait()
-        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-            await req.reply({"type": "done"})
+        await item.notify.wait()
+        await req.reply({"type": "done"})
 
     def _rollback(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
         """Undo a recorded dedup entry when synthesis fails after recording it."""

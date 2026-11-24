@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
+import logging
+import os
+from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
 import pytest
 
+from punt_vox.config import ConfigStore
 from punt_vox.voxd.voice_call.boss_tools import BossTools
+from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 
 from .fakes import FakeWorkers, payload
 
@@ -223,6 +229,24 @@ async def test_start_without_project_needs_one_repo() -> None:
     assert "/a" in json.loads(result)["error"]
 
 
+@pytest.mark.parametrize(
+    "arguments", [{"task": "fix x"}, {"task": "fix x", "project": "/repo"}]
+)
+async def test_start_with_an_empty_allowlist_names_the_fix(
+    arguments: dict[str, object],
+) -> None:
+    """The dead end on 2026-11-23: four tries, 'allowlisted: []', no way out."""
+    workers = FakeWorkers(())
+    result, error = await _tools(workers).answer("start_worker", arguments)
+    assert error
+    message = json.loads(result)["error"]
+    assert message == (
+        "no repository is allowlisted for workers; "
+        "run `vox worker allow <path>` on the daemon host"
+    )
+    assert workers.started == []
+
+
 async def test_reask_during_a_slow_start_starts_one_worker() -> None:
     workers = FakeWorkers()
     workers.gate.clear()
@@ -333,3 +357,71 @@ async def test_start_refuses_a_project_that_is_not_a_path() -> None:
     )
     assert error
     assert "string" in json.loads(result)["error"]
+
+
+def _unfenced(path: Path) -> OSError:
+    """Return the fault Frontmatter raises for a file with no closing fence."""
+    return OSError(errno.EBADMSG, "no closing ---", str(path))
+
+
+def _policy(tmp_path: Path, content: bytes) -> tuple[Path, WorkerRepoPolicy]:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "vox.md").write_bytes(content)
+    return config_dir / "vox.md", WorkerRepoPolicy(ConfigStore(config_dir))
+
+
+def _assert_path_free_fault(
+    answer: tuple[str, bool], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    result, error = answer
+    assert error
+    message = json.loads(result)["error"]
+    for segment in tmp_path.parts[1:]:
+        assert segment not in message, (segment, message)
+    faults = [r for r in caplog.records if r.levelno == logging.ERROR]
+    # The log keeps the path (its tail may be cut by the log field cap).
+    assert any(tmp_path.parts[1] in r.getMessage() for r in faults), caplog.records
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode 000")
+async def test_start_faults_without_the_path_on_an_unreadable_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path, policy = _policy(tmp_path, b'---\nworker_repos: "[]"\n---\n')
+    path.chmod(0)
+    tools = BossTools(FakeWorkers(), policy)
+    try:
+        with caplog.at_level(logging.ERROR):
+            answer = await tools.answer("start_worker", {"task": "fix x"})
+    finally:
+        path.chmod(0o600)
+    _assert_path_free_fault(answer, tmp_path, caplog)
+
+
+async def test_start_faults_without_the_path_on_a_non_utf8_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    _, policy = _policy(tmp_path, b'---\nworker_repos: "[]"\n\xff\n---\n')
+    tools = BossTools(FakeWorkers(), policy)
+    with caplog.at_level(logging.ERROR):
+        result, error = await tools.answer("start_worker", {"task": "fix x"})
+    assert error
+    assert json.loads(result)["error"] == "operation failed"
+    assert any(
+        "utf-8" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR
+    )
+
+
+async def test_start_faults_without_the_path_on_a_malformed_config(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A config file the daemon cannot edit is its own fault, never the caller's."""
+    path, policy = _policy(tmp_path, b'---\nworker_repos: "[]"\n---\n')
+    tools = BossTools(FakeWorkers(), policy)
+    with (
+        patch.object(WorkerRepoPolicy, "repos", side_effect=_unfenced(path)),
+        caplog.at_level(logging.ERROR),
+    ):
+        answer = await tools.answer("start_worker", {"task": "fix x"})
+    _assert_path_free_fault(answer, tmp_path, caplog)

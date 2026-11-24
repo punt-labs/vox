@@ -227,3 +227,15 @@ class TestRejectOrFault:
         assert not _warnings(caplog)
         # An OSError with no filename to relativize also stays generic on the wire.
         assert sent[-1]["message"] == "operation failed"
+
+    def test_unicode_decode_error_audits_operation_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-UTF-8 daemon file is a fault, though the error is a ValueError."""
+        ws, sent = _capturing_ws()
+        exc = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(exc))
+        assert "operation failed" in _errors(caplog)[-1].getMessage()
+        assert not _warnings(caplog)
+        assert sent[-1]["message"] == "operation failed"

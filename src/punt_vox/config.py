@@ -222,11 +222,15 @@ class ConfigStore:
             fields, repo_name=self._repo_name, source=self._ephemeral.path
         )
 
-    def read_field(self, field: str) -> str | None:
-        """Read a single config field from the correct file."""
+    def read_field(self, field: str, *, strict: bool = False) -> str | None:
+        """Read a single config field from the correct file.
+
+        With *strict*, an unreadable or undecodable file raises instead of
+        reading as absent.
+        """
         if field in EPHEMERAL_KEYS:
-            return self._ephemeral.read_field(field)
-        return self._durable.read_field(field)
+            return self._ephemeral.read_field(field, strict=strict)
+        return self._durable.read_field(field, strict=strict)
 
     @classmethod
     def global_dir(cls) -> Path:
@@ -267,6 +271,23 @@ class ConfigStore:
         self._reject_unknown(key)
         store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
         store.write_fields({key: value}, check=check)
+
+    def update_field(
+        self,
+        key: str,
+        transform: Callable[[str | None], str],
+        *,
+        # Most field updates have no precondition; check only when supplied.
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> str:
+        """Replace *key* with ``transform(current)`` under the file's lock.
+
+        One locked read-modify-write: a concurrent writer waits rather than
+        being overwritten. Returns the stored value.
+        """
+        self._reject_unknown(key)
+        store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
+        return store.update_field(key, transform, check=check)
 
     def write_fields(
         self,
