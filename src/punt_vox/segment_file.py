@@ -49,6 +49,6 @@ class SegmentFile:
         match item:
             case (str() as text) | {"text": str() as text}:
                 return text
-        raise typer.BadParameter(
-            f"Element {index} must be a string or an object with string text."
-        )
+            case _:
+                msg = f"Element {index} must be a string or an object with string text."
+                raise typer.BadParameter(msg)
