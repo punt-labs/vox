@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -23,6 +25,127 @@ from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "limit", "tags", "vibe_prefix", "inline_prefix"),
+    [
+        ("eleven_v3", 5_000, "[whispers]", "[whispers] ", "[sighs] "),
+        ("eleven_v3", 5_000, None, "", "[sighs] "),
+        ("eleven_multilingual_v2", 10_000, "[whispers]", "", ""),
+    ],
+    ids=["v3-session", "v3-inline", "non-expressive"],
+)
+async def test_session_vibe_at_elevenlabs_chunk_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+    model: str,
+    limit: int,
+    tags: str | None,
+    vibe_prefix: str,
+    inline_prefix: str,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+    sentence = "The last train is waiting."
+    body = " ".join([sentence] * 410)
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(
+            f"[sighs] {body}",
+            SynthesisSpec(provider="elevenlabs", model=model, vibe_tags=tags),
+        )
+    outcome.path.unlink()
+    chunks: list[str] = [
+        call.kwargs["text"]
+        for call in mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    ]
+    assert len(chunks) > 1
+    assert all(0 < len(chunk) <= limit for chunk in chunks)
+    if vibe_prefix:
+        assert [chunk.startswith(vibe_prefix) for chunk in chunks] == [True] * len(
+            chunks
+        )
+    assert " ".join(chunk.removeprefix(vibe_prefix) for chunk in chunks) == (
+        inline_prefix + body
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_reuse_literal_or_legacy_audio(
+    tmp_path: Path, mock_elevenlabs_client: MagicMock
+) -> None:
+    pipeline = _make_pipeline()
+    spec = SynthesisSpec(provider="elevenlabs", model="eleven_v3")
+    with (
+        patch("punt_vox.cache.CACHE_DIR", tmp_path),
+        patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-elevenlabs"}),
+        patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ),
+    ):
+        old_take = await pipeline.synthesize_to_file("[whispers] Come closer.", spec)
+        assert not old_take.cached
+        old_take.path.unlink()
+        vibed_spec = replace(spec, vibe_tags=" [whispers] ")
+        new_take = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert not new_take.cached
+        new_take.path.unlink()
+        repeat = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert repeat.cached
+        repeat.path.unlink()
+    calls = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert [call.kwargs["text"] for call in calls] == ["[whispers] Come closer."] * 2
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_replay_pre_upgrade_cache_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+) -> None:
+    prefix = "[whispers] "
+    body = " ".join(["The last train is waiting."] * 210)
+    legacy_payload = json.dumps(
+        {
+            "version": 3,
+            "text": prefix + body,
+            "voice": "",
+            "provider": "elevenlabs",
+            "model": "eleven_v3",
+            "rate": None,
+            "language": None,
+            "stability": None,
+            "similarity": None,
+            "style": None,
+            "speaker_boost": None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    legacy_digest = hashlib.md5(legacy_payload, usedforsecurity=False).hexdigest()
+    (tmp_path / f"{legacy_digest}.mp3").write_bytes(_get_valid_mp3_bytes())
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    spec = SynthesisSpec(
+        provider="elevenlabs", model="eleven_v3", vibe_tags=prefix.strip()
+    )
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(body, spec)
+    outcome.path.unlink()
+
+    assert not outcome.cached
+    chunks = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert len(chunks) > 1
+    assert all(call.kwargs["text"].startswith(prefix) for call in chunks)
 
 
 @pytest.mark.parametrize(
@@ -1239,9 +1362,14 @@ class TestModelSupportsExpressiveTags:
 
 
 class TestApplyVibeForSynthesis:
-    """apply_vibe_for_synthesis gates vibe-tag handling on capability."""
+    """Normalization gates vibe-tag handling on model capability."""
 
-    _apply = staticmethod(SynthesisPipeline.apply_vibe_for_synthesis)
+    @staticmethod
+    def _apply(raw: str, tags: str | None, provider: str, model: str | None) -> str:
+        body, vibe_tags = SynthesisPipeline._normalize_for_synthesis(
+            raw, SynthesisSpec(provider=provider, model=model, vibe_tags=tags)
+        )
+        return f"{vibe_tags} {body}" if vibe_tags and body else body
 
     def test_v3_preserves_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
@@ -1414,6 +1542,37 @@ class TestApplyVibeForSynthesis:
         ],
     )
     def test_euro_comma_decimals(self, model: str, source: str, expected: str) -> None:
+        assert self._apply(source, None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("€1.234,56", "1,234 euros and 56 cents"),
+            ("1.234,56€", "1,234 euros and 56 cents"),
+            ("€1.234.567,89", "1,234,567 euros and 89 cents"),
+            ("It costs 1.234,56€.", "It costs 1,234 euros and 56 cents."),
+            ("€1.234,56\u20132.345,67", "1,234.56 to 2,345.67 euros"),
+            ("€1.234,56-2.345,67", "1,234.56 to 2,345.67 euros"),
+            ("€1.234,56\u20132.345", "1,234.56 to 2,345 euros"),
+            ("€1.234,56-2.345", "1,234.56 to 2,345 euros"),
+            ("€1.234,56\u20132.345.678", "1,234.56 to 2,345,678 euros"),
+            ("€1.234,56\u20132.345,10", "1,234.56 to 2,345.10 euros"),
+            ("€1,56\u20132.345", "1.56 to 2.345 euros"),
+            (
+                "€1.234,56\u2013€2.345,67",
+                "1,234 euros and 56 cents to 2,345 euros and 67 cents",
+            ),
+            ("€1.234", "1.234 euros"),
+            ("€1.50", "1 euro and 50 cents"),
+            ("€1.234,567", "1.234,567"),
+            ("$1.234,56", "1.234,56"),
+            ("`€1.234,56`", "euro sign 1.234,56"),
+        ],
+    )
+    def test_euro_dotted_thousands(
+        self, model: str, source: str, expected: str
+    ) -> None:
         assert self._apply(source, None, "elevenlabs", model) == expected
 
     @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])

@@ -1,10 +1,7 @@
-"""Speech synthesis and recording WebSocket handlers."""
-# pyright: reportPrivateUsage=false
-# Internal module within the voxd package -- cross-module private access is expected.
+"""Speech request parsing and replies shared by synthesis and recording."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
@@ -17,16 +14,12 @@ from punt_vox.voxd._parse import (
     parse_optional_str,
     parse_required_str,
 )
-from punt_vox.voxd.dedup import OnceDedup
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.speech_reply import SpeechReply
-from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
-    _LOCAL_PROVIDERS,
-    _SYNTHESIS_REJECTIONS,
+from punt_vox.voxd.synthesis import (
+    _SYNTHESIS_REJECTIONS,  # pyright: ignore[reportPrivateUsage]
     EmptyNormalizedTextError,
     SynthesisPipeline,
 )
-from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
@@ -37,7 +30,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.dedup import DedupHit
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
-__all__ = ["SynthesizeHandler"]
+__all__ = ["SpeechRequest"]
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +40,8 @@ _REQUEST_KEY = ApiKeyCheck("the request's api_key")
 
 
 @dataclass(frozen=True, slots=True)
-class _SpeechRequest:
-    """Bundle parsed synthesis fields and their id-stamped reply channel."""
+class SpeechRequest:
+    """Bundle parsed synthesis fields and their ID-stamped reply channel."""
 
     text: str
     spec: SynthesisSpec
@@ -64,10 +57,10 @@ class _SpeechRequest:
         """Parse a wire message into a request, validating at the boundary.
 
         A string-typed field raises ``ValueError`` on a non-string value while a
-        numeric field accepts a JSON number (via the parse helpers); empty or
-        whitespace-only text, an ``api_key`` no HTTP header may carry, and a
-        rate or voice setting :meth:`SynthesisSpec.validate` refuses are
-        rejected here, so both handlers share one validation point.
+        numeric field accepts a JSON number (via the parse helpers); empty,
+        whitespace-only or non-UTF-8 text, an ``api_key`` no HTTP header may
+        carry, and any rate or voice settings :meth:`SynthesisSpec.validate`
+        refuses are rejected here, so both handlers share one validation point.
 
         Raises:
             ValueError: If the message has no speech text or an invalid field.
@@ -75,6 +68,10 @@ class _SpeechRequest:
         text = parse_required_str(msg, "text")
         if not text.strip():
             raise ValueError("empty text")
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("text must be valid UTF-8") from None
         speaker_boost_raw = msg.get("speaker_boost")
         # ``provider`` is required on the wire (design §3.7): every client
         # surface (MCP, hook, CLI, panel, record) fills it from state via
@@ -152,7 +149,7 @@ class _SpeechRequest:
     async def reply_duplicate(self, hit: DedupHit) -> None:
         """Validate and acknowledge a duplicate without a synthesis advisory."""
         try:
-            SynthesisPipeline.normalized_text(self.text, self.spec)
+            SynthesisPipeline.prepare_audio_request(self.text, self.spec)
         except EmptyNormalizedTextError as exc:
             await self.fail(exc)
             return
@@ -183,122 +180,3 @@ class _SpeechRequest:
         no absolute prefix reaches the client.
         """
         await self._wire.fault(fault)
-
-
-class SynthesizeHandler(MessageHandler):
-    """Handle 'synthesize' WebSocket messages: TTS + enqueue playback."""
-
-    __slots__ = ("_once_dedup", "_playback", "_synthesis")
-
-    _once_dedup: OnceDedup
-    _playback: PlaybackQueue
-    _synthesis: SynthesisPipeline
-
-    def __new__(
-        cls,
-        *,
-        synthesis: SynthesisPipeline,
-        playback: PlaybackQueue,
-        once_dedup: OnceDedup,
-    ) -> Self:
-        """Create a synthesize handler."""
-        self = super().__new__(cls)
-        self._synthesis = synthesis
-        self._playback = playback
-        self._once_dedup = once_dedup
-        return self
-
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Synthesize speech and enqueue for playback."""
-        # Parse at the boundary: a non-string wire field (or empty text) is an
-        # id-stamped error frame, never a ValueError that tears the connection down.
-        try:
-            req = _SpeechRequest.from_msg(msg, websocket)
-            once = parse_optional_int(msg, "once")
-        except ValueError as exc:
-            # WireReply makes a gone-peer send a clean no-op, matching the siblings.
-            await SpeechReply(websocket, str(msg.get("id", ""))).error(exc)
-            return
-
-        dedup_recorded = await self._respond_if_deduped(req, once)
-        if dedup_recorded is None:
-            return
-
-        logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
-        await self._dispatch(req, dedup_recorded=dedup_recorded)
-
-    async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
-        """Play a local provider directly, else synthesize to a file and enqueue."""
-        local = req.spec.provider in _LOCAL_PROVIDERS
-        if local and await self._play_local(req, dedup_recorded=dedup_recorded):
-            return
-        await self._synthesize_and_enqueue(req, dedup_recorded=dedup_recorded)
-
-    async def _respond_if_deduped(
-        self, req: _SpeechRequest, once: int | None
-    ) -> bool | None:
-        """Check the once-dedup window.
-
-        Return ``None`` after replying to a dedup hit, whether acknowledged or
-        rejected; otherwise return whether this call recorded a dedup entry
-        that a later failure must roll back.
-        """
-        if once is None or once <= 0:
-            return False
-        hit = self._once_dedup.check_and_record(req.text, float(once))
-        if hit is None:
-            return True
-
-        await req.reply_duplicate(hit)
-        return None
-
-    async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
-        """Play a local provider (espeak/say) straight to the device.
-
-        Return True when the request was fully handled (a terminal reply was
-        sent); False when no local path applied and the caller should fall
-        through to file synthesis.
-        """
-        result = await self._synthesis.try_direct_play(
-            req.text, req.spec, record_result=self._playback.record_result
-        )
-        if result is None:
-            return False
-        if result == 0:
-            await req.reply({"type": "done"})
-        else:
-            self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.fail(result)
-        return True
-
-    async def _synthesize_and_enqueue(
-        self, req: _SpeechRequest, *, dedup_recorded: bool
-    ) -> None:
-        """Synthesize to a file, enqueue it, and drive the playing/done replies."""
-        outcome = await req.synthesize(
-            self._synthesis,
-            on_failure=lambda: self._rollback(req, dedup_recorded=dedup_recorded),
-        )
-        if outcome is None:
-            return
-
-        # `cached` rides the 'playing' response (the client's terminal).
-        item = PlaybackItem(
-            path=outcome.path,
-            request_id=req.request_id,
-            notify=asyncio.Event(),
-            discard=outcome.discard,
-        )
-        try:
-            await self._playback.enqueue(item)
-        except BaseException:
-            outcome.discard()
-            raise
-        await req.reply({"type": "playing", "cached": outcome.cached})
-        await item.notify.wait()
-        await req.reply({"type": "done"})
-
-    def _rollback(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
-        """Undo a recorded dedup entry when synthesis fails after recording it."""
-        if dedup_recorded:
-            self._once_dedup.rollback(req.text)

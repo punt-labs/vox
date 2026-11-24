@@ -7,58 +7,72 @@ import re
 import sys
 from pathlib import Path
 
+from punt_vox.config_seed import InheritedConfig
+
 # Per-repo subdirectory under .punt-labs/
 _REPO_SUBDIR = Path(".punt-labs") / "vox"
 
 DEFAULT_CONFIG_DIR = _REPO_SUBDIR  # Path(".punt-labs/vox")
+_CONFIG_FILES = ("vox.md", "vox.local.md")
 _XDG_MUSIC_SETTING = re.compile(r'^XDG_MUSIC_DIR="([^"]*)"', re.MULTILINE)
+
+
+def _ancestors(start: Path | None) -> tuple[Path, ...]:
+    """*start* (default: cwd), resolved, followed by each of its parents."""
+    path = (start or Path.cwd()).resolve()
+    return (path, *path.parents)
 
 
 def find_repo_root(start: Path | None = None) -> Path | None:
     """Walk up from *start* (default: cwd) to find a git repo root."""
-    path = (start or Path.cwd()).resolve()
-    for parent in (path, *path.parents):
-        if (parent / ".git").exists():
-            return parent
-    return None
+    return next((p for p in _ancestors(start) if (p / ".git").exists()), None)
 
 
 def find_config_dir(start: Path | None = None) -> Path | None:
     """Walk up from *start* (default: cwd) to find ``.punt-labs/vox/``.
 
     Returns the directory if either ``vox.md`` or ``vox.local.md``
-    exists inside it.  No legacy fallback.
+    exists inside it.  No legacy fallback.  A repo with no config of its
+    own inherits the nearest one above it (e.g. its workspace's).
     """
-    path = (start or Path.cwd()).resolve()
-    for parent in (path, *path.parents):
-        d = parent / _REPO_SUBDIR
-        if (d / "vox.md").exists() or (d / "vox.local.md").exists():
-            return d
-    return None
+    candidates = (parent / _REPO_SUBDIR for parent in _ancestors(start))
+    return next(
+        (d for d in candidates if any((d / f).exists() for f in _CONFIG_FILES)), None
+    )
 
 
-def _read_xdg_music_dir(home: Path) -> Path | None:
-    """Read XDG_MUSIC_DIR from the given user's XDG file.
+def writable_config_dir(start: Path | None = None) -> Path | None:
+    """Return the config directory a setting write from *start* lands in.
+
+    Same as :func:`find_config_dir`, except when that config is inherited
+    from above the nearest git repo root: the write then goes to the repo's
+    own ``.punt-labs/vox/``, seeded with copies of the inherited files so
+    only the written setting differs, and the repo reads its own config
+    from then on.
+    """
+    found = find_config_dir(start)
+    root = find_repo_root(start)
+    if found is None or root is None or found.is_relative_to(root):
+        return found
+    own = root / _REPO_SUBDIR
+    InheritedConfig(found).seed(root, own)
+    return own
+
+
+def _read_xdg_music_dir() -> Path | None:
+    """Read XDG_MUSIC_DIR from the current user's XDG file.
 
     Return None if the file is missing, unreadable, or not UTF-8, or if the
     key isn't found.
     """
-    dirs_file = home / ".config" / "user-dirs.dirs"
-    if not dirs_file.is_file():
-        return None
+    home = Path.home()
     try:
-        text = dirs_file.read_text(encoding="utf-8")
+        text = (home / ".config" / "user-dirs.dirs").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-
     match = _XDG_MUSIC_SETTING.search(text)
-    if not match:
-        return None
-
-    raw = match.group(1)
     # Expand $HOME -- the only variable XDG user-dirs.dirs uses
-    resolved = raw.replace("$HOME", str(home))
-    return Path(resolved)
+    return Path(match.group(1).replace("$HOME", str(home))) if match else None
 
 
 def _resolve_music_dir() -> Path:
@@ -69,15 +83,11 @@ def _resolve_music_dir() -> Path:
     macOS:   ~/Music
     Windows: %USERPROFILE%\Music
     """
-    home = Path.home()
-    if sys.platform == "linux":
-        xdg = _read_xdg_music_dir(home)
-        if xdg is not None:
-            return xdg
+    xdg = _read_xdg_music_dir() if sys.platform == "linux" else None
     # Cross-platform fallback: ~/Music exists on macOS by default,
     # is the conventional location on Linux, and is the standard
     # media library on Windows.
-    return home / "Music"
+    return xdg or Path.home() / "Music"
 
 
 def default_output_dir() -> Path:
@@ -88,6 +98,4 @@ def default_output_dir() -> Path:
     2. ~/Music/vox/ (platform-standard)
     """
     env_dir = os.environ.get("VOX_OUTPUT_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return _resolve_music_dir() / "vox"
+    return Path(env_dir) if env_dir else _resolve_music_dir() / "vox"

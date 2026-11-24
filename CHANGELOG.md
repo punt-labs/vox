@@ -53,6 +53,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
+  `voice`, or the matching `mic` tool) from a git repo nested in a workspace
+  no longer edits the workspace's config. The repo gets its own
+  `.punt-labs/vox/` config, seeded from the inherited one so only the
+  written setting differs, and reads it from then on. A nested repo with no
+  config of its own still reads the workspace's. (PL-1598)
+
+- `vox say` and `vox rec new` reject a positional TEXT argument combined with
+  `--from` instead of silently using the file. (PL-1599)
+
+- ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
+  Inline cues stay where they were written. (PL-1577)
+
+- `vox desktop install --provider` rejects unknown providers and shows how to
+  set the suggested provider in Claude Desktop instead of claiming it was set.
+  (PL-1594)
+
+- Hooks on machines without `jq` decode the payload's `cwd` instead of
+  cutting it at the first quote, so a repo path with a quote, backslash or
+  non-ASCII name no longer silently drops the Stop and other notifications.
+  (PL-1595)
+
 - Warn when ElevenLabs ignores a non-default speech rate in `vox say`,
   `vox rec new`, and the corresponding MCP and daemon replies. (PL-1570)
 
@@ -165,6 +187,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speak euro amounts such as `€1,50` and `1,50€` as euros and cents. Commas
   with three-digit groups still mark thousands, and other currencies and
   inline code are unchanged. (PL-1535)
+- Speak dotted thousands in euro amounts with a two-digit decimal comma,
+  such as `€1.234,56` and `1.234,56€`, as euros and cents. Dot-only amounts
+  such as `€1.234` keep their existing reading. (PL-1536)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS

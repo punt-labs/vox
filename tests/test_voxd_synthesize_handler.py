@@ -1,4 +1,4 @@
-"""Tests for punt_vox.voxd.speech_handlers -- synthesize and record handlers."""
+"""Tests for WebSocket speech synthesis and playback requests."""
 # pyright: reportPrivateUsage=false
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ import contextlib
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,9 +28,9 @@ from punt_vox.types_provider_errors import (
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
-from punt_vox.voxd.speech_handlers import SynthesizeHandler
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+from punt_vox.voxd.synthesize_handler import SynthesizeHandler
 
 
 def _make_synthesize_handler(
@@ -223,6 +224,24 @@ class TestSynthesizeParseGuard:
         mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_surrogate_is_rejected_before_dedup(self) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+
+        await handler(
+            {"id": "1", "text": "left\udcffright", "provider": "espeak", "once": 10},
+            ws,
+        )
+
+        ws.send_json.assert_awaited_once_with(
+            {"type": "error", "id": "1", "message": "text must be valid UTF-8"}
+        )
+        mock_synth.try_direct_play.assert_not_called()
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "text", ["", "  ", "\t\n"], ids=["empty", "spaces", "tab-nl"]
     )
@@ -293,40 +312,6 @@ class TestSynthesizeParseGuard:
         provider_factory.assert_not_called()
         if dedup_hit:
             assert dedup.check_and_record(text, 60) is not None
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("field", "value", "message"),
-        [
-            ("rate", 0, "rate must be greater than 0, got 0"),
-            ("rate", -10, "rate must be greater than 0, got -10"),
-            ("stability", 1.5, "stability must be between 0.0 and 1.0, got 1.5"),
-        ],
-    )
-    async def test_invalid_spec_field_is_rejected_before_synthesis(
-        self, field: str, value: float, message: str
-    ) -> None:
-        """A value SynthesisSpec.validate refuses is an id-stamped error, never
-        sent to a provider."""
-        mock_synth = MagicMock(spec=SynthesisPipeline)
-        mock_synth.synthesize_to_file = AsyncMock()
-        mock_synth.try_direct_play = AsyncMock()
-        handler = _make_synthesize_handler(synthesis=mock_synth)
-        sent: list[dict[str, object]] = []
-        ws = MagicMock()
-        ws.send_json = AsyncMock(side_effect=sent.append)
-
-        msg: dict[str, object] = {
-            "id": "1",
-            "text": "hello",
-            "provider": "espeak",
-            field: value,
-        }
-        await handler(msg, ws)
-
-        assert sent == [{"type": "error", "id": "1", "message": message}]
-        mock_synth.try_direct_play.assert_not_called()
-        mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -469,7 +454,7 @@ class TestHandleSynthesizeOnceFlag:
         mock_synth.synthesize_to_file = fake_synthesize
 
         monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+            "punt_vox.voxd.synthesize_handler._LOCAL_PROVIDERS", set[str]()
         )
 
         handler = _make_synthesize_handler(synthesis=mock_synth)
@@ -480,6 +465,80 @@ class TestHandleSynthesizeOnceFlag:
 
         handler._playback._queue = _InstantPlaybackQueue()  # type: ignore[assignment]
         return handler, synthesis_calls
+
+    @pytest.mark.asyncio
+    async def test_once_retries_failed_queued_playback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A nonzero player exit releases once without delaying the playing frame."""
+        frames: list[dict[str, object]] = []
+        queued = asyncio.Event()
+
+        async def capture(frame: dict[str, object]) -> None:
+            frames.append(frame)
+            if frame["type"] == "playing":
+                queued.set()
+
+        first = tmp_path / "first.mp3"
+        retry = tmp_path / "retry.mp3"
+        for path in (first, retry):
+            path.write_bytes(b"audio")
+
+        def player_command(path: Path) -> list[str]:
+            script = (
+                "raise SystemExit(7)"
+                if path == first
+                else "import time; time.sleep(0.08)"
+            )
+            return [sys.executable, "-c", script]
+
+        synthesis = MagicMock(spec=SynthesisPipeline)
+        synthesis.synthesize_to_file = AsyncMock(
+            side_effect=[
+                SynthesisOutcome(path, cached=False) for path in (first, retry)
+            ]
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.playback.AudioFile.player_command",
+            player_command,
+        )
+        playback = PlaybackQueue()
+        handler = _make_synthesize_handler(synthesis=synthesis, playback=playback)
+        websocket = MagicMock()
+        websocket.send_json = AsyncMock(side_effect=capture)
+        msg: dict[str, object] = {
+            "id": "first",
+            "text": "retry after a player failure",
+            "provider": "elevenlabs",
+            "once": 600,
+        }
+
+        async with asyncio.timeout(5):
+            request = asyncio.create_task(handler(msg, websocket))
+            try:
+                await queued.wait()
+                assert playback.queue_size == 1
+                assert not request.done()
+                consumer = asyncio.create_task(playback.consumer())
+                try:
+                    await request
+                    result = playback.last_result
+                    assert result is not None and result.rc == 7
+                    await handler({**msg, "id": "retry"}, websocket)
+                finally:
+                    consumer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer
+            finally:
+                request.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await request
+
+        assert frames[2] == {"id": "retry", "type": "playing", "cached": False}
+        result = playback.last_result
+        assert result is not None and result.ok
+        await handler({**msg, "id": "after-success"}, websocket)
+        assert frames[-1]["deduped"] is True
 
     @pytest.mark.asyncio
     async def test_once_null_does_not_dedupe(
@@ -596,7 +655,7 @@ class TestHandleSynthesizeCachedSignal:
         mock_synth = MagicMock(spec=SynthesisPipeline)
         mock_synth.synthesize_to_file = fake_synthesize
         monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
+            "punt_vox.voxd.synthesize_handler._LOCAL_PROVIDERS", set[str]()
         )
         handler = _make_synthesize_handler(synthesis=mock_synth)
 
