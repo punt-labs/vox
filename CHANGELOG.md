@@ -24,9 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Treat non-object JSON replies from voxd as protocol errors. Status reports
-  `unresponsive` for an identified local daemon or `unknown` when the endpoint
-  is explicitly configured, instead of crashing. (PL-1422)
+- Treat non-object JSON replies from voxd as protocol errors. Instead of
+  crashing, `vox status` reports `unknown`. `vox daemon status` reports
+  `unresponsive` for an identified local daemon and `unknown` for an
+  explicitly configured endpoint. (PL-1422)
+
+- `vox doctor` probes the output dir with a private, uniquely created
+  temporary file, so it no longer overwrites or deletes an existing
+  `.doctor_test` file or writes through a symlink of that name. (PL-1431)
 
 - Preserve currency and signs when speaking attached amounts, rates, compact
   amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
