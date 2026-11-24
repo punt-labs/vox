@@ -18,7 +18,9 @@ from punt_vox.client_errors import (
 from punt_vox.config import ConfigStore
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.panel_settings import PanelSettings
 from punt_vox.panel.service import VoxPanelService
+from punt_vox.panel.state import PanelState
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
@@ -625,57 +627,34 @@ class TestApplyEvent:
         assert service.scene().voice == "benno"
 
     def test_provider_yields_when_another_thread_won_the_race(self) -> None:
-        """A mid-flight competing provider commit wins; this call gives up.
+        """A provider change during the roster fetch wins over this commit."""
 
-        If two panel threads both dispatch a PROVIDER event and the roster
-        RPC lands second, the second commit must not clobber the first.
-        Modeled with a client whose ``voices()`` sneaks a competing state
-        update into the service between fetch and re-check.
-        """
-
-        class _RacingClient:
-            def __init__(self, service_ref: list[VoxPanelService]) -> None:
-                self._service_ref = service_ref
-                self.prefetch_done = False
-
-            def voices(self, provider: str | None = None) -> list[str]:
-                # First call (prefetch) returns the elevenlabs roster.
-                if not self.prefetch_done:
-                    self.prefetch_done = True
-                    return ["benno", "aria"]
-                # Subsequent calls: mid-flight, another thread wins with
-                # openai. We simulate by mutating the service's state
-                # directly (as if another thread had held the lock).
-                settings = self._service_ref[0]._settings
-                settings._state = settings.snapshot().with_provider(
-                    "openai", roster=("alloy",), model="tts-1", voice="alloy"
+        class _RacingRoster:
+            def voices(self, provider: str) -> list[str]:
+                assert provider == "espeak"
+                settings.replace(
+                    settings.snapshot().with_provider(
+                        "openai", roster=("alloy",), model="tts-1", voice="alloy"
+                    ),
+                    PanelNotice.silent(),
                 )
-                return ["en", "en-us"]  # espeak roster (what our caller asked for)
+                return ["benno"]
 
-            def synthesize(self, *args: object, **kwargs: object) -> object:
-                raise NotImplementedError
-
-        ref: list[VoxPanelService] = []
-        client = _RacingClient(ref)
-        service = VoxPanelService(
-            client,  # type: ignore[arg-type]
-            (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
+        store = _FakeStore(_config(voice="benno", provider="elevenlabs"))
+        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
+        settings.replace(
+            PanelState.empty().with_provider(
+                "elevenlabs", roster=("benno",), model=None, voice="benno"
+            ),
+            PanelNotice.silent(),
         )
-        ref.append(service)
-        service.prefetch()
-        changed = service.apply_event(
-            PanelTopic.PROVIDER, {"value": 5}
-        )  # ask for espeak
-        # The widget already shows "espeak"; ``_state`` landed on "openai"
-        # instead, via the race, so a diff against the last confirmed render
-        # would find "espeak" already there and skip it. Only a full
-        # reinstall (``ControlPush.CORRECT``) snaps the widget back.
+
+        changed = settings.commit_provider("espeak")
+
         assert changed is ControlPush.CORRECT
-        # The racing "openai" write happened during our roster RPC. We must
-        # NOT write espeak on top of it.
         assert "provider" not in store.written
         assert "voice" not in store.written
-        assert service.scene().provider == "openai"
+        assert settings.scene().provider == "openai"
 
     def test_model_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(
@@ -714,11 +693,11 @@ class TestApplyEvent:
         applied the pick optimistically and ``_state`` never moves, so only a
         full reinstall snaps it back.
         """
-        service = VoxPanelService(
-            _FakeDaemonClient(), (store := _FakeStore(_config(provider=None)))
+        store = _FakeStore(_config(provider=None))
+        settings = PanelSettings(
+            _FakeDaemonClient(), store, logging.getLogger(__name__)
         )
-        service.prefetch()
-        changed = service._settings.commit_model("tts-1")
+        changed = settings.commit_model("tts-1")
         assert changed is ControlPush.CORRECT
         assert "model" not in store.written
         assert "voice" not in store.written
@@ -758,54 +737,34 @@ class TestApplyEvent:
         assert service.scene().notice == PanelNotice.voxd_unavailable()
 
     def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
-        """A mid-flight competing provider commit wins; this model commit gives up.
+        """A provider change during the roster fetch wins over this commit."""
 
-        Same race as a provider commit: if the roster RPC lands second,
-        the model commit must not clobber the new provider's state with a
-        voice default computed for the OLD provider.
-        """
-
-        class _RacingClient:
-            def __init__(self, service_ref: list[VoxPanelService]) -> None:
-                self._service_ref = service_ref
-                self.prefetch_done = False
-
-            def voices(self, provider: str | None = None) -> list[str]:
-                _ = provider  # RacingClient ignores provider arg
-                if not self.prefetch_done:
-                    self.prefetch_done = True
-                    return ["matilda", "aria"]
-                # Mid-flight: another thread wins with espeak. Simulate by
-                # mutating the service's state directly.
-                settings = self._service_ref[0]._settings
-                settings._state = settings.snapshot().with_provider(
-                    "espeak", roster=("en",), model=None, voice="en"
+        class _RacingRoster:
+            def voices(self, provider: str) -> list[str]:
+                assert provider == "elevenlabs"
+                settings.replace(
+                    settings.snapshot().with_provider(
+                        "espeak", roster=("en",), model=None, voice="en"
+                    ),
+                    PanelNotice.silent(),
                 )
-                return ["matilda", "aria"]  # old-provider roster
+                return ["matilda"]
 
-            def synthesize(self, *args: object, **kwargs: object) -> object:
-                raise NotImplementedError
-
-        ref: list[VoxPanelService] = []
-        client = _RacingClient(ref)
-        service = VoxPanelService(
-            client,  # type: ignore[arg-type]
-            (store := _FakeStore(_config(provider="elevenlabs"))),
+        store = _FakeStore(_config(voice="matilda", provider="elevenlabs"))
+        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
+        settings.replace(
+            PanelState.empty().with_provider(
+                "elevenlabs", roster=("matilda",), model=None, voice="matilda"
+            ),
+            PanelNotice.silent(),
         )
-        ref.append(service)
-        service.prefetch()
-        changed = service.apply_event(
-            PanelTopic.MODEL, {"value": 2}
-        )  # tts-1-hd (arbitrary)
-        # The widget already shows "tts-1-hd"; ``_state`` landed on "espeak"
-        # instead, via the race, so only a full reinstall
-        # (``ControlPush.CORRECT``) snaps the widget back.
+
+        changed = settings.commit_model("tts-1-hd")
+
         assert changed is ControlPush.CORRECT
-        # The racing "espeak" write happened mid-fetch. We MUST NOT write
-        # a model + old-provider voice on top of it.
         assert "model" not in store.written
         assert "voice" not in store.written
-        assert service.scene().provider == "espeak"
+        assert settings.scene().provider == "espeak"
 
     def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
