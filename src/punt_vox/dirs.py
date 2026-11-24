@@ -70,11 +70,14 @@ def _resolve_music_dir() -> Path:
     Windows: %USERPROFILE%\Music
     """
     home = Path.home()
-    xdg = _read_xdg_music_dir(home) if sys.platform == "linux" else None
+    if sys.platform == "linux":
+        xdg = _read_xdg_music_dir(home)
+        if xdg is not None:
+            return xdg
     # Cross-platform fallback: ~/Music exists on macOS by default,
     # is the conventional location on Linux, and is the standard
     # media library on Windows.
-    return xdg if xdg is not None else home / "Music"
+    return home / "Music"
 
 
 def default_output_dir() -> Path:

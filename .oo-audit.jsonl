@@ -2591,3 +2591,4 @@
 {"ts":"2026-11-24T01:32:15Z","commit":"a9122c9","source":null,"files_scored":488,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/doctor.py":{"max_complexity":[6.0,5.0],"avg_complexity":[2.67,2.56]}},"removed":[]}
 {"ts":"2026-11-24T01:34:48Z","commit":"6bc86d0","source":null,"files_scored":488,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-24T01:44:26Z","commit":"3d5cf76","source":null,"files_scored":488,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/dirs.py":{"module_size":[49.0,44.0]}},"removed":[]}
+{"ts":"2026-11-24T01:51:57Z","commit":"15ce21a","source":null,"files_scored":488,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/dirs.py":{"module_size":[49.0,47.0]}},"removed":[]}
