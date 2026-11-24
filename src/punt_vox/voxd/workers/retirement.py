@@ -7,6 +7,7 @@ import subprocess
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
+from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.settlement import WorkerSettlement
 
 if TYPE_CHECKING:
@@ -105,9 +106,7 @@ class WorkerRetirement:
             subprocess.SubprocessError,
         ) as exc:
             logger.warning(
-                "Worker %s reconciliation unavailable (%s)",
-                record.id,
-                type(exc).__name__,
+                "Worker %s reconciliation unavailable: %s", record.id, GitFailure(exc)
             )
             return record
         if alive:
@@ -122,12 +121,28 @@ class WorkerRetirement:
         try:
             self._inventory.save(observed)
         except (OSError, ValueError) as exc:
-            logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
+            logger.warning(
+                "Worker %s retirement not saved: %s", observed.id, GitFailure(exc)
+            )
             return
         self._release(observed.id)
         self.schedule(observed.id)
 
     def _cleanup(self, worker_id: str) -> None:
+        """Settle the worker's debts; a save that fails is logged under its id.
+
+        The discard a job ran is irreversible, so the record is the only
+        trace of its outcome. A save that fails after it names the worker
+        and the failure, not just the exception type.
+        """
+        try:
+            self._settle_all(self._inventory.get(worker_id))
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Worker %s settlement outcome not saved: %s", worker_id, GitFailure(exc)
+            )
+
+    def _settle_all(self, record: WorkerRecord) -> None:
         """Settle the owed debts, and any a stop queued while they ran.
 
         The queue holds one job per worker, so a stop that marks a debt
@@ -135,14 +150,8 @@ class WorkerRetirement:
         before it ends. Only a debt this job did not run repeats the loop,
         never one it ran and recorded as failed.
         """
-        try:
-            record = self._inventory.get(worker_id)
-            if not self._settlement.owed(record):
+        while self._settlement.owed(record):
+            settled = self._settlement.settle(record)
+            record = self._inventory.update(record.id, settled.fold)
+            if not settled.left_owing(record):
                 return
-            while True:
-                settled = self._settlement.settle(record)
-                record = self._inventory.update(record.id, settled.fold)
-                if not settled.left_owing(record):
-                    return
-        except (OSError, ValueError) as exc:
-            logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)

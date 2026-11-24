@@ -74,7 +74,7 @@ class WorkerCleanupQueue:
         try:
             operation()
         except Exception as exc:
-            logger.exception("Worker cleanup job failed")
+            logger.exception("Worker %s cleanup job failed", worker_id)
             failure = exc
         finally:
             with self._lock:

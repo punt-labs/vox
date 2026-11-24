@@ -1,6 +1,9 @@
 """Retirement queue shutdown behavior."""
 
+import logging
 from threading import Event
+
+import pytest
 
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
 
@@ -30,3 +33,20 @@ def test_shutdown_cancels_waiting_and_future_work() -> None:
     running.result(timeout=1)
     assert queue.is_idle()
     assert not ran.is_set()
+
+
+def test_failed_job_log_names_the_worker(caplog: pytest.LogCaptureFixture) -> None:
+    """An exception escaping a job is logged under the worker it belonged to."""
+    queue = WorkerCleanupQueue()
+    with caplog.at_level(logging.ERROR, logger="punt_vox.voxd.workers.cleanup_queue"):
+        job = queue.submit("w-42", lambda: _raise(RuntimeError("save exploded")))
+        assert job is not None
+        with pytest.raises(RuntimeError, match="save exploded"):
+            job.result(timeout=1)
+    [record] = caplog.records
+    assert "w-42" in record.getMessage()
+    assert record.exc_info is not None
+
+
+def _raise(exc: Exception) -> None:
+    raise exc

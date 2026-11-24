@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import replace
 from threading import Event
@@ -271,3 +272,32 @@ async def test_stop_returns_before_a_retried_discard_runs(tmp_path: Path) -> Non
     assert done.last_report["worktree_discarded"] is True
     assert "discard_pending" not in done.last_report
     assert worktrees.discard.call_count == 2
+
+
+def test_unsaved_settlement_outcome_log_names_the_worker(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A save that fails after the irreversible discard is logged with the id.
+
+    The discard already ran, so the record is the only trace of its outcome;
+    the warning names the worker and the failure, not just the exception type.
+    """
+    record = (
+        _registry(tmp_path, FakeWorkerProvider())
+        .start("work", str(tmp_path), provider="fake", harness="test")
+        .retire()
+    )
+    inventory = Mock(spec=WorkerInventory)
+    inventory.get.return_value = record
+    inventory.update.side_effect = OSError("disk full")
+    retirement = WorkerRetirement(
+        WorkerSettlement({"test": TrivialProfile()}, Mock(spec=WorkerRepoPolicy)),
+        inventory,
+    )
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.retirement"):
+        job = retirement.schedule(record.id)
+        assert job is not None
+        job.result(timeout=1)
+    [warning] = caplog.records
+    assert record.id in warning.getMessage()
+    assert "OSError: disk full" in warning.getMessage()
