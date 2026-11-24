@@ -33,7 +33,7 @@ from punt_vox.client_errors import FetchWriteError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
-from punt_vox.types_cli_synthesis import LanguageOpt, RateOpt
+from punt_vox.types_cli_options import LanguageOpt, RateOpt
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
