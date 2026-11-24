@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, final
 
 from punt_vox.cli_daemon import DaemonCli
-from punt_vox.desktop_install import DesktopInstaller
+from punt_vox.desktop_registration import DesktopRegistration
 from punt_vox.service.daemon_status import DaemonState
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ class StatusCli:
             "vibe": cfg.vibe,
             "vibe_tags": cfg.vibe_tags,
             "log_level": log_level,
-            "desktop": DesktopInstaller.registration(),
+            "desktop": DesktopRegistration.read(),
         }
         formatter.emit(info, cls._text(info, cls._log_label(log_level, daemon.state)))
 
