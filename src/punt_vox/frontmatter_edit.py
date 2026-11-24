@@ -71,7 +71,7 @@ class FrontmatterEdit:
         if self._check is None:
             return
         self._check({} if held is None else held.fields())
-        if held is not None and not held.fenced:
+        if held is not None and held.unclosed:
             raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
 
     def fields(self, held: FrontmatterBlock | None) -> dict[str, str]:  # None: no file.
@@ -85,13 +85,21 @@ class FrontmatterEdit:
     ) -> FrontmatterBlock:
         """Return *held* with *fields* applied, or a fresh block when it cannot.
 
-        A file with no closing fence and none of the keys is rebuilt from the
-        fields alone, with a warning naming it: a plain edit never lands a
-        field below prose where no reader would find it.
+        A file with no fence pair and none of the keys cannot take an edit
+        in place: a plain edit rebuilds it from the fields alone, with a
+        warning naming it, rather than land a field below prose where no
+        reader would find it. A checked edit never rebuilds; it refuses with
+        the fence fault instead, so the file's other content is kept.
+
+        Raises:
+            OSError: If this is a checked edit and *held* cannot be edited
+                in place.
         """
         if held is None:
             return FrontmatterBlock.rendered(fields)
         if held.accepts(fields):
             return held.with_fields(fields)
+        if self._check is not None:
+            raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
         logger.warning("Malformed config (no closing ---): %s", self._path)
         return FrontmatterBlock.rendered(fields)

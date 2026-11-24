@@ -414,13 +414,31 @@ def test_git_failures_are_told_apart_and_stderr_is_logged(
         assert any("fatal: not a git repo" in r.getMessage() for r in caplog.records)
 
 
-def test_allow_refuses_an_unfenced_file_that_already_holds_the_field(
+def test_allow_edits_an_unfenced_file_in_place_when_it_holds_the_field(
     tmp_path: Path,
 ) -> None:
-    """A present key is no licence to edit a file with no closing fence."""
+    """No fence at all is not a fault: the field is edited where it sits."""
     config, path = _global_config(tmp_path)
-    unfenced = 'worker_repos: "[]"\nprose with no fence above or below\n'
-    path.write_bytes(unfenced.encode())
+    prose = "prose with no fence above or below\n"
+    path.write_bytes(('worker_repos: "[]"\n' + prose).encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    assert path.read_text() == f"worker_repos: \"['{repo.resolve()}']\"\n" + prose
+
+
+def test_allow_refuses_to_rebuild_an_unfenced_file_that_lacks_the_field(
+    tmp_path: Path,
+) -> None:
+    """A checked write never rebuilds vox.md around one field."""
+    config, path = _global_config(tmp_path)
+    prose = "# notes\n\nprose with no fence and no field\n"
+    path.write_bytes(prose.encode())
     repo = tmp_path / "repo"
     repo.mkdir()
     policy = WorkerRepoPolicy(config)
@@ -432,7 +450,8 @@ def test_allow_refuses_an_unfenced_file_that_already_holds_the_field(
         pytest.raises(OSError, match="no closing ---"),
     ):
         policy.allow(str(repo))
-    assert path.read_bytes() == unfenced.encode()
+    assert path.read_bytes() == prose.encode()
+    assert policy.repos() == ()
 
 
 def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None:

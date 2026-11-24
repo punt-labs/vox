@@ -579,3 +579,20 @@ async def test_repos_faults_on_an_unclosed_config_as_every_edit_does(
         "id": "m",
         "result": [],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [b"", b"# notes\n\nprose only\n"])
+async def test_repos_lists_empty_for_a_file_with_no_frontmatter(
+    tmp_path: Path, content: bytes
+) -> None:
+    """Only a file that opens a fence and never closes it is refused."""
+    config_dir = _broken_config(tmp_path, content)
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "e"}, ws)
+    assert ws.send_json.call_args.args[0] == {
+        "type": "worker_result",
+        "id": "e",
+        "result": [],
+    }

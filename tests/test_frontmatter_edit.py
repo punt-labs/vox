@@ -80,3 +80,21 @@ def test_block_rebuilds_an_unfenced_file_with_a_warning(
         block = _plain({}).block(_UNFENCED, {"notify": "y"})
     assert block.text == '---\nnotify: "y"\n---\n'
     assert any(str(_PATH) in r.getMessage() for r in caplog.records)
+
+
+def test_a_checked_edit_refuses_to_rebuild_an_unfenced_file() -> None:
+    edit = FrontmatterEdit(_PATH, lambda _held: {"notify": "y"}, lambda _f: None)
+    prose = FrontmatterBlock("# notes\n\nprose only\n")
+    edit.admit(prose)
+    with pytest.raises(OSError, match="no closing ---") as refused:
+        edit.block(prose, {"notify": "y"})
+    assert refused.value.errno == errno.EBADMSG
+    assert refused.value.filename == str(_PATH)
+
+
+def test_a_checked_edit_refuses_an_unclosed_fence_but_not_prose() -> None:
+    edit = FrontmatterEdit(_PATH, lambda _held: {}, lambda _f: None)
+    with pytest.raises(OSError, match="no closing ---"):
+        edit.admit(_UNFENCED)
+    edit.admit(FrontmatterBlock(""))
+    edit.admit(FrontmatterBlock("# notes\n\nprose only\n"))

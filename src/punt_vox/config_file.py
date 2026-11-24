@@ -81,7 +81,7 @@ class ConfigFile:
             UnicodeDecodeError: If the file is not UTF-8.
         """
         block = self.block()
-        if block is not None and not block.fenced:
+        if block is not None and block.unclosed:
             raise OSError(errno.EBADMSG, "no closing ---", str(self._path))
         return block
 

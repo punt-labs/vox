@@ -33,6 +33,7 @@ _FENCED_HEADER_RE = re.compile(
     rf"\A---[ \t]*(?={_NEWLINE}).*?(?P<separator>{_NEWLINE})---[ \t]*{_LINE_END}",
     re.DOTALL,
 )
+_OPENING_FENCE_RE = re.compile(rf"\A---[ \t]*(?={_NEWLINE}|\Z)")
 # Each character that ends a quoted value early, and how a rejection names it.
 _UNQUOTABLE = (("\n", "newlines"), ("\r", "newlines"), ('"', "double-quotes"))
 
@@ -114,6 +115,17 @@ class FrontmatterBlock:
         """Return whether the text opens with a fence pair this can edit inside."""
         _, tail = self._parts
         return bool(tail)
+
+    @property
+    def unclosed(self) -> bool:
+        """Return whether the text opens a fence it never closes.
+
+        Such a file is not frontmatter, whatever it holds: no edit can land
+        in it and no policy read should trust it. An empty file, or prose
+        with no fence at all, is simply a file with no fields.
+        """
+        header, _ = self._parts
+        return not self.fenced and _OPENING_FENCE_RE.match(header) is not None
 
     def accepts(self, keys: Iterable[str]) -> bool:
         """Return whether every key in *keys* has somewhere to go in this block.
