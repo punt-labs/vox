@@ -11,7 +11,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.allowlist import RepoAllowlist
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.workers.repo_spellings import RepoSpellings
+    from punt_vox.repo_spellings import RepoSpellings
 
 logger = logging.getLogger(__name__)
 

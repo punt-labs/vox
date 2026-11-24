@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.voxd._parse import parse_optional_str, parse_required_str
 from punt_vox.voxd.wire_reply import WireReply
-from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

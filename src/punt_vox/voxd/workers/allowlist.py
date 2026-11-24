@@ -11,7 +11,7 @@ from punt_vox.config import ConfigStore
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.voxd.workers.repo_spellings import RepoSpellings
+    from punt_vox.repo_spellings import RepoSpellings
 
 _FIELD = "worker_repos"
 _SHAPE = "worker_repos must be a list of repository paths"

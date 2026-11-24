@@ -16,9 +16,9 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.config import ConfigStore
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.contracts import WorkerLaunch
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
-from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 
 pytestmark = pytest.mark.subprocess

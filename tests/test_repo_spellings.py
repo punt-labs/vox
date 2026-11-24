@@ -1,4 +1,4 @@
-"""Tests for punt_vox.voxd.workers.repo_spellings -- how a disallow names an entry."""
+"""Tests for punt_vox.repo_spellings -- how a disallow names an entry."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from punt_vox.voxd.workers.repo_spellings import RepoSpellings
+from punt_vox.repo_spellings import RepoSpellings
 
 
 def test_the_resolved_path_is_the_spelling_a_refusal_names() -> None:

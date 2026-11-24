@@ -15,10 +15,10 @@ import pytest
 from test_workers import TrivialProfile
 
 from punt_vox.config import ConfigStore
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
-from punt_vox.voxd.workers.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.tmux_probe import TmuxProbe
 from punt_vox.voxd.workers.trust import ClaudeTrust

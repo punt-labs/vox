@@ -10,7 +10,7 @@ from typing import Annotated, final
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.voxd.workers.repo_spellings import RepoSpellings
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.worker_client import WorkerClient
 
 JsonFlag = Annotated[bool, typer.Option("--json", help="Print a JSON array.")]
