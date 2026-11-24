@@ -7,11 +7,46 @@ from pathlib import Path
 from punt_vox.service.keys_env_merge import KeysEnvMerge
 from punt_vox.service.keys_env_report import KeyNotice
 
+_DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
 
-def test_new_value_overrides_the_stored_one() -> None:
-    merge = KeysEnvMerge({"OPENAI_API_KEY": "old"}, {"OPENAI_API_KEY": "sk-new"})
+
+def test_a_different_value_keeps_the_stored_one_and_notes_it() -> None:
+    merge = KeysEnvMerge({"OPENAI_API_KEY": "sk-old"}, {"OPENAI_API_KEY": "sk-new"})
+    assert merge.merged == {"OPENAI_API_KEY": "sk-old"}
+    assert merge.notices == (KeyNotice("OPENAI_API_KEY", _DIFFERS, kept=True),)
+    assert merge.rotated == ()
+
+
+def test_rotate_replaces_a_different_stored_value_and_names_it() -> None:
+    merge = KeysEnvMerge(
+        {"OPENAI_API_KEY": "sk-old"}, {"OPENAI_API_KEY": "sk-new"}, rotate=True
+    )
     assert merge.merged == {"OPENAI_API_KEY": "sk-new"}
     assert merge.notices == ()
+    assert merge.rotated == ("OPENAI_API_KEY",)
+
+
+def test_the_same_value_in_both_places_is_silent() -> None:
+    merge = KeysEnvMerge({"OPENAI_API_KEY": "sk-k"}, {"OPENAI_API_KEY": " sk-k "})
+    assert merge.merged == {"OPENAI_API_KEY": "sk-k"}
+    assert merge.notices == ()
+    assert merge.rotated == ()
+
+
+def test_a_new_key_is_written_without_rotate() -> None:
+    merge = KeysEnvMerge({}, {"OPENAI_API_KEY": "sk-new"})
+    assert merge.merged == {"OPENAI_API_KEY": "sk-new"}
+    assert merge.notices == ()
+    assert merge.rotated == ()
+
+
+def test_rotate_never_writes_an_empty_or_refused_value() -> None:
+    stored = {"ELEVENLABS_API_KEY": "el-old", "OPENAI_API_KEY": "sk-old"}
+    env = {"ELEVENLABS_API_KEY": "", "OPENAI_API_KEY": "sk bad"}
+    merge = KeysEnvMerge(stored, env, rotate=True)
+    assert merge.merged == stored
+    assert merge.rotated == ()
+    assert [n.kept for n in merge.notices] == [True, True]
 
 
 def test_unknown_environment_names_are_ignored() -> None:
@@ -61,8 +96,18 @@ def test_notices_come_in_key_order() -> None:
 
 def test_over_text_parses_the_stored_file() -> None:
     text = "# header\nAWS_PROFILE=dev\nOPENAI_API_KEY=sk-old\n"
-    merge = KeysEnvMerge.over_text(text, {"OPENAI_API_KEY": "sk-new"})
-    assert merge.merged == {"AWS_PROFILE": "dev", "OPENAI_API_KEY": "sk-new"}
+    merge = KeysEnvMerge.over_text(text, {"TTS_PROVIDER": "say"})
+    assert merge.merged == {
+        "AWS_PROFILE": "dev",
+        "OPENAI_API_KEY": "sk-old",
+        "TTS_PROVIDER": "say",
+    }
+
+
+def test_over_text_passes_rotate_through() -> None:
+    text = "OPENAI_API_KEY=sk-old\n"
+    merge = KeysEnvMerge.over_text(text, {"OPENAI_API_KEY": "sk-new"}, rotate=True)
+    assert merge.merged == {"OPENAI_API_KEY": "sk-new"}
 
 
 def test_text_is_the_header_then_sorted_lines() -> None:
@@ -77,3 +122,4 @@ def test_report_carries_the_path_and_the_notices() -> None:
     report = merge.report(Path("/k/keys.env"))
     assert report.path == Path("/k/keys.env")
     assert report.notices == merge.notices
+    assert report.rotated == merge.rotated

@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox daemon install` (and `install.sh`) no longer replaces a key stored in
+  `keys.env` with a different value from the installing shell, which could
+  swap a working key for a revoked one and fail speech with HTTP 401. The
+  stored key is kept and the install output names it; `--rotate-keys`
+  replaces it and reports each key it replaced. Values are never shown.
+  (PL-1322)
+
 - `vox say --provider <other>` without `--voice` now uses that provider's
   default voice instead of failing with `VoiceNotFoundError` on the saved
   voice of the configured provider. (PL-799)

@@ -224,6 +224,48 @@ def test_install_status_reports_skipped_keys_by_name_only(
     assert "sk bad" not in result
 
 
+@pytest.mark.parametrize(
+    ("rotate", "stored_after", "line"),
+    [
+        pytest.param(
+            False,
+            "sk-working",
+            "ELEVENLABS_API_KEY: the environment's value differs "
+            "(--rotate-keys replaces it); kept the stored value",
+            id="kept",
+        ),
+        pytest.param(
+            True,
+            "sk-shell",
+            "~ ELEVENLABS_API_KEY: replaced the stored value",
+            id="rotated",
+        ),
+    ],
+)
+def test_install_rotates_a_stored_key_only_when_asked(
+    rotate: bool,
+    stored_after: str,
+    line: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A different shell key replaces the stored one only with rotate_keys."""
+    fake_home = _setup_fake_env(tmp_path, monkeypatch)
+    _on(monkeypatch, "linux")
+    _fake_backend(monkeypatch, SystemdBackend)
+    keys_path = fake_home / ".punt-labs" / "vox" / "keys.env"
+    keys_path.parent.mkdir(parents=True)
+    keys_path.write_text("ELEVENLABS_API_KEY=sk-working\n")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-shell")
+
+    result = ServiceInstaller().install(rotate_keys=rotate)
+
+    assert f"ELEVENLABS_API_KEY={stored_after}\n" in keys_path.read_text()
+    assert line in result
+    assert "sk-working" not in result
+    assert "sk-shell" not in result
+
+
 def test_install_fails_when_the_unit_never_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

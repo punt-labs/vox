@@ -14,6 +14,7 @@ _STAND_INS: dict[str, str] = {
     "AWS_PROFILE": "boto3 uses the default profile",
 }
 _UNKEPT = {key: f"not written; {stand_in}" for key, stand_in in _STAND_INS.items()}
+_REPLACED = "    ~ {}: replaced the stored value"
 
 
 @final
@@ -40,11 +41,16 @@ class KeyNotice:
 @final
 @dataclass(frozen=True, slots=True)
 class KeysEnvReport:
-    """Where one ``keys.env`` write went and every key it did not take."""
+    """Where one ``keys.env`` write went, every key it did not take, and rotations.
+
+    *rotated* names the keys whose stored value ``--rotate-keys`` replaced.
+    """
 
     path: Path
     notices: tuple[KeyNotice, ...]
+    rotated: tuple[str, ...] = ()
 
     def notice_lines(self) -> tuple[str, ...]:
-        """Return one indented status line per notice, for the install output."""
-        return tuple(f"    ! {notice}" for notice in self.notices)
+        """Return one indented status line per notice and rotation, for install."""
+        skipped = (f"    ! {notice}" for notice in self.notices)
+        return (*skipped, *map(_REPLACED.format, self.rotated))

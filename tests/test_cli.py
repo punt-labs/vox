@@ -19,7 +19,7 @@ from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
-from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.cli_daemon import DaemonCli
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
@@ -3006,9 +3006,27 @@ class TestDaemonLifecycleCommands:
 
     def test_daemon_verb_set(self) -> None:
         """The daemon group: install, uninstall, start, stop, restart, status."""
-        group = build_daemon_app(MagicMock(), MagicMock())
+        group = DaemonCli.typer_app(MagicMock(), MagicMock())
         verbs = {c.name for c in group.registered_commands}
         assert verbs == {"install", "uninstall", "start", "stop", "restart", "status"}
+
+    @pytest.mark.parametrize(
+        ("argv", "rotate"),
+        [
+            pytest.param([], False, id="default-keeps-stored-keys"),
+            pytest.param(["--rotate-keys"], True, id="rotate-keys"),
+        ],
+    )
+    def test_install_passes_rotate_keys_to_the_service(
+        self,
+        argv: list[str],
+        rotate: bool,
+    ) -> None:
+        """``--rotate-keys`` is the only way install replaces a stored key."""
+        with patch(f"{_CLI_DAEMON}.svc_install", return_value="ok") as svc:
+            result = CliRunner().invoke(app, ["daemon", "install", *argv])
+        assert result.exit_code == 0
+        svc.assert_called_once_with(rotate_keys=rotate)
 
     @pytest.mark.parametrize(
         ("verb", "key", "target"),

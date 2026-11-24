@@ -82,3 +82,15 @@ def test_report_renders_one_indented_line_per_notice() -> None:
         "    ! AWS_PROFILE: empty in the environment; kept the stored value",
         f"    ! OPENAI_API_KEY: empty in the environment; {unkept}",
     )
+
+
+def test_report_renders_a_rotated_key_after_the_notices() -> None:
+    report = KeysEnvReport(
+        Path("/k/keys.env"),
+        (KeyNotice("AWS_PROFILE", "empty in the environment", kept=True),),
+        ("OPENAI_API_KEY",),
+    )
+    assert report.notice_lines() == (
+        "    ! AWS_PROFILE: empty in the environment; kept the stored value",
+        "    ~ OPENAI_API_KEY: replaced the stored value",
+    )
