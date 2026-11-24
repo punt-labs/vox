@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lux scene trees and patches now report themselves as unhashable while
+  retaining structural equality.
+
 - Local `vox daemon` lifecycle commands ignore invalid `serve.port` hints
   and no longer crash while clearing a stale hint with thousands of digits.
   (PL-1432)
