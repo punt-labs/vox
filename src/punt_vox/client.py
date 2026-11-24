@@ -15,7 +15,7 @@ import tempfile
 import uuid
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -41,6 +41,7 @@ from punt_vox.types_programs import (
     PromptSet,
 )
 from punt_vox.types_provider import ProviderStatusPayload
+from punt_vox.types_recording import RecordingFetchRequest
 from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
@@ -81,16 +82,8 @@ _RECORD_TIMEOUT_MAX = 600.0
 _TIMEOUT_MUSIC_NEW = 600.0
 
 
-class _RecordingFetch(TypedDict):
-    """Request for one recording's bytes."""
-
-    type: Literal["fetch"]
-    id: str
-    ref: str
-
-
 def _recording_fetch(ref: str) -> dict[str, object]:
-    msg = _RecordingFetch(type="fetch", id=uuid.uuid4().hex[:12], ref=ref)
+    msg = RecordingFetchRequest(type="fetch", id=uuid.uuid4().hex[:12], ref=ref)
     return dict(msg)
 
 

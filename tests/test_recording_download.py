@@ -90,19 +90,38 @@ def test_save_falls_back_to_an_exclusive_copy(
 def test_nonprivate_directory_never_contains_a_named_staging_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    make_directory = tempfile.TemporaryDirectory
+    make_directory = tempfile.mkdtemp
 
-    def nonprivate_directory(**_kwargs: object) -> tempfile.TemporaryDirectory[str]:
+    def nonprivate_directory(**_kwargs: object) -> str:
         directory = make_directory(dir=tmp_path)
-        Path(directory.name).chmod(0o755)
+        Path(directory).chmod(0o755)
         return directory
 
     def fetch(sink: IO[bytes]) -> int:
         assert not list(tmp_path.iterdir())
         return _fetch(sink)
 
-    monkeypatch.setattr(tempfile, "TemporaryDirectory", nonprivate_directory)
+    monkeypatch.setattr(tempfile, "mkdtemp", nonprivate_directory)
     dest = tmp_path / "rec.mp3"
     assert RecordingDownload(dest).save(fetch) == 4
     assert dest.read_bytes() == b"DATA"
     assert list(tmp_path.iterdir()) == [dest]
+
+
+def test_cleanup_does_not_remove_unrelated_files_after_directory_rename(
+    tmp_path: Path,
+) -> None:
+    moved = tmp_path / "renamed"
+
+    def fetch(sink: IO[bytes]) -> int:
+        staged = next(tmp_path.iterdir())
+        staged.rename(moved)
+        staged.mkdir()
+        (staged / "unrelated").write_bytes(b"keep")
+        return _fetch(sink)
+
+    dest = tmp_path / "rec.mp3"
+    assert RecordingDownload(dest).save(fetch) == 4
+    assert list(moved.iterdir()) == []
+    assert next(tmp_path.glob(".vox-rec-*/unrelated")).read_bytes() == b"keep"
+    assert dest.read_bytes() == b"DATA"

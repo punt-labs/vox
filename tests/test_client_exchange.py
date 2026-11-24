@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import hashlib
 import io
 import json
@@ -14,6 +15,7 @@ import pytest
 import websockets
 
 from punt_vox.client_errors import (
+    FetchWriteError,
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
@@ -158,6 +160,20 @@ def test_a_short_sink_write_stops_the_fetch() -> None:
     with pytest.raises(OSError, match="incomplete write for fetch chunk 0"):
         asyncio.run(run())
     assert ws.recv.await_count == 2  # no read after the failed write
+
+
+def test_sink_os_error_keeps_its_errno() -> None:
+    exchange, ws = _exchange(*_fetch_frames(b"abcdef", chunk=3))
+    sink = MagicMock(spec=io.BytesIO)
+    sink.write.side_effect = OSError(errno.ENOSPC, "disk full")
+
+    async def run() -> int:
+        return await exchange.receive_fetch(_later(1), sink)
+
+    with pytest.raises(FetchWriteError) as caught:
+        asyncio.run(run())
+    assert caught.value.errno == errno.ENOSPC
+    assert ws.recv.await_count == 2
 
 
 def test_a_non_object_fetch_frame_is_a_protocol_error() -> None:

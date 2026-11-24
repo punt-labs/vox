@@ -8,13 +8,11 @@ import os
 import shutil
 import stat
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
-
-from punt_vox.pinned_directory import PinnedDirectory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
-    from pathlib import Path
     from typing import IO
 
 _STAGED_FILE = "recording"
@@ -54,22 +52,53 @@ class RecordingDownload:
     @contextlib.contextmanager
     def _staging(self) -> Generator[tuple[IO[bytes], int | None]]:
         """Name the staging file only in a directory that is actually private."""
-        with (
-            tempfile.TemporaryDirectory(
-                dir=self._dest.parent, prefix=".vox-rec-"
-            ) as tmp,
-            PinnedDirectory.opened(self._dest.parent / tmp) as directory,
-        ):
-            info = os.fstat(directory.fd)
-            if info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0:
-                flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
-                fd = os.open(_STAGED_FILE, flags, 0o600, dir_fd=directory.fd)
-                with os.fdopen(fd, "w+b") as staged:
-                    yield staged, directory.fd
-                return
+        tmp = Path(tempfile.mkdtemp(dir=self._dest.parent, prefix=".vox-rec-"))
+        try:
+            dir_fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                if self._is_private(dir_fd):
+                    with self._named_staging(dir_fd) as staged:
+                        yield staged, dir_fd
+                    return
+            finally:
+                os.close(dir_fd)
+        finally:
+            self._remove_empty_staging_directory(tmp)
         # Filesystems that ignore mkdtemp's mode cannot safely stage by name.
         with tempfile.TemporaryFile(dir=self._dest.parent) as staged:
             yield staged, None
+
+    @staticmethod
+    def _is_private(dir_fd: int) -> bool:
+        """Check the observed staging directory permissions, not mkdtemp's intent."""
+        info = os.fstat(dir_fd)
+        return info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _named_staging(dir_fd: int) -> Generator[IO[bytes]]:
+        """Create and unlink only our own file, relative to the same directory."""
+        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+        fd = os.open(_STAGED_FILE, flags, 0o600, dir_fd=dir_fd)
+        try:
+            with os.fdopen(fd, "w+b") as staged:
+                yield staged
+        finally:
+            os.unlink(_STAGED_FILE, dir_fd=dir_fd)
+
+    @staticmethod
+    def _remove_empty_staging_directory(tmp: Path) -> None:
+        """Never recursively delete whatever now occupies the staging path."""
+        try:
+            tmp.rmdir()
+        except OSError as exc:
+            if exc.errno not in {
+                errno.EEXIST,
+                errno.ENOENT,
+                errno.ENOTDIR,
+                errno.ENOTEMPTY,
+            }:
+                raise
 
     def _publish(self, staged: IO[bytes], dir_fd: int | None) -> None:
         """Give the verified inode a final name, copying only if links fail."""

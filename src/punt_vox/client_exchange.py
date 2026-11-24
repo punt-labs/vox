@@ -123,7 +123,7 @@ class VoxdExchange:
             try:
                 written = sink.write(chunk)
             except OSError as exc:
-                raise FetchWriteError(str(exc)) from exc
+                raise FetchWriteError(*exc.args) from exc
             if written != len(chunk):
                 raise FetchWriteError(f"incomplete write for fetch chunk {seq}")
         return verifier.finish(await self.recv_before(deadline, "fetch_end"))
