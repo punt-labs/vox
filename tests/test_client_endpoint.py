@@ -21,11 +21,15 @@ from punt_vox.service.health import HealthTarget
 # ---------------------------------------------------------------------------
 
 
-def test_read_port_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("content", "port"),
+    [("1", 1), ("9999", 9999), ("65535", 65535), (" \uff10\uff11\n", 1)],
+)
+def test_read_port_file(content: str, port: int, tmp_path: Path) -> None:
     port_file = tmp_path / "serve.port"
-    port_file.write_text("9999")
+    port_file.write_text(content)
     with patch("punt_vox.client_endpoint._user_run_dir", return_value=tmp_path):
-        assert RunFiles.port() == 9999
+        assert RunFiles.port() == port
 
 
 def test_read_port_file_missing(tmp_path: Path) -> None:
@@ -104,16 +108,21 @@ def test_an_unreadable_serve_port_is_not_a_refusal(
     _not_a_refusal(r"cannot read .*serve\.port")
 
 
-@pytest.mark.parametrize("content", ["garbage", "", "84 21"])
+@pytest.mark.parametrize(
+    "content",
+    ["garbage", "", "84 21", "-1", "0", "65536", pytest.param("9" * 4301, id="long")],
+)
 def test_a_corrupt_serve_port_is_not_a_refusal(
     content: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _local_only(tmp_path, monkeypatch)
     (tmp_path / "serve.port").write_text(content)
-    _not_a_refusal(r"serve\.port .*does not hold a port")
+    _not_a_refusal(r"serve\.port: .* is not a port")
 
 
-@pytest.mark.parametrize("raw", ["abc", "70000", "0"])
+@pytest.mark.parametrize(
+    "raw", ["abc", "70000", "0", pytest.param("9" * 4301, id="long")]
+)
 def test_a_malformed_voxd_port_is_not_a_refusal(
     raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -121,7 +130,7 @@ def test_a_malformed_voxd_port_is_not_a_refusal(
     _local_only(tmp_path, monkeypatch)
     (tmp_path / "serve.port").write_text("8421")
     monkeypatch.setenv("VOXD_PORT", raw)
-    _not_a_refusal(rf"VOXD_PORT={raw!r} is not a port")
+    _not_a_refusal(rf"VOXD_PORT={raw[:32]!r}.* is not a port")
 
 
 def test_a_remote_voxd_host_with_no_port_is_not_a_refusal(

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject malformed daemon discovery ports before connecting, so status reports
+  an unknown daemon state rather than mistaking it for a stopped daemon. (PL-1421)
+
+- Keep the daemon responsive to other requests while it hashes a large store
+  file before sending it. (PL-1430)
+
 - Treat non-object JSON replies from voxd as protocol errors. Instead of
   crashing, `vox status` reports `unknown`. `vox daemon status` reports
   `unresponsive` for an identified local daemon and `unknown` for an
