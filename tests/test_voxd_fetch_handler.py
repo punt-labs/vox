@@ -218,6 +218,21 @@ class TestMusicPartFetch:
         assert sent[-1]["type"] == "error"
         assert "requires a part" in str(sent[-1]["message"])
 
+    def test_missing_part_is_a_client_rejection(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handler, _, lib = _handler(tmp_path)
+        aid = asyncio.run(lib.new("a prompt", None))
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            handler({"id": "f1", "album": aid.value, "part": "missing.mp3"}, ws)
+        )
+
+        assert [f["type"] for f in sent] == ["error"]
+        assert sent[0]["message"] == "no part name 'missing.mp3'"
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+
     def test_symlink_part_is_refused_not_followed(self, tmp_path: Path) -> None:
         """A symlink part is rejected before the first byte -- its target's bytes
         are never streamed.
