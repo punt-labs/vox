@@ -15,54 +15,45 @@ import base64
 import hashlib
 import io
 import logging
+from threading import Event, get_ident
 from typing import TYPE_CHECKING, final
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from punt_vox.voxd.chunked_fetch import ChunkedTransfer
+from punt_vox.voxd.fetch_digest import FetchDigest
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _CHUNK = 4  # a tiny bound so a handful of bytes spans several frames
 
 
-def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
+def _capturing_ws(
+    on_begin: Callable[[], object] | None = None,
+) -> tuple[object, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
     @final
     class _WS:
         async def send_json(self, payload: dict[str, object]) -> None:
             sent.append(payload)
+            if on_begin is not None and payload["type"] == "fetch_begin":
+                on_begin()
 
     return _WS(), sent
 
 
-def _run(path: Path, ref: str, chunk: int = _CHUNK) -> list[dict[str, object]]:
-    ws, sent = _capturing_ws()
+def _run(
+    path: Path, ref: str, *, on_begin: Callable[[], object] | None = None
+) -> list[dict[str, object]]:
+    ws, sent = _capturing_ws(on_begin)
     reply = WireReply(ws, "f1")  # type: ignore[arg-type]
-    asyncio.run(ChunkedTransfer(reply, chunk).stream(path, ref))
+    asyncio.run(ChunkedTransfer(reply, FetchDigest(_CHUNK)).stream(path, ref))
     return sent
-
-
-def _stub_two_passes(
-    monkeypatch: pytest.MonkeyPatch, path: Path, measured: bytes, sent: bytes
-) -> None:
-    """Make ``path.open`` return ``measured`` bytes on the 1st call, ``sent`` after.
-
-    Models a file that changed between the measure pass and the send pass, so the
-    two passes see different content without racing the real filesystem.
-    """
-    calls = {"n": 0}
-
-    def two_files(self: Path, *args: object, **kwargs: object) -> object:
-        del self, args, kwargs
-        calls["n"] += 1
-        return io.BytesIO(measured if calls["n"] == 1 else sent)
-
-    monkeypatch.setattr(type(path), "open", two_files)
 
 
 def _reassemble(frames: list[dict[str, object]]) -> bytes:
@@ -76,29 +67,45 @@ def _reassemble(frames: list[dict[str, object]]) -> bytes:
     return data
 
 
-class TestChunkBoundValidation:
-    def test_positive_bound_constructs(self) -> None:
-        """A positive chunk bound instantiates the transport."""
-        ws, _ = _capturing_ws()
-        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
-        assert ChunkedTransfer(reply, 1) is not None
-
-    def test_zero_bound_rejected(self) -> None:
-        """A zero chunk bound is refused -- it would divide by zero in _measure."""
-        ws, _ = _capturing_ws()
-        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="chunk_bytes must be positive"):
-            ChunkedTransfer(reply, 0)
-
-    def test_negative_bound_rejected(self) -> None:
-        """A negative chunk bound is refused -- it breaks the bounded-memory read."""
-        ws, _ = _capturing_ws()
-        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
-        with pytest.raises(ValueError, match="chunk_bytes must be positive"):
-            ChunkedTransfer(reply, -1)
-
-
 class TestOrderedDelivery:
+    def test_measure_reads_off_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "r.mp3"
+        contents = b"abcdefghij"
+        path.write_bytes(contents)
+        read_on: list[int] = []
+
+        @final
+        class _TrackingFile(io.BytesIO):
+            def read(self, size: int | None = -1, /) -> bytes:
+                read_on.append(get_ident())
+                return super().read(size)
+
+        def open_file(_: Path) -> io.BytesIO:
+            return _TrackingFile(contents)
+
+        loop_thread = get_ident()
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(open_file))
+
+        during_measure: list[int] = []
+        frames = _run(path, "r.mp3", on_begin=lambda: during_measure.extend(read_on))
+
+        assert during_measure and loop_thread not in during_measure
+        assert _reassemble(frames) == contents
+
+    def test_replaced_path_sends_the_measured_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "r.mp3"
+        contents = b"abcdefghij"
+        path.write_bytes(contents)
+        replacement = tmp_path / "new.mp3"
+        replacement.write_bytes(b"0123456789")
+
+        frames = _run(path, path.name, on_begin=lambda: replacement.replace(path))
+
+        assert _reassemble(frames) == contents
+        assert frames[0]["sha256"] == hashlib.sha256(contents).hexdigest()
+
     def test_ordered_contiguous_seq(self, tmp_path: Path) -> None:
         """Every chunk carries the next seq: 0, 1, ... with no gap or repeat."""
         path = tmp_path / "r.mp3"
@@ -152,31 +159,90 @@ class TestOrderedDelivery:
         assert frames[0]["sha256"] == hashlib.sha256(blob).hexdigest()
 
 
+class TestDigestConcurrency:
+    def test_cancel_stops_next_read_and_releases_slot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "r.mp3"
+        path.write_bytes(b"abcdefghij")
+        original_open = FetchDigest._open
+        unblock = Event()
+        closed: list[bool] = []
+        reads: list[int | None] = []
+        opened: list[Path] = []
+
+        async def exercise() -> None:
+            loop = asyncio.get_running_loop()
+            both_hashing = asyncio.Event()
+            started = 0
+            loop_errors: list[object] = []
+            loop.set_exception_handler(lambda _, context: loop_errors.append(context))
+
+            def note_start() -> None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_hashing.set()
+
+            @final
+            class _BlockedFile(io.BytesIO):
+                def read(self, size: int | None = -1, /) -> bytes:
+                    reads.append(size)
+                    loop.call_soon_threadsafe(note_start)
+                    assert unblock.wait(5), "test did not release the hash worker"
+                    return super().read(size)
+
+                def close(self) -> None:
+                    closed.append(True)
+                    super().close()
+
+            def open_file(file: Path) -> object:
+                opened.append(file)
+                if len(opened) <= 2:
+                    return _BlockedFile(b"abcdefghij")
+                return original_open(file)
+
+            monkeypatch.setattr(FetchDigest, "_open", staticmethod(open_file))
+            digest = FetchDigest(_CHUNK)
+            ws, sent = _capturing_ws()
+            reply = WireReply(ws, "f1")  # type: ignore[arg-type]
+            tasks = [
+                asyncio.create_task(
+                    ChunkedTransfer(reply, digest).stream(path, path.name)
+                )
+                for _ in range(3)
+            ]
+            try:
+                await asyncio.wait_for(both_hashing.wait(), timeout=5)
+                tasks[0].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await tasks[0]
+                tasks[1].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await tasks[1]
+                assert len(opened) == 2
+            finally:
+                unblock.set()
+            await asyncio.wait_for(tasks[2], timeout=5)
+            assert _reassemble(sent) == b"abcdefghij"
+            assert not loop_errors
+
+        asyncio.run(exercise())
+        assert reads == [_CHUNK, _CHUNK]
+        assert len(closed) == 2
+
+
 class TestAtomicTerminal:
     def test_mid_stream_fault_ends_with_error_not_end(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A read fault after fetch_begin ends with an error terminal, no fetch_end.
-
-        The measure pass opens the file once; the send pass opens it again. Failing
-        the second open models the file vanishing mid-stream: begin is announced,
-        then an error terminal, so the client discards its partial (no complete
-        file is ever claimed).
-        """
+        """A read fault after fetch_begin ends with an error terminal, no fetch_end."""
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abcdefghij")
-        contents = path.read_bytes()
-        calls = {"n": 0}
+        handle = _FailingReadFile(b"abcdefghij")
 
-        def flaky_open(self: Path, *args: object, **kwargs: object) -> object:
-            del self, args, kwargs
-            calls["n"] += 1
-            if calls["n"] >= 2:
-                raise OSError("vanished mid-stream")
-            return io.BytesIO(contents)
-
-        monkeypatch.setattr(type(path), "open", flaky_open)
-        frames = _run(path, "r.mp3")
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(handle.open_for_test))
+        frames = _run(path, "r.mp3", on_begin=handle.fail)
 
         assert frames[0]["type"] == "fetch_begin"
         assert frames[-1]["type"] == "error"
@@ -189,17 +255,23 @@ class TestAtomicTerminal:
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abcdefghij")
 
-        def boom(self: Path, *args: object, **kwargs: object) -> object:
+        def boom(_: Path) -> object:
             raise OSError("cannot open")
 
-        monkeypatch.setattr(type(path), "open", boom)
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(boom))
         frames = _run(path, "r.mp3")
 
         assert [f["type"] for f in frames] == ["error"]  # no begin, no chunk
 
-    def test_shrunk_file_aborts(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_measure_refuses_a_path_replaced_by_a_symlink(self, tmp_path: Path) -> None:
+        target = tmp_path / "target.mp3"
+        target.write_bytes(b"abcdefghij")
+        path = tmp_path / "r.mp3"
+        path.symlink_to(target)
+
+        assert [f["type"] for f in _run(path, path.name)] == ["error"]
+
+    def test_shrunk_file_aborts(self, tmp_path: Path) -> None:
         """A file that yields fewer bytes than declared aborts, never a false end.
 
         The measure pass sees 10 bytes; the send pass sees a shrunk 3, so the
@@ -207,8 +279,7 @@ class TestAtomicTerminal:
         """
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abcdefghij")
-        _stub_two_passes(monkeypatch, path, b"abcdefghij", b"abc")
-        frames = _run(path, "r.mp3")
+        frames = _run(path, "r.mp3", on_begin=lambda: path.write_bytes(b"abc"))
 
         assert frames[0]["type"] == "fetch_begin"
         assert frames[0]["bytes"] == 10
@@ -216,7 +287,29 @@ class TestAtomicTerminal:
         assert not [f for f in frames if f["type"] == "fetch_end"]
 
 
-class TestPeerGoneMidStream:
+class TestPeerGone:
+    def test_pump_does_not_start_when_peer_disconnects_at_begin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "r.mp3"
+        path.write_bytes(b"abcdefghij")
+        handle = _FailingReadFile(b"abcdefghij")
+        attempted: list[object] = []
+
+        @final
+        class _GoneAtBegin:
+            async def send_json(self, payload: dict[str, object]) -> None:
+                attempted.append(payload["type"])
+                handle.fail()
+                raise WebSocketDisconnect(code=1006)
+
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(handle.open_for_test))
+        reply = WireReply(_GoneAtBegin(), "f1")  # type: ignore[arg-type]
+        asyncio.run(ChunkedTransfer(reply, FetchDigest(_CHUNK)).stream(path, "r.mp3"))
+
+        assert handle.closed
+        assert attempted == ["fetch_begin"]
+
     def test_pump_stops_encoding_when_peer_disconnects(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -252,7 +345,7 @@ class TestPeerGoneMidStream:
                     raise WebSocketDisconnect(code=1006)
 
         reply = WireReply(_GoneAfterFirstChunk(), "f1")  # type: ignore[arg-type]
-        asyncio.run(ChunkedTransfer(reply, _CHUNK).stream(path, "r.mp3"))
+        asyncio.run(ChunkedTransfer(reply, FetchDigest(_CHUNK)).stream(path, "r.mp3"))
 
         # Chunk 0 (delivered) and chunk 1 (the send that finds the gone peer) are
         # encoded; the pump then stops, so chunk 2 is never encoded.
@@ -262,9 +355,7 @@ class TestPeerGoneMidStream:
 
 
 class TestGrownFile:
-    def test_grown_file_transfers_declared_prefix_bounded(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_grown_file_transfers_declared_prefix_bounded(self, tmp_path: Path) -> None:
         """A file grown after measure still transfers exactly its declared prefix.
 
         The measure pass sees 8 bytes; the send pass sees a grown 20. The stream
@@ -273,8 +364,9 @@ class TestGrownFile:
         """
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abcdefgh")
-        _stub_two_passes(monkeypatch, path, b"abcdefgh", b"abcdefgh" + b"X" * 12)
-        frames = _run(path, "r.mp3")
+        frames = _run(
+            path, "r.mp3", on_begin=lambda: path.write_bytes(b"abcdefgh" + b"X" * 12)
+        )
 
         assert frames[0]["bytes"] == 8
         assert frames[-1]["type"] == "fetch_end"
@@ -294,10 +386,10 @@ class TestAudit:
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abc")
 
-        def boom(self: Path, *args: object, **kwargs: object) -> object:
+        def boom(_: Path) -> object:
             raise OSError("nope")
 
-        monkeypatch.setattr(type(path), "open", boom)
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(boom))
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             _run(path, "r.mp3")
         assert any(
@@ -317,21 +409,28 @@ class TestAudit:
         """A fault after fetch_begin also audits as a fault, never a rejection."""
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abcdefghij")
-        contents = path.read_bytes()
-        calls = {"n": 0}
-
-        def flaky_open(self: Path, *args: object, **kwargs: object) -> object:
-            del self, args, kwargs
-            calls["n"] += 1
-            if calls["n"] >= 2:
-                raise OSError("vanished mid-stream")
-            return io.BytesIO(contents)
-
-        monkeypatch.setattr(type(path), "open", flaky_open)
+        handle = _FailingReadFile(b"abcdefghij")
+        monkeypatch.setattr(FetchDigest, "_open", staticmethod(handle.open_for_test))
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            _run(path, "r.mp3")
+            _run(path, "r.mp3", on_begin=handle.fail)
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+
+@final
+class _FailingReadFile(io.BytesIO):
+    _failing = False
+
+    def open_for_test(self, _: Path) -> _FailingReadFile:
+        return self
+
+    def fail(self) -> None:
+        self._failing = True
+
+    def read(self, size: int | None = -1, /) -> bytes:
+        if self._failing:
+            raise OSError("read fault")
+        return super().read(size)

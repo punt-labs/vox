@@ -154,9 +154,8 @@ class VoxdTransport:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         async with self._exchange(msg) as exchange:
             return await exchange.reply(timeout)
@@ -180,9 +179,8 @@ class VoxdTransport:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         async with self._exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
@@ -209,16 +207,15 @@ class VoxdTransport:
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid, object fields fail validation,
-                or the response deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object, fields fail
+                validation, or the response deadline expires.
         """
         responses: list[dict[str, Any]] = []
         expected = early_terminal or terminal_type
         async with self._exchange(msg) as exchange:
             deadline = asyncio.get_running_loop().time() + timeout
             while True:
-                resp = exchange.decode(await exchange.recv_before(deadline, expected))
+                resp = await exchange.recv_before(deadline, expected)
                 responses.append(resp)
                 resp_type = resp.get("type")
                 if resp_type == terminal_type:
