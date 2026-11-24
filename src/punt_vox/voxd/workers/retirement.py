@@ -98,24 +98,36 @@ class WorkerRetirement:
         if alive:
             self._inventory.confirm(record.id)
         elif observed.state == "exited" and record.state != "exited":
-            self._inventory.close(record.id)
-            try:
-                self._inventory.save(observed)
-            except (OSError, ValueError) as exc:
-                logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
-            else:
-                self._release(record.id)
-                self.schedule(observed.id)
+            self._retire(observed)
         return observed
 
+    def _retire(self, observed: WorkerRecord) -> None:
+        """Checkpoint a newly confirmed exit, then release it and queue cleanup."""
+        self._inventory.close(observed.id)
+        try:
+            self._inventory.save(observed)
+        except (OSError, ValueError) as exc:
+            logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
+            return
+        self._release(observed.id)
+        self.schedule(observed.id)
+
     def _cleanup(self, worker_id: str) -> None:
+        """Settle the owed debts, and any a stop queued while they ran.
+
+        The queue holds one job per worker, so a stop that marks a debt
+        pending during this job cannot queue its own; the job settles it
+        before it ends. Only a debt this job did not run repeats the loop,
+        never one it ran and recorded as failed.
+        """
         try:
             record = self._inventory.get(worker_id)
             if not self._settlement.owed(record):
                 return
-            result = self._settlement.settle(record)
-            self._inventory.update(
-                record.id, lambda current: self._settlement.fold(current, result)
-            )
+            while True:
+                settled = self._settlement.settle(record)
+                record = self._inventory.update(record.id, settled.fold)
+                if not settled.left_owing(record):
+                    return
         except (OSError, ValueError) as exc:
             logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)
