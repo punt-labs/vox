@@ -100,7 +100,7 @@ class InputDevice:
 
     @staticmethod
     def _positive_rate(default_samplerate_hz: float) -> float:
-        if default_samplerate_hz <= 0:
+        if not default_samplerate_hz > 0:  # Written so NaN fails the check too.
             msg = f"input device sample rate must be positive: {default_samplerate_hz}"
             raise ValueError(msg)
         return default_samplerate_hz

@@ -1,7 +1,7 @@
 """Live microphone capture, yielding :class:`AudioChunk` at a fixed cadence.
 
 The backend that names the device and opens the stream is injected; the
-production one is :class:`~.input_device.PortAudio`. :meth:`MicAudioSource.open`
+production one is :class:`~.portaudio.PortAudio`. :meth:`MicAudioSource.open`
 holds the device from the moment it returns, so a caller can prove the
 microphone works before doing anything that depends on it; the returned
 :class:`~.mic_capture.MicCapture` yields the chunks and releases the device.

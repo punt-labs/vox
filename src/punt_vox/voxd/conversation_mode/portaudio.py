@@ -38,8 +38,14 @@ class PortAudio:
     def device() -> InputDevice:
         """Ask PortAudio for the default input device.
 
+        A device PortAudio reports with no name or a sample rate that is not
+        positive is as unusable as no device: the caller releases the call
+        ID on an :class:`OSError`, so the :class:`ValueError` the device's
+        validation raises is converted here rather than escaping as one.
+
         Raises:
-            OSError: When PortAudio has no default input device.
+            OSError: When PortAudio has no default input device, or reports
+                one with no name or a non-positive sample rate.
         """
         from sounddevice import PortAudioError, query_devices
 
@@ -47,7 +53,10 @@ class PortAudio:
             info = query_devices(kind="input")
         except PortAudioError as exc:
             raise OSError(f"no default input device: {exc}") from exc
-        return InputDevice(str(info["name"]), float(info["default_samplerate"]))
+        try:
+            return InputDevice(str(info["name"]), float(info["default_samplerate"]))
+        except ValueError as exc:
+            raise OSError(f"no usable default input device: {exc}") from exc
 
     @staticmethod
     def open(

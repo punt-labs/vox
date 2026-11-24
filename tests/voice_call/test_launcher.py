@@ -13,6 +13,7 @@ import asyncio
 import gc
 import json
 import logging
+import sys
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
     from contextlib import AbstractContextManager
     from uuid import UUID
+
+    from sounddevice import DeviceInfo
 
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
@@ -629,6 +632,39 @@ class TestMicrophoneBeforeDial:
         with pytest.raises(OSError, match="cannot open input device Fake Microphone"):
             await launcher.launch(call_id, request)
         assert attempts[0].closed
+        assert list(tmp_path.iterdir()) == []  # the reservation was undone
+        active = await launcher.launch(call_id, request)
+        await active.wait_connected(5)
+        await active.cancel()
+        assert len(connector.connections) == 1
+        assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
+
+    async def test_a_device_reported_without_a_rate_gives_the_call_id_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A device PortAudio reports with no sample rate is a refused microphone.
+
+        The device's validation raises ValueError, which the launcher does not
+        release the trace on; the backend converts it to the OSError the
+        launcher does, so a retry with the same call ID reaches the connector.
+        """
+        backend = fake_sounddevice(monkeypatch)
+        sounddevice = sys.modules["sounddevice"]
+        queries: list[int] = []
+
+        def rate_missing_once(kind: str) -> DeviceInfo:
+            del kind
+            queries.append(1)
+            rate = 0.0 if len(queries) == 1 else backend.device().default_samplerate_hz
+            return {"name": backend.device().name, "default_samplerate": rate}
+
+        monkeypatch.setattr(sounddevice, "query_devices", rate_missing_once)
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        call_id = uuid4()
+        request: dict[str, object] = {"type": "call_start", "echo_control": "headset"}
+        with pytest.raises(OSError, match="no usable default input device"):
+            await launcher.launch(call_id, request)
         assert list(tmp_path.iterdir()) == []  # the reservation was undone
         active = await launcher.launch(call_id, request)
         await active.wait_connected(5)

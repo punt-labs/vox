@@ -77,6 +77,29 @@ def test_no_default_device_is_an_oserror_carrying_portaudios_text(
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
 
 
+@pytest.mark.parametrize(
+    ("name", "default_samplerate", "reason"),
+    [
+        ("USB Audio", 0.0, "sample rate must be positive"),
+        ("", 48000.0, "name must not be empty"),
+    ],
+)
+def test_a_device_reported_without_a_name_or_rate_is_an_oserror(
+    monkeypatch: pytest.MonkeyPatch, name: str, default_samplerate: float, reason: str
+) -> None:
+    """A device PortAudio reports but cannot describe is no usable device.
+
+    The launcher releases the call ID on an OSError only; the ValueError the
+    device's validation raises would escape it as a bad-script error with the
+    ID still reserved.
+    """
+    _install(monkeypatch, query_devices=_device_info(name, default_samplerate))
+    with pytest.raises(OSError, match="no usable default input device") as failure:
+        PortAudio().device()
+    assert reason in str(failure.value)
+    assert isinstance(failure.value.__cause__, ValueError)
+
+
 def test_open_requests_a_raw_mono_int16_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

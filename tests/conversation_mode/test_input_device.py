@@ -6,6 +6,8 @@ the backend in ``test_portaudio.py``.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
@@ -16,7 +18,7 @@ def test_an_empty_device_name_is_refused() -> None:
         InputDevice("", 48000.0)
 
 
-@pytest.mark.parametrize("rate", [0.0, -44100.0])
+@pytest.mark.parametrize("rate", [0.0, -44100.0, math.nan])
 def test_a_non_positive_sample_rate_is_refused(rate: float) -> None:
     with pytest.raises(ValueError, match="sample rate must be positive"):
         InputDevice("Built-in", rate)
