@@ -262,6 +262,24 @@ class TestWrite:
             Frontmatter(path).write_field("provider", "polly")
         assert not path.exists()
 
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_refused_write_leaves_nothing_on_disk(
+        self, tmp_path: Path, existing: bool
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        if existing:
+            path.parent.mkdir(parents=True)
+            path.write_text('---\nvoice: "initial"\n---\n')
+        before = sorted(tmp_path.rglob("*"))
+
+        def refuse(fields: dict[str, str]) -> None:
+            msg = "refused"
+            raise ValueError(msg)
+
+        with pytest.raises(ValueError, match="refused"):
+            Frontmatter(path).write_fields({"voice": "fin"}, check=refuse)
+        assert sorted(tmp_path.rglob("*")) == before
+
     def test_write_field_round_trips(self, tmp_path: Path) -> None:
         fm = Frontmatter(tmp_path / "vox.md")
         fm.write_field("voice", "fin")
