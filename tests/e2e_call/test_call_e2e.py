@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import socket
 import subprocess
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -129,12 +132,23 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     }
 
 
-@contextmanager
-def _daemon(env: dict[str, str]) -> Generator[int]:
-    """Run voxd on a free port under *env*; yield the port it serves.
+@dataclass(frozen=True, slots=True)
+class Daemon:
+    """A running voxd under test: the port it serves and its process id."""
 
-    The daemon must still be running at teardown: one that died during the
-    call fails the test with its exit code, its stderr and the tail of its log.
+    port: int
+    pid: int
+
+
+@contextmanager
+def _daemon(env: dict[str, str]) -> Generator[Daemon]:
+    """Run voxd on a free port under *env*; yield the running daemon.
+
+    The daemon must still be running at teardown. One that died during the
+    block fails the test with its exit code, its stderr and the tail of its
+    log: as the error when the block ended normally, and as a note on the
+    block's own exception otherwise, so a call timeout or a CLI failure
+    caused by a daemon crash still shows the crash.
     """
     port = _free_port()
     home = Path(env["HOME"])
@@ -148,7 +162,13 @@ def _daemon(env: dict[str, str]) -> Generator[int]:
         )
     try:
         run_dir = home / ".punt-labs" / "vox" / "run"
-        yield _wait_for_port_file(run_dir, process, home, stderr_path)
+        yield Daemon(
+            _wait_for_port_file(run_dir, process, home, stderr_path), process.pid
+        )
+    except BaseException as exc:
+        if (exited := process.poll()) is not None:
+            exc.add_note(_exit_detail(exited, home, stderr_path))
+        raise
     finally:
         exited = process.poll()
         process.terminate()
@@ -157,10 +177,11 @@ def _daemon(env: dict[str, str]) -> Generator[int]:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
-    assert exited is None, (
-        f"voxd exited with {exited} during the test\n"
-        + _daemon_detail(home, stderr_path)
-    )
+    assert exited is None, _exit_detail(exited, home, stderr_path)
+
+
+def _exit_detail(exited: int, home: Path, stderr: Path) -> str:
+    return f"voxd exited with {exited} during the test\n" + _daemon_detail(home, stderr)
 
 
 def _script(tmp_path: Path) -> Path:
@@ -279,6 +300,19 @@ def test_a_hung_stop_after_a_timed_out_call_is_a_note_on_the_call_error(
     assert failure.value.__notes__ == [
         f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
     ]
+
+
+def test_a_daemon_killed_mid_call_puts_its_detail_on_the_propagating_error(
+    voxd_env: dict[str, str],
+) -> None:
+    """The block's own error, not the fixture's assert, carries the daemon detail."""
+    with pytest.raises(subprocess.TimeoutExpired) as failure, _daemon(voxd_env) as voxd:
+        os.kill(voxd.pid, signal.SIGKILL)
+        time.sleep(0.5)
+        raise subprocess.TimeoutExpired(["vox", "call"], _CALL_TIMEOUT_S)
+    (note,) = failure.value.__notes__
+    assert note.startswith(f"voxd exited with {-signal.SIGKILL} during the test\n")
+    assert "--- vox.log ---" in note
 
 
 def test_scripted_call_reaches_the_tool_result(
