@@ -41,8 +41,8 @@ class SpeechPunctuation:
             joined, name, mark, raw_suffix = named.groups(default="")
             return f"{joined}{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
         core, raw_suffix = cls._split_trailing(core_candidate)
-        spoken = CurrencySpeech.speak_prose(core) + cls._unit(core_candidate)
-        return spoken, cls._prosody(raw_suffix)
+        spoken = CurrencySpeech.speak_prose(core)
+        return spoken + cls._unit(spoken + raw_suffix), cls._prosody(raw_suffix)
 
     @classmethod
     def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
@@ -67,9 +67,9 @@ class SpeechPunctuation:
         return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
 
     @staticmethod
-    def _unit(core_candidate: str) -> str:
-        """Speak a trailing percent sign after a number as the word it stands for."""
-        return " percent" if _NUMERIC_PERCENT_RE.search(core_candidate) else ""
+    def _unit(spoken_token: str) -> str:
+        """Say a ``%`` that directly follows a spoken bare number as "percent"."""
+        return " percent" if _NUMERIC_PERCENT_RE.search(spoken_token) else ""
 
     @staticmethod
     def _prosody(raw_suffix: str) -> str:

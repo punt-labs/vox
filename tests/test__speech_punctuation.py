@@ -74,7 +74,14 @@ def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -
 
 @pytest.mark.parametrize(
     ("token", "core"),
-    [("a%b", "a%b"), ("%d", "d"), ("n%", "n"), ("%", ""), ("10%3", "10%3")],
+    [
+        ("a%b", "a%b"),
+        ("%d", "d"),
+        ("n%", "n"),
+        ("%", ""),
+        ("10%3", "10%3"),
+        ("$5%", "5 dollars"),
+    ],
 )
 def test_split_leaves_other_percent_signs_alone(token: str, core: str) -> None:
     assert SpeechPunctuation.split(token) == (core, "")
