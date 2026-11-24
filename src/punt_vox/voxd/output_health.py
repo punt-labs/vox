@@ -105,10 +105,9 @@ class OutputHealth:
     def _existing_ancestor(path: Path) -> Path:
         for candidate in (path, *path.parents):
             try:
-                candidate.stat()
+                candidate.lstat()
             except FileNotFoundError:
-                if candidate.is_symlink():
-                    raise
-            else:
-                return candidate
+                continue
+            candidate.stat()
+            return candidate
         raise FileNotFoundError(path)
