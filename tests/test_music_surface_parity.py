@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final, get_args
 from unittest.mock import MagicMock
 
 import pytest
 from _program_fakes import FakeProgramGateway
 
+from punt_vox.album_export import AlbumExport
 from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_music_catalog import CatalogCli
@@ -85,9 +87,9 @@ class _FakeCatalog:
         self._albums[album_id] = f"album-{album_id}"
         return album_id
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         self.calls.append(("get", (album_id, dest_dir)))
-        return f"{dest_dir}/{self._albums[album_id]}"
+        return AlbumExport(Path(dest_dir) / self._albums[album_id])
 
     def remove(self, album_id: str) -> None:
         self.calls.append(("remove", album_id))
