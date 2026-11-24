@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,9 +24,8 @@ class TestOptionFile:
     def test_missing_file_names_the_option(self, tmp_path: Path) -> None:
         with pytest.raises(typer.BadParameter) as caught:
             OptionFile(tmp_path / "absent.jsonl", "--script").text()
-        assert str(caught.value) == (
-            "Cannot read --script file: No such file or directory."
-        )
+        reason = os.strerror(errno.ENOENT)
+        assert str(caught.value) == f"Cannot read --script file: {reason}."
         assert isinstance(caught.value.__cause__, FileNotFoundError)
 
     def test_non_utf8_file_says_to_save_as_utf8(self, tmp_path: Path) -> None:
