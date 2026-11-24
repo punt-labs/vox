@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hooks on machines without `jq` decode the payload's `cwd` instead of
+  cutting it at the first quote, so a repo path with a quote, backslash or
+  non-ASCII name no longer silently drops the Stop and other notifications.
+  (PL-1595)
+
 - Warn when ElevenLabs ignores a non-default speech rate in `vox say`,
   `vox rec new`, and the corresponding MCP and daemon replies. (PL-1570)
 
