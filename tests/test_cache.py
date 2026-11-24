@@ -222,6 +222,23 @@ class TestCachePut:
         assert result is not None
         assert cache_dir.exists()
 
+    def test_refuses_symlink_at_session_vibe_key(self, tmp_path: Path) -> None:
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        source = tmp_path / "source.mp3"
+        target = tmp_path / "existing.mp3"
+        _fake_mp3(source, size=200)
+        _fake_mp3(target)
+        key = CacheKey("Hello.", "matilda", "elevenlabs", vibe_tags="[whispers]")
+        destination = key.path_in(cache_dir)
+        destination.symlink_to(target)
+
+        with patch("punt_vox.cache.CACHE_DIR", cache_dir):
+            assert cache_put(key, source) is None
+
+        assert destination.is_symlink()
+        assert target.read_bytes() == b"\xff" * 100
+
 
 # ---------------------------------------------------------------------------
 # eviction tests
