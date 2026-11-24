@@ -35,6 +35,7 @@ class SettingsRefresh:
     __slots__ = ("_client", "_store")
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
+        """Bind the disk and roster sources used for each refresh."""
         self = super().__new__(cls)
         self._client = client
         self._store = store
