@@ -156,3 +156,23 @@ class TestValidateValue:
 
     def test_accepts_an_apostrophe(self) -> None:
         FrontmatterBlock.validate_value("I'm tired")  # no raise
+
+
+class TestUnclosed:
+    @pytest.mark.parametrize(
+        "text", ['---\nvoice: "fin"\n', "---\n", "---", "---\n# prose\n\n---x\n"]
+    )
+    def test_an_opening_fence_with_no_closing_one_is_unclosed(self, text: str) -> None:
+        block = FrontmatterBlock(text)
+        assert block.unclosed
+        assert not block.fenced
+
+    @pytest.mark.parametrize("text", ["", "# notes\n\nprose only\n", _PROSE_WITH_RULE])
+    def test_no_fence_at_all_is_simply_unfenced(self, text: str) -> None:
+        block = FrontmatterBlock(text)
+        assert not block.unclosed
+        assert not block.fenced
+
+    def test_a_fence_pair_is_neither(self) -> None:
+        assert not FrontmatterBlock(_FENCED).unclosed
+        assert FrontmatterBlock(_FENCED).fenced

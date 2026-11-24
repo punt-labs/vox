@@ -28,19 +28,23 @@ class DirectPlayInvocation:
     def run(self) -> int | None:
         """Play synchronously, returning None when the provider opts out."""
         with self.key_env.applied():
-            provider = self.provider_factory()
-            if self.provider_name == "say" and isinstance(provider, SayProvider):
-                player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
-                return player.play_directly(self.request)
-            if self.provider_name == "espeak" and isinstance(provider, EspeakProvider):
-                espeak_player = EspeakDirectPlayer(
-                    binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
-                    voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
-                )
-                return espeak_player.play_directly(self.request)
-            if isinstance(provider, DirectPlayProvider):
-                return provider.play_directly(self.request)
-            return None
+            return self._play()
+
+    def _play(self) -> int | None:
+        """Dispatch to the direct player supported by this provider."""
+        provider = self.provider_factory()
+        if self.provider_name == "say" and isinstance(provider, SayProvider):
+            player = SayDirectPlayer(voices=provider._voices)  # pyright: ignore[reportPrivateUsage]
+            return player.play_directly(self.request)
+        if self.provider_name == "espeak" and isinstance(provider, EspeakProvider):
+            espeak_player = EspeakDirectPlayer(
+                binary=provider._binary,  # pyright: ignore[reportPrivateUsage]
+                voices=provider._voices,  # pyright: ignore[reportPrivateUsage]
+            )
+            return espeak_player.play_directly(self.request)
+        if isinstance(provider, DirectPlayProvider):
+            return provider.play_directly(self.request)
+        return None
 
 
 @dataclass(frozen=True, slots=True)

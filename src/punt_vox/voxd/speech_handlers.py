@@ -5,12 +5,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
-
-from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.types_synthesis import SynthesisSpec
@@ -35,6 +32,9 @@ from punt_vox.voxd.wire_reply import WireReply
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from starlette.websockets import WebSocket
+
+    from punt_vox.voxd.dedup import DedupHit
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = ["SynthesizeHandler"]
@@ -54,6 +54,10 @@ class _SpeechRequest:
     spec: SynthesisSpec
     request_id: str
     websocket: WebSocket
+
+    @property
+    def _wire(self) -> WireReply:
+        return WireReply(self.websocket, self.request_id)
 
     @classmethod
     def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
@@ -93,12 +97,8 @@ class _SpeechRequest:
             api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
         spec.validate()
-        return cls(
-            text=text,
-            spec=spec,
-            request_id=str(msg.get("id", "")),
-            websocket=websocket,
-        )
+        request_id = str(msg.get("id", ""))
+        return cls(text=text, spec=spec, request_id=request_id, websocket=websocket)
 
     async def synthesize(
         self,
@@ -134,7 +134,7 @@ class _SpeechRequest:
         code, is a daemon-side fault.
         """
         if isinstance(result, _SYNTHESIS_REJECTIONS):
-            await WireReply(self.websocket, self.request_id).error(result)
+            await self._wire.error(result)
         elif isinstance(result, Exception):
             await self.fault(SafeFault.from_exception(result))
         else:
@@ -147,7 +147,7 @@ class _SpeechRequest:
         disconnect-safe send the store handlers use, instead of a raw
         ``send_json`` that raises out of the handler when the client has left.
         """
-        await WireReply(self.websocket, self.request_id).send(payload)
+        await self._wire.send(payload)
 
     async def fault(self, fault: SafeFault) -> None:
         """Audit a server-side OPERATIONAL failure and send a prefix-free frame.
@@ -159,7 +159,30 @@ class _SpeechRequest:
         The *fault* carries a prefix-free wire message and the raw log detail, so
         no absolute prefix reaches the client.
         """
-        await WireReply(self.websocket, self.request_id).fault(fault)
+        await self._wire.fault(fault)
+
+    async def reply_to_duplicate(self, hit: DedupHit) -> None:
+        """Validate and reply without touching an existing dedup entry."""
+        try:
+            SynthesisPipeline.normalized_text(self.text, self.spec)
+        except EmptyNormalizedTextError as exc:
+            await self.fail(exc)
+            return
+        logger.info(
+            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
+            self.request_id,
+            len(self.text),
+            hit.original_played_at,
+            hit.ttl_seconds_remaining,
+        )
+        await self.reply(
+            {
+                "type": "done",
+                "deduped": True,
+                "original_played_at": hit.original_played_at,
+                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
+            }
+        )
 
 
 class SynthesizeHandler(MessageHandler):
@@ -201,11 +224,7 @@ class SynthesizeHandler(MessageHandler):
         if dedup_recorded is None:
             return
 
-        logger.info(
-            "Synthesize: id=%r chars=%d",
-            req.request_id,
-            len(req.text),
-        )
+        logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
         await self._dispatch(req, dedup_recorded=dedup_recorded)
 
     async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
@@ -229,26 +248,7 @@ class SynthesizeHandler(MessageHandler):
         hit = self._once_dedup.check_and_record(req.text, float(once))
         if hit is None:
             return True
-        try:
-            SynthesisPipeline.normalized_text(req.text, req.spec)
-        except EmptyNormalizedTextError as exc:
-            await req.fail(exc)
-            return None
-        logger.info(
-            "Dedup hit: id=%r text=%d chars original=%.3f ttl_remaining=%.1fs",
-            req.request_id,
-            len(req.text),
-            hit.original_played_at,
-            hit.ttl_seconds_remaining,
-        )
-        await req.reply(
-            {
-                "type": "done",
-                "deduped": True,
-                "original_played_at": hit.original_played_at,
-                "ttl_seconds_remaining": hit.ttl_seconds_remaining,
-            }
-        )
+        await req.reply_to_duplicate(hit)
         return None
 
     async def _play_local(self, req: _SpeechRequest, *, dedup_recorded: bool) -> bool:
@@ -265,9 +265,9 @@ class SynthesizeHandler(MessageHandler):
             return False
         if result == 0:
             await req.reply({"type": "done"})
-            return True
-        self._rollback(req, dedup_recorded=dedup_recorded)
-        await req.fail(result)
+        else:
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            await req.fail(result)
         return True
 
     async def _synthesize_and_enqueue(
@@ -282,11 +282,10 @@ class SynthesizeHandler(MessageHandler):
             return
 
         # `cached` rides the 'playing' response (the client's terminal).
-        done_event = asyncio.Event()
         item = PlaybackItem(
             path=outcome.path,
             request_id=req.request_id,
-            notify=done_event,
+            notify=asyncio.Event(),
             discard=outcome.discard,
         )
         try:
@@ -295,9 +294,8 @@ class SynthesizeHandler(MessageHandler):
             outcome.discard()
             raise
         await req.reply({"type": "playing", "cached": outcome.cached})
-        await done_event.wait()
-        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-            await req.reply({"type": "done"})
+        await item.notify.wait()
+        await req.reply({"type": "done"})
 
     def _rollback(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
         """Undo a recorded dedup entry when synthesis fails after recording it."""

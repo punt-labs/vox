@@ -129,9 +129,13 @@ class SynthesisPipeline:
             provider_name, model
         )
         body = SpeechText.for_synthesis(raw_text, expressive=expressive)
-        if expressive and vibe_tags and body:
-            return " ".join(filter(None, (vibe_tags.strip(), body)))
+        if expressive and vibe_tags:
+            return SynthesisPipeline._prefix_vibe(body, vibe_tags)
         return body
+
+    @staticmethod
+    def _prefix_vibe(body: str, vibe_tags: str) -> str:
+        return " ".join(filter(None, (vibe_tags.strip(), body))) if body else ""
 
     @staticmethod
     def normalized_text(text: str, spec: SynthesisSpec) -> str:
@@ -216,9 +220,13 @@ class SynthesisPipeline:
         try:
             request = self._prepare_audio_request(text, spec)
             with usage.span("daemon", provider_name, text=text, cached=False):
-                rc = usage.direct_result(
-                    await self._run_direct_play(spec, _factory, request)
+                invocation = DirectPlayInvocation(
+                    provider_name,
+                    ApiKeyEnv(provider_name, spec.api_key),
+                    _factory,
+                    request,
                 )
+                rc = usage.direct_result(await self._run_direct_play(invocation))
         except Exception as exc:
             if not isinstance(exc, _SYNTHESIS_REJECTIONS):
                 logger.exception("Direct-play raised")
@@ -235,12 +243,7 @@ class SynthesisPipeline:
         ).publish(record_result)
         return rc
 
-    async def _run_direct_play(
-        self,
-        spec: SynthesisSpec,
-        factory: Callable[[], TTSProvider],
-        request: AudioRequest,
-    ) -> int | None:
+    async def _run_direct_play(self, invocation: DirectPlayInvocation) -> int | None:
         """Run ``play_directly`` under the playback mutex.
 
         The ``_env_lock`` is added only when an API key must be injected into the
@@ -249,10 +252,7 @@ class SynthesisPipeline:
         queue consumer holds it too -- so two hooks firing at once cannot overlap
         even though direct play bypasses the queue.
         """
-        provider_name = spec.provider or ""
-        key_env = ApiKeyEnv(provider_name, spec.api_key)
-        invocation = DirectPlayInvocation(provider_name, key_env, factory, request)
-        if key_env.injects:
+        if invocation.key_env.injects:
             async with self._env_lock, self._playback_mutex:
                 return await asyncio.to_thread(invocation.run)
         async with self._playback_mutex:
