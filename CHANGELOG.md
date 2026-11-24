@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox say` and `vox rec new` reject a positional TEXT argument combined with
   `--from` instead of silently using the file. (PL-1599)
 
+- ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
+  Inline cues stay where they were written. (PL-1577)
+
 - `vox desktop install --provider` rejects unknown providers and shows how to
   set the suggested provider in Claude Desktop instead of claiming it was set.
   (PL-1594)
