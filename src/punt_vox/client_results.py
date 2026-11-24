@@ -1,8 +1,8 @@
-"""The results ``synthesize`` and ``record`` build from voxd's terminal frame.
+"""Typed results decoded from the daemon's replies.
 
 Split out of :mod:`punt_vox.client` so the client module holds the
 connection and its RPCs, not the value types its replies decode into;
-:mod:`punt_vox.client` re-exports both, so callers keep importing them
+:mod:`punt_vox.client` re-exports these, so callers keep importing them
 from there.
 """
 
@@ -10,11 +10,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from punt_vox.client_errors import VoxdProtocolError
 
-__all__ = ["RecordResult", "SynthesizeResult"]
+if TYPE_CHECKING:
+    from punt_vox.types_programs import JsonObject
+
+__all__ = ["CacheStatus", "RecordResult", "RecordingSummary", "SynthesizeResult"]
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingSummary:
+    """One recording in the store's list: its bare name and byte count."""
+
+    name: str
+    byte_count: int
+
+    @classmethod
+    def from_wire(cls, row: JsonObject) -> Self:
+        """Parse one ``rec_list`` entry (name + bytes) from the wire."""
+        return cls(name=row.require_str("name"), byte_count=row.require_int("bytes"))
+
+
+@dataclass(frozen=True, slots=True)
+class CacheStatus:
+    """The daemon cache's size, described to a client.
+
+    ``path`` is the daemon cache directory relativized to its data root
+    (``cache``) -- a logical name with no absolute prefix, so a remote client
+    learns the location, never the daemon's home or username. ``entries`` and
+    ``size_bytes`` count the ``.mp3`` and orphaned ``.tmp`` files there, mirroring
+    the daemon's own ``cache_status`` return.
+    """
+
+    entries: int
+    size_bytes: int
+    path: Path
+
+    @classmethod
+    def from_wire(cls, obj: JsonObject) -> Self:
+        """Build a cache status from a ``cache_status`` reply, raising on a bad row.
+
+        Raises:
+            ValueError: If a supplied wire field is missing, malformed, or has the wrong
+                type.
+        """
+        return cls(
+            entries=obj.require_int("entries"),
+            size_bytes=obj.require_int("size_bytes"),
+            path=Path(obj.require_str("path")),
+        )
 
 
 @dataclass(frozen=True, slots=True)

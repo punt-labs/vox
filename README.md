@@ -222,7 +222,9 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox notify continuous` | Also announce real-time signals |
 | `vox speak n` | Chimes only (`vox speak y` turns speech back on) |
 | `vox voice` | List the voices for the active provider |
+| `vox voice --provider openai` | List OpenAI voices without switching providers |
 | `vox voice matilda` | Set the session voice |
+| `vox voice alloy --provider openai` | Set the session voice only if OpenAI is active |
 | `vox provider` | List the five providers and mark the current one |
 | `vox provider openai` | Set the TTS provider |
 | `vox model` | List the models the current provider offers |
