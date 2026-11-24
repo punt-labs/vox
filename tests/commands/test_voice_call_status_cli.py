@@ -16,24 +16,27 @@ from punt_vox.daemon_control import DaemonControl
 from punt_vox.output_formatter import OutputFormatter
 
 runner = CliRunner()
-_ENDED = {
-    "state": "ended",
-    "call_id": "first",
-    "transcript": [{"role": "agent", "text": "Started a worker on demo."}],
-    "tool_calls": [{"tool": "start_worker", "arguments": {"repo": "demo"}}],
-    "trace": "/tmp/call-trace.jsonl",
-}
+
+
+def _ended_status() -> dict[str, object]:
+    return {
+        "state": "ended",
+        "call_id": "first",
+        "transcript": [{"role": "agent", "text": "Started a worker on demo."}],
+        "tool_calls": [{"tool": "start_worker", "arguments": {"repo": "demo"}}],
+        "trace": "/tmp/call-trace.jsonl",
+    }
 
 
 def test_call_status_uses_the_supplied_output_pair() -> None:
     formatter = OutputFormatter()
     flags = OutputFlags(formatter)
     flags.apply(json_output=True, verbose=False, quiet=False)
-    with patch.object(DaemonControl, "request", return_value=_ENDED):
+    with patch.object(DaemonControl, "request", side_effect=[_ended_status()]):
         result = runner.invoke(CallCli.build_app((formatter, flags)), ["status"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == _ENDED
+    assert json.loads(result.stdout) == _ended_status()
 
 
 @pytest.mark.parametrize("global_flag", [True, False])
@@ -41,14 +44,16 @@ def test_call_status_uses_the_supplied_output_pair() -> None:
 def test_call_status_output_flags(flag: str, *, global_flag: bool) -> None:
     command = ["call", "status"]
     args = [flag, *command] if global_flag else [*command, flag]
-    with patch.object(DaemonControl, "request", return_value=_ENDED) as request:
+    with patch.object(
+        DaemonControl, "request", side_effect=[_ended_status()]
+    ) as request:
         result = runner.invoke(app, args)
 
     assert result.exit_code == 0, result.output
     request.assert_awaited_once_with("status", timeout=ANY)
     assert not result.stderr
     if flag == "--json":
-        assert json.loads(result.stdout) == _ENDED
+        assert json.loads(result.stdout) == _ended_status()
     else:
         assert not result.stdout
 
