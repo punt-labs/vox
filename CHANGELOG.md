@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A config write that is refused, such as `vox voice` with no provider set,
+  no longer leaves a lock file or empty `.punt-labs/` directories behind.
+  (PL-1552)
+
 - `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
   text mode. JSON output is unchanged. (PL-1549)
 
