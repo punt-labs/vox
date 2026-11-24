@@ -96,7 +96,7 @@ tests/
   test_synthesis_batch.py    # Parallel sentence-chunk batching
   test_chunked.py            # Chunked (long-text) synthesis splitting
   test_normalize.py          # Text normalization for speech
-  test_resolve.py            # Provider/voice resolution
+  test_resolve.py            # Leading expressive tags and vibe application
   test_voice_resolver.py     # Per-instance VoiceResolver cache load path
   test_provider_registry.py  # Provider registry selection order
   test_public_api.py         # __init__.py public library surface (__all__)
