@@ -64,6 +64,7 @@ class VoiceAgentCall:
         "_state",
         "_tool_calls",
         "_tools",
+        "_tools_answered",
         "_trace",
         "_transcript",
     )
@@ -78,7 +79,8 @@ class VoiceAgentCall:
     _error: str | None  # None unless the call failed.
     _connected: asyncio.Event
     _transcript: deque[tuple[str | None, dict[str, str]]]  # (response_id, turn)
-    _tool_calls: deque[dict[str, object]]
+    _tool_calls: deque[dict[str, object]]  # The recent ones a status reply shows.
+    _tools_answered: int  # Every one, for the end line; the history is capped.
 
     def __new__(
         cls,
@@ -98,7 +100,7 @@ class VoiceAgentCall:
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
         self._transcript = deque(maxlen=_HISTORY)
-        self._tool_calls = deque(maxlen=_HISTORY)
+        self._tool_calls, self._tools_answered = deque(maxlen=_HISTORY), 0
         return self
 
     async def run(
@@ -182,7 +184,7 @@ class VoiceAgentCall:
 
     def outcome(self) -> CallOutcome:
         """Return the call's state, failure reason and tool call count."""
-        return CallOutcome(self._state, self._error, len(self._tool_calls))
+        return CallOutcome(self._state, self._error, self._tools_answered)
 
     def status(self) -> dict[str, object]:
         """Return the call's state and its recent exchange."""
@@ -248,6 +250,7 @@ class VoiceAgentCall:
                 "error": answer.is_error,
             }
         )
+        self._tools_answered += 1
         if call.expects_response:
             await conv.send_tool_result(
                 call.tool_call_id, answer.result, is_error=answer.is_error

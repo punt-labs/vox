@@ -394,3 +394,16 @@ async def test_a_silence_failure_still_closes_the_speaker_and_departs() -> None:
     speaker.close.assert_awaited_once_with()
     speaker.finish.assert_not_awaited()
     assert departures == [{}]
+
+
+async def test_the_outcome_counts_every_tool_call_past_the_status_history() -> None:
+    """The status keeps the last 20 tool calls; the end line counts them all."""
+    call = _call(_Peer([]))
+    conv = AsyncMock(spec=Conversation)
+    for n in range(25):
+        await call._answer(
+            conv, ClientToolCall(f"t{n}", "list_workers", {}, expects_response=False)
+        )
+    shown = cast("list[dict[str, object]]", call.status()["tool_calls"])
+    assert len(shown) == 20
+    assert str(call.outcome()) == "connecting, 25 tool calls"
