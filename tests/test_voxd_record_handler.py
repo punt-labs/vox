@@ -436,6 +436,30 @@ class TestRecordHandler:
         assert "empty" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
 
+    def test_whitespace_wire_name_rejected_before_ack(self, tmp_path: Path) -> None:
+        """A whitespace-only wire name is refused, so no blank-id take lands."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": "  ",
+        }
+        asyncio.run(_handler(store, src)(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": "recording name must not be empty or whitespace",
+            }
+        ]
+        assert not store.root.exists() or not any(store.root.iterdir())
+
     def test_absolute_name_rejected_before_ack(self, tmp_path: Path) -> None:
         """An absolute name over the wire is refused before the ack (P1)."""
         src = tmp_path / "src.mp3"

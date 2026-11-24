@@ -2482,6 +2482,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/recording_name.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.67,
+    "module_size": 22.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/resolve.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
@@ -5724,8 +5737,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.23,
     "max_complexity": 5.0,
-    "avg_complexity": 2.15,
-    "module_size": 117.0,
+    "avg_complexity": 2.08,
+    "module_size": 116.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
