@@ -134,7 +134,7 @@ _NameOpt = Annotated[
     str | None,
     typer.Option(
         "--name",
-        help="Bare filename to store under (no path). Default: content-addressed.",
+        help="Bare filename. Unnamed same-text takes overwrite. Use distinct names.",
     ),
 ]
 _ProviderOpt = Annotated[
@@ -228,6 +228,11 @@ class RecCli:
         Reads text from the TEXT argument, ``--from`` (a JSON segments file), or
         stdin. Prints only the store id -- no path, no host. Act on it with
         ``rec play``/``rec get``/``rec remove``.
+
+        Without --name, recording the same text reuses the same id and
+        silently replaces the earlier take, even if synthesis settings change.
+        Pass a different --name for each take to keep them separate.
+        --name only works for a single text segment.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         boost = speaker_boost if speaker_boost else None
@@ -272,12 +277,12 @@ class RecCli:
     ) -> None:
         """List the store's recording ids, one per line (``--json`` for bytes)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        entries = self._run(lambda g: g.recordings())
-        if not entries:
-            self._formatter.emit({"recordings": []}, "No recordings.")
-            return
-        rows = [{"id": e.name, "bytes": e.byte_count} for e in entries]
-        listing = "\n".join(e.name for e in entries)
+        rows: list[dict[str, str | int]] = []
+        names: list[str] = []
+        for entry in self._run(lambda g: g.recordings()):
+            rows.append({"id": entry.name, "bytes": entry.byte_count})
+            names.append(entry.name)
+        listing = "\n".join(names) or "No recordings."
         self._formatter.emit({"recordings": rows}, listing)
 
     def play(

@@ -2671,3 +2671,4 @@
 {"ts":"2026-11-24T05:59:40Z","commit":"be78c1b","source":null,"files_scored":506,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Place the health wire contract in the shared types module without importing the daemon implementation.","deltas":{"src/punt_vox/types_health.py":{"module_size":[49.0,53.0]}},"removed":[]}
 {"ts":"2026-11-24T05:59:41Z","commit":"be78c1b","source":null,"files_scored":506,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
 {"ts":"2026-11-24T05:59:49Z","commit":"be78c1b","source":null,"files_scored":506,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}
+{"ts":"2026-11-24T05:51:07Z","commit":"f5aa789","source":null,"files_scored":505,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/cli_rec.py":{"avg_complexity":[1.77,1.73]}},"removed":[]}
