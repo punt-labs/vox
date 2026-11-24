@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import logging
 import multiprocessing
 import os
@@ -214,13 +215,18 @@ class TestWrite:
     def test_custom_configs_use_distinct_home_locks(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
+        monkeypatch.setenv("VOX_STATE_DIR", str(tmp_path / "other state"))
         first = Frontmatter(tmp_path / "one" / "vox.md")
         second = Frontmatter(tmp_path / "two" / "vox.md")
         first.write_field("voice", "fin")
         second.write_field("voice", "roger")
         locks = tmp_path / "home/.punt-labs/vox/run/config-locks"
         assert len(list(locks.iterdir())) == 2
+        for config in (first, second):
+            digest = hashlib.sha256(str(config.path.resolve()).encode()).hexdigest()
+            assert (locks / digest).is_file()
         assert list(first.path.parent.iterdir()) == [first.path]
         assert list(second.path.parent.iterdir()) == [second.path]
 

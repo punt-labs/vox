@@ -35,7 +35,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir, find_repo_root
-from punt_vox.hook_context_relay import HookContextCommand
+from punt_vox.hook_cli import LOG_DIR_COMMAND, HookCli
 from punt_vox.hook_envelope import HookEnvelope
 from punt_vox.hook_payload import (
     NotificationPayload,
@@ -56,24 +56,6 @@ from punt_vox.quips import (
 
 logger = logging.getLogger(__name__)
 
-hook_app = typer.Typer(
-    help="Hook dispatchers (called by hook scripts).",
-    no_args_is_help=True,
-)
-
-
-@hook_app.callback(invoke_without_command=True)
-def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedFunction]
-    """Initialize logging for all hook subcommands."""
-    if ctx.invoked_subcommand is not None:
-        from punt_vox.logging_config import configure_client_logging
-
-        configure_client_logging(role="hook")
-
-
-usage.register(
-    "hook", lambda: (info.name or "other" for info in hook_app.registered_commands)
-)
 
 # Shared helpers
 
@@ -117,6 +99,23 @@ def _read_hook_bytes(fd: int) -> bytes:
         chunks.append(chunk)
         timeout = 0.05
     return b"".join(chunks)
+
+
+hook_app = HookCli.app(_read_hook_input)
+
+
+@hook_app.callback(invoke_without_command=True)
+def _hook_callback(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Initialize logging for hook events, not for path lookups."""
+    if ctx.invoked_subcommand not in (None, LOG_DIR_COMMAND):
+        from punt_vox.logging_config import configure_client_logging
+
+        configure_client_logging(role="hook")
+
+
+usage.register(
+    "hook", lambda: (info.name or "other" for info in hook_app.registered_commands)
+)
 
 
 def _emit(output: dict[str, object]) -> None:
@@ -519,6 +518,3 @@ def chime_cmd(signal: str) -> None:  # pyright: ignore[reportUnusedFunction]
     """Play a chime in a detached process."""
     with usage.span("hook", "_chime"):
         _chime_via_voxd(signal)
-
-
-hook_app.command("context-event", hidden=True)(HookContextCommand(_read_hook_input).run)

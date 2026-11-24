@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Resolve non-repo config locks and SessionStart panel logs through the shared
+  per-user paths without moving them. (PL-1444)
+
 - Vox call now has one implementation. The CLI and plugin both use
   the daemon's ElevenLabs call and persistent workers. Retired the former
   pi call, its context snapshot and summary handoff, and its prompt lock.
