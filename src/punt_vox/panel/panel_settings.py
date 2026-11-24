@@ -82,6 +82,19 @@ class PanelSettings:
             self._state = update(self._state, value)
             self._notice = PanelNotice.silent()
 
+    def commit_notify(self, code: str) -> ControlPush:
+        """Persist the notification level, enabling speech for Continuous."""
+        with self._lock:
+            state = self._state.with_notify(code)
+            updates = {"notify": code}
+            if code == "c":
+                updates["speak"] = "y"
+                state = state.with_speak("y")
+            self._store.write_fields(updates)
+            self._state = state
+            self._notice = PanelNotice.silent()
+            return ControlPush.REFRESH
+
     def _fetch_roster_or_notice(
         self, provider: str, context: str
     ) -> tuple[str, ...] | RosterError:

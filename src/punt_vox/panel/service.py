@@ -192,9 +192,9 @@ class VoxPanelService:
         bare re-derived ``bool`` cannot tell that apart from a genuine no-op.
         """
         if topic == PanelTopic.NOTIFY:
-            code = NOTIFY_SPEC.code_for_index(self._index(payload))
-            self._settings.commit("notify", code, PanelState.with_notify)
-            return ControlPush.REFRESH
+            return self._settings.commit_notify(
+                NOTIFY_SPEC.code_for_index(self._index(payload))
+            )
         if topic == PanelTopic.MIC_MODE:
             code = MIC_MODE_SPEC.code_for_index(self._index(payload))
             self._settings.commit("speak", code, PanelState.with_speak)

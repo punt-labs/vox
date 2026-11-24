@@ -280,12 +280,26 @@ class TestPrefetch:
 
 
 class TestApplyEvent:
-    def test_notify_writes_the_code_and_updates_state(self) -> None:
-        service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
-        changed = service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+    @pytest.mark.parametrize(
+        ("selection", "notify", "speak"),
+        [(0, "n", "n"), (1, "y", "n"), (2, "c", "y")],
+        ids=["off", "normal", "continuous"],
+    )
+    def test_notify_from_chimes_updates_config_and_scene(
+        self, tmp_path: Path, selection: int, notify: str, speak: str
+    ) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields({"notify": "y", "speak": "n"})
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        service.prefetch()
+
+        changed = service.apply_event(PanelTopic.NOTIFY, {"value": selection})
+
         assert changed is ControlPush.REFRESH
-        assert store.written["notify"] == "c"
-        assert service.scene().notify == "c"
+        config = store.read()
+        scene = service.scene()
+        assert (config.notify, config.speak) == (notify, speak)
+        assert (scene.notify, scene.speak) == (notify, speak)
 
     def test_mic_mode_writes_the_code_and_updates_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
@@ -1015,23 +1029,24 @@ class TestNoteRejection:
 
 class TestConcurrentApplyEvent:
     def test_overlapping_events_on_different_fields_both_land(self) -> None:
-        """Two threads writing different fields must not clobber one another."""
+        """A Mic Mode click waits for the in-flight Continuous transaction."""
         store = _FakeStore(_config())
         first_entered = threading.Event()
         release_first = threading.Event()
         second_started = threading.Event()
+        batches: list[dict[str, str]] = []
 
         class _BlockingStore:
             def read(self) -> VoxConfig:
                 return store.read()
 
             def write_field(self, key: str, value: str) -> None:
-                if key == "notify":
-                    first_entered.set()
-                    release_first.wait(timeout=2)
                 store.write_field(key, value)
 
             def write_fields(self, updates: dict[str, str]) -> None:
+                batches.append(updates.copy())
+                first_entered.set()
+                release_first.wait(timeout=2)
                 store.write_fields(updates)
 
         service = VoxPanelService(_FakeDaemonClient(), _BlockingStore())
@@ -1062,8 +1077,10 @@ class TestConcurrentApplyEvent:
         speak_thread.join(timeout=2)
 
         scene = service.scene()
+        assert batches == [{"notify": "c", "speak": "y"}]
         assert scene.notify == "c"
         assert scene.speak == "n"
+        assert store.written == {"notify": "c", "speak": "n"}
 
 
 class TestAcknowledgeAndService:
