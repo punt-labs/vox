@@ -16,7 +16,8 @@ _SYMBOL_NAME_RE = re.compile(
     r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
-_NUMERIC_PERCENT_RE = re.compile(r"[-\u2212]?\d[\d.,\u2013-]*%[\W_]*")
+_NUMBER = r"[-\u2212]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
+_NUMERIC_PERCENT_RE = re.compile(rf"{_NUMBER}%?(?:[-\u2013]{_NUMBER})?%[\W_]*")
 
 
 class SpeechPunctuation:
@@ -40,9 +41,8 @@ class SpeechPunctuation:
         if named := _SYMBOL_NAME_RE.fullmatch(core_candidate):
             joined, name, mark, raw_suffix = named.groups(default="")
             return f"{joined}{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
-        core, raw_suffix = cls._split_trailing(core_candidate)
-        spoken = CurrencySpeech.speak_prose(core)
-        return spoken + cls._unit(spoken + raw_suffix), cls._prosody(raw_suffix)
+        core, raw_suffix = cls._split_trailing(cls._spell_percent(core_candidate))
+        return CurrencySpeech.speak_prose(core), cls._prosody(raw_suffix)
 
     @classmethod
     def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
@@ -67,9 +67,11 @@ class SpeechPunctuation:
         return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
 
     @staticmethod
-    def _unit(spoken_token: str) -> str:
-        """Say a ``%`` that directly follows a spoken bare number as "percent"."""
-        return " percent" if _NUMERIC_PERCENT_RE.fullmatch(spoken_token) else ""
+    def _spell_percent(core_candidate: str) -> str:
+        """Spell each ``%`` of a bare number or range as the word "percent"."""
+        if _NUMERIC_PERCENT_RE.fullmatch(core_candidate) is None:
+            return core_candidate
+        return core_candidate.replace("%", " percent")
 
     @staticmethod
     def _prosody(raw_suffix: str) -> str:
