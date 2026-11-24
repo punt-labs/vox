@@ -28,7 +28,11 @@ from websockets.exceptions import WebSocketException
 
 from punt_vox.bare_name import BareName
 from punt_vox.cli_io import OutputFlags, TextInput
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    FetchWriteError,
+    VoxdConnectionError,
+    VoxdProtocolError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
@@ -309,15 +313,22 @@ class RecCli:
         dest = Path.cwd() / self._bare_ref(ref)
         try:
             count = RecordingDownload(dest).save(
-                lambda sink: self._gateway_factory().get_into(ref, sink)
+                lambda sink: self._fetch_download(ref, sink)
             )
         except FileExistsError:
             self._fail(f"rec get: ./{ref} exists")
         except OSError as exc:
             self._fail(f"cannot write {dest}: {exc}")
+        self._formatter.emit({"path": str(dest), "bytes": count}, f"./{ref}")
+
+    def _fetch_download(self, ref: str, sink: IO[bytes]) -> int:
+        """Report gateway errors separately from errors writing to the sink."""
+        try:
+            return self._gateway_factory().get_into(ref, sink)
+        except FetchWriteError:
+            raise
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
-        self._formatter.emit({"path": str(dest), "bytes": count}, f"./{ref}")
 
     def remove(
         self,

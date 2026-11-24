@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from punt_vox.client import (
+    AlbumExport,
     CacheStatus,
     RecordingSummary,
     RecordResult,
@@ -477,8 +478,8 @@ class VoxClientSync:
         """
         return self._drive(lambda c: c.music_new(prompts, name))
 
-    def music_get(self, album_id: str, dest_dir: Path) -> Path:
-        """Copy an album into *dest_dir* as a directory of its parts.
+    def music_get(self, album_id: str, dest_dir: Path) -> AlbumExport:
+        """Copy an album into *dest_dir* as a directory of its surviving parts.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.

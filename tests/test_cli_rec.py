@@ -9,13 +9,12 @@ build_rec_app wires the group and that the old top-level verbs are gone.
 
 from __future__ import annotations
 
-import errno
 import io
 import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Self, final
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
@@ -25,9 +24,10 @@ from websockets.exceptions import WebSocketException
 
 from punt_vox.__main__ import app
 from punt_vox.cli_io import OutputFlags
-from punt_vox.cli_rec import RecCli, RecordGateway, build_rec_app
+from punt_vox.cli_rec import ClientRecordGateway, RecCli, RecordGateway, build_rec_app
 from punt_vox.client import RecordingSummary, RecordResult
-from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.client_errors import FetchWriteError, VoxdProtocolError
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 
 if TYPE_CHECKING:
@@ -387,7 +387,12 @@ def test_get_writes_into_cwd_under_store_name(
     ("error", "raised", "message"),
     [
         (VoxdProtocolError("fetch sha256 mismatch"), typer.Exit, "sha256 mismatch"),
-        (OSError(errno.ENOSPC, "disk full"), typer.Exit, "cannot write {dest}:"),
+        (FetchWriteError("disk full"), typer.Exit, "cannot write {dest}:"),
+        (
+            FileExistsError("gateway source unavailable"),
+            typer.Exit,
+            "source unavailable",
+        ),
         (KeyboardInterrupt(), KeyboardInterrupt, None),
     ],
 )
@@ -421,6 +426,35 @@ def test_get_cleans_up_a_failed_staging_write(
         assert stderr == ""
     else:
         assert message.format(dest=tmp_path / "rec.mp3") in stderr
+
+
+def test_get_corrupt_wire_download_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    ws = AsyncMock()
+    ws.transport = MagicMock()
+    ws.recv.side_effect = [
+        json.dumps(
+            {"type": "fetch_begin", "bytes": 4, "chunks": 1, "sha256": "0" * 64}
+        ),
+        json.dumps({"type": "chunk", "seq": 0, "data": "REFUQQ=="}),
+        json.dumps({"type": "fetch_end"}),
+    ]
+    monkeypatch.setattr(
+        "punt_vox.client_transport.websockets.asyncio.client.connect",
+        AsyncMock(return_value=ws),
+    )
+    gateway = ClientRecordGateway(VoxClientSync(port=8421, token="tok"))
+    cli, formatter = _cli(gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.get("rec.mp3")
+
+    assert "sha256 mismatch" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+    formatter.emit.assert_not_called()
+    ws.transport.abort.assert_called_once()
 
 
 def test_get_collision_errors_and_leaves_existing_file(

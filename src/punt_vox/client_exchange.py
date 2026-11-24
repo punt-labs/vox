@@ -19,6 +19,7 @@ import websockets
 import websockets.asyncio.client
 
 from punt_vox.client_errors import (
+    FetchWriteError,
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
@@ -112,15 +113,19 @@ class VoxdExchange:
             VoxdRejectionError: If the daemon sends an error frame.
             VoxdProtocolError: If a frame is invalid or out of order, the stream
                 fails verification, or the deadline expires.
-            OSError: If writing the chunk fails or is incomplete.
+            FetchWriteError: If writing the chunk fails or is incomplete.
         """
         verifier = FetchVerifier.begin(await self.recv_before(deadline, "fetch_begin"))
         for seq in range(verifier.chunks):
             chunk = verifier.decode_chunk(
                 await self.recv_before(deadline, "chunk"), seq
             )
-            if sink.write(chunk) != len(chunk):
-                raise OSError(f"incomplete write for fetch chunk {seq}")
+            try:
+                written = sink.write(chunk)
+            except OSError as exc:
+                raise FetchWriteError(str(exc)) from exc
+            if written != len(chunk):
+                raise FetchWriteError(f"incomplete write for fetch chunk {seq}")
         return verifier.finish(await self.recv_before(deadline, "fetch_end"))
 
     # The receive path is shared by single replies and streamed frames.
