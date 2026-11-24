@@ -74,14 +74,15 @@ class RecordingDownload:
     def _staging_directory(self) -> Generator[int]:
         """Keep the staging directory open for relative file operations."""
         path = Path(tempfile.mkdtemp(dir=self._dest.parent, prefix=".vox-rec-"))
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        original = path.lstat()
         try:
-            yield fd
-        finally:
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
-                self._remove_empty_staging_directory(path, os.fstat(fd))
+                yield fd
             finally:
                 os.close(fd)
+        finally:
+            self._remove_empty_staging_directory(path, original)
 
     @staticmethod
     @contextlib.contextmanager

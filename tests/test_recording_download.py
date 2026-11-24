@@ -120,6 +120,22 @@ def test_shared_parent_never_contains_a_named_staging_file(tmp_path: Path) -> No
     assert dest.read_bytes() == b"DATA"
 
 
+def test_failed_staging_directory_open_leaves_no_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error = OSError(errno.EMFILE, "too many open files")
+
+    def failed_open(*_args: object, **_kwargs: object) -> NoReturn:
+        raise error
+
+    monkeypatch.setattr("punt_vox.recording_download.os.open", failed_open)
+
+    with pytest.raises(OSError) as caught:
+        RecordingDownload(tmp_path / "rec.mp3").save(_fetch)
+    assert caught.value is error
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("replacement_has_contents", [False, True])
 def test_cleanup_leaves_replacement_directories_alone(
     tmp_path: Path, replacement_has_contents: bool
