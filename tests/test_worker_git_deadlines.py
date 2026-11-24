@@ -389,3 +389,22 @@ def test_worktree_create_timeout_tolerates_a_group_already_gone(
     ):
         WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
     process.wait.assert_called_once()
+
+
+def test_worktree_create_logs_its_elapsed_time_when_git_cannot_start(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Popen failure (git missing, EMFILE) is still an exit worth timing."""
+    repo = tmp_path / "shiny-repo"
+    repo.mkdir()
+    with (
+        caplog.at_level(logging.INFO, logger="punt_vox.voxd.workers.worktrees"),
+        patch("punt_vox.voxd.workers.worktrees.time.monotonic", side_effect=[0.0, 0.1]),
+        patch(POPEN, side_effect=FileNotFoundError(2, "No such file", "git")),
+        pytest.raises(FileNotFoundError),
+    ):
+        WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
+    assert any(
+        r.getMessage() == "Worker worktree for shiny-repo could not start after 0.1 s"
+        for r in caplog.records
+    )

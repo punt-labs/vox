@@ -41,6 +41,10 @@ class WorkerWorktrees:
         started = time.monotonic()
         try:
             self._add(project, worktree, branch)
+        except OSError:
+            # git missing from PATH, or no file descriptor to spawn it with.
+            self._timed(project, started, "could not start after")
+            raise
         except subprocess.TimeoutExpired as exc:
             self._timed(project, started, "timed out after")
             raise ValueError(
