@@ -41,13 +41,21 @@ class AllowlistHandlers:
         """Expose the three allowlist RPCs."""
         return dict.fromkeys(self.ROUTES, self.handle)
 
-    async def _allow(self, msg: dict[str, object]) -> list[str]:
+    @staticmethod
+    def _project(msg: dict[str, object]) -> str:
+        """Refuse a blank project: an empty path would resolve to the daemon's cwd."""
         project = parse_required_str(msg, "project")
+        if not project.strip():
+            raise ValueError("project is required")
+        return project
+
+    async def _allow(self, msg: dict[str, object]) -> list[str]:
+        project = self._project(msg)
         async with self._lock:
             return list(await asyncio.to_thread(self._policy.allow, project))
 
     async def _disallow(self, msg: dict[str, object]) -> list[str]:
-        project = parse_required_str(msg, "project")
+        project = self._project(msg)
         async with self._lock:
             return list(await asyncio.to_thread(self._policy.disallow, project))
 

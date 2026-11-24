@@ -335,7 +335,7 @@ async def test_call_side_allow_repos_disallow_roundtrip(tmp_path: Path) -> None:
         await handlers[f"worker_{operation}"](
             {"type": f"worker_{operation}", "id": "rpc", **fields}, ws
         )
-        return ws.send_json.call_args.args[0]
+        return cast("dict[str, object]", ws.send_json.call_args.args[0])
 
     assert await rpc("repos") == {"type": "worker_result", "id": "rpc", "result": []}
     with patch(
@@ -349,5 +349,10 @@ async def test_call_side_allow_repos_disallow_roundtrip(tmp_path: Path) -> None:
     refused = await rpc("allow", project=str(tmp_path / "missing"))
     assert refused["type"] == "error"
     assert "not a directory" in str(refused["message"])
+    for blank in ({}, {"project": ""}, {"project": None}):
+        bare = await rpc("allow", **blank)
+        assert bare["type"] == "error", blank
+        assert "project is required" in str(bare["message"])
+    assert config.read_field("worker_repos") == repr([str(repo.resolve())])
     assert (await rpc("disallow", project=str(repo)))["result"] == []
     assert config.read_field("worker_repos") == "[]"

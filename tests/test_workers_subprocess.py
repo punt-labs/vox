@@ -168,3 +168,20 @@ def test_real_tmux_literal_steering_clean_env_and_stop(
     else:
         pytest.fail("worker pane process survived stop")
     provider.stop(handle)
+
+
+def test_allow_accepts_a_real_top_level_and_refuses_its_child(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "child").mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    with pytest.raises(ValueError, match="not a git repository top level"):
+        policy.allow(str(repo / "child"))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(ValueError, match="not a git repository top level"):
+        policy.allow(str(plain))
+    assert policy.resolve(str(repo)) == repo.resolve()
+    assert policy.disallow(str(repo)) == ()

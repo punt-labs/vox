@@ -7,15 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
-  edit and list the repositories workers may start in, through the daemon;
-  `vox status` shows them on a `Workers:` line, and `--json` carries
-  `worker_repos`. With an empty allowlist, a vox call's `start_worker` names
-  `vox worker allow` instead of a dead end, and the agent says so once and
-  stops offering workers. (PL-1493)
-
 ### Removed
 
 - The unused voice and language resolver. Default voice selection is unchanged.
@@ -248,6 +239,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is evicted from the speech cache. (PL-1191)
 
 ### Added
+
+- `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
+  edit and list the repositories workers may start in, through the daemon;
+  `vox status` shows them on a `Workers:` line, and `--json` carries
+  `worker_repos`. With an empty allowlist, a vox call's `start_worker` names
+  `vox worker allow` instead of a dead end, and the agent says so once and
+  stops offering workers. (PL-1493)
 
 - `vox doctor` reports call prerequisites: the local ElevenLabs key's
   `convai_write` scope, Claude login expiry, tmux, and echo cancellation.
