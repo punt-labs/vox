@@ -1,20 +1,11 @@
-"""Shared resolution helpers for CLI and MCP server.
-
-Houses voice/language resolution and vibe application -- logic that
-both surfaces need but that doesn't belong in core.py (provider-agnostic
-orchestration) or config.py (file I/O).
-"""
+"""Helpers for leading expressive tags and session vibe application."""
 
 from __future__ import annotations
 
-import logging
 import re
 from pathlib import Path
 
 import punt_vox.config as _config
-from punt_vox.types import TTSProvider, VoiceNotFoundError, validate_language
-
-logger = logging.getLogger(__name__)
 
 _LEADING_TAG_RE = re.compile(r"^\s*\[[^\]\n]+\]")
 _LEADING_TAGS_RE = re.compile(r"^(\s*\[[^\]\n]+\]\s*)+")  # one-or-more tags
@@ -56,65 +47,6 @@ def strip_expressive_tags(text: str) -> str:
     """
     _tags, body = split_leading_expressive_tags(text)
     return body if body.strip() else text
-
-
-def resolve_voice_and_language(
-    provider: TTSProvider,
-    voice: str | None,
-    language: str | None,
-    *,
-    config_dir: Path | None = None,
-) -> tuple[str, str | None]:
-    """Resolve voice and language from user input.
-
-    Priority: explicit voice > session voice > language default > provider default.
-
-    If only language is provided, selects the provider's default voice for it.
-    If only voice is provided, infers language from the voice (best-effort).
-    If both, validates compatibility.
-
-    When *config_dir* is provided (or defaults to
-    ``.punt-labs/vox/``), reads the ``voice`` field as session
-    default.
-    """
-    if language is not None:
-        language = validate_language(language)
-
-    voice_from_config = False
-    if voice is None:
-        store = _config.ConfigStore(config_dir or _config.DEFAULT_CONFIG_DIR)
-        voice = store.read_field("voice")
-        voice_from_config = voice is not None
-
-    if voice is None and language is not None:
-        voice = provider.get_default_voice(language)
-    elif voice is None:
-        voice = provider.default_voice
-
-    try:
-        return voice, _validate_and_infer(provider, voice, language)
-    except VoiceNotFoundError:
-        if not voice_from_config:
-            raise
-        logger.info(
-            "Session voice '%s' not available for %s; using default '%s'",
-            voice,
-            type(provider).__name__,
-            provider.default_voice,
-        )
-        voice = provider.default_voice
-        return voice, _validate_and_infer(provider, voice, language)
-
-
-def _validate_and_infer(
-    provider: TTSProvider, voice: str, language: str | None
-) -> str | None:
-    """Validate *voice* against *provider*; infer its language when unset."""
-    if language is not None:
-        provider.resolve_voice(voice, language)
-        return language
-    provider.resolve_voice(voice)
-    return provider.infer_language_from_voice(voice)
 
 
 def apply_vibe(

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The unused voice and language resolver. Default voice selection is unchanged.
+
 - The unused append-log factory and stderr reporter from `PrivateState`.
   The shared observability package supplies the active append sink.
 
