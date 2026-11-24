@@ -141,7 +141,7 @@ class CommandOutcome:
     """Whether the daemon applied a command, and a line describing the result.
 
     Queued commands receive a bare acknowledgement at enqueue, before the
-    single writer applies them. A synchronous guard refusal reports
+    single writer applies them. A synchronous no-op reports
     ``applied=False`` and a reason in the command reply.
     """
 
