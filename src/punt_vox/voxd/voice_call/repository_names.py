@@ -48,9 +48,8 @@ class RepositoryNames:
         """
         if not self._names:
             raise ValueError("no repositories to list")
-        if len(self._names) == 1:
-            return self._names[0]
-        return f"{', '.join(self._names[:-1])} and {self._names[-1]}"
+        *leading, last = self._names
+        return f"{', '.join(leading)} and {last}" if leading else last
 
     @staticmethod
     def _segments(path: PurePath) -> tuple[str, ...]:
