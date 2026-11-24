@@ -43,7 +43,7 @@ class CliSynthesis:
         from_file: Path | None,  # Absent without --from.
         *,
         speaker_boost: bool,
-        api_key: str | None = None,  # No per-request credential override.
+        api_key: str | None = None,  # Omit to use the provider's configured key.
         **options: Unpack[SynthesisOptions],
     ) -> tuple[list[str], SynthesisSpec]:
         """Resolve segments first, then validate options and fill repo defaults."""
