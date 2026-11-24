@@ -25,6 +25,7 @@ from punt_vox.album_export import AlbumExport as AlbumExport, ExportManifest
 from punt_vox.client_errors import (
     VoxdProtocolError,
 )
+from punt_vox.client_recordings import RecordingListing
 from punt_vox.client_results import (
     CacheStatus as CacheStatus,
     RecordingSummary as RecordingSummary,
@@ -366,13 +367,10 @@ class VoxClient:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        resp = await self._command("rec_list")
+        msg: dict[str, object] = {"type": "rec_list", "id": uuid.uuid4().hex[:12]}
         with self._wire_guard():
-            obj = JsonObject.coerce(resp, "rec_list")
-            return tuple(
-                RecordingSummary.from_wire(JsonObject.coerce(item, "rec_list.entries"))
-                for item in obj.require_list("entries")
-            )
+            async with self._transport.exchange(msg) as exchange:
+                return await RecordingListing.read(exchange, timeout=_TIMEOUT_SHORT)
 
     async def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store (a hostile/absent ref raises).
@@ -549,8 +547,10 @@ class VoxClient:
         voice_list: list[str] = resp["voices"]
         return voice_list
 
-    async def health(self) -> HealthStatus:
+    async def health(self, *, output_dirs: bool = False) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version).
+
+        Set *output_dirs* to also probe the daemon's album output directory.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -558,9 +558,10 @@ class VoxClient:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        resp = await self._transport.send_and_recv(
-            {"type": "health"}, timeout=_TIMEOUT_SHORT
-        )
+        msg: dict[str, object] = {"type": "health"}
+        if output_dirs:
+            msg["output_dirs"] = True
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
         return HealthStatus.from_wire(resp)
 
     async def provider_status(

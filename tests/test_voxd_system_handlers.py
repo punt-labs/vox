@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
@@ -17,6 +18,7 @@ from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.output_health import OutputHealth
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.system_handlers import (
     ChimeHandler,
@@ -196,6 +198,15 @@ class TestChimeReply:
 class TestHealthReply:
     """The health handler replies through WireReply -- gone-peer-safe."""
 
+    @pytest.fixture
+    def _health_with_fixed_uptime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> DaemonHealth:
+        monkeypatch.setattr(
+            "punt_vox.voxd.health.time", SimpleNamespace(monotonic=lambda: 0.0)
+        )
+        return DaemonHealth(PlaybackQueue(), lambda: 0, 0)
+
     @pytest.mark.asyncio
     async def test_health_reports_through_wire_reply(self) -> None:
         """A health request returns an id-stamped health payload."""
@@ -205,6 +216,44 @@ class TestHealthReply:
 
         assert ws.sent[-1]["type"] == "health"
         assert ws.sent[-1]["id"] == "h1"
+
+    @pytest.mark.asyncio
+    async def test_unavailable_output_diagnostics_preserve_base_health(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _health_with_fixed_uptime: DaemonHealth,
+    ) -> None:
+        async def unavailable(_probe: OutputHealth) -> None:
+            return None
+
+        monkeypatch.setattr(OutputHealth, "probe_within_budget", unavailable)
+        health = _health_with_fixed_uptime
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
+
+    @pytest.mark.asyncio
+    async def test_output_probe_exception_preserves_base_health(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _health_with_fixed_uptime: DaemonHealth,
+    ) -> None:
+        def broken_probe(_probe: OutputHealth) -> None:
+            raise RuntimeError("output probe failed")
+
+        monkeypatch.setattr(OutputHealth, "probe", broken_probe)
+        health = _health_with_fixed_uptime
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
 
     @pytest.mark.asyncio
     async def test_gone_peer_during_health_send_does_not_raise(self) -> None:

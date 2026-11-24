@@ -1006,8 +1006,10 @@ class TestVoxClientRecMusic:
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
                 {
-                    "type": "recordings",
+                    "type": "recordings_page",
                     "id": "l1",
+                    "page": 0,
+                    "more": False,
                     "entries": [
                         {"name": "a.mp3", "bytes": 5},
                         {"name": "b.mp3", "bytes": 2},
@@ -1509,6 +1511,7 @@ class TestVoxClientHealth:
         # field; per-provider readiness belongs to provider_status.
         assert not hasattr(result, "provider")
         assert result.daemon_version == "5.0.0"
+        assert "output_dirs" not in json.loads(mock_ws.send.call_args.args[0])
 
 
 @pytest.mark.parametrize("provider", [None, "elevenlabs"])
@@ -1714,6 +1717,28 @@ class TestVoxClientSync:
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.health()
             assert result.status == "ok"
+
+    def test_health_can_request_album_output_diagnostics(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "health",
+                    "output_dir": "absent",
+                    "music_dir_missing": True,
+                }
+            )
+        )
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            result = VoxClientSync(port=8421, token="tok").health(output_dirs=True)
+
+        assert json.loads(mock_ws.send.call_args.args[0])["output_dirs"] is True
+        assert result.output_dir == "absent"
+        assert result.music_dir_missing is True
 
     def test_health_timeout_bounds_a_voxd_that_never_answers(self) -> None:
         """The bound holds the whole call, not the client's fixed 5 s recv wait."""
@@ -1993,7 +2018,7 @@ class TestVoxClientSyncFrameDispatch:
     def test_rec_list_puts_type_on_the_wire(self) -> None:
         _, sent = self._run(
             lambda s: s.rec_list(),
-            [{"type": "rec_list", "entries": []}],
+            [{"type": "recordings_page", "page": 0, "more": False, "entries": []}],
         )
         assert len(sent) == 1
         assert sent[0]["type"] == "rec_list"

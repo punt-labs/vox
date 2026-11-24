@@ -22,18 +22,22 @@ import shutil
 import stat
 import tempfile
 from dataclasses import dataclass
-from operator import attrgetter
+from itertools import batched
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types import generate_filename
 from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.path_status import PathStatus
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 __all__ = ["RecordStore", "RecordWrite"]
 
 _NAME_LABEL = "recording name"
+_SCAN_BATCH_SIZE = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,29 +129,24 @@ class RecordStore:
         moved = self._move(source, dest)
         return moved if moved is not None else self._copy(source, dest)
 
-    def entries(self) -> tuple[RecordingEntry, ...]:
-        """Return the store's immediate recordings (name + bytes), sorted by name.
+    def entry_batches(self) -> Iterator[list[RecordingEntry]]:
+        """Yield bounded batches of immediate, non-symlink recording files.
 
-        Lists only the files directly in the ``0700`` root -- no recursion and no
-        following a symlink out of it -- so the enumeration cannot leak a path the
-        client could never have named. A missing root is an empty store; a root
-        that exists but cannot be read raises, so an access fault is never masked
-        as an empty listing (``RecListHandler`` turns the ``OSError`` into a fault).
-
-        Raises:
-            OSError: If the store exists but cannot be enumerated or inspected.
+        A missing root is empty. An inaccessible root raises OSError.
         """
         if not PathStatus.of(self._root).is_directory:
-            return ()
+            return
         # Build the shared bare-name validator once; every child is judged by the
         # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
         validator = ContainmentRoot(self._root, _NAME_LABEL)
-        found = [
-            entry
-            for child in self._root.iterdir()
-            if (entry := self._entry_for(child, validator)) is not None
-        ]
-        return tuple(sorted(found, key=attrgetter("name")))
+        with os.scandir(self._root) as children:
+            for batch in batched(children, _SCAN_BATCH_SIZE, strict=False):
+                yield [
+                    entry
+                    for child in batch
+                    if (entry := self._entry_for(Path(child.path), validator))
+                    is not None
+                ]
 
     @staticmethod
     def _entry_for(child: Path, validator: ContainmentRoot) -> RecordingEntry | None:
@@ -160,7 +159,7 @@ class RecordStore:
         and never fails on a concurrent delete.
 
         A name *validator* would refuse (a backslash-, separator-, or
-        non-printable-bearing planted file) is skipped too, so ``entries`` surfaces
+        non-printable-bearing planted file) is skipped too, so the scan surfaces
         only names ``resolve_ref``/``remove`` would accept -- list and operate stay
         consistent, never showing an id that ``rec get``/``rec remove`` then reject.
         ``None`` means "skip this entry", not a give-up on producing a value

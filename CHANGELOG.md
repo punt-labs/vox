@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox rec list` lists large recording stores without exceeding WebSocket frame
+  limits or blocking other daemon requests while it scans the directory.
+
 - `vox say --from` and `vox rec new --from` now reject a segments file with
   no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
   having said nothing, and skip whitespace-only segments instead of failing
@@ -61,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox call --script` on a file that is not UTF-8 now gives a usage error
   telling you to save it as UTF-8, instead of a `UnicodeDecodeError`
   traceback. `vox say --from` reports the same message. (PL-1472)
+
+- Speak trailing currency signs on standalone prose amounts (`5€`, `12.50$`)
+  as money. For dollar, euro, and pound decimals, say cents or pence explicitly
+  with either sign position so speech engines do not misread the fraction.
+  Amounts with an attached scale (such as `$1.5million`) and ranges without a
+  currency sign on the second endpoint (such as `£.50–1.25`) keep decimal
+  wording. Decimal commas and inline code are unchanged. (PL-1473)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS

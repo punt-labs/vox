@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from punt_vox.paths import recordings_dir
 from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.play_handler import PlayHandler
-from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
+from punt_vox.voxd.rec_handlers import RecRemoveHandler
+from punt_vox.voxd.rec_list_handler import RecListHandler
 from punt_vox.voxd.record_handler import RecordHandler
 from punt_vox.voxd.record_store import RecordStore
 

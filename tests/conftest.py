@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast, final
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +22,31 @@ from punt_vox.providers.espeak import EspeakProvider, EspeakVoiceConfig
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.polly import PollyProvider, VoiceConfig
 from punt_vox.providers.say import SayProvider, SayVoiceConfig
+from punt_vox.voxd.record_store import RecordStore
+
+if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
+
+
+@pytest.fixture
+def recording_socket() -> tuple[WebSocket, list[dict[str, object]]]:
+    """Capture JSON replies from a recording handler."""
+    sent: list[dict[str, object]] = []
+
+    @final
+    class _WS:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent.append(payload)
+
+    return cast("WebSocket", _WS()), sent
+
+
+@pytest.fixture
+def recording_store(tmp_path: Path) -> RecordStore:
+    """Provide an existing, isolated recording directory."""
+    store = RecordStore(tmp_path / "recordings")
+    store.root.mkdir(parents=True)
+    return store
 
 
 @pytest.hookimpl(tryfirst=True)
