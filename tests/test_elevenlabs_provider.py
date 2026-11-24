@@ -133,6 +133,22 @@ class TestElevenLabsProviderResolveVoice:
             == voice.voice_id
         )
 
+    def test_unknown_voice_keeps_a_colliding_full_name_without_a_description(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        voices = mock_elevenlabs_client.voices.get_all.return_value.voices
+        voices[1].name = "Drew"
+        other_drew = MagicMock(name="described voice")
+        other_drew.name = "Drew - baritone"
+        other_drew.voice_id = "AAAAAAAAAAAAAAAAAAAA"
+        voices.append(other_drew)
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
+
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock
     ) -> None:
