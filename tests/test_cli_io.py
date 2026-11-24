@@ -155,7 +155,7 @@ class TestTextInputFromFile:
         path.write_bytes(b"hi \xff\xfe\n")
         result = CliRunner().invoke(app, [*flags, "say", "--from", str(path)])
         assert result.exit_code == 2
-        message = "Invalid value: --from file must contain valid UTF-8."
+        message = "Invalid value: --from file is not UTF-8 (byte 3); save it as UTF-8."
         if flags:
             assert json.loads(result.stdout) == {"error": message}
             assert result.stderr == ""
