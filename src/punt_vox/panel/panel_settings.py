@@ -86,6 +86,17 @@ class PanelSettings:
             self._state = update(self._state, value)
             self._notice = PanelNotice.silent()
 
+    def commit_voice(self, shown: PanelState, voice: str) -> ControlPush:
+        """Persist a pick only while the roster's provider and model are current."""
+        with self._lock:
+            if self._state is not shown:
+                return ControlPush.CORRECT
+            target = VoiceTarget(shown.provider or "", shown.model)
+            self._store.write_field("voice", voice, check=target.require_current)
+            self._state = shown.with_voice(voice)
+            self._notice = PanelNotice.silent()
+        return ControlPush.REFRESH
+
     def _fetch_roster_or_notice(
         self, target: VoiceTarget, context: str
     ) -> tuple[str, ...] | RosterError:

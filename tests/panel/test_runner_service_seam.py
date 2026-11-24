@@ -33,6 +33,8 @@ from punt_vox.panel.topics import PanelTopic
 from punt_vox.server_switches import PROVIDER_NAMES
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
     from punt_lux.operations import OpError, UpdateRequest
@@ -67,7 +69,13 @@ class _Store:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(self, key: str, value: str) -> None:
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         self.written[key] = value
 
     def write_fields(self, updates: dict[str, str]) -> None:

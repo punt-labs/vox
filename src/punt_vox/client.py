@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import IO
 
+    from punt_vox.voice_target import VoiceTarget
+
 from punt_vox.album_export import AlbumExport as AlbumExport, ExportManifest
 from punt_vox.client_errors import (
     VoxdProtocolError,
@@ -44,7 +46,6 @@ from punt_vox.types_programs import (
 from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_recording import RecordingFetchRequest
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.voice_target import VoiceTarget
 
 logger = logging.getLogger(__name__)
 
@@ -526,8 +527,8 @@ class VoxClient:
             tmp.unlink(missing_ok=True)
             raise
 
-    async def voices(self, provider: str | VoiceTarget) -> list[str]:
-        """List the target's voices; a provider name uses its default model.
+    async def voices(self, target: VoiceTarget) -> list[str]:
+        """List the target's voices, using its default model if unspecified.
 
         State is the sole authority on which provider voxd runs, so the
         caller names it explicitly on every roster fetch: the wire never
@@ -540,7 +541,7 @@ class VoxClient:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
         """
-        msg = VoiceTarget.request(provider)
+        msg = target.request()
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_PROVIDER)
         if "voices" not in resp:
             raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")

@@ -200,9 +200,7 @@ class VoxPanelService:
             self._settings.commit("speak", code, PanelState.with_speak)
             return ControlPush.REFRESH
         if topic == PanelTopic.VOICE:
-            voice = self._target().voice(self._index(payload))
-            self._settings.commit("voice", voice, PanelState.with_voice)
-            return ControlPush.REFRESH
+            return self._commit_voice(self._index(payload))
         if topic == PanelTopic.PROVIDER:
             return self._settings.commit_provider(
                 self._target().provider(self._index(payload))
@@ -215,6 +213,10 @@ class VoxPanelService:
             return self._preview()
         logger.warning("vox-panel: no handler for topic %r", topic)
         return ControlPush.NONE
+
+    def _commit_voice(self, index: int) -> ControlPush:
+        state = self._settings.snapshot()
+        return self._settings.commit_voice(state, ClickTarget(state).voice(index))
 
     def _target(self) -> ClickTarget:
         """Snapshot the held settings as the thing a click's index names."""

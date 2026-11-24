@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from punt_vox.voice_target import RosterClient
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
     from punt_vox.types_synthesis import SynthesisSpec
@@ -57,7 +59,13 @@ class SettingsSource(Protocol):
 class SettingsStore(SettingsSource, Protocol):
     """The config-store read and write ``VoxPanelService`` needs."""
 
-    def write_field(self, key: str, value: str) -> None:
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         """Write one config field, raising on a value it cannot store or a bad write."""
         ...
 

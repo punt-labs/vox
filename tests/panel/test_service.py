@@ -26,6 +26,7 @@ from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from punt_lux import LuxClient, RenderRequest, SceneShown
@@ -84,7 +85,21 @@ class _FakeStore:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(self, key: str, value: str) -> None:
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        if check is not None:
+            check(
+                {
+                    "provider": self._cfg.provider or "",
+                    "model": self._cfg.model or "",
+                }
+                | self.written
+            )
         self.written[key] = value
 
     def write_fields(self, updates: dict[str, str]) -> None:
@@ -300,6 +315,20 @@ class TestApplyEvent:
         service.apply_event(PanelTopic.VOICE, {"value": 1})
         assert store.written["voice"] == "aria"
         assert service.scene().voice == "aria"
+
+    def test_voice_pick_rejects_a_model_changed_on_disk(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
+        )
+        service = VoxPanelService(_FakeDaemonClient(["alloy", "marin"]), store)
+        service.prefetch()
+        store.write_fields({"model": "tts-1", "voice": "alloy"})
+
+        with pytest.raises(ConfigValueError, match="active model changed"):
+            service.apply_event(PanelTopic.VOICE, {"value": 2})
+
+        assert store.read().voice == "alloy"
 
     def test_voice_preview_does_not_write_and_reports_no_repush(self) -> None:
         client = _FakeDaemonClient()
@@ -743,7 +772,13 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
+            def write_field(
+                self,
+                key: str,
+                value: str,
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -767,7 +802,13 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
+            def write_field(
+                self,
+                key: str,
+                value: str,
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "config values must not contain double-quotes"
                 raise ConfigValueError(msg)
 
@@ -908,7 +949,13 @@ class TestCorrectScene:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
+            def write_field(
+                self,
+                key: str,
+                value: str,
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -1061,7 +1108,13 @@ class TestConcurrentApplyEvent:
             def read(self) -> VoxConfig:
                 return store.read()
 
-            def write_field(self, key: str, value: str) -> None:
+            def write_field(
+                self,
+                key: str,
+                value: str,
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 if key == "notify":
                     first_entered.set()
                     release_first.wait(timeout=2)

@@ -69,13 +69,7 @@ class VoiceRoster:
         active = fields.get("provider")
         if not active:
             raise ProviderNotConfiguredError.for_mcp()
-        if active.lower() != target.provider.lower():
-            msg = (
-                f"The active provider changed from {target.provider!r} to {active!r}. "
-                "Retry setting the voice."
-            )
-            raise ValueError(msg)
-        target.require_current_model(fields)
+        target.require_current(fields)
 
     @staticmethod
     def featured(provider: str | None, roster: list[str]) -> list[FeaturedVoice]:

@@ -1436,7 +1436,7 @@ class TestVoxClientVoices:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        result = await client.voices("say")
+        result = await client.voices(VoiceTarget("say"))
         assert result == ["fred"]
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["provider"] == "say"
@@ -1448,7 +1448,7 @@ class TestVoxClientVoices:
         with patch.object(VoxdTransport, "send_and_recv") as send:
             send.side_effect = [{"voices": ["fred"]}]
 
-            assert await client.voices("say") == ["fred"]
+            assert await client.voices(VoiceTarget("say")) == ["fred"]
 
         call = send.await_args
         assert call is not None
@@ -1469,7 +1469,7 @@ class TestVoxClientVoices:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="missing 'voices' key"):
-            await client.voices("say")
+            await client.voices(VoiceTarget("say"))
 
     @pytest.mark.asyncio
     async def test_voices_wire_rejection_raises_typed_error(self) -> None:
@@ -1492,7 +1492,7 @@ class TestVoxClientVoices:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdRejectionError, match="Unknown provider"):
-            await client.voices("")
+            await client.voices(VoiceTarget(""))
 
 
 class TestVoxClientHealth:
@@ -1897,9 +1897,12 @@ class TestVoxClientSync:
 
     @pytest.mark.parametrize(
         ("target", "model"),
-        [("say", None), (VoiceTarget("openai", "gpt-4o-mini-tts"), "gpt-4o-mini-tts")],
+        [
+            (VoiceTarget("say"), None),
+            (VoiceTarget("openai", "gpt-4o-mini-tts"), "gpt-4o-mini-tts"),
+        ],
     )
-    def test_voices(self, target: str | VoiceTarget, model: str | None) -> None:
+    def test_voices(self, target: VoiceTarget, model: str | None) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(

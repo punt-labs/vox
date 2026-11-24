@@ -14,6 +14,8 @@ from punt_vox.panel.voice_preview import VoicePreview
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.panel.ports import PanelDaemonClient, SettingsStore
     from punt_vox.voice_target import VoiceTarget
 
@@ -65,7 +67,13 @@ class _Store:
             vibe_tags=None,
         )
 
-    def write_field(self, key: str, value: str) -> None:
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         raise NotImplementedError
 
     def write_fields(self, updates: dict[str, str]) -> None:
