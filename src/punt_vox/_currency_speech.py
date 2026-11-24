@@ -86,20 +86,17 @@ class CurrencySpeech:
         scale = _SCALES.get(word.lower(), "")
         suffix = "" if scale else word
         singular, plural = _UNITS[symbol]
-        scale, span = cls._speak_span(match, prefix, scale)
+        span = "" if prefix else cls._speak_bare_end(match, scale)
         unit = singular if not (scale or span) and cls._is_one(amount) else plural
         number = _SIGNS[sign] + cls._spoken_number(amount)
         return " ".join(filter(None, (number, scale, span, unit, suffix)))
 
     @classmethod
-    def _speak_span(
-        cls, match: re.Match[str], prefix: str, scale: str
-    ) -> tuple[str, str]:
-        if prefix or not (end := match["bare_end"]):
-            return scale, ""
-        end_scale = _SCALES.get((match["bare_scale"] or "").lower(), "") or scale
-        span = " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
-        return scale or end_scale, span
+    def _speak_bare_end(cls, match: re.Match[str], start_scale: str) -> str:
+        if not (end := match["bare_end"]):
+            return ""
+        end_scale = _SCALES.get((match["bare_scale"] or "").lower(), start_scale)
+        return " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
 
     @staticmethod
     def _is_one(amount: str) -> bool:
