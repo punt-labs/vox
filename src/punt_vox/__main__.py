@@ -488,14 +488,11 @@ def _run(coro: Coroutine[object, object, CommandResult]) -> None:
     exit code the result carries becomes the process exit on failure.
     """
     result = asyncio.run(coro)
+    payload, text = result.json_data, result.text
     if result.error:
-        detail = result.json_data if result.json_data is not None else result.text
-        _formatter.error(detail, result.text)
+        _formatter.error((payload or {}).get("error", text), text)
         raise typer.Exit(code=result.exit_code)
-    payload = (
-        result.json_data if result.json_data is not None else {"text": result.text}
-    )
-    _formatter.emit(payload, result.text)
+    _formatter.emit(payload if payload is not None else {"text": text}, text)
 
 
 @app.command("model")

@@ -1230,6 +1230,63 @@ class TestLogCommand:
         assert "refused" in result.output
 
 
+@pytest.mark.parametrize(
+    ("args", "message", "prefix"),
+    [
+        (
+            ["provider", "definitely-bogus"],
+            (
+                "unknown provider 'definitely-bogus'. "
+                "Allowed: elevenlabs, openai, polly, say, espeak"
+            ),
+            "",
+        ),
+        (
+            ["model", "definitely-bogus"],
+            "unknown model 'definitely-bogus' for provider 'elevenlabs'",
+            "",
+        ),
+        (["voice", "@"], "voice name is empty", ""),
+        (
+            ["voice", "matilda", "--provider", "openai"],
+            "Cannot set a voice for 'openai': the active provider is 'elevenlabs'.",
+            "Error: ",
+        ),
+    ],
+)
+def test_switch_errors_have_one_json_error_key(
+    args: list[str], message: str, prefix: str
+) -> None:
+    runner = CliRunner()
+    plain = runner.invoke(app, args)
+    assert plain.exit_code == 1
+    assert plain.stdout == ""
+    assert plain.stderr == f"{prefix}{message}\n"
+
+    machine = runner.invoke(app, [*args, "--json"])
+    assert machine.exit_code == 1
+    assert machine.stderr == ""
+    assert json.loads(machine.stdout) == {"error": message}
+
+
+@patch(f"{_CLI}.VoxClientSync")
+def test_model_roster_failure_has_one_json_error_key(
+    mock_client_cls: MagicMock, hermetic_config: Path
+) -> None:
+    config = hermetic_config / "vox.md"
+    original = config.read_text()
+    mock_client_cls.return_value.voices.side_effect = VoxdConnectionError(
+        "voice roster unavailable"
+    )
+
+    result = CliRunner().invoke(app, ["model", "v3", "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {"error": "voice roster unavailable"}
+    assert config.read_text() == original
+
+
 class TestVoiceCommand:
     """Tests for the extended ``vox voice`` switch command (.3).
 
