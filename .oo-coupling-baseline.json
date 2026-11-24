@@ -1228,8 +1228,8 @@
     "efferent_coupling": 6.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.8,
-    "avg_lcom": 0.8
+    "max_lcom": 0.791,
+    "avg_lcom": 0.791
   },
   "src/punt_vox/providers/elevenlabs_answer.py": {
     "efferent_coupling": 3.0,
@@ -1238,12 +1238,33 @@
     "max_lcom": 0.2,
     "avg_lcom": 0.2
   },
+  "src/punt_vox/providers/elevenlabs_catalog.py": {
+    "efferent_coupling": 3.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.5,
+    "avg_lcom": 0.5
+  },
+  "src/punt_vox/providers/elevenlabs_catalog_entry.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/providers/elevenlabs_client.py": {
     "efferent_coupling": 8.0,
     "public_names": 5.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.733,
-    "avg_lcom": 0.733
+    "max_lcom": 0.667,
+    "avg_lcom": 0.667
+  },
+  "src/punt_vox/providers/elevenlabs_credential.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/providers/elevenlabs_music.py": {
     "efferent_coupling": 3.0,
