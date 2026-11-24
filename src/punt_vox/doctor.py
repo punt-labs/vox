@@ -41,6 +41,10 @@ if TYPE_CHECKING:
 
 __all__ = ["DoctorCheck"]
 
+# Saved music albums are what vox writes under the music root (recordings go to
+# the daemon's state store), so a fresh install has neither dir until then.
+_CREATED_BY = "created when 'vox music on' saves its first album"
+
 # How each connection failure reads, most specific first: the daemon-health
 # line (formatted with the error) and the provider-readiness skip reason.
 # Only a refusal is "not running"; a rejected handshake is a live voxd whose
@@ -302,11 +306,7 @@ class DoctorCheck:
         """
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
         if not music_dir.is_dir():
-            return [
-                CheckResult.warn(
-                    "output music dir: absent — created on first 'vox record'"
-                )
-            ]
+            return [CheckResult.warn(f"output music dir: absent — {_CREATED_BY}")]
         return []
 
     def check_uvx(self) -> CheckResult:
@@ -341,7 +341,7 @@ class DoctorCheck:
                 return [CheckResult.ok("output: writable")]
             except OSError:
                 return [CheckResult.fail("output: not writable — check permissions")]
-        return [CheckResult.warn("output: absent — created on first 'vox record'")]
+        return [CheckResult.warn(f"output: absent — {_CREATED_BY}")]
 
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.

@@ -12,7 +12,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
+from punt_vox.__main__ import app
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdHandshakeRejectedError,
@@ -411,6 +413,34 @@ class TestCheckUvx:
 
 
 # ---------------------------------------------------------------------------
+# check_music_dir
+# ---------------------------------------------------------------------------
+
+_MUSIC_ON_ADVICE = "created when 'vox music on' saves its first album"
+
+
+class TestCheckMusicDir:
+    def test_present_dir_reports_nothing(self, tmp_path: Path) -> None:
+        with patch("punt_vox.doctor._resolve_music_dir", return_value=tmp_path):
+            assert DoctorCheck().check_music_dir() == []
+
+    def test_missing_dir_names_the_command_that_creates_it(
+        self, tmp_path: Path
+    ) -> None:
+        missing = tmp_path / "Music"
+        with patch("punt_vox.doctor._resolve_music_dir", return_value=missing):
+            results = DoctorCheck().check_music_dir()
+        assert len(results) == 1
+        assert results[0].symbol == "⚠"
+        assert results[0].message == f"output music dir: absent — {_MUSIC_ON_ADVICE}"
+        assert str(missing) not in results[0].message  # no absolute path
+
+    def test_advised_command_exists(self) -> None:
+        result = CliRunner().invoke(app, ["music", "on", "--help"])
+        assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
 # check_output_dir
 # ---------------------------------------------------------------------------
 
@@ -473,7 +503,7 @@ class TestCheckOutputDir:
         assert len(results) == 1
         assert results[0].passed is False
         assert results[0].symbol == "⚠"
-        assert "absent" in results[0].message
+        assert results[0].message == f"output: absent — {_MUSIC_ON_ADVICE}"
         assert str(missing) not in results[0].message  # no absolute path
 
 
