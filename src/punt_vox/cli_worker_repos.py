@@ -1,41 +1,55 @@
-"""The ``Workers:`` line of ``vox status``: the allowlist, read from global config."""
+"""The ``Workers:`` line of ``vox status``: the daemon's allowlist, not local config."""
 
 from __future__ import annotations
 
-from typing import Self, final
+import asyncio
+from typing import Self, cast, final
 
-from punt_vox.config import ConfigStore
-from punt_vox.voxd.workers.allowlist import RepoAllowlist
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.service.daemon_status import DaemonState
+from punt_vox.worker_client import WorkerClient
+
+_UNREACHABLE = "daemon not reachable"
 
 
 @final
 class WorkerReposStatus:
-    """Hold the allowlisted repositories, or the one reason they cannot be read."""
+    """Hold the daemon's allowlist, or the one reason it could not be read."""
 
-    __slots__ = ("_fault", "_repos")
-    _repos: list[str]
-    _fault: str | None  # None when the allowlist parsed.
+    __slots__ = ("_error", "_repos")
+    _repos: list[str] | None  # None: the daemon gave no allowlist.
+    _error: str | None  # None when the daemon answered with a list.
 
-    def __new__(cls) -> Self:
-        """Read ``worker_repos`` from the daemon's global config once."""
+    def __new__(cls, state: DaemonState) -> Self:
+        """Ask a running daemon for its allowlist; any other state is unreachable."""
         self = super().__new__(cls)
-        self._repos, self._fault = [], None
-        allowlist = RepoAllowlist(ConfigStore(ConfigStore.global_dir()))
-        try:
-            self._repos = sorted(str(path) for path in allowlist.paths())
-        except ValueError as exc:
-            self._fault = str(exc)
+        self._repos, self._error = None, _UNREACHABLE
+        if state is DaemonState.RUNNING:
+            self._repos, self._error = cls._ask()
         return self
 
-    @property
-    def repos(self) -> list[str]:
-        """Return the allowlisted paths, empty when unreadable."""
-        return list(self._repos)
+    @staticmethod
+    def _ask() -> tuple[list[str] | None, str | None]:
+        try:
+            reply = asyncio.run(WorkerClient.request("repos"))
+        except VoxdConnectionError:
+            return None, _UNREACHABLE
+        except VoxdProtocolError as exc:
+            return None, str(exc)
+        return [str(p) for p in cast("list[object]", reply)], None
+
+    def fields(self) -> dict[str, list[str] | str | None]:
+        """Return ``worker_repos`` and, when it is null, ``worker_repos_error``."""
+        if self._error is not None:
+            return {"worker_repos": None, "worker_repos_error": self._error}
+        return {"worker_repos": self._repos}
 
     def label(self) -> str:
-        """Return the last path segments, or what to run, or the parse fault."""
-        if self._fault is not None:
-            return f"({self._fault})"
+        """Return the last path segments, what to run, or why there is no answer."""
+        if self._error == _UNREACHABLE:
+            return f"unknown ({_UNREACHABLE})"
+        if self._error is not None:
+            return f"({self._error})"
         if not self._repos:
             return "(none allowlisted; run vox worker allow <path>)"
         return ", ".join(sorted(repo.rsplit("/", 1)[-1] for repo in self._repos))

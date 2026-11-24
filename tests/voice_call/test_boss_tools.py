@@ -223,10 +223,15 @@ async def test_start_without_project_needs_one_repo() -> None:
     assert "/a" in json.loads(result)["error"]
 
 
-async def test_start_with_an_empty_allowlist_names_the_fix() -> None:
+@pytest.mark.parametrize(
+    "arguments", [{"task": "fix x"}, {"task": "fix x", "project": "/repo"}]
+)
+async def test_start_with_an_empty_allowlist_names_the_fix(
+    arguments: dict[str, object],
+) -> None:
     """The dead end on 2026-11-23: four tries, 'allowlisted: []', no way out."""
     workers = FakeWorkers(())
-    result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
+    result, error = await _tools(workers).answer("start_worker", arguments)
     assert error
     message = json.loads(result)["error"]
     assert message == (

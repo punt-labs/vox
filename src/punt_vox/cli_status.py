@@ -37,7 +37,7 @@ class StatusCli:
         daemon = DaemonCli.probe_status()
         health = daemon.health
         log_level = health.log_level if health is not None else "unknown"
-        workers = WorkerReposStatus()
+        workers = WorkerReposStatus(daemon.state)
         info: dict[str, str | list[str] | None] = {
             "daemon": daemon.state.value.replace("_", " "),
             "provider": cfg.provider or "unknown",
@@ -49,7 +49,7 @@ class StatusCli:
             "vibe_tags": cfg.vibe_tags,
             "log_level": log_level,
             "desktop": DesktopRegistration.read(),
-            "worker_repos": workers.repos,
+            **workers.fields(),
         }
         label = cls._log_label(log_level, daemon.state)
         formatter.emit(info, cls._text(info, label, workers.label()))
