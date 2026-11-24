@@ -92,10 +92,14 @@ def test_a_reply_past_the_integer_conversion_limit_is_a_protocol_error() -> None
         VoxdExchange.decode("1" * (digits + 1))
 
 
-def test_a_reply_nested_past_the_recursion_limit_is_a_protocol_error() -> None:
-    depth = sys.getrecursionlimit() + 1
-    with pytest.raises(VoxdProtocolError, match="invalid JSON from voxd"):
-        VoxdExchange.decode("[" * depth + "0" + "]" * depth)
+def test_a_reply_nested_past_the_recursion_limit_is_a_protocol_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = RecursionError("JSON nesting limit exceeded")
+    monkeypatch.setattr(json, "loads", MagicMock(side_effect=error))
+    with pytest.raises(VoxdProtocolError, match="invalid JSON from voxd") as raised:
+        VoxdExchange.decode("{}")
+    assert raised.value.__cause__ is error
 
 
 @pytest.mark.parametrize("frame", [[], 1, "x", True, None])
