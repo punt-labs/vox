@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
+import subprocess
+import sys
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 import pytest
@@ -12,22 +14,48 @@ from punt_vox.voxd import output_health
 from punt_vox.voxd.output_health import OutputHealth
 
 
+def test_stalled_probe_does_not_hold_process_open() -> None:
+    script = """
+import asyncio
+from pathlib import Path
+from threading import Event
+from unittest.mock import patch
+from punt_vox.voxd import output_health
+from punt_vox.voxd.output_health import OutputHealth
+
+entered = Event()
+
+def stalled_probe(self):
+    entered.set()
+    Event().wait()
+
+async def run():
+    await OutputHealth(Path(".")).probe_within_budget()
+    assert entered.is_set()
+
+output_health._PROBE_TIMEOUT_S = 0.1
+with patch.object(OutputHealth, "probe", stalled_probe):
+    asyncio.run(run())
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=4)
+
+
 @pytest.mark.asyncio
 async def test_timed_out_requests_share_the_in_flight_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     calls = 0
-    release = asyncio.Event()
-    finished = asyncio.Event()
+    release = Event()
+    finished = Event()
 
-    async def blocked_probe(_probe: object) -> dict[str, object]:
+    def blocked_probe(_probe: OutputHealth) -> dict[str, object]:
         nonlocal calls
         calls += 1
-        await release.wait()
+        assert release.wait(timeout=5.0)
         finished.set()
         return {"output_dir": "writable"}
 
-    monkeypatch.setattr(asyncio, "to_thread", blocked_probe)
+    monkeypatch.setattr(OutputHealth, "probe", blocked_probe)
     monkeypatch.setattr(output_health, "_PROBE_TIMEOUT_S", 0.01)
     probe = OutputHealth(tmp_path)
 
@@ -39,7 +67,7 @@ async def test_timed_out_requests_share_the_in_flight_probe(
         assert await probe.probe_within_budget() == {"output_dir": "writable"}
     finally:
         release.set()
-        await asyncio.wait_for(finished.wait(), timeout=1.0)
+        assert finished.wait(timeout=1.0)
 
     assert calls == 1
     assert "Timed out checking the album output directories" in caplog.text

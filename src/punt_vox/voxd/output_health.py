@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+from concurrent.futures import Future
+from threading import Thread
 from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.dirs import _resolve_music_dir  # pyright: ignore[reportPrivateUsage]
@@ -22,7 +24,7 @@ class OutputHealth:
     """Probe the actual root wired into the daemon's album store."""
 
     __slots__ = ("_pending", "_root")
-    _pending: asyncio.Task[dict[str, object]] | None
+    _pending: asyncio.Future[dict[str, object]] | None
     _root: Path
 
     def __new__(cls, root: Path) -> Self:
@@ -42,7 +44,14 @@ class OutputHealth:
     async def probe_within_budget(self) -> dict[str, object]:
         """Bound the wait and reuse the pending probe if storage is still busy."""
         if self._pending is None or self._pending.done():
-            self._pending = asyncio.create_task(asyncio.to_thread(self.probe))
+            result: Future[dict[str, object]] = Future()
+            Thread(
+                target=self._complete_probe,
+                args=(result,),
+                name="vox-output-health",
+                daemon=True,
+            ).start()
+            self._pending = asyncio.wrap_future(result)
         try:
             return await asyncio.wait_for(
                 asyncio.shield(self._pending), timeout=_PROBE_TIMEOUT_S
@@ -50,6 +59,14 @@ class OutputHealth:
         except TimeoutError:
             logger.warning("Timed out checking the album output directories")
             return {}
+
+    def _complete_probe(self, result: Future[dict[str, object]]) -> None:
+        try:
+            verdict = self.probe()
+        except Exception:
+            logger.exception("Could not check the album output directories")
+            verdict = {}
+        result.set_result(verdict)
 
     def _music_dir_missing(self) -> bool:
         try:
