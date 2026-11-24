@@ -42,9 +42,10 @@ class _Daemon:
 class _Store:
     """A store that only ever answers reads, with *provider* configured."""
 
-    def __init__(self, provider: str | None) -> None:
+    def __init__(self, provider: str | None, model: str | None = None) -> None:
         # None: no provider declared, which the session spec refuses.
         self._provider = provider
+        self._model = model
 
     def read(self) -> VoxConfig:
         return VoxConfig(
@@ -53,7 +54,7 @@ class _Store:
             vibe_mode="auto",
             voice="roger",
             provider=self._provider,
-            model=None,
+            model=self._model,
             vibe=None,
             vibe_tags=None,
         )
@@ -65,10 +66,12 @@ class _Store:
         raise NotImplementedError
 
 
-def _preview(daemon: _Daemon, provider: str | None = "elevenlabs") -> VoicePreview:
+def _preview(
+    daemon: _Daemon, provider: str | None = "elevenlabs", *, model: str | None = None
+) -> VoicePreview:
     return VoicePreview(
         cast("PanelDaemonClient", daemon),
-        cast("SettingsStore", _Store(provider)),
+        cast("SettingsStore", _Store(provider, model)),
         _LOGGER,
     )
 
@@ -99,6 +102,16 @@ def test_an_undeclared_provider_is_refused_before_voxd_is_asked() -> None:
     notice = _preview(daemon, provider=None).play("aria")
 
     assert (notice.is_present, daemon.spoken) == (True, [])
+
+
+def test_an_invalid_model_keeps_the_voxd_rejection_notice() -> None:
+    daemon = _Daemon()
+
+    notice = _preview(daemon, model="unknown-model").play("aria")
+
+    assert notice.message.startswith("⚠ voxd rejected the request")
+    assert "unknown-model" in notice.message
+    assert daemon.spoken == []
 
 
 @pytest.mark.parametrize(
