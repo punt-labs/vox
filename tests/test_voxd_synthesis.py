@@ -1382,6 +1382,69 @@ class TestApplyVibeForSynthesis:
         suffixed = self._apply(suffix, None, "elevenlabs", model)
         assert prefixed == suffixed == expected
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("€1,50", "1 euro and 50 cents"),
+            ("I paid €1,50.", "I paid 1 euro and 50 cents."),
+            ("€1,50, then", "1 euro and 50 cents, then"),
+            ("€0,50", "50 euro cents"),
+            ("1,50€", "1 euro and 50 cents"),
+            ("€1,500", "1,500 euros"),
+            ("€1,000,000", "1,000,000 euros"),
+            ("$1,50", "1,50"),
+            ("`€1,50`", "euro sign 1,50"),
+            ("`1,50€`", "1,50"),
+            ("€1,5", "1,5"),
+            ("€1,505", "1,505 euros"),
+            ("€1,50,000", "1,50,000"),
+            ("€1,50.25", "1,50.25"),
+            ("€1,501,50", "1,501 euros and 50 cents"),
+            ("€1,50\u2013€2,01", "1 euro and 50 cents to 2 euros and 1 cent"),
+            ("€1.50\u20132,50", "1.50 to 2.50 euros"),
+            ("€1,50\u20132.50", "1.50 to 2.50 euros"),
+            ("€1,50-2.50", "1.50 to 2.50 euros"),
+            ("€1.50-2,50", "1.50 to 2.50 euros"),
+            ("€1,500,50-2,500,50", "1,500.50 to 2,500.50 euros"),
+            ("$1,50-2,50", "1,50-2,50"),
+            ("€1.50-2.50", "1.50-2.50"),
+            ("1.50\u20132.50€", "1.50\u20132.50"),
+            ("1,50\u20132,50€", "1,50\u20132,50"),
+        ],
+    )
+    def test_euro_comma_decimals(self, model: str, source: str, expected: str) -> None:
+        assert self._apply(source, None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize("separator", ["\u2013", "-"])
+    def test_euro_comma_decimal_bare_range(self, model: str, separator: str) -> None:
+        dot_range = self._apply("€1.50\u20132.50", None, "elevenlabs", model)
+        assert dot_range == "1.50 to 2.50 euros"
+        assert (
+            self._apply(f"€1,50{separator}2,50", None, "elevenlabs", model) == dot_range
+        )
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("€1,50-2.50£", "1,50-2.50"),
+            ("€1.50\u20132.50£", "1.50\u20132.50"),
+            ("It cost (€1,50-2.50£).", "It cost 1,50-2.50."),
+        ],
+    )
+    def test_bare_currency_range_rejects_suffix_sign(
+        self, model: str, source: str, expected: str
+    ) -> None:
+        assert self._apply(source, None, "elevenlabs", model) == expected
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    def test_currency_range_with_slash_before_sign(self, model: str) -> None:
+        assert self._apply("¥140\u2013150/$", None, "elevenlabs", model) == (
+            "140 to 150 yen"
+        )
+
     @pytest.mark.parametrize(
         ("model", "expected"),
         [

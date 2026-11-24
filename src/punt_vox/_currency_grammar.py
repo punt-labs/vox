@@ -6,6 +6,8 @@ import re
 import unicodedata
 from typing import final
 
+from punt_vox._currency_patterns import CurrencyPatterns
+
 UNITS = {
     "$": ("dollar", "dollars"),
     "€": ("euro", "euros"),
@@ -26,37 +28,29 @@ SCALES = {
 }
 _SCALE_PATTERN = "|".join(SCALES)
 _SYMBOLS = "".join(UNITS)
-_SIGN = r"[-+\u2212]"
-_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+"
-_PREFIX_AMOUNT = (
-    rf"(?P<{{p}}sign_before>{_SIGN})?"
-    rf"(?P<{{p}}symbol>[{_SYMBOLS}])"
-    rf"(?({{p}}sign_before)|(?P<{{p}}sign_after>{_SIGN})?)"
-    rf"(?P<{{p}}amount>{_NUMBER})"
-)
-_SUFFIX_AMOUNT = (
-    rf"(?P<leading>_*[^\w\s~/.,`{_SYMBOLS}]*?)"
-    rf"(?P<sign>{_SIGN}?)(?P<amount>{_NUMBER})(?P<symbol>[{_SYMBOLS}])"
-)
+_PROSE_AMOUNT = CurrencyPatterns.prose_amount(_SYMBOLS)
+_RANGE_END_AMOUNT = CurrencyPatterns.prose_amount(_SYMBOLS, "end_")
+_SUFFIX_AMOUNT = CurrencyPatterns.suffix_amount(_SYMBOLS)
 _TRAILING_PUNCTUATION = rf"(?:[^\w\s`{_SYMBOLS}]|_)*"
 _LETTER = r"[^\W\d_]"
 
 
 @final
 class CurrencyGrammar:
-    """Recognize attached money without guessing a numeric locale."""
+    """Recognize attached money using symbol-specific numeric rules."""
 
-    CODE_AMOUNT = re.compile(_PREFIX_AMOUNT.replace("{p}", ""))
+    CODE_AMOUNT = re.compile(CurrencyPatterns.code_amount(_SYMBOLS))
 
-    @classmethod
-    def prose_pattern(cls, text: str) -> re.Pattern[str]:
+    @staticmethod
+    def prose_pattern(text: str) -> re.Pattern[str]:
         """Build the prose grammar with any combining marks present in *text*."""
-        word = cls._word_pattern(text)
+        word = CurrencyGrammar._word_pattern(text)
         return re.compile(
-            rf"{cls.CODE_AMOUNT.pattern}(?P<word>{word})?"
-            rf"(?:[-\u2013]{_PREFIX_AMOUNT.replace('{p}', 'end_')}(?P<end_word>{word})?"
-            rf"|\u2013(?P<bare_end>{_NUMBER})(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
+            rf"{_PROSE_AMOUNT}(?P<word>{word})?"
+            rf"(?:[-\u2013]{_RANGE_END_AMOUNT}(?P<end_word>{word})?"
+            rf"|{CurrencyPatterns.BARE_RANGE}(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
             rf"(?P<rates>(?:/{word})*)"
+            rf"(?(bare_end)(?![{_SYMBOLS}]))"
         )
 
     @classmethod
