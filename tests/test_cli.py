@@ -1324,7 +1324,9 @@ class TestVibeCommand:
 
         result = CliRunner().invoke(app, ["vibe", "whispering"])
 
-        assert isinstance(result.exception, UnicodeDecodeError)
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == f"Error: {local} is not valid UTF-8\n"
         assert local.read_bytes() == b"\xff"
 
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
@@ -1379,6 +1381,29 @@ class TestVibeCommand:
 # ---------------------------------------------------------------------------
 # notify/speak/voice tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "filename"),
+    [
+        (["notify", "normal", "--json"], "vox.md"),
+        (["--json", "speak", "n"], "vox.md"),
+        (["--json", "vibe", "whispering"], "vox.local.md"),
+    ],
+)
+def test_config_edit_invalid_utf8_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], filename: str
+) -> None:
+    monkeypatch.setattr("punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+    config = tmp_path / filename
+    config.write_bytes(b"\xff\n")
+
+    result = CliRunner().invoke(app, args)
+
+    assert config.read_bytes() == b"\xff\n"
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {"error": f"{config} is not valid UTF-8"}
 
 
 class TestNotifyCommand:
