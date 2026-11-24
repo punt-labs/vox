@@ -600,3 +600,22 @@ def test_stop_of_an_absent_session_is_a_no_op() -> None:
     ) as run:
         TmuxWorkerProvider().stop("worker")
     assert run.call_count == 1
+
+
+@pytest.mark.parametrize("vanishes_at", ["pane", "kill"])
+def test_stop_treats_a_session_vanishing_mid_stop_as_finished(
+    vanishes_at: str,
+) -> None:
+    """Absence after has-session is a race, not a failed kill."""
+    gone = subprocess.CompletedProcess([], 1, "", "no such session")
+    results = [subprocess.CompletedProcess([], 0, "", "")]
+    if vanishes_at == "kill":
+        results.append(subprocess.CompletedProcess([], 0, "123\n", ""))
+    results.append(gone)
+    with (
+        patch.object(TmuxWorkerProvider, "_run", side_effect=results),
+        patch("punt_vox.voxd.workers.tmux.os.getpgid", return_value=123),
+        patch.object(TmuxProbe, "wait_for_exit") as finish,
+    ):
+        TmuxWorkerProvider().stop("worker")
+    assert finish.call_count == (1 if vanishes_at == "kill" else 0)
