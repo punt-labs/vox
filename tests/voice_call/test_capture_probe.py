@@ -166,6 +166,35 @@ async def test_a_stream_that_never_delivers_fails_within_the_limit(
     assert "System Settings > Privacy & Security > Microphone" in str(failure.value)
 
 
+async def test_sparse_silent_blocks_fail_within_the_wall_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One silent block well inside each per-block wait still fails on time.
+
+    Scaled from a 3 s limit: a 20 ms zero block every 2.5 s never trips the
+    per-block wait, and its nominal durations need minutes to reach the
+    silence limit. The wall budget from the first wait fails it instead, with
+    the silence message, not the no-audio one.
+    """
+    limit = 0.3
+    monkeypatch.setattr(
+        "punt_vox.voxd.voice_call.capture_probe._SILENCE_LIMIT_S", limit
+    )
+
+    async def sparse() -> AsyncGenerator[AudioChunk]:
+        while True:
+            await asyncio.sleep(limit * 2.5 / 3.0)
+            yield AudioChunk(pcm=_SILENCE, duration_s=_FRAME_S * limit / 3.0)
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(ValueError, match="delivered only silence") as failure:
+        async with asyncio.timeout(2):
+            async for _ in CaptureProbe().watch(sparse()):
+                pass
+    assert asyncio.get_running_loop().time() - started < 1.0
+    assert "System Settings > Privacy & Security > Microphone" in str(failure.value)
+
+
 async def test_a_silence_failure_closes_the_source_before_it_reaches_the_caller() -> (
     None
 ):

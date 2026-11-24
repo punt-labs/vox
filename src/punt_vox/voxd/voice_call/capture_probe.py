@@ -60,30 +60,40 @@ class CaptureProbe:
 
         A stream that opens but never calls back is as dead as one that
         delivers zeros, so every wait for a block is bounded by the same limit.
-        The source is closed on the way out, however the watch ends, so the
-        device is released by the probe and not later by garbage collection.
+        Until signal is heard the limit is also a wall-clock budget from the
+        first wait: a source trickling one silent block just inside each wait
+        would otherwise never trip the per-block limit, and its nominal block
+        durations would take minutes to add up to the silence limit. The
+        source is closed on the way out, however the watch ends, so the device
+        is released by the probe and not later by garbage collection.
 
         Raises:
             ValueError: When the first seconds hold only zero samples, or a
                 block does not arrive within the limit.
         """
+        deadline = asyncio.get_running_loop().time() + _SILENCE_LIMIT_S
         try:
-            while (chunk := await self._next(chunks)) is not None:
+            while (chunk := await self._next(chunks, deadline)) is not None:
                 self.observe(chunk.pcm, chunk.duration_s)
                 yield chunk.pcm
         finally:
             await chunks.aclose()
 
-    @staticmethod
-    async def _next(chunks: AsyncIterator[AudioChunk]) -> AudioChunk | None:
+    async def _next(
+        self, chunks: AsyncIterator[AudioChunk], deadline: float
+    ) -> AudioChunk | None:
         """Return the next block within the limit; None once the stream ends."""
+        wait = _SILENCE_LIMIT_S
+        if not self._heard:  # The wall budget binds until signal is heard.
+            wait = min(wait, deadline - asyncio.get_running_loop().time())
         try:
-            return await asyncio.wait_for(anext(chunks), _SILENCE_LIMIT_S)
+            return await asyncio.wait_for(anext(chunks), max(wait, 0.0))
         except StopAsyncIteration:
             return None
         except TimeoutError:
-            logger.warning(_NO_AUDIO)
-            raise ValueError(_NO_AUDIO) from None
+            message = _NO_SIGNAL if self._seen_s and not self._heard else _NO_AUDIO
+            logger.warning(message)
+            raise ValueError(message) from None
 
     def observe(self, pcm: bytes, duration_s: float) -> None:
         """Account for one captured block.
