@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -281,3 +283,119 @@ def test_allow_refuses_a_path_with_a_double_quote_by_name(tmp_path: Path) -> Non
         policy.allow(str(repo))
     git.assert_not_called()
     assert policy.repos() == ()
+
+
+_FENCED = '---\nprovider: "elevenlabs"\nvoice: "fin"\nlog_level: "debug"\n---\n'
+
+
+def _global_config(tmp_path: Path) -> tuple[ConfigStore, Path]:
+    config = ConfigStore(tmp_path / "config")
+    (tmp_path / "config").mkdir()
+    return config, tmp_path / "config" / "vox.md"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+def test_an_unreadable_allowlist_file_raises_instead_of_reading_as_empty(
+    tmp_path: Path,
+) -> None:
+    """H2: a policy file that will not open is a fault, never an empty policy."""
+    config, path = _global_config(tmp_path)
+    path.write_text(_FENCED + "", encoding="utf-8")
+    config.write_field("worker_repos", repr([str(tmp_path)]))
+    path.chmod(0)
+    policy = WorkerRepoPolicy(config)
+    try:
+        with pytest.raises(PermissionError):
+            policy.repos()
+        with pytest.raises(PermissionError):
+            policy.disallow(str(tmp_path))
+        with (
+            patch(
+                "punt_vox.voxd.workers.policy.subprocess.run",
+                return_value=_git_toplevel(tmp_path.resolve()),
+            ),
+            pytest.raises(PermissionError),
+        ):
+            policy.allow(str(tmp_path))
+    finally:
+        path.chmod(0o600)
+
+
+def test_a_non_utf8_allowlist_file_raises_instead_of_reading_as_empty(
+    tmp_path: Path,
+) -> None:
+    config, path = _global_config(tmp_path)
+    path.write_bytes(b"---\nworker_repos: \"['/repo']\"\n\xff\n---\n")
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(UnicodeDecodeError):
+        policy.repos()
+    with pytest.raises(UnicodeDecodeError):
+        policy.disallow("/repo")
+
+
+def test_allow_refuses_a_file_without_a_closing_fence_and_leaves_it_intact(
+    tmp_path: Path,
+) -> None:
+    """H3: never rebuild vox.md from worker_repos alone, losing every other field."""
+    config, path = _global_config(tmp_path)
+    broken = '---\nprovider: "elevenlabs"\nvoice: "fin"\nlog_level: "debug"\n'
+    path.write_bytes(broken.encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(ValueError, match="no closing ---"),
+    ):
+        policy.allow(str(repo))
+    assert path.read_bytes() == broken.encode()
+
+
+def test_allow_edits_in_place_and_keeps_the_other_fields(tmp_path: Path) -> None:
+    config, path = _global_config(tmp_path)
+    path.write_text(_FENCED, encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        policy.allow(str(repo))
+    assert config.read_field("voice") == "fin"
+    assert config.read_field("provider") == "elevenlabs"
+    assert config.read_field("worker_repos") == f"['{repo.resolve()}']"
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (FileNotFoundError(2, "No such file", "git"), "git is not installed"),
+        (subprocess.TimeoutExpired(["git"], 5), "git timed out"),
+        (
+            subprocess.CalledProcessError(128, ["git"], stderr="fatal: not a git repo"),
+            "not a git repository top level",
+        ),
+    ],
+)
+def test_git_failures_are_told_apart_and_stderr_is_logged(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    failure: Exception,
+    message: str,
+) -> None:
+    """M6: a missing git binary, a hang and a real non-repo are different."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run", side_effect=failure),
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.policy"),
+        pytest.raises(ValueError, match=message),
+    ):
+        policy.allow(str(repo))
+    if isinstance(failure, subprocess.CalledProcessError):
+        assert any("fatal: not a git repo" in r.getMessage() for r in caplog.records)

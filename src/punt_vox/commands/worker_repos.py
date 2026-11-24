@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Annotated, cast, final
+from typing import Annotated, final
 
 import typer
 
@@ -24,11 +24,12 @@ class WorkerReposCli:
     @staticmethod
     def _paths(operation: str, *, as_json: bool, **fields: str) -> None:
         try:
-            result = asyncio.run(WorkerClient.request(operation, **fields))
+            paths = WorkerClient.paths(
+                asyncio.run(WorkerClient.request(operation, **fields))
+            )
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             typer.echo(f"vox: worker {operation}: {exc}", err=True)
             raise typer.Exit(1) from None
-        paths = [str(p) for p in cast("list[object]", result)]
         if as_json:
             typer.echo(json.dumps(paths))
             return

@@ -58,9 +58,18 @@ class Frontmatter:
         """Return all non-empty frontmatter fields, or ``{}`` if unreadable."""
         return self._fields(self._readable_block())
 
-    def read_field(self, field: str) -> str | None:
-        """Return a single frontmatter field, or ``None`` if absent/unreadable."""
-        block = self._readable_block()
+    def read_field(self, field: str, *, strict: bool = False) -> str | None:
+        """Return a single frontmatter field, or ``None`` if absent.
+
+        By default an unreadable file reads as absent. With *strict*, a file
+        that exists but cannot be read or decoded raises, so a policy reader
+        never takes a fault for an empty policy.
+
+        Raises:
+            OSError: If *strict* and the file exists but cannot be read.
+            UnicodeDecodeError: If *strict* and the file is not UTF-8.
+        """
+        block = self._read_block() if strict else self._readable_block()
         return None if block is None else block.field(field)
 
     def write_field(self, key: str, value: str) -> None:

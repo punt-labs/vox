@@ -222,11 +222,15 @@ class ConfigStore:
             fields, repo_name=self._repo_name, source=self._ephemeral.path
         )
 
-    def read_field(self, field: str) -> str | None:
-        """Read a single config field from the correct file."""
+    def read_field(self, field: str, *, strict: bool = False) -> str | None:
+        """Read a single config field from the correct file.
+
+        With *strict*, an unreadable or undecodable file raises instead of
+        reading as absent.
+        """
         if field in EPHEMERAL_KEYS:
-            return self._ephemeral.read_field(field)
-        return self._durable.read_field(field)
+            return self._ephemeral.read_field(field, strict=strict)
+        return self._durable.read_field(field, strict=strict)
 
     @classmethod
     def global_dir(cls) -> Path:

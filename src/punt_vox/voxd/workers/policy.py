@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Self, final
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.allowlist import RepoAllowlist
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -38,7 +41,13 @@ class WorkerRepoPolicy:
                 text=True,
                 timeout=5,
             )
-        except (subprocess.SubprocessError, OSError) as exc:
+        except FileNotFoundError as exc:
+            raise ValueError("git is not installed on the daemon host") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"git timed out reading {path}") from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            logger.warning("git rev-parse failed for %s: %s", path, detail)
             raise ValueError(f"not a git repository top level: {path}") from exc
         return Path(result.stdout.strip()).resolve()
 

@@ -172,3 +172,16 @@ def test_allow_and_disallow_refuse_a_blank_path_before_sending(blank: str) -> No
     for result, name in ((allow, "allow"), (disallow, "disallow")):
         assert result.exit_code == 2, result.output
         assert f"vox: worker {name}: PATH must not be blank" in result.output
+
+
+@pytest.mark.parametrize("reply", [None, "/a", {"repos": []}])
+def test_repos_rejects_a_reply_that_is_not_a_list(reply: object) -> None:
+    """M7: a wrong-shaped daemon reply is a protocol error, not a traceback."""
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=reply,
+    ):
+        result = CliRunner().invoke(app, ["worker", "repos"])
+    assert result.exit_code == 1, result.output
+    assert "vox: worker repos: expected a list of paths" in result.output

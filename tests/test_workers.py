@@ -356,3 +356,30 @@ async def test_call_side_allow_repos_disallow_roundtrip(tmp_path: Path) -> None:
     assert config.read_field("worker_repos") == repr([str(repo.resolve())])
     assert (await rpc("disallow", project=str(repo)))["result"] == []
     assert config.read_field("worker_repos") == "[]"
+
+
+@pytest.mark.asyncio
+async def test_allowlist_handler_faults_hide_the_path_and_decode_errors(
+    tmp_path: Path,
+) -> None:
+    """M4: an OSError or a bad encoding is a server fault, never a client rejection."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "vox.md").write_bytes(b'---\nworker_repos: "[]"\n\xff\n---\n')
+    handlers = AllowlistHandlers(WorkerRepoPolicy(ConfigStore(config_dir))).handlers()
+    ws = AsyncMock(spec=WebSocket)
+    await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert str(tmp_path) not in str(reply["message"])
+    with patch.object(
+        WorkerRepoPolicy,
+        "allow",
+        side_effect=PermissionError(13, "Permission denied", str(config_dir / "x")),
+    ):
+        await handlers["worker_allow"](
+            {"type": "worker_allow", "id": "a", "project": str(tmp_path)}, ws
+        )
+    reply = ws.send_json.call_args.args[0]
+    assert reply["type"] == "error"
+    assert str(tmp_path) not in str(reply["message"])

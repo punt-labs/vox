@@ -1790,6 +1790,28 @@ class TestStatusCommand:
             "worker_repos must be a list of repository paths"
         )
 
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_renders_a_fault_reply_and_a_bad_shape_as_the_error_line(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """M8: whatever the daemon answers short of a list is the error line."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=[VoxdProtocolError("vox.md: Permission denied"), "/a"],
+        ):
+            fault = CliRunner().invoke(app, ["status", "--json"])
+            shape = CliRunner().invoke(app, ["status", "--json"])
+        assert fault.exit_code == 0, fault.output
+        assert json.loads(fault.output)["worker_repos_error"] == (
+            "vox.md: Permission denied"
+        )
+        assert shape.exit_code == 0, shape.output
+        payload = json.loads(shape.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == "expected a list of paths"
+
 
 # ---------------------------------------------------------------------------
 # main group tests

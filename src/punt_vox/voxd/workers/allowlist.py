@@ -28,10 +28,15 @@ class RepoAllowlist:
     def paths(self) -> set[Path]:
         """Return the allowlisted paths, resolved.
 
+        The read is strict: a policy file that cannot be read is a fault,
+        never an empty policy.
+
         Raises:
             ValueError: If the field is not a Python list literal of strings.
+            OSError: If the config file exists but cannot be read.
+            UnicodeDecodeError: If the config file is not UTF-8.
         """
-        raw = self._config.read_field(_FIELD) or "[]"
+        raw = self._config.read_field(_FIELD, strict=True) or "[]"
         try:
             repos: object = ast.literal_eval(raw)
         except (ValueError, SyntaxError) as exc:
@@ -69,9 +74,19 @@ class RepoAllowlist:
         Each entry is a single-quoted Python literal, so the stored text never
         holds a double quote (the frontmatter refuses one) and ``literal_eval``
         reads an apostrophe back unchanged.
+
+        A malformed config file is refused, never rebuilt around this field.
+
+        Raises:
+            ValueError: If the file has no closing fence to hold the field.
+            OSError: If the file cannot be read or written.
         """
         repos = tuple(sorted(str(path) for path in paths))
-        self._config.write_field(_FIELD, self._literal(repos))
+        # A checked write never rebuilds a malformed file around this field;
+        # the policy itself has no precondition, so the check is a no-op.
+        self._config.write_field(
+            _FIELD, self._literal(repos), check=lambda fields: None
+        )
         return repos
 
     @staticmethod

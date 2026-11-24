@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd._parse import parse_required_str
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -64,7 +65,7 @@ class AllowlistHandlers:
             return list(await asyncio.to_thread(self._policy.repos))
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Answer with the new allowlist, or the one-line reason it was refused."""
+        """Answer with the new allowlist, a refusal, or a path-free fault."""
         operations: dict[str, Callable[[dict[str, object]], Awaitable[list[str]]]] = {
             "worker_allow": self._allow,
             "worker_disallow": self._disallow,
@@ -77,7 +78,11 @@ class AllowlistHandlers:
             return
         try:
             result = await operation(msg)
-        except (ValueError, KeyError, OSError) as exc:
-            await reply.error(str(exc))
+        except UnicodeDecodeError as exc:
+            # Not a client fault: the daemon's own config file is not UTF-8.
+            await reply.fault(SafeFault.from_exception(exc))
+            return
+        except (ValueError, OSError) as exc:
+            await reply.reject_or_fault(exc)
             return
         await reply.send({"type": "worker_result", "result": result})

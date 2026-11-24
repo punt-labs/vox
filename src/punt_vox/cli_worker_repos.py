@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Self, cast, final
+from typing import Self, final
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.daemon_status import DaemonState
@@ -31,12 +31,12 @@ class WorkerReposStatus:
     @staticmethod
     def _ask() -> tuple[list[str] | None, str | None]:
         try:
-            reply = asyncio.run(WorkerClient.request("repos"))
+            repos = WorkerClient.paths(asyncio.run(WorkerClient.request("repos")))
         except VoxdConnectionError:
             return None, _UNREACHABLE
         except VoxdProtocolError as exc:
             return None, str(exc)
-        return [str(p) for p in cast("list[object]", reply)], None
+        return repos, None
 
     def fields(self) -> dict[str, list[str] | str | None]:
         """Return ``worker_repos`` and, when it is null, ``worker_repos_error``."""
