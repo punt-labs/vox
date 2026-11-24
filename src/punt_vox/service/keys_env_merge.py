@@ -19,6 +19,11 @@ from punt_vox.service.keys_env_report import KeyNotice, KeysEnvReport
 _POLICIES = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, ValuePolicy.header_safe())
 _SETTING_POLICY = ValuePolicy.printable()
 _CREDENTIALS = HEADER_CARRIED_KEY_NAMES | {"AWS_SECRET_ACCESS_KEY"}
+# AWS signs with the key id, secret and session token together, so a stored
+# pair is kept or replaced whole: never a stored pair with the shell's token.
+_AWS_SET = frozenset(
+    {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+)
 _EMPTY = "empty in the environment"
 _DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
 _HEADER = (
@@ -44,8 +49,9 @@ class KeysEnvMerge:
     noted. A setting (profile, region, provider) still follows the shell.
     """
 
-    __slots__ = ("_merged", "_notices", "_rotate", "_rotated")
+    __slots__ = ("_held", "_merged", "_notices", "_rotate", "_rotated")
 
+    _held: frozenset[str]
     _merged: dict[str, str]
     _notices: list[KeyNotice]
     _rotate: bool
@@ -60,8 +66,10 @@ class KeysEnvMerge:
         self._notices = []
         self._rotate = rotate
         self._rotated = []
-        for key in sorted(PROVIDER_KEY_NAMES & env.keys()):
-            self._take(key, env[key].strip())
+        taken = {key: env[key].strip() for key in PROVIDER_KEY_NAMES & env.keys()}
+        self._held = frozenset() if rotate else self._held_over(taken)
+        for key in sorted(taken):
+            self._take(key, taken[key])
         return self
 
     @classmethod
@@ -103,13 +111,27 @@ class KeysEnvMerge:
         else:
             self._notices.append(KeyNotice(key, reason, key in self._merged))
 
+    def _held_over(self, taken: Mapping[str, str]) -> frozenset[str]:
+        """Return the credentials whose stored values stay over *taken* ones."""
+        differing = {key for key, value in taken.items() if self._differs(key, value)}
+        aws = _AWS_SET if differing & _AWS_SET else frozenset()
+        return frozenset(differing | aws)
+
+    def _differs(self, key: str, value: str) -> bool:
+        """Return whether writable *value* would replace a stored credential."""
+        stored = self._merged.get(key, value)
+        return (
+            key in _CREDENTIALS
+            and stored != value
+            and not self._reason_to_skip(key, value)
+        )
+
     def _kept_over(self, key: str, value: str) -> str | None:
         """Return why a differing stored credential stays; record it when rotated."""
-        if key not in _CREDENTIALS or self._merged.get(key, value) == value:
-            return None
-        if not self._rotate:
+        if key in self._held and self._merged.get(key) != value:
             return _DIFFERS
-        self._rotated.append(key)
+        if self._rotate and self._differs(key, value):
+            self._rotated.append(key)
         return None
 
     @staticmethod

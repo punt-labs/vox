@@ -27,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox daemon install` (and `install.sh`) no longer replaces a key stored in
   `keys.env` with a different value from the installing shell, which could
   swap a working key for a revoked one and fail speech with HTTP 401. The
-  stored key is kept and the install output names it; `--rotate-keys`
-  replaces it and reports each key it replaced. Values are never shown.
+  stored key is kept and the install output names it; `vox daemon install
+  --rotate-keys` replaces it and reports each key it replaced. AWS key pairs
+  and session tokens are kept or replaced together. Values are never shown.
   Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still
   follow the shell. (PL-1322)
 

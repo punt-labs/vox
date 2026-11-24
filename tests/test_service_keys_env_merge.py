@@ -35,6 +35,35 @@ def test_a_different_aws_credential_is_kept_without_rotate(key: str) -> None:
     assert merge.notices == (KeyNotice(key, _DIFFERS, kept=True),)
 
 
+_STATIC_PAIR = {"AWS_ACCESS_KEY_ID": "AKIDSTORED", "AWS_SECRET_ACCESS_KEY": "stored"}
+_TEMPORARY_SET = {
+    "AWS_ACCESS_KEY_ID": "ASIASHELL",
+    "AWS_SECRET_ACCESS_KEY": "shell",
+    "AWS_SESSION_TOKEN": "token",
+}
+
+
+def test_a_kept_aws_key_pair_never_takes_the_shells_session_token() -> None:
+    merge = KeysEnvMerge(_STATIC_PAIR, _TEMPORARY_SET)
+    assert merge.merged == _STATIC_PAIR
+    assert KeyNotice("AWS_SESSION_TOKEN", _DIFFERS, kept=False) in merge.notices
+    assert merge.rotated == ()
+
+
+def test_rotate_replaces_the_aws_key_pair_with_its_session_token() -> None:
+    merge = KeysEnvMerge(_STATIC_PAIR, _TEMPORARY_SET, rotate=True)
+    assert merge.merged == _TEMPORARY_SET
+    assert merge.notices == ()
+    assert merge.rotated == ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+
+
+def test_a_session_token_joins_a_matching_stored_key_pair() -> None:
+    env = {**_STATIC_PAIR, "AWS_SESSION_TOKEN": "token"}
+    merge = KeysEnvMerge(_STATIC_PAIR, env)
+    assert merge.merged == env
+    assert merge.notices == ()
+
+
 @pytest.mark.parametrize("key", ["TTS_PROVIDER", "AWS_PROFILE", "AWS_DEFAULT_REGION"])
 def test_a_different_setting_follows_the_shell_without_rotate(key: str) -> None:
     merge = KeysEnvMerge({key: "stored"}, {key: "shell"})
