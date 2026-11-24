@@ -2658,7 +2658,14 @@ class TestDesktopInstallCommand:
         data = json.loads(raw)
         server = data["mcpServers"]["vox"]
         assert server["command"] == _UVX
-        assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
+        assert server["args"] == [
+            "--directory",
+            str(Path.home()),
+            "--from",
+            "punt-vox",
+            "vox",
+            "mcp",
+        ]
         assert server["env"] == {
             "VOX_OUTPUT_DIR": str(audio_dir),
         }

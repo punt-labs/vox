@@ -149,8 +149,9 @@ class DesktopCli:
         """Register the MCP server with Claude Desktop.
 
         Writes the MCP registration and output directory to
-        ``claude_desktop_config.json``. Provider selection remains in Vox state,
-        and the daemon reads provider keys from ``keys.env`` at startup.
+        ``claude_desktop_config.json``. Desktop launches Vox from the user's
+        home so provider selection persists there in Vox state. The daemon
+        reads provider keys from ``keys.env`` at startup.
 
         Every prerequisite is resolved before anything is created on disk, so
         a host vox cannot register with leaves no output directory behind.
@@ -173,7 +174,14 @@ class DesktopCli:
         overwriting = "vox" in servers
         servers["vox"] = {
             "command": uvx,
-            "args": ["--from", "punt-vox", "vox", "mcp"],
+            "args": [
+                "--directory",
+                str(Path.home()),
+                "--from",
+                "punt-vox",
+                "vox",
+                "mcp",
+            ],
             "env": {**installer.server_env()},
         }
         config.write(data)

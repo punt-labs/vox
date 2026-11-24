@@ -87,6 +87,7 @@ class TestInstallPlatformDispatch:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config_path = _linux_host(monkeypatch, tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
 
         result = CliRunner().invoke(
             app,
@@ -104,7 +105,14 @@ class TestInstallPlatformDispatch:
         data = json.loads(config_path.read_text(encoding="utf-8"))
         entry = data["mcpServers"]["vox"]
         assert entry["command"] == "/usr/bin/uvx"
-        assert entry["args"] == ["--from", "punt-vox", "vox", "mcp"]
+        assert entry["args"] == [
+            "--directory",
+            str(tmp_path),
+            "--from",
+            "punt-vox",
+            "vox",
+            "mcp",
+        ]
         assert entry["env"] == {"VOX_OUTPUT_DIR": str(tmp_path / "audio")}
         assert 'provider tool with name="say"' in result.output
 

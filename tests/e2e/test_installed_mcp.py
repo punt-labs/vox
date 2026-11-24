@@ -9,16 +9,25 @@ contains the core ``mic:*`` tools clients depend on.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import queue
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import IO, Any, NoReturn, Self, final
+from typing import IO, Any, NoReturn, Self, cast, final
 
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+from punt_vox.dirs import DEFAULT_CONFIG_DIR
 
 pytestmark = pytest.mark.e2e
 
@@ -170,8 +179,8 @@ class StdioClient:
         raise AssertionError(f"{reason}\n--- server stderr ---\n{self._err.text()}")
 
 
-def _spawn() -> subprocess.Popen[str]:
-    """Spawn ``vox mcp`` from the INSTALLED wheel, never the editable venv.
+def _installed_binary() -> Path:
+    """Resolve the installed wheel's entry point, not the editable venv.
 
     Path resolution matches ``test_installed_cli._vox``: ``uv run`` prepends
     ``.venv/bin`` to ``PATH`` and ``shutil.which("vox")`` would return the
@@ -179,14 +188,18 @@ def _spawn() -> subprocess.Popen[str]:
     ``VOX_E2E_BINARY``) forces the packaged artifact.
     """
     override = os.environ.get("VOX_E2E_BINARY")
-    binary = Path(override) if override else _DEFAULT_BINARY
+    binary = Path(override).resolve() if override else _DEFAULT_BINARY
     if not binary.is_file():
         pytest.skip(
             f"installed vox not found at {binary}; run `make install` "
             "(or set VOX_E2E_BINARY to the uv tool bin path)"
         )
+    return binary
+
+
+def _spawn() -> subprocess.Popen[str]:
     return subprocess.Popen(
-        [str(binary), "mcp"],
+        [str(_installed_binary()), "mcp"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -222,3 +235,93 @@ def test_installed_server_exposes_core_mic_tools() -> None:
             proc.wait(timeout=_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+@pytest.fixture
+def desktop_sandbox() -> Iterator[Path]:
+    """Keep launcher directories out of the checkout's Vox config ancestry."""
+    with tempfile.TemporaryDirectory(prefix="vox-desktop-", dir="/tmp") as path:
+        yield Path(path)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="uses Linux Desktop and espeak")
+async def test_desktop_provider_survives_mcp_restart(desktop_sandbox: Path) -> None:
+    binary = _installed_binary()
+    uv = shutil.which("uv")
+    assert uv is not None, "The Desktop packaging test requires uv"
+    home, first, restarted = (
+        desktop_sandbox / name for name in ("home", "first", "restart")
+    )
+    for folder in (home, first, restarted):
+        folder.mkdir()
+    env = {
+        "HOME": str(home),
+        "PATH": os.environ["PATH"],
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "AWS_EC2_METADATA_DISABLED": "true",
+    }
+    subprocess.run(
+        [binary, "desktop", "install", "--provider", "espeak", "--uvx-path", uv],
+        cwd=first,
+        env=env,
+        check=True,
+        timeout=_TIMEOUT,
+    )
+    desktop = home / ".config" / "Claude" / "claude_desktop_config.json"
+    entry = json.loads(desktop.read_text(encoding="utf-8"))["mcpServers"]["vox"]
+    args = cast("list[str]", entry["args"])
+    env.update(cast("dict[str, str]", entry["env"]))
+    # Preserve the registered uv working-directory flags but run the installed
+    # wheel rather than fetching the released punt-vox from PyPI.
+    launch = [*args[: args.index("--from")], "--", str(binary), *args[-1:]]
+    daemon = subprocess.Popen(
+        [binary.with_name("voxd"), "--port", "0"], cwd=home, env=env
+    )
+    try:
+        async with asyncio.timeout(_TIMEOUT):
+            port = home / DEFAULT_CONFIG_DIR / "run" / "serve.port"
+            while not port.exists():
+                assert daemon.poll() is None, "voxd exited before binding a port"
+                await asyncio.sleep(0.05)
+            params = StdioServerParameters(
+                command=uv, args=["run", "--no-project", *launch], env=env, cwd=first
+            )
+            async with (
+                stdio_client(params) as (rx, tx),
+                ClientSession(rx, tx) as client,
+            ):
+                await client.initialize()
+                unset = await client.call_tool("unmute", {"text": "Desktop proof."})
+                refusal = unset.content[0]
+                assert refusal.type == "text"
+                assert (
+                    "no TTS provider is configured" in json.loads(refusal.text)["error"]
+                )
+                selected = await client.call_tool("provider", {"name": "espeak"})
+                choice = selected.content[0]
+                assert choice.type == "text"
+                assert json.loads(choice.text)["provider"] == "espeak"
+
+            params.cwd = restarted
+            async with (
+                stdio_client(params) as (rx, tx),
+                ClientSession(rx, tx) as client,
+            ):
+                await client.initialize()
+                current = await client.call_tool("provider")
+                payload = current.content[0]
+                assert payload.type == "text"
+                assert json.loads(payload.text)["current"] == "espeak"
+                speech = await client.call_tool("unmute", {"text": "Desktop proof."})
+                audio = speech.content[0]
+                assert audio.type == "text"
+                assert json.loads(audio.text)[0]["provider"] == "espeak"
+        assert (home / DEFAULT_CONFIG_DIR / "vox.md").is_file()
+        assert not (first / DEFAULT_CONFIG_DIR / "vox.md").exists()
+    finally:
+        daemon.terminate()
+        try:
+            daemon.wait(timeout=_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            daemon.kill()
+            daemon.wait(timeout=_TIMEOUT)
