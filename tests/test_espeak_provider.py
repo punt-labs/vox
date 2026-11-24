@@ -183,6 +183,13 @@ class TestEspeakDefaultVoiceDynamic:
     def test_unusable_system_roster_keeps_english_default(
         self, voice_output: str
     ) -> None:
+        def voice_list_result(
+            *_args: object, **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                ["espeak-ng", "--voices"], 0, stdout=voice_output
+            )
+
         with (
             patch(
                 "punt_vox.providers.espeak._find_espeak_binary",
@@ -190,9 +197,7 @@ class TestEspeakDefaultVoiceDynamic:
             ),
             patch("punt_vox.providers.espeak.subprocess.run") as run,
         ):
-            run.return_value = subprocess.CompletedProcess(
-                ["espeak-ng", "--voices"], 0, stdout=voice_output
-            )
+            run.side_effect = voice_list_result
             assert EspeakProvider().default_voice == "en"
 
 
