@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say --provider <other>` without `--voice` now uses that provider's
+  default voice instead of failing with `VoiceNotFoundError` on the saved
+  voice of the configured provider. (PL-799)
+
 - `vox doctor` probes the output dir with a private, uniquely created
   temporary file, so it no longer overwrites or deletes an existing
   `.doctor_test` file or writes through a symlink of that name. (PL-1431)
