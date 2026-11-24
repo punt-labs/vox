@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from punt_vox.frontmatter import Frontmatter
+from punt_vox.frontmatter_block import FrontmatterBlock
 from punt_vox.sibling_lock import SiblingLock
 from punt_vox.types_errors import ConfigValueError
 
@@ -261,6 +262,70 @@ class TestWrite:
         with pytest.raises(PermissionError):
             Frontmatter(path).write_field("provider", "polly")
         assert not path.exists()
+
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_refused_write_leaves_nothing_on_disk(
+        self, tmp_path: Path, existing: bool
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        if existing:
+            path.parent.mkdir(parents=True)
+            path.write_text('---\nvoice: "initial"\n---\n')
+        before = sorted(tmp_path.rglob("*"))
+
+        def refuse(fields: dict[str, str]) -> None:
+            msg = "refused"
+            raise ValueError(msg)
+
+        with pytest.raises(ValueError, match="refused"):
+            Frontmatter(path).write_fields({"voice": "fin"}, check=refuse)
+        assert sorted(tmp_path.rglob("*")) == before
+
+    def test_refused_malformed_write_leaves_nothing_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        path.parent.mkdir(parents=True)
+        path.write_text('---\nprovider: "polly"\n')
+        before = sorted(tmp_path.rglob("*"))
+
+        with pytest.raises(ValueError, match="no closing ---"):
+            Frontmatter(path).write_fields({"voice": "fin"}, check=lambda _: None)
+        assert sorted(tmp_path.rglob("*")) == before
+
+    def test_existing_lock_defers_the_check_to_the_lock(self, tmp_path: Path) -> None:
+        # A lock file means a writer may be mid-rewrite, so an unlocked read
+        # could see a torn file; only the check under the lock may run.
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        lock.parent.mkdir(parents=True)
+        lock.touch()
+        seen: list[dict[str, str]] = []
+
+        Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
+        assert seen == [{}]
+
+    def test_lock_taken_during_the_early_read_defers_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A first writer may take the lock while the early read runs, so the
+        # read must come before the lock-file test, not after it.
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        read_block = Frontmatter._read_block
+
+        def read_while_a_writer_starts(
+            fm: Frontmatter,
+        ) -> FrontmatterBlock | None:  # None: no config file.
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.touch()
+            return read_block(fm)
+
+        monkeypatch.setattr(Frontmatter, "_read_block", read_while_a_writer_starts)
+        seen: list[dict[str, str]] = []
+
+        Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
+        assert seen == [{}]
 
     def test_write_field_round_trips(self, tmp_path: Path) -> None:
         fm = Frontmatter(tmp_path / "vox.md")

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["Frontmatter"]
 
+# Raises to refuse a write, given the fields the file currently holds.
+type FieldCheck = Callable[[dict[str, str]], None]
+
 # Expressive mood text: log its length, never the content (PY-CS-11 privacy).
 _REDACTED_KEYS = frozenset({"vibe", "vibe_tags"})
 
@@ -53,8 +56,7 @@ class Frontmatter:
 
     def read_fields(self) -> dict[str, str]:
         """Return all non-empty frontmatter fields, or ``{}`` if unreadable."""
-        block = self._readable_block()
-        return {} if block is None else block.fields()
+        return self._fields(self._readable_block())
 
     def read_field(self, field: str) -> str | None:
         """Return a single frontmatter field, or ``None`` if absent/unreadable."""
@@ -70,17 +72,30 @@ class Frontmatter:
         updates: dict[str, str],
         *,
         # A plain update has no precondition; checked writes opt in.
-        check: Callable[[dict[str, str]], None] | None = None,
+        check: FieldCheck | None = None,
     ) -> None:
         """Write multiple key-value pairs in a single read-write cycle.
 
-        A check runs against the current block under the write lock. Checked
-        writes never rebuild a malformed block from just the updates.
+        A check runs against the current block under the write lock, and
+        checked writes never rebuild a malformed block from just the updates.
+        Until the lock file exists, the check also runs before the lock is
+        taken, so a refused write leaves nothing on disk.
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
+        if check is not None:
+            self._refuse_early(updates, check)
         with self._lock().held():
             self._write_fields(updates, check)
+
+    def _refuse_early(self, updates: dict[str, str], check: FieldCheck) -> None:
+        """Run a refusal before the lock file exists, so it leaves nothing."""
+        block = self._read_block()
+        # Every write holds the lock and its file is never removed, so with
+        # no lock file yet, no write can have overlapped that read.
+        if not self._lock().path.exists():
+            check(self._fields(block))
+            self._require_accepts(block, updates)
 
     def _lock(self) -> SiblingLock:
         """Share a local-state lock across every spelling of the config path."""
@@ -97,39 +112,45 @@ class Frontmatter:
     def _write_fields(
         self,
         updates: dict[str, str],
-        check: Callable[[dict[str, str]], None] | None,  # None for plain updates.
+        check: FieldCheck | None,  # None: plain update.
     ) -> None:
         """Read and write the config while holding its local-state lock."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         # Read strictly on write: rebuilding an unreadable file from just
         # the updates would destroy the existing fields we need to preserve.
-        try:
-            held = self._read_block()
-        except FileNotFoundError:
-            if check is not None:
-                check({})
-            self._path.write_text(
-                FrontmatterBlock.rendered(updates).text, encoding="utf-8"
-            )
-            return
-
-        written = self._updated_block(held, updates, check)
+        held = self._read_block()
+        if check is not None:
+            check(self._fields(held))
+            self._require_accepts(held, updates)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        written = self._updated_block(held, updates)
         self._path.write_text(written.text, encoding="utf-8", newline="")
-        self._log_write(updates)
+        if held is not None:  # Creating the file is not logged as an update.
+            self._log_write(updates)
+
+    @staticmethod
+    def _fields(block: FrontmatterBlock | None) -> dict[str, str]:  # None: no file.
+        """Return *block*'s fields, or ``{}`` when there is no block."""
+        return {} if block is None else block.fields()
+
+    def _require_accepts(
+        self,
+        block: FrontmatterBlock | None,  # None: no file.
+        updates: dict[str, str],
+    ) -> None:
+        """Refuse a checked write into a block that cannot take *updates*."""
+        if block is not None and not block.accepts(updates):
+            msg = f"Malformed config (no closing ---): {self._path}"
+            raise ValueError(msg)
 
     def _updated_block(
         self,
-        block: FrontmatterBlock,
+        block: FrontmatterBlock | None,  # None: no file.
         updates: dict[str, str],
-        check: Callable[[dict[str, str]], None] | None,  # Only plain writes can repair.
     ) -> FrontmatterBlock:
-        if check is not None:
-            check(block.fields())
+        if block is None:
+            return FrontmatterBlock.rendered(updates)
         if block.accepts(updates):
             return block.with_fields(updates)
-        if check is not None:
-            msg = f"Malformed config (no closing ---): {self._path}"
-            raise ValueError(msg)
         logger.warning("Malformed config (no closing ---): %s", self._path)
         return FrontmatterBlock.rendered(updates)
 
@@ -145,9 +166,16 @@ class Frontmatter:
             logger.debug("Config: set %s = %s in %s", key, shown, self._path)
         logger.info("config: updated %d field(s) in %s", len(updates), self._path.name)
 
-    def _read_block(self) -> FrontmatterBlock:
-        """Parse the file as UTF-8, propagating I/O and decode errors."""
-        return FrontmatterBlock(self._path.read_text(encoding="utf-8", newline=""))
+    def _read_block(self) -> FrontmatterBlock | None:  # None when absent.
+        """Parse the file as UTF-8, or ``None`` if absent.
+
+        Other I/O and decode errors propagate.
+        """
+        try:
+            text = self._path.read_text(encoding="utf-8", newline="")
+        except FileNotFoundError:
+            return None
+        return FrontmatterBlock(text)
 
     def _readable_block(self) -> FrontmatterBlock | None:
         """Return the file's frontmatter, or ``None`` if absent or unreadable.
@@ -157,8 +185,6 @@ class Frontmatter:
         """
         try:
             return self._read_block()
-        except FileNotFoundError:
-            return None
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning(
                 "Config unreadable, using defaults: %s (%s)", self._path, exc
