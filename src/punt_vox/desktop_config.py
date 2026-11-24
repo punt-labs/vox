@@ -75,7 +75,28 @@ class DesktopConfig:
             )
         return servers
 
-    def create_workspace(self) -> Path:
+    def register(self, command: str, env: dict[str, str]) -> bool:
+        """Register Vox and return whether an existing entry was replaced."""
+        data = self.load()
+        servers = self.server_map(data)
+        overwriting = "vox" in servers
+        workspace = self._create_workspace()
+        servers["vox"] = {
+            "command": command,
+            "args": [
+                "--directory",
+                str(workspace),
+                "--from",
+                "punt-vox",
+                "vox",
+                "mcp",
+            ],
+            "env": {**env},
+        }
+        self.write(data)
+        return overwriting
+
+    def _create_workspace(self) -> Path:
         """Anchor Desktop's Vox state before ancestor config discovery can run."""
         workspace = self._path.parent / "vox"
         marker = workspace / DEFAULT_CONFIG_DIR / "vox.md"

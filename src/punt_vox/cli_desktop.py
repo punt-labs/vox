@@ -169,23 +169,7 @@ class DesktopCli:
         self._make_dir(audio_dir, self._OUTPUT_DIR_MODE)
         self._make_dir(config_path.parent, self._CONFIG_DIR_MODE)
         config = DesktopConfig(config_path, self._formatter)
-        data = config.load()
-        servers = config.server_map(data)
-        overwriting = "vox" in servers
-        workspace = config.create_workspace()
-        servers["vox"] = {
-            "command": uvx,
-            "args": [
-                "--directory",
-                str(workspace),
-                "--from",
-                "punt-vox",
-                "vox",
-                "mcp",
-            ],
-            "env": {**installer.server_env()},
-        }
-        config.write(data)
+        overwriting = config.register(uvx, installer.server_env())
 
         next_step = (
             "The installer did not set a provider. "
