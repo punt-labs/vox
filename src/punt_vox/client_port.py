@@ -1,4 +1,4 @@
-"""Decimal TCP port parsing shared by the client discovery sources."""
+"""Decimal TCP port parsing shared by discovery and lifecycle probes."""
 
 from __future__ import annotations
 

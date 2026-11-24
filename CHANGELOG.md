@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lux scene trees and patches now report themselves as unhashable while
   retaining structural equality.
 
+- Local `vox daemon` lifecycle commands ignore invalid `serve.port` hints
+  and no longer crash while clearing a stale hint with thousands of digits.
+  (PL-1432)
+
 - `vox daemon install` (and `install.sh`) no longer replaces a key stored in
   `keys.env` with a different value from the installing shell, which could
   swap a working key for a revoked one and fail speech with HTTP 401. The
