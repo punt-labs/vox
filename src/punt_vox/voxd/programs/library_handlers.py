@@ -105,16 +105,7 @@ class MusicManifestHandler:
         except _LIBRARY_FAILURES as exc:
             await reply.reject_or_fault(exc)
             return
-        await reply.send(
-            {
-                "type": "manifest",
-                "album": contents.name,
-                "parts": [
-                    {"part": part.name, "bytes": part.byte_count}
-                    for part in contents.parts
-                ],
-            }
-        )
+        await reply.send(contents.wire())
 
 
 @final

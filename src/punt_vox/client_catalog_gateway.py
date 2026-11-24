@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.client_sync import VoxClientSync
 
 if TYPE_CHECKING:
+    from punt_vox.album_export import AlbumExport
     from punt_vox.types_programs.prompts import PromptSet
 
 __all__ = ["ClientCatalogGateway"]
@@ -38,9 +39,9 @@ class ClientCatalogGateway:
         """Create one track via the ``music_new`` op; return the album id."""
         return self._client.music_new(prompts, name)
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         """Copy the album into *dest_dir* via the ``music_get`` op."""
-        return str(self._client.music_get(album_id, Path(dest_dir)))
+        return self._client.music_get(album_id, Path(dest_dir))
 
     def remove(self, album_id: str) -> None:
         """Delete the album via the ``music_remove`` op."""
