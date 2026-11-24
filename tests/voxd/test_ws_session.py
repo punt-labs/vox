@@ -199,6 +199,35 @@ async def test_rec_list_peer_disconnect_stops_scan_between_batches(
     assert batches == [1]
 
 
+async def test_program_list_peer_disconnect_cancels_active_handler() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def list_albums(msg: dict[str, object], websocket: WebSocket) -> None:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    peer = _FetchPeer(
+        WebSocketRouter(handlers={"program_list": list_albums}, auth_token=None)
+    )
+    peer.send("program_list", "albums")
+    try:
+        async with asyncio.timeout(2):
+            await started.wait()
+            peer.disconnect()
+            await asyncio.shield(peer.wait_closed())
+    finally:
+        release.set()
+        await asyncio.wait_for(peer.wait_closed(), timeout=5)
+    assert cancelled.is_set()
+    assert not peer.sent
+
+
 @pytest.mark.parametrize("broken_receive", [False, True])
 async def test_fetch_keeps_pipelined_replies_in_request_order(
     router: WebSocketRouter,

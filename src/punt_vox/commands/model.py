@@ -50,13 +50,7 @@ class ModelCommand:
                     text=listing.render("No models for this provider."),
                     json_data=listing.payload(),
                 )
-            message = str(ProviderNotConfiguredError.for_cli())
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(str(ProviderNotConfiguredError.for_cli()))
 
         if name is None:
             listing = SwitchList(
@@ -70,33 +64,16 @@ class ModelCommand:
         try:
             resolved = resolve_model(name, provider)
         except ValueError as exc:
-            message = str(exc)
-            return CommandResult(
-                text=message,
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(str(exc))
 
         voice_default = Cascade.fetch_first_voice(ctx.client, provider)
         if isinstance(voice_default, RosterError):
-            return CommandResult(
-                text=f"Error: {voice_default.message}",
-                json_data={"error": voice_default.message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(voice_default.message)
 
         try:
             ctx.store.write_fields({"model": resolved, "voice": voice_default})
         except ValueError as exc:
-            message = str(exc)
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
+            return CommandResult.failure(str(exc))
         return CommandResult(
             text=f"Model: {resolved}",
             json_data={"model": resolved, "voice": voice_default},

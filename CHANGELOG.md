@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox music list` reads saved album manifests off the daemon event loop, so
+  listing a large catalog does not delay unrelated requests. (PL-1546)
+
 - `vox say` and `vox rec new` share how they prepare synthesis settings and
   text segments. Command behavior is unchanged.
 
@@ -43,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
+  text mode. JSON output is unchanged. (PL-1549)
+
+- `vox daemon status --json` and `vox doctor` report the actual listening port
+  when `voxd --port 0` lets the operating system choose a port.
 
 - `vox --json rec` reports operational errors, including an unavailable daemon,
   as JSON on stdout, matching `vox --json music`. (PL-1538)

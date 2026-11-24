@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
+from punt_vox.voxd.programs.album_list_reader import AlbumListReader
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 
@@ -13,6 +14,10 @@ from .conftest import QuietProducer, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
+
+    from punt_vox.voxd.programs.types import AlbumListRow
 
 
 def _subsystem(root: Path) -> ProgramSubsystem:
@@ -66,15 +71,32 @@ class TestHandlersBoundToService:
         assert reply["type"] == "program_status"
         assert reply["status"]["mode"] == "off"
 
-    def test_list_handler_reports_albums(self, tmp_path: Path) -> None:
+    async def test_list_handler_reports_albums_through_one_shared_reader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, 2, style="ambient", vibe="calm", album_id="a3f1c9")
         subsystem = _subsystem(root)
         ws = MagicMock()
         ws.send_json = AsyncMock()
+        readers: list[AlbumListReader] = []
+        read = AlbumListReader.read
 
-        asyncio.run(subsystem.handlers()["program_list"]({"id": "l1"}, ws))
+        async def track_reader(
+            reader: AlbumListReader, service: ProgramService
+        ) -> list[AlbumListRow]:
+            readers.append(reader)
+            return await read(reader, service)
 
-        reply = ws.send_json.await_args.args[0]
-        assert reply["type"] == "program_list"
-        assert [p["id"] for p in reply["programs"]] == ["a3f1c9"]
+        monkeypatch.setattr(AlbumListReader, "read", track_reader)
+        handler = subsystem.handlers()["program_list"]
+        await handler({"id": "l1"}, ws)
+        await handler({"id": "l2"}, ws)
+
+        assert len(readers) == 2 and readers[0] is readers[1]
+        replies = [call.args[0] for call in ws.send_json.await_args_list]
+        assert [(r["type"], r["id"]) for r in replies] == [
+            ("program_list", "l1"),
+            ("program_list", "l2"),
+        ]
+        assert [[p["id"] for p in r["programs"]] for r in replies] == [["a3f1c9"]] * 2
