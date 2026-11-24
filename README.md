@@ -241,6 +241,11 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox rec get 5b9fc536a112.mp3` | Copy a recording into the current directory |
 | `vox rec remove 5b9fc536a112.mp3` | Delete a recording from the store |
 
+Without `--name`, the recording id depends only on the text. Recording the
+same text again silently replaces the earlier take, even if you change the
+voice or rate. Use a different `--name` for each take (for example,
+`--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
+
 #### Music
 
 | Command | What it does |
