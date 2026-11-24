@@ -16,8 +16,8 @@ album whose Parts back the active pool or selection).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-import logging
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
@@ -43,8 +43,6 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.store import PartStore, ProgramStore
 
 __all__ = ["MusicLibrary"]
-
-logger = logging.getLogger(__name__)
 
 # A hand-authored ``music new`` track has no vibe/style classification; it lands
 # under one neutral tag so the whole authored-track set groups together in
@@ -133,13 +131,14 @@ class MusicLibrary:
         with self.reserve(prompt, name) as reservation:
             return await self.produce(reservation)
 
-    def manifest(self, album_id: AlbumId) -> AlbumContents:
+    async def manifest(self, album_id: AlbumId) -> AlbumContents:
         """Return the album's on-disk name and ready parts, resolved by catalog id.
 
         The id is a catalog key, never a path; the per-part containment (a corrupt
         manifest entry can never stat outside the album dir) lives on ``AlbumContents``.
         A ready part whose file was deleted out of band is listed as missing, not
-        raised, so the surviving parts stay exportable.
+        raised, so the surviving parts stay exportable. The catalog lookup stays on
+        the event loop; the live manifest read and track stats run in a worker.
 
         Raises:
             ValueError: If the album is missing or a part path is unsafe.
@@ -147,7 +146,7 @@ class MusicLibrary:
         """
         album = self._require(album_id)
         root = ContainmentRoot(self._root / album.locator, _PART_LABEL)
-        return AlbumContents.from_album(album, root)
+        return await asyncio.to_thread(AlbumContents.from_album, album, root)
 
     def resolve_part(self, album_id: AlbumId, part_name: str) -> Path:
         """Resolve one album part to a contained regular file, never a symlink.

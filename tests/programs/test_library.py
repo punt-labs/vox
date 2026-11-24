@@ -298,15 +298,15 @@ class TestManifestAndResolve:
     async def test_manifest_lists_parts_with_bytes(self, tmp_path: Path) -> None:
         fx = _fx(tmp_path)
         album_id = await fx.library.new("a prompt", name="pads")
-        contents = fx.library.manifest(album_id)
+        contents = await fx.library.manifest(album_id)
         assert contents.name.endswith(album_id.value)
         assert [p.name for p in contents.parts] == ["001.mp3"]
         assert contents.parts[0].byte_count > 0
 
-    def test_unknown_album_id_is_a_clean_error(self, tmp_path: Path) -> None:
+    async def test_unknown_album_id_is_a_clean_error(self, tmp_path: Path) -> None:
         fx = _fx(tmp_path)
         with pytest.raises(ValueError, match="no album named"):
-            fx.library.manifest(AlbumId("abcdef"))
+            await fx.library.manifest(AlbumId("abcdef"))
 
     async def test_resolve_part_contains_within_album(self, tmp_path: Path) -> None:
         fx = _fx(tmp_path)
@@ -519,12 +519,12 @@ class TestManifestContainment:
         _seed_hostile_manifest(tmp_path / "programs", identity)
         fx = _fx(tmp_path)  # scans the seeded album into the shared catalog
         with pytest.raises(ValueError):
-            fx.library.manifest(AlbumId("cccccc"))
+            await fx.library.manifest(AlbumId("cccccc"))
 
     async def test_manifest_lists_a_normal_part(self, tmp_path: Path) -> None:
         """A well-formed manifest still lists its parts with byte counts."""
         fx = _fx(tmp_path)
         album_id = await fx.library.new("a prompt", name="clean")
-        contents = fx.library.manifest(album_id)
+        contents = await fx.library.manifest(album_id)
         assert [p.name for p in contents.parts] == ["001.mp3"]
         assert contents.parts[0].byte_count > 0

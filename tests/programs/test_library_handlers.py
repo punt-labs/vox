@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+from threading import get_ident
 from typing import TYPE_CHECKING, cast, final
 
 from starlette.websockets import WebSocketDisconnect
@@ -28,7 +30,7 @@ from punt_vox.voxd.programs.producer import PartSpec, ProducerBadInputError
 from .conftest import QuietProducer, seed_album
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import os
 
     import pytest
     from starlette.websockets import WebSocket
@@ -246,6 +248,32 @@ class TestMusicNewHandler:
 
 
 class TestMusicManifestHandler:
+    async def test_sizes_tracks_off_the_daemon_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1, 2, name="pads", album_id="a3f1c9")
+        library = _library(root)
+        ws, sent = _capturing_ws()
+        track_reads: list[tuple[str, int]] = []
+        loop_thread = get_ident()
+        lstat = Path.lstat
+
+        def track_lstat(path: Path) -> os.stat_result:
+            if path.parent == root / locator and path.suffix == ".mp3":
+                track_reads.append((path.name, get_ident()))
+            return lstat(path)
+
+        monkeypatch.setattr(Path, "lstat", track_lstat)
+        await MusicManifestHandler(library)({"id": "m1", "album": "a3f1c9"}, ws)
+
+        assert sent[-1]["parts"] == [
+            {"part": "001.mp3", "bytes": 5},
+            {"part": "002.mp3", "bytes": 5},
+        ]
+        assert [name for name, _ in track_reads] == ["001.mp3", "002.mp3"]
+        assert all(thread != loop_thread for _, thread in track_reads), track_reads
+
     def test_success_lists_parts(self, tmp_path: Path) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, 2, name="pads", album_id="a3f1c9")
@@ -366,7 +394,7 @@ class TestLibraryFaultClassification:
     ) -> None:
         library = _library(tmp_path / "programs")
 
-        def vanished(_self: MusicLibrary, _album_id: object) -> object:
+        async def vanished(_self: MusicLibrary, _album_id: object) -> object:
             raise LookupError("album dir vanished mid-op")
 
         monkeypatch.setattr(MusicLibrary, "manifest", vanished)
