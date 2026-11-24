@@ -134,3 +134,41 @@ def test_discard_unregisters_its_own_worktree_whose_directory_is_gone(
     WorkerWorktrees().discard(repo, worktree, worker_id)
     assert not _is_listed(repo, worktree)
     assert _git(repo, "branch", "--list", f"vox-worker/{worker_id}") == ""
+
+
+def test_discard_removes_a_worktree_still_locked_from_its_creation(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A run killed at the deadline leaves git's own "initializing" lock behind."""
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    branch = f"vox-worker/{worker_id}"
+    _git(
+        repo,
+        "worktree",
+        "add",
+        "--lock",
+        "--reason",
+        "initializing",
+        "-b",
+        branch,
+        str(worktree),
+    )
+    WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert not worktree.exists()
+    assert not _is_listed(repo, worktree)
+    probe = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 1

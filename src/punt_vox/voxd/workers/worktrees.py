@@ -116,7 +116,11 @@ class WorkerWorktrees:
         if worktree.name != _WORKTREE_LEAF or worktree.parent.name != owner:
             raise ValueError(f"not the worker's own worktree: {worktree}")
         if self._registered(project, worktree):
-            self._git(project, "worktree", "remove", "--force", str(worktree))
+            # Two --force: git locks a worktree ("initializing") while adding
+            # it, and a run killed at the deadline leaves that lock in place.
+            self._git(
+                project, "worktree", "remove", "--force", "--force", str(worktree)
+            )
         if worktree.exists():
             shutil.rmtree(worktree)
         branch = f"vox-worker/{owner}"
