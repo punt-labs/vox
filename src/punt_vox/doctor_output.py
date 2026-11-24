@@ -27,7 +27,7 @@ class OutputDirCheck:
     """Verdicts for the music dir and the output root it normally contains.
 
     Stateless, like :class:`~punt_vox.doctor_guide.GuideCheck`: both paths are
-    resolved afresh on every call, so ``VOX_OUTPUT_DIR`` is honoured at run time.
+    resolved afresh on every call.
     """
 
     __slots__ = ()
@@ -37,14 +37,13 @@ class OutputDirCheck:
         return super().__new__(cls)
 
     def music_dir(self) -> list[CheckResult]:
-        """Return the music-dir row, or no row where it does not apply.
+        """Return the music-dir row: a warning when it is absent, else no row.
 
-        The music dir matters only as the parent of the output root; when
-        ``VOX_OUTPUT_DIR`` moves the root elsewhere, vox never creates it.
+        The row stands even when this shell sets ``VOX_OUTPUT_DIR``: the
+        installed voxd unit does not carry that variable, so the daemon still
+        saves albums under the music dir.
         """
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
-        if not default_output_dir().is_relative_to(music_dir):
-            return []
         if not music_dir.is_dir():
             return [CheckResult.warn(f"output music dir: absent — {_CREATED_BY}")]
         return []
