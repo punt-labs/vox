@@ -55,29 +55,23 @@ class ProviderCommand:
         if cfg.provider == name:
             return CommandResult(text=f"Provider: {name}", json_data={"provider": name})
 
-        voice_default = Cascade.fetch_first_voice(ctx.client, name)
+        target = Cascade.default_target(name)
+        voice_default = Cascade.fetch_first_voice(ctx.client, target)
         if isinstance(voice_default, RosterError):
             return CommandResult.failure(voice_default.message)
 
-        model_default = Cascade.default_model(name)
-
+        updates = {
+            "provider": name,
+            "model": target.model_field,
+            "voice": voice_default,
+        }
         try:
-            ctx.store.write_fields(
-                {
-                    "provider": name,
-                    "model": model_default,
-                    "voice": voice_default,
-                }
-            )
+            ctx.store.write_fields(updates)
         except ValueError as exc:
             return CommandResult.failure(str(exc))
         return CommandResult(
             text=f"Provider: {name}",
-            json_data={
-                "provider": name,
-                "model": model_default,
-                "voice": voice_default,
-            },
+            json_data={**updates},
         )
 
 

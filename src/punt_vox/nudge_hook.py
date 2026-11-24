@@ -50,7 +50,7 @@ class NudgeHook:
         decision = self._nudge.advance(
             mode=config.vibe_mode, turns=config.vibe_nudge_turns
         )
-        if config.vibe_mode == "auto" and not self._persist(decision.next_turns):
+        if config.vibe_mode == "auto" and not self.persist(decision.next_turns):
             return None
         if decision.reminder is None:
             return None
@@ -65,7 +65,7 @@ class NudgeHook:
             }
         }
 
-    def _persist(self, next_turns: int) -> bool:
+    def persist(self, next_turns: int) -> bool:
         """Persist the cadence counter; return ``False`` (and warn) on write failure."""
         try:
             ConfigStore(self._config_dir).write_field(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import logging
 import ssl
 from collections import OrderedDict
 from pathlib import Path
@@ -411,31 +410,29 @@ class TestElevenLabsProviderCheckHealth:
         assert not checks[1].passed
 
 
-class TestElevenLabsProviderRateMessage:
-    def test_logs_debug_when_rate_not_100(
+class TestElevenLabsProviderRate:
+    @pytest.mark.parametrize("rate", [90, 100, 120])
+    def test_rate_does_not_change_sdk_request_or_audio(
         self,
         elevenlabs_provider: ElevenLabsProvider,
+        mock_elevenlabs_client: MagicMock,
         tmp_output_dir: Path,
-        caplog: pytest.LogCaptureFixture,
+        rate: int,
     ) -> None:
-        request = SynthesisRequest(text="test", voice="matilda", rate=90)
-        out = tmp_output_dir / "rate.mp3"
-        with caplog.at_level(logging.DEBUG):
-            elevenlabs_provider.synthesize(request, out)
-        assert "does not support rate adjustment" in caplog.text
-        assert "rate=90" in caplog.text
-
-    def test_no_message_at_rate_100(
-        self,
-        elevenlabs_provider: ElevenLabsProvider,
-        tmp_output_dir: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        request = SynthesisRequest(text="test", voice="matilda", rate=100)
-        out = tmp_output_dir / "rate100.mp3"
-        with caplog.at_level(logging.DEBUG):
-            elevenlabs_provider.synthesize(request, out)
-        assert "does not support rate adjustment" not in caplog.text
+        stream = mock_elevenlabs_client.text_to_speech.stream
+        default = tmp_output_dir / "default.mp3"
+        requested = tmp_output_dir / "requested.mp3"
+        elevenlabs_provider.synthesize(
+            SynthesisRequest(text="test", voice="matilda", stability=0.5), default
+        )
+        elevenlabs_provider.synthesize(
+            SynthesisRequest(text="test", voice="matilda", stability=0.5, rate=rate),
+            requested,
+        )
+        default_call, requested_call = stream.call_args_list
+        assert requested_call == default_call
+        assert requested_call.kwargs["voice_settings"].speed is None
+        assert requested.read_bytes() == default.read_bytes()
 
 
 class TestElevenLabsProviderDefaultModel:
@@ -522,6 +519,29 @@ class TestElevenLabsProviderDefaultModel:
 
 
 class TestElevenLabsProviderCharLimits:
+    @pytest.mark.parametrize("tag_letters", [4997, 4996])
+    def test_vibe_cue_must_leave_room_for_speech(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path, tag_letters: int
+    ) -> None:
+        provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="Hello.", vibe_tags=f"[{'a' * tag_letters}]")
+        with pytest.raises(
+            ValueError, match="vibe cue leaves too little room for speech"
+        ):
+            provider.synthesize(request, tmp_path / "speech.mp3")
+        mock_elevenlabs_client.text_to_speech.stream.assert_not_called()
+
+    def test_long_vibe_cue_can_fit_one_call(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        provider = ElevenLabsProvider(model="eleven_v3", client=mock_elevenlabs_client)
+        cue = f"[{'a' * 4991}]"
+        request = SynthesisRequest(text="Hello.", vibe_tags=cue)
+        provider.synthesize(request, tmp_path / "speech.mp3")
+        outbound = mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["text"]
+        assert outbound == f"{cue} Hello."
+        assert len(outbound) == 5_000
+
     def test_v3_chunks_above_5k(self) -> None:
         """eleven_v3 should chunk text exceeding 5,000 chars."""
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())

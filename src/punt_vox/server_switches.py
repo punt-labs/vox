@@ -22,6 +22,7 @@ from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 from punt_vox.voice_roster import VoiceRoster
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -141,7 +142,9 @@ class ModelTool:
         except ValueError as exc:
             return _error(str(exc))
 
-        voice_default = Cascade.fetch_first_voice(self._client_factory(), provider)
+        voice_default = Cascade.fetch_first_voice(
+            self._client_factory(), VoiceTarget(provider, resolved)
+        )
         if isinstance(voice_default, RosterError):
             return _error(voice_default.message)
 
@@ -226,22 +229,23 @@ class ProviderTool:
         if previous == name:
             return json.dumps({"provider": name})
 
-        model_default = Cascade.default_model(name)
-        voice_default = Cascade.fetch_first_voice(self._client_factory(), name)
+        target = Cascade.default_target(name)
+        voice_default = Cascade.fetch_first_voice(self._client_factory(), target)
         if isinstance(voice_default, RosterError):
             return _error(voice_default.message)
 
-        write_err = self._config.write_fields(
-            {"provider": name, "model": model_default, "voice": voice_default}
-        )
+        updates = {
+            "provider": name,
+            "model": target.model_field,
+            "voice": voice_default,
+        }
+        write_err = self._config.write_fields(updates)
         if write_err is not None:
             return write_err
         session.provider = name
-        session.model = model_default or None
+        session.model = target.model
         session.voice = voice_default or None
-        return json.dumps(
-            {"provider": name, "model": model_default, "voice": voice_default}
-        )
+        return json.dumps(updates)
 
 
 @final
@@ -307,14 +311,13 @@ class VoiceTool:
         if normalized is None:
             return _error("voice name is empty")
 
-        error = VoiceRoster.selection_error(
-            self._client_factory(), provider, normalized
-        )
+        target = VoiceTarget(provider, session.model)
+        error = VoiceRoster.selection_error(self._client_factory(), target, normalized)
         if error is not None:
             return _error(error)
 
         write_err = self._config.write_voice(
-            normalized, VoiceRoster.provider_check(provider)
+            normalized, VoiceRoster.selection_check(target)
         )
         if write_err is not None:
             return write_err
@@ -335,7 +338,13 @@ class VoiceTool:
         state is the substitution the whole subsystem exists to prevent.
         """
         provider = session.provider
-        roster = VoiceRoster.fetch(self._client_factory(), provider) if provider else []
+        roster = (
+            VoiceRoster.fetch(
+                self._client_factory(), VoiceTarget(provider, session.model)
+            )
+            if provider
+            else []
+        )
         if isinstance(roster, RosterError):
             return _error(roster.message)
         return json.dumps(

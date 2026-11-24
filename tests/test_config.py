@@ -545,6 +545,15 @@ class TestConfigStoreWrite:
         with pytest.raises(ValueError, match="Unknown config key"):
             ConfigStore(tmp_path).write_fields({"bad_key": "val"})
 
+    def test_checked_write_cannot_span_config_files(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        with pytest.raises(ValueError, match="must target one file"):
+            store.write_fields(
+                {"notify": "y", "vibe_tags": "[calm]"}, check=lambda fields: None
+            )
+        assert store.read_field("notify") is None
+        assert store.read_field("vibe_tags") is None
+
     def test_non_ascii_value_round_trips(self, tmp_path: Path) -> None:
         """A non-ASCII mood survives write+read via symmetric UTF-8 I/O.
 

@@ -153,6 +153,47 @@ def _path_without_vox_panel() -> str:
     )
 
 
+def _jq_less_path(bin_dir: Path, awk: str = "awk") -> str:
+    """A PATH holding only the tools the gated hooks run, and no `jq`.
+
+    Each tool is linked into ``bin_dir`` by itself, so a host that keeps `jq`
+    beside them in /usr/bin still runs the hooks down their jq-less branch.
+    ``awk`` names the implementation linked in as `awk`.
+    """
+    tools = {
+        "bash": "bash",
+        "cat": "cat",
+        "dirname": "dirname",
+        "git": "git",
+        "awk": awk,
+    }
+    for name, tool in tools.items():
+        real = shutil.which(tool)
+        assert real is not None, f"the jq-less hook run needs {tool}"
+        (bin_dir / name).symlink_to(real)
+    return str(bin_dir)
+
+
+# Repo directory names Claude Code sends JSON-escaped: json.dumps escapes the
+# quote and backslash and, like any JSON encoder may, the non-ASCII letters.
+_ESCAPED_REPO_NAMES = ('quote"repo', "back\\slash", "café ☕ 🎵")
+
+
+def _path_without_jq(tools_dir: Path) -> str:
+    """Every executable on the vox-panel-free PATH, linked into ``tools_dir``
+    except `jq`, for hooks that need more tools than ``_jq_less_path`` holds."""
+    tools_dir.mkdir()
+    for entry in _path_without_vox_panel().split(os.pathsep):
+        directory = Path(entry)
+        if not directory.is_dir():
+            continue
+        for tool in directory.iterdir():
+            link = tools_dir / tool.name
+            if tool.name != "jq" and os.access(tool, os.X_OK) and not link.exists():
+                link.symlink_to(tool)
+    return str(tools_dir)
+
+
 # Sentinels from the no-spawn assertions, re-checked at module teardown. The
 # spawn is backgrounded, and this file's own polling evidence (see
 # _wait_for_panel_spawn) is that a record can land after a 2-second window. The
@@ -533,7 +574,9 @@ class TestPanelSpawn:
         )
 
     @staticmethod
-    def _run_session_start(cwd: Path, env: dict[str, str]) -> int:
+    def _run_session_start(
+        cwd: Path, env: dict[str, str], launch_dir: Path | None = None
+    ) -> int:
         payload = json.dumps({"cwd": str(cwd)})
         result = subprocess.run(
             ["bash", str(_HOOKS_DIR / "session-start.sh")],
@@ -543,7 +586,7 @@ class TestPanelSpawn:
             # Never inherit pytest's cwd: the hook falls back to $PWD when the
             # payload cwd is unresolvable, and pytest runs from the enabled
             # vox repo -- the fallback would find the real marker.
-            cwd=cwd,
+            cwd=launch_dir or cwd,
             env=env,
             check=False,
         )
@@ -561,6 +604,30 @@ class TestPanelSpawn:
         env["VOX_PANEL_SENTINEL"] = str(sentinel)
 
         rc = self._run_session_start(repo, env)
+
+        assert rc == 0
+        assert f"--session-pid {os.getpid()}" in _wait_for_panel_spawn(sentinel)
+
+    @pytest.mark.parametrize("repo_name", _ESCAPED_REPO_NAMES)
+    def test_spawns_for_escaped_cwd_without_jq(
+        self, repo_name: str, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / repo_name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        _mark_enabled(repo)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel.log"
+        self._write_vox_panel_stub(bin_dir)
+        env = self._base_env(tmp_path)
+        env["PATH"] = os.pathsep.join(
+            (str(bin_dir), _path_without_jq(tmp_path / "tools"))
+        )
+        env["VOX_PANEL_SENTINEL"] = str(sentinel)
+        # Launched outside the repo, so the hook's $PWD fallback cannot stand
+        # in for a cwd it failed to decode.
+        rc = self._run_session_start(repo, env, launch_dir=tmp_path)
 
         assert rc == 0
         assert f"--session-pid {os.getpid()}" in _wait_for_panel_spawn(sentinel)
@@ -927,3 +994,85 @@ class TestManifestRefusal:
         # the two is what made an unreadable manifest look like a prod one.
         assert "grep exit 2" in result.stdout
         assert "Permission denied" in result.stderr
+
+
+@pytest.mark.subprocess
+class TestJqLessPayloadDecoding:
+    @pytest.mark.parametrize("repo_name", _ESCAPED_REPO_NAMES)
+    @pytest.mark.parametrize("name", sorted(_GATED_HOOKS))
+    def test_escaped_cwd_reaches_vox_without_jq(
+        self, name: str, repo_name: str, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / repo_name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        _mark_enabled(repo)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        env = {"PATH": _jq_less_path(bin_dir), "HOME": str(tmp_path)}
+
+        rc = _run_hook(name, str(repo), _GATED_HOOKS[name], env, launch_dir=tmp_path)
+
+        assert rc == 0
+        assert sentinel.exists(), f"{name} lost cwd {repo_name!r} without jq"
+
+
+# (payload, field, decoded value) -- what `jq -r '.[$field] // empty'` prints.
+_PAYLOAD_CASES = (
+    (r'{"cwd": "/a\"b"}', "cwd", '/a"b'),
+    (r'{"cwd":"\\srv\/x\ty"}', "cwd", "\\srv/x\ty"),
+    (r'{"cwd":"caf\u00e9 \u2615 \ud83c\udfb5"}', "cwd", "café ☕ 🎵"),
+    ('{"cwd":"café raw"}', "cwd", "café raw"),
+    ('{\n  "cwd" : "pretty"\n}', "cwd", "pretty"),
+    (r'{"a":{"cwd":"nested"},"s":"\"cwd\": \"quoted\"","cwd":"top"}', "cwd", "top"),
+    ('{"a":[{"cwd":"in array"}],"hook_event_name":"Stop"}', "cwd", ""),
+    ('{"cwd":"first","cwd":"last"}', "cwd", "last"),
+    ('{"cwd":null}', "cwd", ""),
+    ('{"cwd":5}', "cwd", ""),
+    ('{"cwd":{"path":"/x"}}', "cwd", ""),
+    ('{"session_id":"s"}', "cwd", ""),
+    ('{"cwd":"a","hook_event_name":"SubagentStop"}', "hook_event_name", "SubagentStop"),
+    (r'{"prompt":"nul \u0000 byte","cwd":"/after/nul"}', "cwd", "/after/nul"),
+    (r'{"a":["x\"y",{"cwd":"v\\"}],"cwd":"top"}', "cwd", "top"),
+    ("not json", "cwd", ""),
+    ('["cwd", "x"]', "cwd", ""),
+)
+
+
+def _payload_field(payload: str, field: str, path: str) -> str:
+    result = subprocess.run(
+        [
+            shutil.which("bash") or "bash",
+            "-c",
+            'source "$1" && vox_hook_payload_field "$2"',
+            "payload-field",
+            str(_HOOKS_DIR / "payload.sh"),
+            field,
+        ],
+        input=payload.encode(),
+        capture_output=True,
+        env={"PATH": path},
+        check=False,
+        timeout=3,
+    )
+    return result.stdout.decode()
+
+
+@pytest.mark.subprocess
+class TestPayloadField:
+    @pytest.mark.parametrize("awk", ["awk", "mawk", "gawk", "original-awk"])
+    @pytest.mark.parametrize(("payload", "field", "expected"), _PAYLOAD_CASES)
+    def test_jq_less_decoding(
+        self, payload: str, field: str, expected: str, awk: str, tmp_path: Path
+    ) -> None:
+        if shutil.which(awk) is None:
+            pytest.skip(f"{awk} is not installed")
+        path = _jq_less_path(tmp_path, awk)
+        assert _payload_field(payload, field, path) == expected
+
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="parity needs jq")
+    @pytest.mark.parametrize(("payload", "field", "expected"), _PAYLOAD_CASES)
+    def test_jq_decoding_matches(self, payload: str, field: str, expected: str) -> None:
+        assert _payload_field(payload, field, os.environ["PATH"]) == expected

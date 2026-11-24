@@ -6,12 +6,16 @@ The CLI command and MCP voice tool share the voice-selection rules in
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 from punt_vox.voice_roster import RosterError, VoiceRoster
+from punt_vox.voice_target import VoiceTarget
+
+if TYPE_CHECKING:
+    from punt_vox.config import VoxConfig
 
 
 @final
@@ -39,7 +43,7 @@ class VoiceCommand:
         """
         if name is None:
             cfg = ctx.store.read()
-            return self._list(ctx, provider or cfg.provider, cfg.voice)
+            return self._list(ctx, provider or cfg.provider, cfg)
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return self._error("voice name is empty", prefix="")
@@ -48,14 +52,17 @@ class VoiceCommand:
     @classmethod
     def _set(cls, ctx: Ctx, name: str, target: str | None) -> CommandResult:
         try:
-            active = cls._require_provider(target, ctx.store.read_field("provider"))
+            cfg = ctx.store.read()
+            active = cls._require_provider(target, cfg.provider)
+            voice_target = VoiceTarget(active, cfg.model)
             if (
-                error := VoiceRoster.selection_error(ctx.client, active, name)
+                error := VoiceRoster.selection_error(ctx.client, voice_target, name)
             ) is not None:
                 return cls._error(error)
 
             def check(fields: dict[str, str]) -> None:
                 cls._require_provider(active, fields.get("provider"))
+                voice_target.require_current_model(fields)
 
             ctx.store.write_field("voice", name, check=check)
         except (OSError, ValueError) as exc:
@@ -74,9 +81,7 @@ class VoiceCommand:
         return active
 
     @classmethod
-    def _list(
-        cls, ctx: Ctx, provider: str | None, current: str | None
-    ) -> CommandResult:
+    def _list(cls, ctx: Ctx, provider: str | None, cfg: VoxConfig) -> CommandResult:
         """Return the voice roster, or an empty listing when no provider is set.
 
         Listing needs no synthesis, so an unset provider (no ``--provider``
@@ -93,10 +98,16 @@ class VoiceCommand:
         authority on which provider voxd runs) so the empty-roster branch
         must not reach it.
         """
-        roster = VoiceRoster.fetch(ctx.client, provider) if provider else []
+        roster = (
+            VoiceRoster.fetch(
+                ctx.client, VoiceTarget.for_listing(provider, cfg.provider, cfg.model)
+            )
+            if provider
+            else []
+        )
         if isinstance(roster, RosterError):
             return cls._error(roster.message)
-        listing = SwitchList(names=tuple(roster), current=current)
+        listing = SwitchList(names=tuple(roster), current=cfg.voice)
         return CommandResult(
             text=listing.render("" if provider else "No voices for this provider."),
             json_data=listing.payload() | {"provider": provider},

@@ -189,13 +189,31 @@ class RecCli:
         """Synthesize speech into the store and print its bare id.
 
         Reads text from the TEXT argument, ``--from`` (a JSON segments file), or
-        stdin. Prints only the store id -- no path, no host. Act on it with
-        ``rec play``/``rec get``/``rec remove``.
+        stdin. By default, prints only the store id -- no path, no host.
+        Act on it with ``rec play``/``rec get``/``rec remove``.
 
         Without --name, recording the same text reuses the same id and
         silently replaces the earlier take, even if synthesis settings change.
         Pass a different --name for each take to keep them separate.
         --name only works for a single text segment.
+
+        With --from and --json, stdout is JSON Lines: one JSON object per successful
+        segment, in input order. Blank segments are skipped. If the daemon rejects a
+        segment or the connection fails during processing, Vox writes a final
+        {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
+        are skipped. An invalid segments file produces one error object and exits 2.
+
+        With a segments file named in.json, save stdout before running jq:
+
+        status=0
+
+        vox rec new --from in.json --json >out.jsonl ||
+
+        status=$?
+
+        jq -c . out.jsonl
+
+        echo "Vox exit status: $status" >&2
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         segments, spec = self._synthesis.prepare(
@@ -215,14 +233,7 @@ class RecCli:
         gateway = self._guard.run(self._gateway_factory)
         for seg_text in segments:
             result = self._guard.run(partial(gateway.new, seg_text, spec, name))
-            self._formatter.emit(
-                {
-                    "id": result.name,
-                    "bytes": result.byte_count,
-                    "cached": result.cached,
-                },
-                result.name,
-            )
+            self._formatter.emit(result.metadata(), result.name, warning=result.warning)
 
     def list_recordings(
         self,
