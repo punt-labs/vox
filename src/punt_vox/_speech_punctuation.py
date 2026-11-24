@@ -12,6 +12,10 @@ _FILE_PATH_RE = re.compile(r"^[~/.]?/")
 _CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
 _TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
+_SYMBOL_NAME_RE = re.compile(
+    r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
+)
+_SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
 
 
 class SpeechPunctuation:
@@ -23,15 +27,19 @@ class SpeechPunctuation:
 
         Leading punctuation is discarded except file path and identifier prefixes
         (``~/._``), a numeric minus, and signed or unsigned currency amounts.
-        Trailing non-prosody symbols are discarded to avoid synthesis artifacts.
+        Trailing non-prosody symbols are discarded to avoid synthesis artifacts,
+        except the ``#`` and ``++`` that name languages such as C# and C++.
         """
         currency = CurrencySpeech.prose_pattern(token).pattern
         leading = (
             rf"^(?:[-\u2212]{{2,}}|(?!(?:{currency}[\W_]*$|[-\u2212]\.?\d))[^\w~/.])+"
         )
-        core, raw_suffix = cls._split_trailing(re.sub(leading, "", token))
-        suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-        return CurrencySpeech.speak_prose(core), suffix
+        core_candidate = re.sub(leading, "", token)
+        if named := _SYMBOL_NAME_RE.fullmatch(core_candidate):
+            joined, name, mark, raw_suffix = named.groups(default="")
+            return f"{joined}{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
+        core, raw_suffix = cls._split_trailing(core_candidate)
+        return CurrencySpeech.speak_prose(core), cls._prosody(raw_suffix)
 
     @classmethod
     def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
@@ -54,6 +62,10 @@ class SpeechPunctuation:
     def _spell_code_token(cls, match: re.Match[str]) -> str:
         token = match[0]
         return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
+
+    @staticmethod
+    def _prosody(raw_suffix: str) -> str:
+        return "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
 
     @staticmethod
     def _split_trailing(core_candidate: str) -> tuple[str, str]:
