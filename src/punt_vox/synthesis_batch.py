@@ -1,11 +1,9 @@
 """Render a list of speech segments against a shared synthesis default.
 
-The multi-voice ``unmute``/``record`` tools accept a ``segments`` list where each
+The multi-voice ``unmute``/``rec new`` tools accept a ``segments`` list where each
 segment may override ``voice``, ``language``, and ``vibe_tags`` on top of the
 call-level :class:`~punt_vox.types_synthesis.SynthesisSpec`.  :class:`SegmentBatch`
-owns that per-segment override logic and the daemon-error handling, so the tool
-functions stay thin: build the defaults, hand off a synth/record ``handler``, and
-serialize the result.
+validates the whole batch before the tools hand off a synth/record ``handler``.
 """
 
 from __future__ import annotations
@@ -24,38 +22,60 @@ from punt_vox.types_synthesis import SynthesisSpec
 logger = logging.getLogger(__name__)
 
 SegmentHandler = Callable[[str, SynthesisSpec], dict[str, object]]
+_SEGMENT_KEYS = frozenset({"text", "voice", "language", "vibe_tags"})
 
 
 @final
 class SegmentBatch:
-    """Synthesize each non-empty segment against shared defaults."""
+    """Validate a batch and synthesize every segment against shared defaults."""
 
-    __slots__ = ("_defaults", "_segments")
+    __slots__ = ("_segments",)
 
     _segments: list[dict[str, str]]
-    _defaults: SynthesisSpec
 
-    def __new__(cls, segments: list[dict[str, str]], defaults: SynthesisSpec) -> Self:
-        """Create a segment batch."""
+    def __new__(cls, segments: list[dict[str, str]]) -> Self:
+        """Reject malformed input before the caller can start synthesis."""
+        if not segments:
+            msg = "segments must contain at least one segment."
+            raise ValueError(msg)
         self = super().__new__(cls)
-        self._segments = segments
-        self._defaults = defaults
+        self._segments = [
+            cls._validated_segment(index, segment)
+            for index, segment in enumerate(segments)
+        ]
         return self
 
-    def render(self, *, handler: SegmentHandler, error_label: str) -> str:
+    @staticmethod
+    def _validated_segment(index: int, segment: dict[str, str]) -> dict[str, str]:
+        extra = segment.keys() - _SEGMENT_KEYS
+        if extra:
+            offending = ", ".join(repr(key) for key in sorted(extra))
+            allowed = ", ".join(sorted(_SEGMENT_KEYS))
+            msg = (
+                f"segments[{index}] contains unknown key(s): {offending}. "
+                f"Allowed keys: {allowed}."
+            )
+            raise ValueError(msg)
+        if not segment.get("text", "").strip():
+            msg = f"segments[{index}].text must be a non-blank string."
+            raise ValueError(msg)
+        return segment.copy()
+
+    def render(
+        self, defaults: SynthesisSpec, *, handler: SegmentHandler, error_label: str
+    ) -> str:
         """Return a JSON list of per-segment results, or a JSON error string.
 
-        Each non-empty segment is synthesized via *handler* against its
+        Each segment is synthesized via *handler* against its
         per-segment spec; a daemon failure short-circuits to an error string,
         logged under *error_label*.
         """
         results: list[dict[str, object]] = []
         try:
-            for seg in self._segments:
-                seg_text = seg.get("text", "")
-                if not seg_text:
-                    continue
-                results.append(handler(seg_text, self._spec_for(seg)))
+            results.extend(
+                handler(seg["text"], self._spec_for(defaults, seg))
+                for seg in self._segments
+            )
         except VoxdConnectionError as exc:
             return self._error(str(exc), results)
         except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
@@ -63,9 +83,9 @@ class SegmentBatch:
             return self._error(str(exc), results)
         return json.dumps(results)
 
-    def _spec_for(self, seg: dict[str, str]) -> SynthesisSpec:
+    @staticmethod
+    def _spec_for(defaults: SynthesisSpec, seg: dict[str, str]) -> SynthesisSpec:
         """Return the per-segment spec: segment overrides win over the defaults."""
-        defaults = self._defaults
         return replace(
             defaults,
             voice=seg.get("voice") or defaults.voice,

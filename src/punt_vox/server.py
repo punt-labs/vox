@@ -461,6 +461,9 @@ def unmute(
 
     Returns:
         JSON string with synthesis results.
+
+    Raises:
+        ValueError: The synthesis settings or segment batch are malformed.
     """
     _session.refresh_from_config()
 
@@ -487,6 +490,7 @@ def unmute(
         if text is None:
             return _error("Provide text or segments.")
         segments = [{"text": text}]
+    batch = SegmentBatch(segments)
 
     # Fill defaults BEFORE mutating session vibe: an F1 refusal
     # (no provider) or F7 refusal (provider-alien model) must leave the
@@ -523,9 +527,7 @@ def unmute(
                 entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
         return entry
 
-    return SegmentBatch(segments, defaults).render(
-        handler=_synth_handler, error_label="Synthesis"
-    )
+    return batch.render(defaults, handler=_synth_handler, error_label="Synthesis")
 
 
 # The single `rec` tool: one subcommand-dispatched verb (new/list/play/get/

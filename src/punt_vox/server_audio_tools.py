@@ -177,7 +177,10 @@ class RecTool:
             JSON string: a list of ``{"id", "bytes", "cached"}`` for ``new``,
             ``{"recordings": [...]}`` for ``list``, ``{"played"}``/
             ``{"id", "bytes", "base64"}``/``{"removed"}`` for the ref verbs, and
-            an ``{"error": ...}`` envelope on a bad input or daemon fault.
+            an ``{"error": ...}`` envelope on invalid options or daemon faults.
+
+        Raises:
+            ValueError: The synthesis segment batch is malformed.
         """
         self._session_provider().refresh_from_config()
         args = RecArgs(
@@ -222,25 +225,9 @@ class RecTool:
             if args.text is None:
                 return _error("Provide text or segments.")
             segments = [{"text": args.text}]
+        batch = SegmentBatch(segments)
         if args.name is not None and len(segments) > 1:
             return _error("name only supported for single-segment calls")
-        # The daemon owns the store and is the sole authority on name validity:
-        # an absent (None) name is content-addressed; an explicit name --
-        # including "" -- is sent for the daemon to reject pre-ack (``is not
-        # None``, not truthiness, to match the client and the CLI).
-        single_name = (
-            args.name if args.name is not None and len(segments) == 1 else None
-        )
-        client = self._client_factory()
-
-        def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-            # Bare id only -- no store path leaks to the agent (CLI parity).
-            result = client.record(seg_text, seg_spec, name=single_name)
-            return {
-                "id": result.name,
-                "bytes": result.byte_count,
-                "cached": result.cached,
-            }
 
         # Route through SessionSpec so ``rec new`` shares the one state-to-spec
         # constructor every synthesis surface uses -- state is the sole authority
@@ -251,9 +238,18 @@ class RecTool:
             defaults = SessionSpec(session).fill(spec)
         except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
             return _error(str(exc))
-        return SegmentBatch(segments, defaults).render(
-            handler=_handler, error_label="Record"
-        )
+        client = self._client_factory()
+
+        def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
+            # The daemon validates explicit names, including "".
+            result = client.record(seg_text, seg_spec, name=args.name)
+            return {
+                "id": result.name,
+                "bytes": result.byte_count,
+                "cached": result.cached,
+            }
+
+        return batch.render(defaults, handler=_handler, error_label="Record")
 
     def _list(self, _args: RecArgs) -> str:
         """List the store's recordings as ``{"recordings": [{"id", "bytes"}]}``."""

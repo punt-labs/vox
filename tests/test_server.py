@@ -10,11 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from _program_fakes import FakeProgramGateway
+from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import TextContent
 
 if TYPE_CHECKING:
     from punt_vox.types_provider import ProviderStatusPayload
 
-from punt_vox.client import SynthesizeResult
+from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.music_phrases import (
@@ -613,6 +615,62 @@ class TestUnmute:
 # ---------------------------------------------------------------------------
 # vibe tool tests
 # ---------------------------------------------------------------------------
+
+
+class TestMcpSegmentValidation:
+    """Malformed batches fail through the MCP protocol before any daemon RPC."""
+
+    @pytest.mark.parametrize("tool", ["unmute", "rec"])
+    @pytest.mark.parametrize(
+        ("segments", "message"),
+        [
+            ([], "segments must contain at least one segment"),
+            ([{"voice": "roger"}], "segments[0].text must be a non-blank string"),
+            ([{"text": ""}], "segments[0].text must be a non-blank string"),
+            ([{"text": " \t"}], "segments[0].text must be a non-blank string"),
+            ([{"text": "Hello", "voci": "roger"}], "unknown key(s): 'voci'"),
+            (
+                [{"text": "Hello"}, {"text": " "}],
+                "segments[1].text must be a non-blank string",
+            ),
+        ],
+        ids=[
+            "empty",
+            "missing-text",
+            "empty-text",
+            "blank-text",
+            "typo",
+            "late-invalid",
+        ],
+    )
+    async def test_rejects_before_synthesis(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tool: str,
+        segments: list[dict[str, str]],
+        message: str,
+    ) -> None:
+        import punt_vox.server as srv
+
+        client = MagicMock()
+        client.synthesize.return_value = SynthesizeResult(request_id="req")
+        client.record.return_value = RecordResult(
+            id="test.mp3", name="test.mp3", store_path=Path("test.mp3"), byte_count=1
+        )
+        client_factory = MagicMock(return_value=client)
+        monkeypatch.setattr(srv, "_voxd_client", client_factory)
+        monkeypatch.setattr(srv._rec_tool, "_client_factory", client_factory)
+        arguments: dict[str, object] = {"segments": segments}
+        if tool == "rec":
+            arguments["subcommand"] = "new"
+
+        async with create_connected_server_and_client_session(srv.mcp) as session:
+            result = await session.call_tool(tool, arguments)
+
+        assert result.isError, result.content
+        assert isinstance(result.content[0], TextContent)
+        assert message in result.content[0].text
+        client_factory.assert_not_called()
 
 
 class TestVibeTool:
