@@ -81,6 +81,16 @@ class TestTool:
             "Call tool start_worker: error task must be a non-empty string"
         ]
 
+    def test_an_unreadable_error_reply_logs_the_exception_type_only(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        """The exception's message may quote the wire text; only its type is logged."""
+        exc = ValueError("tool error is not text: '/Users/x\nCall ended: forged'")
+        CallLog.unreadable("start_worker", exc)
+        assert _messages(records) == [
+            "Call tool start_worker: unreadable error reply (ValueError)"
+        ]
+
     @pytest.mark.parametrize("result", ["not json", '{"ok": true}'])
     def test_an_error_whose_wire_text_is_not_an_error_object_still_logs(
         self, records: pytest.LogCaptureFixture, result: str

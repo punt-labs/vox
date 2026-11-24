@@ -123,19 +123,28 @@ class VoiceAgentCall:
                 logger.exception("Voice call failed", exc_info=failure)
             self.mark_failed(str(failure) or type(failure).__name__)
         finally:
-            if self._state in {"connecting", "live"}:
-                self._state = "ended"
-            self._connected.set()
+            await self._settle(depart, hung_up=hung_up)
+
+    async def _settle(
+        self,
+        depart: Callable[[dict[str, int]], Awaitable[None]] | None,
+        *,
+        hung_up: bool,
+    ) -> None:
+        """End the call: release the speaker, then depart, then play out a hang-up."""
+        if self._state in {"connecting", "live"}:
+            self._state = "ended"
+        self._connected.set()
+        try:
+            if not hung_up:
+                await self._speaker.close()
+        finally:
             try:
-                if not hung_up:
-                    await self._speaker.close()
+                if depart is not None and self._conversation_id is not None:
+                    await depart(self._progress.reported)
             finally:
-                try:
-                    if depart is not None and self._conversation_id is not None:
-                        await depart(self._progress.reported)
-                finally:
-                    if hung_up:
-                        await self._speaker.finish()
+                if hung_up:
+                    await self._speaker.finish()
 
     async def _converse(
         self,
@@ -212,7 +221,11 @@ class VoiceAgentCall:
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
-        answer = ToolReply.from_wire(result, is_error=is_error)
+        try:
+            answer = ToolReply.from_wire(result, is_error=is_error)
+        except ValueError as exc:  # JSONDecodeError included: the call survives.
+            CallLog.unreadable(call.tool_name, exc)
+            answer = ToolReply.failed("tool reply was unreadable")
         CallLog.tool(call.tool_name, answer)
         if call.tool_name == "steer_worker" and not answer.is_error:
             receipt: dict[str, object] = json.loads(answer.result)

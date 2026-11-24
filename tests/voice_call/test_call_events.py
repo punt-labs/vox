@@ -307,6 +307,38 @@ async def test_each_tool_call_is_logged_with_its_outcome(
     assert call.outcome().tool_calls == 3
 
 
+async def test_an_unreadable_tool_error_reply_does_not_end_the_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A runner error the wire cannot parse is answered, not raised into the group."""
+
+    class _BrokenTools:
+        replayed = 0
+
+        async def answer(
+            self, name: str, arguments: dict[str, object]
+        ) -> tuple[str, bool]:
+            del name, arguments
+            return "not json", True
+
+    peer = _Peer([ClientToolCall("t1", "list_workers", {}, expects_response=True)])
+    call = _call(peer)
+    call._tools = cast("BossTools", _BrokenTools())
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call_log"):
+        await call.run(_dial)
+    assert call.status()["state"] == "ended"
+    assert call.status()["error"] is None
+    assert peer.results == ['t1{"error": "tool reply was unreadable"}']
+    assert call.status()["tool_calls"] == [
+        {"tool": "list_workers", "arguments": {}, "error": True}
+    ]
+    lines = [r.message for r in caplog.records if r.message.startswith("Call tool")]
+    assert lines == [
+        "Call tool list_workers: unreadable error reply (JSONDecodeError)",
+        "Call tool list_workers: error tool reply was unreadable",
+    ]
+
+
 async def test_a_silent_microphone_fails_the_live_call_naming_the_remedies(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

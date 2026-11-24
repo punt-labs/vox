@@ -73,11 +73,27 @@ class CallLog:
         """Log the conversation the agent answered on; the peer named it."""
         logger.info("Call live: conversation %s", LogText.reason(conversation_id))
 
-    @staticmethod
-    def tool(name: str, answer: ToolReply) -> None:
+    @classmethod
+    def tool(cls, name: str, answer: ToolReply) -> None:
         """Log one answered client tool call; an error names its redacted text."""
-        tool = name if name in _TOOLS else "unknown"  # An agent-chosen name.
+        tool = cls._tool_name(name)
         if answer.error is None:
             logger.info("Call tool %s: ok", tool)
         else:
             logger.info("Call tool %s: error %s", tool, LogText.reason(answer.error))
+
+    @classmethod
+    def unreadable(cls, name: str, exc: ValueError) -> None:
+        """Log a tool error reply the wire could not parse, by exception type only.
+
+        The exception's message may quote the wire text, so it stays out.
+        """
+        logger.info(
+            "Call tool %s: unreadable error reply (%s)",
+            cls._tool_name(name),
+            type(exc).__name__,
+        )
+
+    @staticmethod
+    def _tool_name(name: str) -> str:
+        return name if name in _TOOLS else "unknown"  # An agent-chosen name.
