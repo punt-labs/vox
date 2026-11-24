@@ -71,13 +71,17 @@ class _FakeSession:
 class _FakeCatalog:
     """A filesystem-free :class:`CatalogGateway` both surfaces are given."""
 
-    __slots__ = ("_albums", "calls")
+    __slots__ = ("_albums", "_missing", "calls")
     _albums: dict[str, str]
+    _missing: tuple[str, ...]
     calls: list[tuple[str, object]]
 
-    def __new__(cls, albums: dict[str, str] | None = None) -> Self:
+    def __new__(
+        cls, albums: dict[str, str] | None = None, missing: tuple[str, ...] = ()
+    ) -> Self:
         self = super().__new__(cls)
         self._albums = dict(albums) if albums is not None else {}
+        self._missing = missing
         self.calls = []
         return self
 
@@ -89,7 +93,7 @@ class _FakeCatalog:
 
     def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         self.calls.append(("get", (album_id, dest_dir)))
-        return AlbumExport(Path(dest_dir) / self._albums[album_id])
+        return AlbumExport(Path(dest_dir) / self._albums[album_id], self._missing)
 
     def remove(self, album_id: str) -> None:
         self.calls.append(("remove", album_id))
@@ -260,6 +264,22 @@ def test_get_reports_the_same_fields() -> None:
     )
 
     assert _cli_payload(formatter) == tool_result
+
+
+def test_get_reports_the_same_skipped_parts() -> None:
+    """A partial export names the same missing parts on both surfaces."""
+    albums = {"7f3a91": "warm-pads-7f3a91"}
+    cli, formatter = _catalog_cli(_FakeCatalog(albums, missing=("002.mp3",)))
+    cli.get("7f3a91", dest="/out")
+
+    tool_result = _tool_payload(
+        _tool(
+            FakeProgramGateway(), _FakeCatalog(albums, missing=("002.mp3",))
+        ).dispatch("get", album_id="7f3a91", dest="/out")
+    )
+
+    assert _cli_payload(formatter) == tool_result
+    assert tool_result["missing"] == ["002.mp3"]
 
 
 def test_remove_reports_the_same_fields() -> None:
