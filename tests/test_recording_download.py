@@ -108,8 +108,21 @@ def test_nonprivate_directory_never_contains_a_named_staging_file(
     assert list(tmp_path.iterdir()) == [dest]
 
 
-def test_cleanup_does_not_remove_unrelated_files_after_directory_rename(
-    tmp_path: Path,
+def test_shared_parent_never_contains_a_named_staging_file(tmp_path: Path) -> None:
+    tmp_path.chmod(0o777)
+    dest = tmp_path / "rec.mp3"
+
+    def fetch(sink: IO[bytes]) -> int:
+        assert not list(tmp_path.iterdir())
+        return _fetch(sink)
+
+    assert RecordingDownload(dest).save(fetch) == 4
+    assert dest.read_bytes() == b"DATA"
+
+
+@pytest.mark.parametrize("replacement_has_contents", [False, True])
+def test_cleanup_leaves_replacement_directories_alone(
+    tmp_path: Path, replacement_has_contents: bool
 ) -> None:
     moved = tmp_path / "renamed"
 
@@ -117,11 +130,16 @@ def test_cleanup_does_not_remove_unrelated_files_after_directory_rename(
         staged = next(tmp_path.iterdir())
         staged.rename(moved)
         staged.mkdir()
-        (staged / "unrelated").write_bytes(b"keep")
+        if replacement_has_contents:
+            (staged / "unrelated").write_bytes(b"keep")
         return _fetch(sink)
 
     dest = tmp_path / "rec.mp3"
     assert RecordingDownload(dest).save(fetch) == 4
     assert list(moved.iterdir()) == []
-    assert next(tmp_path.glob(".vox-rec-*/unrelated")).read_bytes() == b"keep"
+    replacement = next(tmp_path.glob(".vox-rec-*"))
+    if replacement_has_contents:
+        assert (replacement / "unrelated").read_bytes() == b"keep"
+    else:
+        assert list(replacement.iterdir()) == []
     assert dest.read_bytes() == b"DATA"

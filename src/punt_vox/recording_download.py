@@ -52,27 +52,36 @@ class RecordingDownload:
     @contextlib.contextmanager
     def _staging(self) -> Generator[tuple[IO[bytes], int | None]]:
         """Name the staging file only in a directory that is actually private."""
-        tmp = Path(tempfile.mkdtemp(dir=self._dest.parent, prefix=".vox-rec-"))
-        try:
-            dir_fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                if self._is_private(dir_fd):
+        if self._parent_protects_entries():
+            with self._staging_directory() as dir_fd:
+                info = os.fstat(dir_fd)
+                if info.st_uid == os.geteuid() and info.st_mode & 0o077 == 0:
                     with self._named_staging(dir_fd) as staged:
                         yield staged, dir_fd
                     return
-            finally:
-                os.close(dir_fd)
-        finally:
-            self._remove_empty_staging_directory(tmp)
-        # Filesystems that ignore mkdtemp's mode cannot safely stage by name.
+        # Not all filesystems honor private permissions on new directories.
         with tempfile.TemporaryFile(dir=self._dest.parent) as staged:
             yield staged, None
 
-    @staticmethod
-    def _is_private(dir_fd: int) -> bool:
-        """Check the observed staging directory permissions, not mkdtemp's intent."""
-        info = os.fstat(dir_fd)
-        return info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0
+    def _parent_protects_entries(self) -> bool:
+        """Only use named staging when peers cannot replace its directory."""
+        info = self._dest.parent.stat()
+        return info.st_uid in {0, os.geteuid()} and (
+            info.st_mode & 0o022 == 0 or bool(info.st_mode & stat.S_ISVTX)
+        )
+
+    @contextlib.contextmanager
+    def _staging_directory(self) -> Generator[int]:
+        """Keep the staging directory open for relative file operations."""
+        path = Path(tempfile.mkdtemp(dir=self._dest.parent, prefix=".vox-rec-"))
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            yield fd
+        finally:
+            try:
+                self._remove_empty_staging_directory(path, os.fstat(fd))
+            finally:
+                os.close(fd)
 
     @staticmethod
     @contextlib.contextmanager
@@ -87,10 +96,11 @@ class RecordingDownload:
             os.unlink(_STAGED_FILE, dir_fd=dir_fd)
 
     @staticmethod
-    def _remove_empty_staging_directory(tmp: Path) -> None:
-        """Never recursively delete whatever now occupies the staging path."""
+    def _remove_empty_staging_directory(path: Path, original: os.stat_result) -> None:
+        """Remove the empty directory only if its name still matches."""
         try:
-            tmp.rmdir()
+            if os.path.samestat(path.lstat(), original):
+                path.rmdir()
         except OSError as exc:
             if exc.errno not in {
                 errno.EEXIST,
