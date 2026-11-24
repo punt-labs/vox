@@ -54,8 +54,8 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
-# Rosters and verified status can spend 10s in a provider operation and
-# may also wait for synthesis to release the daemon's env lock.
+# Provider operations can take 10s. Verified status may also wait for
+# synthesis to release the daemon's env lock.
 _TIMEOUT_PROVIDER = 30.0
 # play waits for the host-side playback to FINISH (not just enqueue) so a
 # failure surfaces, so its deadline must cover a full track. Bounded like the
