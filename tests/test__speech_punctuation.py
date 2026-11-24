@@ -35,6 +35,7 @@ def test_combining_mark_after_trailing_underscore() -> None:
         ("(C++),", "C plus plus", ","),
         ("`C#`", "C sharp", ""),
         ("Notepad++", "Notepad plus plus", ""),
+        ("i++;", "i plus plus", ";"),
     ],
 )
 def test_split_keeps_language_name_marks(token: str, core: str, suffix: str) -> None:
