@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox rec get` streams recordings to disk instead of keeping the entire
+  download in memory. It still verifies the download before saving it. (PL-1484)
+
 - Clarify in CLI help and docs that same-text recordings without `--name`
   replace the earlier take and that distinct names keep takes separate. (PL-1486)
 
