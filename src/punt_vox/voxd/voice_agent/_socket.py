@@ -21,7 +21,7 @@ from websockets.exceptions import (
 )
 
 from punt_vox.voxd.voice_agent.fault import ConvAIError
-from punt_vox.voxd.voice_agent.test_overrides import TestOverrides
+from punt_vox.voxd.voice_agent.test_overrides import LOOPBACK_ORIGINS, TestOverrides
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -75,7 +75,7 @@ class Socket:
             raise ConvAIError(msg) from None
         trusted = {("wss", "api.elevenlabs.io")}
         if allow_loopback or TestOverrides.allow_loopback():
-            trusted.update({("ws", "127.0.0.1"), ("ws", "::1")})
+            trusted |= LOOPBACK_ORIGINS
         if (url.scheme, url.hostname) not in trusted or url.username is not None:
             msg = "Untrusted ElevenLabs signed URL origin"
             raise ConvAIError(msg)

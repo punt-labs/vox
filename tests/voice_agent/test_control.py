@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError
-from punt_vox.voxd.voice_agent.test_overrides import TestOverrides
+from punt_vox.voxd.voice_agent.test_overrides import LOOPBACK_HOSTS, PLACEHOLDER_KEY
 
 _API = "https://api.elevenlabs.io"
 _OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.test_overrides"
@@ -93,18 +93,53 @@ def test_signed_url_connection_failure_is_sanitized(
         assert "unrecorded" not in str(failure.value)
 
 
-def test_base_url_env_var_is_honoured_for_loopback(
+@pytest.mark.parametrize("override", ["http://127.0.0.1:4321", "http://[::1]:4321"])
+def test_base_url_env_var_sends_rest_to_loopback_with_a_placeholder_key(
+    override: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A listener on the override port never receives the real API key."""
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", override)
+    with (
+        caplog.at_level("WARNING", logger=_OVERRIDES_LOGGER),
+        ConvAIControl("sk-real-looking-key") as control,
+    ):
+        assert str(control._http.base_url).rstrip("/") == override
+        assert control._http.headers["xi-api-key"] == PLACEHOLDER_KEY
+    assert "VOX_CONVAI_BASE_URL" in caplog.text
+
+
+def test_the_real_key_is_sent_without_the_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "http://127.0.0.1:4321")
-    assert TestOverrides.base_url(_API) == "http://127.0.0.1:4321"
+    monkeypatch.delenv("VOX_CONVAI_BASE_URL", raising=False)
+    with ConvAIControl("sk-real-looking-key") as control:
+        assert str(control._http.base_url).rstrip("/") == _API
+        assert control._http.headers["xi-api-key"] == "sk-real-looking-key"
 
 
-def test_base_url_env_var_is_ignored_for_remote_hosts(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "override",
+    [
+        "127.0.0.1:4321",  # no scheme
+        "https://127.0.0.1:4321",  # not http
+        "http://localhost:4321",  # a name, not a loopback IP
+        "http://evil.example:4321",  # not loopback
+        "http://127.0.0.1",  # no port
+        "http://127.0.0.1:notaport",
+        "http://127.0.0.1:70000",
+        "http://127.0.0.1:4321/v1",  # a path
+        "http://user@127.0.0.1:4321",  # userinfo
+        "http://[::1",  # unparsable
+    ],
+)
+def test_an_invalid_base_url_env_var_fails_the_call_by_name(
+    override: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "https://evil.example")
-    with caplog.at_level("WARNING", logger=_OVERRIDES_LOGGER):
-        base_url = TestOverrides.base_url(_API)
-    assert base_url == _API
-    assert "VOX_CONVAI_BASE_URL ignored" in caplog.text
+    """A set but wrong override never falls back to production with the real key."""
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", override)
+    with pytest.raises(ValueError, match="VOX_CONVAI_BASE_URL"):
+        ConvAIControl("sk-real-looking-key")
+
+
+def test_loopback_hosts_are_literal_ips_only() -> None:
+    assert sorted(LOOPBACK_HOSTS) == ["127.0.0.1", "::1"]

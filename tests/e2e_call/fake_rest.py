@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.voice_agent.test_overrides import PLACEHOLDER_KEY
+
 if TYPE_CHECKING:
     from types import TracebackType
 
@@ -18,7 +20,9 @@ class FakeConvAIRest:
     """Answer tool and agent creation and sign conversations with one URL.
 
     Each request is recorded as ``(method, path)`` in ``requests`` so a test
-    can prove the daemon provisioned before it dialled.
+    can prove the daemon provisioned before it dialled. A request carrying
+    any key but the override placeholder is refused with 401: the daemon must
+    never send a real credential to a loopback stand-in.
     """
 
     __slots__ = ("_requests", "_server", "_signed_url", "_thread")
@@ -68,6 +72,8 @@ class FakeConvAIRest:
             def do_POST(self) -> None:
                 rest._requests.append(("POST", self.path))
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if not self._authorized():
+                    return
                 match self.path:
                     case "/v1/convai/tools":
                         self._reply({"id": f"tool_{len(rest._requests)}"})
@@ -78,6 +84,8 @@ class FakeConvAIRest:
 
             def do_GET(self) -> None:
                 rest._requests.append(("GET", self.path))
+                if not self._authorized():
+                    return
                 if self.path.startswith("/v1/convai/conversation/get-signed-url"):
                     self._reply({"signed_url": rest._signed_url})
                 else:
@@ -85,7 +93,14 @@ class FakeConvAIRest:
 
             def do_DELETE(self) -> None:
                 rest._requests.append(("DELETE", self.path))
-                self._reply({})
+                if self._authorized():
+                    self._reply({})
+
+            def _authorized(self) -> bool:
+                if self.headers.get("xi-api-key") == PLACEHOLDER_KEY:
+                    return True
+                self._reply({"detail": "not the override placeholder key"}, status=401)
+                return False
 
             def _reply(self, body: dict[str, object], *, status: int = 200) -> None:
                 payload = json.dumps(body).encode()

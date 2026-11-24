@@ -1,7 +1,8 @@
 """Register client tools and fetch signed conversations through the REST API.
 
 The API origin can be redirected to loopback by a test-only environment
-switch; see :mod:`punt_vox.voxd.voice_agent.test_overrides`.
+switch, which also replaces the key sent with a placeholder; see
+:mod:`punt_vox.voxd.voice_agent.test_overrides`.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ class ConvAIControl:
             msg = "ElevenLabs Conversational AI requires an API key"
             raise ValueError(msg)
         if base_url is None:
-            base_url = TestOverrides.base_url(_API)
+            base_url, api_key = TestOverrides.rest(_API, api_key)
         self = super().__new__(cls)
         self._credential_id = hashlib.scrypt(
             api_key.encode(),
