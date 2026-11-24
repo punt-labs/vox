@@ -11,8 +11,8 @@ from markdown_it.rules_block import fence
 from markdown_it.rules_inline import backtick, image
 
 from punt_vox._backtick_offsets import BacktickOffsets
+from punt_vox._code_currency import CodeCurrency
 from punt_vox._currency_grammar import CurrencyGrammar
-from punt_vox._speech_punctuation import SpeechPunctuation
 
 if TYPE_CHECKING:
     from markdown_it.rules_block import StateBlock
@@ -41,9 +41,7 @@ class InlineCode:
         tag = VIBE_TAG_RE if vibed else None
         return cls._rewrite(
             text,
-            lambda body, in_path: SpeechPunctuation.spell_code_currency(
-                body, in_path=in_path
-            ),
+            lambda body, in_path: CodeCurrency.spell(body, in_path=in_path),
             prose=lambda body: CurrencyGrammar.prefix_suffix_amounts(body, tag=tag),
             vibed=vibed,
         )
@@ -82,7 +80,7 @@ class InlineCode:
                 word = next(words)
                 in_path = None
             if in_path is None:
-                in_path = SpeechPunctuation.is_code_path(text[word.start() : opening])
+                in_path = CodeCurrency.is_code_path(text[word.start() : opening])
             yield in_path, start, end
 
     @classmethod

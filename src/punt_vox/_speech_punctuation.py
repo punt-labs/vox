@@ -9,15 +9,15 @@ from punt_vox._currency_speech import CurrencySpeech
 
 _VARIATION_SELECTOR_RE = re.compile(r"[\uFE00-\uFE0F\U000E0100-\U000E01EF]")
 _FILE_PATH_RE = re.compile(r"^[~/.]?/")
-_CODE_PATH_RE = re.compile(r"^(?:\$[a-zA-Z_]\w*|[\w.~+-]*)\\?/")
-_TOKEN_RE = re.compile(r"\S+")
 _PROSODY_PUNCTUATION = frozenset(".,?!:;\u2014\u2013")
 _SYMBOL_NAME_RE = re.compile(
     r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
 _NUMBER = r"[-\u2212]?(?:\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d[\d,]*(?:\.\d+)?|\.\d+)"
-_NUMERIC_PERCENT_RE = re.compile(rf"{_NUMBER}(?:%?[-\u2013]{_NUMBER})?%(?:[^\w%]|_)*")
+_NUMERIC_PERCENT_RE = re.compile(
+    rf"\A{_NUMBER}(?:%?[-\u2013]{_NUMBER})?%(?:[^\w%]|_)*\Z"
+)
 
 
 class SpeechPunctuation:
@@ -44,34 +44,17 @@ class SpeechPunctuation:
         core, raw_suffix = cls._split_trailing(cls._spell_percent(core_candidate))
         return CurrencySpeech.speak_prose(core), cls._prosody(raw_suffix)
 
-    @classmethod
-    def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
-        """Say a code currency symbol literally rather than as a monetary unit."""
-        attached = _TOKEN_RE.match(text) if in_path else None
-        start = attached.end() if attached else 0
-        return text[:start] + _TOKEN_RE.sub(cls._spell_code_token, text[start:])
-
-    @staticmethod
-    def is_code_path(text: str) -> bool:
-        """Recognize paths inside or directly adjacent to an inline span."""
-        return _CODE_PATH_RE.match(text.lstrip("`'\"\u2018\u2019“”([{<")) is not None
-
     @staticmethod
     def is_path(core: str) -> bool:
         """Recognize path prefixes on a token without leading wrappers."""
         return _FILE_PATH_RE.match(core) is not None
 
-    @classmethod
-    def _spell_code_token(cls, match: re.Match[str]) -> str:
-        token = match[0]
-        return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
-
     @staticmethod
     def _spell_percent(core_candidate: str) -> str:
         """Spell each ``%`` of a bare number or range as the word "percent"."""
-        if _NUMERIC_PERCENT_RE.fullmatch(core_candidate) is None:
-            return core_candidate
-        return core_candidate.replace("%", " percent")
+        return _NUMERIC_PERCENT_RE.sub(
+            lambda amount: amount[0].replace("%", " percent"), core_candidate
+        )
 
     @staticmethod
     def _prosody(raw_suffix: str) -> str:
