@@ -465,6 +465,7 @@ application = [
     "punt_vox.voxd.chimes",
     "punt_vox.voxd.chunked_fetch",
     "punt_vox.voxd.direct_play",
+    "punt_vox.voxd.fetch_digest",
     "punt_vox.voxd.handler_registry",
     "punt_vox.voxd.health",
     "punt_vox.voxd.playback",
