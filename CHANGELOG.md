@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify in CLI help and docs that same-text recordings without `--name`
+  replace the earlier take and that distinct names keep takes separate. (PL-1486)
+
 - Separate panel provider/model roster fetches and atomic commits from scene
   orchestration without changing selector behavior. (PL-837)
 
