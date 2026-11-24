@@ -7,6 +7,7 @@ import logging
 import ssl
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -86,14 +87,16 @@ class TestElevenLabsProviderResolveVoice:
     def test_unknown_voice_keeps_distinct_voices_with_the_same_short_name(
         self, mock_elevenlabs_client: MagicMock, tmp_path: Path
     ) -> None:
-        other_drew = MagicMock()
-        other_drew.name = "Drew - baritone"
-        other_drew.voice_id = "AAAAAAAAAAAAAAAAAAAA"
-        mock_elevenlabs_client.voices.get_all.return_value.voices.append(other_drew)
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
 
         with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("nonexistent")
+        assert mock_elevenlabs_client.voices.get_all.call_count == 2
 
         expected = {
             "drew - baritone": "AAAAAAAAAAAAAAAAAAAA",
@@ -116,8 +119,11 @@ class TestElevenLabsProviderResolveVoice:
     def test_unknown_voice_skips_names_interpreted_as_ids(
         self, mock_elevenlabs_client: MagicMock, tmp_path: Path
     ) -> None:
-        voice = mock_elevenlabs_client.voices.get_all.return_value.voices[0]
-        voice.name = "ABCDEFGHIJKLMNOPQRST - bright, calm"
+        voice_id = "XrExE9yKIg1WjnnlVkGX"
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("ABCDEFGHIJKLMNOPQRST - bright, calm", voice_id),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+        )
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
 
         with pytest.raises(VoiceNotFoundError) as exc_info:
@@ -130,24 +136,32 @@ class TestElevenLabsProviderResolveVoice:
         )
         assert (
             mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["voice_id"]
-            == voice.voice_id
+            == voice_id
         )
 
     def test_unknown_voice_keeps_a_colliding_full_name_without_a_description(
         self, mock_elevenlabs_client: MagicMock
     ) -> None:
-        voices = mock_elevenlabs_client.voices.get_all.return_value.voices
-        voices[1].name = "Drew"
-        other_drew = MagicMock(name="described voice")
-        other_drew.name = "Drew - baritone"
-        other_drew.voice_id = "AAAAAAAAAAAAAAAAAAAA"
-        voices.append(other_drew)
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
 
         with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("nonexistent")
 
         assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
+
+    @staticmethod
+    def _voice_catalog(*entries: tuple[str, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            voices=[
+                SimpleNamespace(name=name, voice_id=voice_id)
+                for name, voice_id in entries
+            ]
+        )
 
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock
