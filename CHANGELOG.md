@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say` and `vox rec new` reject a positional TEXT argument combined with
+  `--from` instead of silently using the file. (PL-1599)
+
 - `vox desktop install --provider` rejects unknown providers and shows how to
   set the suggested provider in Claude Desktop instead of claiming it was set.
   (PL-1594)

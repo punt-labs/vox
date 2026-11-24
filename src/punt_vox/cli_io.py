@@ -85,7 +85,7 @@ class TextInput:
         return self
 
     def resolve(self, text: str | None, from_file: Path | None) -> list[str]:
-        """Return the text segments for *text*/*from_file*, or exit on empty input.
+        """Resolve exactly one speech input source into text segments.
 
         Text may come from the argument, from a ``--from`` JSON file (an array of
         strings or ``{text}`` objects), or from stdin -- when TEXT is ``-`` or
@@ -93,31 +93,28 @@ class TextInput:
 
         Raises:
             typer.Exit: If no text is provided or standard input is empty.
-            typer.BadParameter: If the file cannot be read or its content is invalid.
+            typer.BadParameter: If TEXT and --from are combined or the file is invalid.
             OSError: If standard input cannot be read.
         """
         if from_file is not None:
+            if text is not None:
+                raise typer.BadParameter("TEXT and --from are mutually exclusive.")
             return SegmentFile(from_file).segments()
-        if self._should_read_stdin(text):
+        if text == "-":
             return [self._read_stdin()]
-        if text is None:
+        if text is not None:
+            return [text]
+        return [self._read_piped_stdin()]
+
+    def _read_piped_stdin(self) -> str:
+        """Read implicit stdin input only when it is piped."""
+        if sys.stdin.isatty():
             self._formatter.error(
                 "provide TEXT argument, --from file, or piped stdin",
                 "Error: provide TEXT argument, --from file, or piped stdin.",
             )
             raise typer.Exit(code=1)
-        return [text]
-
-    @staticmethod
-    def _should_read_stdin(text: str | None) -> bool:
-        """Return whether text should be read from stdin.
-
-        True when the caller passes ``-`` explicitly, or gives no argument while
-        stdin is a pipe (not a terminal) -- the Unix convention for composing in
-        a pipeline. An interactive shell with no argument is left to the caller's
-        usage error rather than blocking on a terminal read.
-        """
-        return text == "-" or (text is None and not sys.stdin.isatty())
+        return self._read_stdin()
 
     def _read_stdin(self) -> str:
         """Read and return stripped text from stdin, or exit on empty input."""
