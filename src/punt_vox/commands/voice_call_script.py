@@ -8,6 +8,8 @@ from typing import Required, Self, TypedDict, cast, final
 
 import typer
 
+from punt_vox.option_file import OptionFile
+
 __all__ = ["ScriptTurn", "VoiceCallScript"]
 
 
@@ -41,12 +43,10 @@ class VoiceCallScript:
         """Parse *path*, resolving each turn's ``pcm_path`` against its directory.
 
         Raises:
-            typer.BadParameter: If the file is unreadable or a line is not a turn.
+            typer.BadParameter: If the file is unreadable or not UTF-8, or a
+                line is not a turn.
         """
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError as exc:
-            raise typer.BadParameter(f"cannot read {path}: {exc}") from None
+        lines = OptionFile(path, "--script").text().splitlines()
         base = path.resolve().parent
         turns = tuple(
             cls._turn(base, number, line)
