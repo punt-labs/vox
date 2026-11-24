@@ -649,3 +649,62 @@ class TestDepartureNotSaved:
             "Call departure not saved (PermissionError: [Errno 13] Permission "
             "denied: '<path>', errno 13)"
         )
+
+
+class TestCancelBeforeFirstStep:
+    """A stop that lands before the task's first step still ends the call."""
+
+    async def test_the_microphone_is_released_and_the_status_is_terminal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No await between launch and cancel: the task body never runs.
+
+        run()'s cleanup never executes, so the launcher's completion path
+        must close the input and end the call itself.
+        """
+        backend = fake_sounddevice(monkeypatch)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "echo_control": "headset"}
+        )
+        await active.cancel()
+        (stream,) = backend.created
+        assert stream.closed
+        assert active.status()["state"] == "ended"
+
+    async def test_the_unstarted_call_still_logs_its_end(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=_LOG)
+        fake_sounddevice(monkeypatch)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "echo_control": "headset"}
+        )
+        await active.cancel()
+        (ended,) = [
+            r.message for r in caplog.records if r.message.startswith("Call ended:")
+        ]
+        assert ended.startswith("Call ended: ended, 0 tool calls")
+
+    async def test_a_cancel_after_the_body_ran_closes_the_input_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When run() ran, its own cleanup owns the close; the callback adds none."""
+        exits: list[int] = []
+
+        def count_exit(_stream: FakeInputStream, *_exc_info: object) -> None:
+            exits.append(1)
+
+        monkeypatch.setattr(FakeInputStream, "__exit__", count_exit)
+        fake_sounddevice(monkeypatch)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "echo_control": "headset"}
+        )
+        await asyncio.sleep(0)  # the task takes its first step
+        await active.cancel()
+        assert exits == [1]

@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
     from pathlib import Path
-    from typing import TextIO
     from uuid import UUID
 
     from punt_vox.voxd.playback import PlaybackQueue
@@ -134,20 +133,37 @@ class CallLauncher:
                     audio.close()
 
         task = asyncio.create_task(run())
-        task.add_done_callback(lambda done: self._finished(done, trace.stream))
+        task.add_done_callback(lambda done: self._finished(done, call, audio, trace))
         return ActiveCall(call_id, call, task, trace.path)
 
     @staticmethod
-    def _finished(task: asyncio.Task[None], stream: TextIO) -> None:
-        """Close the trace and take the task's exception, so asyncio never does.
+    def _finished(
+        task: asyncio.Task[None],
+        call: VoiceAgentCall,
+        audio: CallInput,
+        trace: CallTrace,
+    ) -> None:
+        """End what the task left unfinished, then close the trace.
 
-        The status already carries the failure; this is the one log line for
-        it, and reading the exception here keeps a task nobody awaits from
-        reporting "exception was never retrieved" when it is collected.
+        A stop that cancels the task before its first step never enters
+        ``run``, so none of its cleanup happens: the call is still
+        "connecting", the microphone is still held, and no end line was
+        logged. The callback is the only code that runs for such a task, so
+        it ends the call itself; a task whose body ran already did all three.
+
+        It also takes the task's exception, so asyncio never does. The status
+        already carries the failure; this is the one log line for it, and
+        reading the exception here keeps a task nobody awaits from reporting
+        "exception was never retrieved" when it is collected.
         """
-        stream.close()
-        if not task.cancelled() and (exc := task.exception()) is not None:
+        if task.cancelled():
+            if call.outcome().state == "connecting":
+                with CallLog(trace.path, call.outcome):
+                    call.mark_ended()
+                    audio.close()
+        elif (exc := task.exception()) is not None:
             logger.warning("Call task ended with %s", LogText.failure(exc))
+        trace.stream.close()
 
     async def teardown(self) -> None:
         """Delete the agent registration once outstanding operations settle."""

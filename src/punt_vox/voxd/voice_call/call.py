@@ -171,6 +171,15 @@ class VoiceAgentCall:
         """Keep the terminal failure reason in subsequent call status replies."""
         self._state, self._error = "failed", error
 
+    def mark_ended(self) -> None:
+        """End a call whose task was cancelled before :meth:`run` ever began.
+
+        Nothing was dialled and nothing is held by the call itself, so the
+        only work is the terminal state a status reply reports.
+        """
+        self._state = "ended"
+        self._connected.set()
+
     def outcome(self) -> CallOutcome:
         """Return the call's state, failure reason and tool call count."""
         return CallOutcome(self._state, self._error, len(self._tool_calls))
