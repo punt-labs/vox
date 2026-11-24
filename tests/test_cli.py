@@ -97,6 +97,39 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("rate", ["0", "-1"])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_nonpositive_rate_rejected_before_client(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        command: list[str],
+        rate: str,
+    ) -> None:
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc123")
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult(
+                "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+            )
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
+        result = CliRunner().invoke(
+            app,
+            [*command, "hello", "--provider", "elevenlabs", "--rate", rate, "--json"],
+        )
+
+        assert result.exit_code == 2, result.output
+        assert json.loads(result.stdout) == {
+            "error": f"Invalid value: rate must be greater than 0, got {rate}"
+        }
+        say_client.assert_not_called()
+        rec_client.assert_not_called()
+
     @patch("punt_vox.cli_rec.VoxClientSync")
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_and_rec_new_forward_the_same_segments_and_settings(
@@ -290,6 +323,12 @@ class TestSayCommand:
         result = runner.invoke(app, ["say", "--help"])
         assert result.exit_code == 0
         assert "%%" not in result.output
+
+    @pytest.mark.parametrize("option", ["--language", "--rate"])
+    def test_say_and_rec_new_share_synthesis_help(self, option: str) -> None:
+        assert option_help("say", option=option) == option_help(
+            "rec", "new", option=option
+        )
 
     def test_say_once_help_documents_zero(self) -> None:
         assert "Use 0 or omit the option to play every time." in option_help(

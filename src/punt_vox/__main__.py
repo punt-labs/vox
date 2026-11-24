@@ -32,6 +32,7 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.types_cli_options import LanguageOpt, RateOpt
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -113,14 +114,6 @@ ModelOpt = Annotated[
 VoiceOpt = Annotated[
     str | None,
     typer.Option("--voice", help="Voice name. Default: provider-specific."),
-]
-LanguageOpt = Annotated[
-    str | None,
-    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
-]
-RateOpt = Annotated[
-    int,
-    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
 ]
 StabilityOpt = Annotated[
     float | None,
