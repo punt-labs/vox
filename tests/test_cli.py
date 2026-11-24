@@ -1399,7 +1399,7 @@ def test_config_edit_invalid_utf8_json(
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
     client = MagicMock()
-    client.voices.return_value = ["demo"]
+    client.voices.side_effect = lambda *_args, **_kwargs: ["demo"]
     monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     config = tmp_path / filename
     config.write_bytes(b"\xff\n")
