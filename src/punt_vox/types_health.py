@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Self, cast, final
+from typing import Literal, Self, TypedDict, cast, final
+
+type OutputVerdict = Literal["absent", "not_writable", "writable"]
+
+
+class OutputDiagnostics(TypedDict):
+    """Path-free diagnostics returned when an output probe succeeds."""
+
+    output_dir: OutputVerdict
+    music_dir_missing: bool
 
 
 @final

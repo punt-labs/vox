@@ -11,8 +11,9 @@ from unittest.mock import patch
 
 import pytest
 
+from punt_vox.types_health import OutputDiagnostics
 from punt_vox.voxd import output_health
-from punt_vox.voxd.output_health import OutputDiagnostics, OutputHealth
+from punt_vox.voxd.output_health import OutputHealth
 
 
 def test_stalled_probe_does_not_hold_process_open() -> None:

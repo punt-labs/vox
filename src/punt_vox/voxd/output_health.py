@@ -7,25 +7,18 @@ import logging
 import tempfile
 from concurrent.futures import Future
 from threading import Thread
-from typing import TYPE_CHECKING, Literal, Self, TypedDict, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.dirs import _resolve_music_dir  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.types_health import OutputDiagnostics, OutputVerdict
+
 logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT_S = 1.0
-
-type OutputVerdict = Literal["absent", "not_writable", "writable"]
-
-
-class OutputDiagnostics(TypedDict):
-    """Path-free diagnostics returned when an output probe succeeds."""
-
-    output_dir: OutputVerdict
-    music_dir_missing: bool
 
 
 @final
