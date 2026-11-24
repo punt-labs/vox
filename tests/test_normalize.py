@@ -657,3 +657,20 @@ class TestLanguageNames:
     def test_language_names_are_idempotent(self) -> None:
         once = normalize_for_speech("Port the C# tool to C++.")
         assert normalize_for_speech(once) == once
+
+
+class TestPercentages:
+    def test_percentage_keeps_its_unit(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") == "Error rate is 5 percent."
+
+    def test_percentage_differs_from_bare_count(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") != normalize_for_speech(
+            "Error rate is 5."
+        )
+
+    def test_code_modulo_is_unchanged(self) -> None:
+        assert normalize_for_speech("x %= 2 and a%b") == "x 2 and a%b"
+
+    def test_percentages_are_idempotent(self) -> None:
+        once = normalize_for_speech("Coverage rose from 85% to 92.5%.")
+        assert normalize_for_speech(once) == once

@@ -55,3 +55,26 @@ def test_split_keeps_language_name_marks(token: str, core: str, suffix: str) -> 
 )
 def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
     assert SpeechPunctuation.split(token) == (core, "")
+
+
+@pytest.mark.parametrize(
+    ("token", "core", "suffix"),
+    [
+        ("5%", "5 percent", ""),
+        ("5%.", "5 percent", "."),
+        ("(5.5%),", "5.5 percent", ","),
+        ("-3%", "-3 percent", ""),
+        ("5\u201310%!", "5\u201310 percent", "!"),
+        ("`100%`", "100 percent", ""),
+    ],
+)
+def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, suffix)
+
+
+@pytest.mark.parametrize(
+    ("token", "core"),
+    [("a%b", "a%b"), ("%d", "d"), ("n%", "n"), ("%", ""), ("10%3", "10%3")],
+)
+def test_split_leaves_other_percent_signs_alone(token: str, core: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, "")

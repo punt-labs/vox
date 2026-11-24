@@ -16,6 +16,7 @@ _SYMBOL_NAME_RE = re.compile(
     r"(.*[-/,])?(_*[A-Z](?=#)|\w*[^\W\d_](?=\+\+))(#|\+\+)([\W_]*)"
 )
 _SPOKEN_MARKS = {"#": "sharp", "++": "plus plus"}
+_NUMERIC_PERCENT_RE = re.compile(r"\d%[\W_]*\Z")
 
 
 class SpeechPunctuation:
@@ -28,7 +29,8 @@ class SpeechPunctuation:
         Leading punctuation is discarded except file path and identifier prefixes
         (``~/._``), a numeric minus, and signed or unsigned currency amounts.
         Trailing non-prosody symbols are discarded to avoid synthesis artifacts,
-        except the ``#`` and ``++`` that name languages such as C# and C++.
+        except the ``#`` and ``++`` that name languages such as C# and C++, and
+        a ``%`` after a number, which is spoken as "percent".
         """
         currency = CurrencySpeech.prose_pattern(token).pattern
         leading = (
@@ -39,7 +41,8 @@ class SpeechPunctuation:
             joined, name, mark, raw_suffix = named.groups(default="")
             return f"{joined}{name} {_SPOKEN_MARKS[mark]}", cls._prosody(raw_suffix)
         core, raw_suffix = cls._split_trailing(core_candidate)
-        return CurrencySpeech.speak_prose(core), cls._prosody(raw_suffix)
+        spoken = CurrencySpeech.speak_prose(core) + cls._unit(core_candidate)
+        return spoken, cls._prosody(raw_suffix)
 
     @classmethod
     def spell_code_currency(cls, text: str, *, in_path: bool) -> str:
@@ -62,6 +65,11 @@ class SpeechPunctuation:
     def _spell_code_token(cls, match: re.Match[str]) -> str:
         token = match[0]
         return token if cls.is_code_path(token) else CurrencySpeech.speak_code(token)
+
+    @staticmethod
+    def _unit(core_candidate: str) -> str:
+        """Speak a trailing percent sign after a number as the word it stands for."""
+        return " percent" if _NUMERIC_PERCENT_RE.search(core_candidate) else ""
 
     @staticmethod
     def _prosody(raw_suffix: str) -> str:
