@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -34,6 +35,7 @@ import pytest
 _SCRIPT = (
     Path(__file__).resolve().parent.parent / "plugin" / "hooks" / "session-start.sh"
 )
+_PANEL_ARGS_FILENAME = "stub_out.txt"
 
 pytestmark = [
     pytest.mark.subprocess,
@@ -142,9 +144,11 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
 
     stub_bin = tmp_path / "stubbin"
     stub_bin.mkdir()
-    stub_out = tmp_path / "stub_out.txt"
+    stub_out = tmp_path / _PANEL_ARGS_FILENAME
     (stub_bin / "vox-panel").write_text(
-        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "{stub_out}"\n',
+        "#!/usr/bin/env bash\n"
+        f"out={shlex.quote(str(stub_out))}\n"
+        'printf \'%s\\n\' "$@" > "$out.tmp" && mv -- "$out.tmp" "$out"\n',
         encoding="utf-8",
     )
     _make_executable(stub_bin / "vox-panel")
@@ -195,6 +199,32 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
     resolved_session_pid = int(stub_args[1])
 
     return claude_pid, wrapper_pid, resolved_session_pid
+
+
+def test_panel_recorder_keeps_final_path_hidden_at_write_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sample the final path after stdout is opened but before any bytes are written."""
+    bash_env = tmp_path / "recorder_probe.sh"
+    bash_env.write_text(
+        f"""printf() {{
+  if [[ ${{0##*/}} == vox-panel ]]; then
+    if [[ -e {shlex.quote(str(tmp_path / _PANEL_ARGS_FILENAME))} ]]; then
+      echo visible > recorder_state.txt
+    else
+      echo hidden > recorder_state.txt
+    fi
+  fi
+  builtin printf "$@"
+}}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BASH_ENV", str(bash_env))
+
+    _run_tree(tmp_path, claude_comm="claude")
+
+    assert (tmp_path / "recorder_state.txt").read_text(encoding="utf-8") == "hidden\n"
 
 
 class TestResolvesTheRealSessionAcrossTheWrapper:
