@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import ast
+import gc
 import logging
 import ssl
+import weakref
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -17,7 +21,8 @@ from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
 from punt_vox.providers.elevenlabs import ElevenLabsProvider
-from punt_vox.providers.elevenlabs_catalog import (
+from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
+from punt_vox.providers.elevenlabs_catalog_entry import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
 )
 from punt_vox.providers.provider_faults import ProviderTransportError
@@ -38,6 +43,10 @@ class TestElevenLabsProviderName:
 
 
 class TestElevenLabsSharedCatalog:
+    @pytest.fixture(autouse=True)
+    def _isolate_catalogs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(ElevenLabsCatalog, "_shared", OrderedDict())
+
     def test_raw_id_does_not_fetch_catalog(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -108,6 +117,85 @@ class TestElevenLabsSharedCatalog:
             sdk = clients[key]
             sdk.voices.get_all.assert_called_once()
             assert sdk.text_to_speech.stream.call_args.kwargs["voice_id"] == voice_id
+
+    def test_shared_catalog_does_not_retain_the_request_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        sdk = MagicMock()
+        sdk.voices.get_all.return_value = SimpleNamespace(
+            voices=[SimpleNamespace(name="Matilda", voice_id="A" * 20)]
+        )
+        sdk_ref = weakref.ref(sdk)
+        with patch("punt_vox.providers.elevenlabs_client.ElevenLabs", return_value=sdk):
+            assert ElevenLabsProvider().resolve_voice("matilda") == "matilda"
+        del sdk
+        gc.collect()
+
+        assert sdk_ref() is None
+        assert ElevenLabsProvider().resolve_voice("matilda") == "matilda"
+
+    def test_refresh_uses_current_client(
+        self, monkeypatch: pytest.MonkeyPatch, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        refreshed = MagicMock()
+        refreshed.voices.get_all.return_value = SimpleNamespace(
+            voices=[SimpleNamespace(name="New Name", voice_id="A" * 20)]
+        )
+        with (
+            patch(
+                "punt_vox.providers.elevenlabs_client.ElevenLabs",
+                side_effect=[mock_elevenlabs_client, refreshed],
+            ),
+            patch("punt_vox.providers.voice_resolver.time.monotonic") as clock,
+        ):
+            clock.return_value = 1
+            assert ElevenLabsProvider().resolve_voice("matilda") == "matilda"
+            clock.return_value += _VOICE_CACHE_TTL_S
+            assert ElevenLabsProvider().resolve_voice("new name") == "new name"
+
+        mock_elevenlabs_client.voices.get_all.assert_called_once()
+        refreshed.voices.get_all.assert_called_once()
+
+    def test_concurrent_lookups_share_the_first_fetch(
+        self, monkeypatch: pytest.MonkeyPatch, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        providers = [ElevenLabsProvider(), ElevenLabsProvider()]
+        with (
+            patch(
+                "punt_vox.providers.elevenlabs_client.ElevenLabs",
+                return_value=mock_elevenlabs_client,
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            lookups = [pool.submit(p.resolve_voice, "matilda") for p in providers]
+            results = [lookup.result() for lookup in lookups]
+
+        assert results == ["matilda", "matilda"]
+        mock_elevenlabs_client.voices.get_all.assert_called_once()
+
+    def test_lru_evicts_oldest_scope_not_recently_used_scope(
+        self, monkeypatch: pytest.MonkeyPatch, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        providers = []
+        with patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ):
+            for _ in range(9):
+                monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+                providers.append(ElevenLabsProvider())
+            for provider in providers[:8]:
+                provider.resolve_voice("matilda")
+            providers[0].resolve_voice("matilda")
+            providers[8].resolve_voice("matilda")
+            providers[0].resolve_voice("matilda")
+            assert mock_elevenlabs_client.voices.get_all.call_count == 9
+            providers[1].resolve_voice("matilda")
+
+        assert mock_elevenlabs_client.voices.get_all.call_count == 10
 
 
 class TestElevenLabsProviderResolveVoice:

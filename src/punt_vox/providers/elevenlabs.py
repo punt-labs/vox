@@ -162,7 +162,10 @@ class ElevenLabsProvider(TTSProvider):
                 output_path=output_path,
             )
         else:
-            self._single_synthesize(replace(request, text=text), output_path, voice_id)
+            normalized = (
+                request if text == request.text else replace(request, text=text)
+            )
+            self._single_synthesize(normalized, output_path, voice_id)
 
         logger.info("Wrote %s", output_path)
         return SynthesisResult(
