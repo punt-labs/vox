@@ -26,6 +26,7 @@ from punt_vox.client_errors import (
     VoxdRefusedError,
     VoxdRejectionError,
 )
+from punt_vox.client_results import RecordResult, SynthesizeResult
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -33,6 +34,7 @@ from punt_vox.service.lifecycle_report import (
     LifecycleVerb,
 )
 from punt_vox.types_health import HealthStatus
+from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
     from typer.testing import Result
@@ -92,6 +94,63 @@ finally:
 
 
 class TestSayCommand:
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_and_rec_new_forward_the_same_segments_and_settings(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        say_call = say_client.return_value.synthesize
+        say_call.return_value = SynthesizeResult(request_id="abc123")
+        rec_call = rec_client.return_value.record
+        rec_call.return_value = RecordResult(
+            "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+        )
+        source = tmp_path / "segments.json"
+        source.write_text('["first", {"text": "second"}]', encoding="utf-8")
+        options = [
+            "--from",
+            str(source),
+            "--provider",
+            "elevenlabs",
+            "--model",
+            "eleven_v3",
+            "--voice",
+            "@adam",
+            "--lang",
+            "de",
+            "--rate",
+            "105",
+            "--stability",
+            "0.4",
+            "--similarity",
+            "0.6",
+            "--style",
+            "0.2",
+            "--speaker-boost",
+        ]
+
+        for command in (["say"], ["rec", "new"]):
+            result = CliRunner().invoke(app, [*command, *options])
+            assert result.exit_code == 0, result.output
+
+        spec = SynthesisSpec(
+            provider="elevenlabs",
+            model="eleven_v3",
+            voice="adam",
+            language="de",
+            rate=105,
+            stability=0.4,
+            similarity=0.6,
+            style=0.2,
+            speaker_boost=True,
+        )
+        expected = [("first", spec), ("second", spec)]
+        assert [call.args for call in say_call.call_args_list] == expected
+        assert [call.args for call in rec_call.call_args_list] == expected
+
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),

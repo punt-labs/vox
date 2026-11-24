@@ -27,17 +27,13 @@ import typer
 
 from punt_vox.bare_name import BareName
 from punt_vox.cli_guard import GATEWAY_ERRORS, CliGuard
-from punt_vox.cli_io import OutputFlags, TextInput
+from punt_vox.cli_io import OutputFlags
+from punt_vox.cli_synthesis import CliSynthesis
 from punt_vox.client_errors import FetchWriteError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
-from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,11 +155,12 @@ _Quiet = Annotated[
 class RecCli:
     """The recordings-store command implementations (a humble object)."""
 
-    __slots__ = ("_flags", "_formatter", "_gateway_factory", "_guard")
+    __slots__ = ("_flags", "_formatter", "_gateway_factory", "_guard", "_synthesis")
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], RecordGateway]
     _guard: CliGuard
     _flags: OutputFlags
+    _synthesis: CliSynthesis
 
     def __new__(
         cls,
@@ -175,6 +172,7 @@ class RecCli:
         self = super().__new__(cls)
         self._formatter = formatter
         self._guard = CliGuard(formatter)
+        self._synthesis = CliSynthesis(formatter)
         self._gateway_factory = gateway_factory or cls._default_gateway
         self._flags = flags if flags is not None else OutputFlags(formatter)
         return self
@@ -215,21 +213,18 @@ class RecCli:
         --name only works for a single text segment.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        segments = TextInput(self._formatter).resolve(text, from_file)
-        spec = self._fill_from_state(
-            self._validated_spec(
-                SynthesisSpec(
-                    voice=voice,
-                    language=language,
-                    rate=rate,
-                    provider=provider,
-                    model=model,
-                    stability=stability,
-                    similarity=similarity,
-                    style=style,
-                    speaker_boost=speaker_boost or None,
-                )
-            )
+        segments, spec = self._synthesis.prepare(
+            text,
+            from_file,
+            voice=voice,
+            language=language,
+            rate=rate,
+            provider=provider,
+            model=model,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
         )
         self._guard_name(name, segments)
         gateway = self._guard.run(self._gateway_factory)
@@ -318,29 +313,6 @@ class RecCli:
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         self._guard.run(lambda: self._gateway_factory().remove(ref))
         self._formatter.emit({"removed": ref}, f"removed {ref}")
-
-    def _validated_spec(self, spec: SynthesisSpec) -> SynthesisSpec:
-        """Validate a spec at the CLI boundary, returning it for chaining."""
-        try:
-            spec.validate()
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-        return spec
-
-    def _fill_from_state(self, spec: SynthesisSpec) -> SynthesisSpec:
-        """Fill unset synthesis fields from repo state through SessionSpec.
-
-        An unconfigured provider or incompatible model exits with code 1.
-        """
-        try:
-            return SessionSpec.for_repo().fill(spec)
-        except ProviderNotConfiguredError:
-            # for_mcp() is SessionSpec._resolve_provider's default message --
-            # the wrong verb here, mirroring __main__._fill_from_state's
-            # identical rebuild for the same CLI-vs-MCP split.
-            self._guard.fail(str(ProviderNotConfiguredError.for_cli()))
-        except ModelNotAvailableError as exc:
-            self._guard.fail(str(exc))
 
     def _bare_ref(self, ref: str) -> str:
         """Return *ref* as a bare filename, failing cleanly if it escapes the CWD.
