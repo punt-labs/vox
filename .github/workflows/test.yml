@@ -351,6 +351,14 @@ jobs:
           key: ${{ steps.apt-prepare.outputs.key }}
       - run: uv sync --frozen --all-extras
       - run: make coverage
+      # Voice-call e2e: a real voxd subprocess dials a fake ElevenLabs agent
+      # and fake REST on loopback with scripted PCM, no microphone and no
+      # credentials. `make coverage` depends on `make install`, so the wheel
+      # is already built; the tier runs as its own step, the way the
+      # packaging-e2e job runs `make test-e2e` after its install, so a
+      # call-path break is reported as this step and never buried in the
+      # coverage run.
+      - run: make test-call-e2e
       - name: Save main coverage baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
