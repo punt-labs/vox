@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
+from websockets.asyncio.server import ServerConnection
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 
 from .fake_agent import FakeConvAIAgent
 from .steps import (
@@ -205,6 +206,38 @@ async def test_client_close_during_a_wait_is_recorded_as_cut_short() -> None:
         await _recv(socket)
         await socket.close()
     assert agent.cut_short == WaitForToolResult("never")
+
+
+async def test_client_close_during_a_send_step_is_recorded_as_cut_short(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A send the client's close lands on is not a success; the fake says which.
+
+    The close frame racing a send is not reproducible on demand, so the
+    server's send stands in for it: it raises ConnectionClosed, as the real
+    send does once the client's close has been read.
+    """
+    real_send = ServerConnection.send
+
+    async def closed_on_audio(self: ServerConnection, message: str) -> None:
+        if '"type": "audio"' in message:
+            raise ConnectionClosedOK(None, None)
+        await real_send(self, message)
+
+    monkeypatch.setattr(ServerConnection, "send", closed_on_audio)
+    steps: tuple[Step, ...] = (
+        SendUserTranscript("hi"),
+        SendAudio(b"\x00", 1),
+        SendAgentResponse("never sent", 2),
+        HangUp(),
+    )
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        assert (await _recv(socket))["type"] == "user_transcript"
+        await socket.close()
+    assert agent.fault is None
+    assert agent.cut_short == SendAudio(b"\x00", 1)
 
 
 async def test_a_completed_script_is_not_cut_short() -> None:

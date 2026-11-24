@@ -48,10 +48,12 @@ class FakeConvAIAgent:
 
     The agent records the client's initiation payload, keeps every client
     message in ``received``, and plays its steps in order. A client close ends
-    the script without raising. Any other error in the reader or the player is
-    the agent's ``fault``: the socket closes with code 1011 so the client sees
-    it at once, and leaving the context re-raises it so the test fails with
-    the real error rather than a timeout.
+    the script without raising, and the step it interrupted, whether a send
+    or a wait, is ``cut_short``, so ``cut_short is None`` means every step
+    ran. Any other error in the reader or the player is the agent's
+    ``fault``: the socket closes with code 1011 so the client sees it at
+    once, and leaving the context re-raises it so the test fails with the
+    real error rather than a timeout.
     """
 
     __slots__ = (
@@ -79,7 +81,7 @@ class FakeConvAIAgent:
     _audio_chunks: int
     _closed: bool
     _fault: BaseException | None  # None until the reader or player fails.
-    _cut_short: Step | None  # None unless a client close ended a wait step.
+    _cut_short: Step | None  # None unless a client close interrupted a step.
     _connections: int
     _changed: asyncio.Condition
 
@@ -170,16 +172,24 @@ class FakeConvAIAgent:
                 await self._stop(task)
 
     async def _play(self, socket: ServerConnection) -> None:
-        # The client hanging up is the normal end of a script, not a fault.
-        with suppress(ConnectionClosed):
-            await self._wait_until(lambda: bool(self._initiation) or self._closed)
-            if self._closed:
-                return
+        await self._wait_until(lambda: bool(self._initiation) or self._closed)
+        if self._closed:
+            return
+        pending = iter(self._steps)
+        # A close before the metadata lands interrupts the first step.
+        step = next(pending, None)
+        try:
             await socket.send(json.dumps(self._metadata()))
-            for step in self._steps:
+            while step is not None:
                 if await self._run(step, socket):
                     return
+                step = next(pending, None)
             await socket.wait_closed()
+        except ConnectionClosed:
+            # The client hanging up is the normal end of a script, not a
+            # fault; the step it interrupted is what the test asks about.
+            if step is not None:
+                self._cut(step)
 
     async def _run(self, step: Step, socket: ServerConnection) -> bool:
         """Play one step; return True when the step ended the conversation."""
@@ -275,7 +285,12 @@ class FakeConvAIAgent:
     async def _wait_for(self, step: Step, satisfied: Callable[[], bool]) -> None:
         """Wait for a step's condition; a client close first is a cut-short script."""
         await self._wait_until(lambda: satisfied() or self._closed)
-        if not satisfied() and self._cut_short is None:
+        if not satisfied():
+            self._cut(step)
+
+    def _cut(self, step: Step) -> None:
+        """Record the first step a client close kept from completing."""
+        if self._cut_short is None:
             self._cut_short = step
 
     @staticmethod
