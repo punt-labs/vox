@@ -34,9 +34,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
 from punt_vox.types_cli_options import (
-    BATCH_JSON_LINES_EPILOG,
     FromOpt,
-    JsonOutput,
     LanguageOpt,
     ModelOpt,
     ProviderOpt,
@@ -45,7 +43,6 @@ from punt_vox.types_cli_options import (
     SpeakerBoostFlag,
     StabilityOpt,
     StyleOpt,
-    TextArg,
     VoiceOpt,
 )
 from punt_vox.types_synthesis import SynthesisSpec
@@ -119,6 +116,9 @@ class ClientRecordGateway:
 
 
 # Per-verb aliases for options defined by the recording CLI.
+_TextArg = Annotated[
+    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
+]
 _NameOpt = Annotated[
     str | None,
     typer.Option(
@@ -127,6 +127,7 @@ _NameOpt = Annotated[
     ),
 ]
 _RefArg = Annotated[str, typer.Argument(help="Bare store recording id.")]
+_JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
 _Verbose = Annotated[
     bool, typer.Option("--verbose", "-v", help="Enable debug logging.")
 ]
@@ -168,7 +169,7 @@ class RecCli:
 
     def new(
         self,
-        text: TextArg = None,
+        text: _TextArg = None,
         from_file: FromOpt = None,
         voice: VoiceOpt = None,
         language: LanguageOpt = None,
@@ -181,7 +182,7 @@ class RecCli:
         style: StyleOpt = None,
         speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer bool default
         *,
-        json_output: JsonOutput = False,
+        json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -195,6 +196,20 @@ class RecCli:
         silently replaces the earlier take, even if synthesis settings change.
         Pass a different --name for each take to keep them separate.
         --name only works for a single text segment.
+
+        With --from and --json, stdout is JSON Lines: one JSON object per successful
+        segment, in input order. Blank segments are skipped. If the daemon rejects a
+        segment or the connection fails during processing, Vox writes a final
+        {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
+        are skipped. An invalid segments file produces one error object and exits 2.
+
+        Save stdout and check Vox's exit status separately from jq:
+
+        \b
+        status=0
+        vox rec new --from segments.json --json > out.jsonl || status=$?
+        jq -c . out.jsonl
+        echo "Vox exit status: $status" >&2
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         segments, spec = self._synthesis.prepare(
@@ -219,7 +234,7 @@ class RecCli:
     def list_recordings(
         self,
         *,
-        json_output: JsonOutput = False,
+        json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -237,7 +252,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: JsonOutput = False,
+        json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -252,7 +267,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: JsonOutput = False,
+        json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -282,7 +297,7 @@ class RecCli:
         self,
         ref: _RefArg,
         *,
-        json_output: JsonOutput = False,
+        json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
@@ -321,7 +336,7 @@ def build_rec_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer
         help="Author and manage stored recordings.",
         no_args_is_help=True,
     )
-    app.command("new", epilog=BATCH_JSON_LINES_EPILOG % "rec new")(cli.new)
+    app.command("new")(cli.new)
     app.command("list")(cli.list_recordings)
     app.command("play")(cli.play)
     app.command("get")(cli.get)

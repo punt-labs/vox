@@ -8,9 +8,7 @@ from typing import Annotated
 import typer
 
 __all__ = [
-    "BATCH_JSON_LINES_EPILOG",
     "FromOpt",
-    "JsonOutput",
     "LanguageOpt",
     "ModelOpt",
     "ProviderOpt",
@@ -19,7 +17,6 @@ __all__ = [
     "SpeakerBoostFlag",
     "StabilityOpt",
     "StyleOpt",
-    "TextArg",
     "VoiceOpt",
 ]
 
@@ -27,7 +24,6 @@ FromOpt = Annotated[
     Path | None,
     typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
-JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
 LanguageOpt = Annotated[
     str | None,  # Omitting --language leaves provider language selection unchanged.
     typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
@@ -71,29 +67,7 @@ StyleOpt = Annotated[
     float | None,
     typer.Option("--style", help="ElevenLabs voice style/expressiveness (0.0-1.0)."),
 ]
-TextArg = Annotated[
-    str | None, typer.Argument(help="Text to synthesize.", show_default=False)
-]
 VoiceOpt = Annotated[
     str | None,
     typer.Option("--voice", help="vox.md voice for its provider, or provider default."),
 ]
-
-
-_BATCH_JSON_LINES_CONTRACT = """\
-With --from and --json, stdout is JSON Lines: one JSON object per successful
-segment, in input order. If the daemon rejects a segment or the connection
-fails during processing, Vox writes a final {"error": "..."} line and exits
-nonzero. Earlier lines remain; later segments are skipped."""
-
-BATCH_JSON_LINES_EPILOG = (
-    _BATCH_JSON_LINES_CONTRACT
-    + """
-
-Save stdout and check Vox's exit status separately from jq:
-
-\b\nstatus=0
-vox %s --from segments.json --json > out.jsonl || status=$?
-jq -c . out.jsonl
-echo "Vox exit status: $status" >&2"""
-)
