@@ -9,6 +9,7 @@ from typing import final
 from punt_vox._currency_grammar import SCALES, UNITS, CurrencyGrammar
 
 _SIGNS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
+_MINOR_UNITS = {"$": ("cent", "cents"), "€": ("cent", "cents"), "£": ("penny", "pence")}
 
 
 @final
@@ -43,17 +44,34 @@ class CurrencySpeech:
         word = match[prefix + "word"] or ""
         scale = SCALES.get(word.lower(), "")
         suffix = "" if scale else word
-        singular, plural = UNITS[symbol]
-        span = "" if prefix else cls._speak_bare_end(match, scale)
-        unit = singular if not (scale or span) and cls._is_one(amount) else plural
-        number = _SIGNS[sign] + cls._spoken_number(amount)
-        return " ".join(filter(None, (number, scale, span, unit, suffix)))
+        span = cls._speak_bare_end(match)
+        if scale or span:
+            parts = (cls._spoken_number(amount), scale, span, UNITS[symbol][1])
+            money = " ".join(filter(None, parts))
+        else:
+            money = cls._speak_unscaled(symbol, amount)
+        return " ".join(filter(None, (_SIGNS[sign] + money, suffix)))
 
     @classmethod
-    def _speak_bare_end(cls, match: re.Match[str], start_scale: str) -> str:
+    def _speak_unscaled(cls, symbol: str, amount: str) -> str:
+        units = UNITS[symbol]
+        whole, _, fraction = amount.partition(".")
+        if symbol not in _MINOR_UNITS or not 1 <= len(fraction) <= 2:
+            return f"{cls._spoken_number(amount)} {units[not cls._is_one(amount)]}"
+        major = Decimal(whole.replace(",", "") or "0")
+        minor = int(fraction.ljust(2, "0"))
+        if not minor:
+            return f"{whole or '0'} {units[major != 1]}"
+        minor_text = f"{minor} {_MINOR_UNITS[symbol][minor != 1]}"
+        if not major:
+            return minor_text
+        return f"{whole} {units[major != 1]} and {minor_text}"
+
+    @classmethod
+    def _speak_bare_end(cls, match: re.Match[str]) -> str:
         if not (end := match["bare_end"]):
             return ""
-        end_scale = SCALES.get((match["bare_scale"] or "").lower(), start_scale)
+        end_scale = SCALES.get((match["bare_scale"] or match["word"] or "").lower(), "")
         return " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
 
     @staticmethod

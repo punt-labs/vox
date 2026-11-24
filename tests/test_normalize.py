@@ -331,7 +331,7 @@ class TestSymbolStripping:
             ("€-20", "minus 20 euros"),
             ("€\u221220", "minus 20 euros"),
             ("$-5", "minus 5 dollars"),
-            ("-$5.50", "minus 5.50 dollars"),
+            ("-$5.50", "minus 5 dollars and 50 cents"),
             ("$5", "5 dollars"),
             ("-$5._", "minus 5 dollars."),
             ("_-$5._", "minus 5 dollars."),
@@ -347,9 +347,9 @@ class TestSymbolStripping:
         ("text", "expected"),
         [
             ("I paid 5€.", "I paid 5 euros."),
-            ("It cost 12.50$!", "It cost 12.50 dollars!"),
+            ("It cost 12.50$!", "It cost 12 dollars and 50 cents!"),
             ("It cost (1£), not 1,000£.", "It cost 1 pound, not 1,000 pounds."),
-            ("It cost -5.50€.", "It cost minus 5.50 euros."),
+            ("It cost -5.50€.", "It cost minus 5 euros and 50 cents."),
             ("I paid €5.", "I paid 5 euros."),
             ("I paid €1,50, not 1,50€.", "I paid 1,50, not 1,50."),
             (

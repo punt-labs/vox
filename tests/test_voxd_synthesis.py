@@ -1354,6 +1354,32 @@ class TestApplyVibeForSynthesis:
         result = self._apply("[whisper] 5€ or `5€`.", None, "elevenlabs", "eleven_v3")
         assert result == "[whisper] 5 euros or 5."
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("prefix", "suffix", "expected"),
+        [
+            ("$12.50", "12.50$", "12 dollars and 50 cents"),
+            ("$1.01", "1.01$", "1 dollar and 1 cent"),
+            ("-$.05", "-.05$", "minus 5 cents"),
+            ("$0.5", "0.5$", "50 cents"),
+            ("$1.00", "1.00$", "1 dollar"),
+            ("$0.00", "0.00$", "0 dollars"),
+            ("$1.005", "1.005$", "1.005 dollars"),
+            ("€12.50", "12.50€", "12 euros and 50 cents"),
+            ("€1.01", "1.01€", "1 euro and 1 cent"),
+            ("£12.50", "12.50£", "12 pounds and 50 pence"),
+            ("£1,000.25", "1,000.25£", "1,000 pounds and 25 pence"),
+            ("£1.01", "1.01£", "1 pound and 1 penny"),
+            ("£.01", ".01£", "1 penny"),
+        ],
+    )
+    def test_decimal_currency_prefix_and_suffix_speak_alike(
+        self, model: str, prefix: str, suffix: str, expected: str
+    ) -> None:
+        prefixed = self._apply(prefix, None, "elevenlabs", model)
+        suffixed = self._apply(suffix, None, "elevenlabs", model)
+        assert prefixed == suffixed == expected
+
     @pytest.mark.parametrize(
         ("model", "expected"),
         [
