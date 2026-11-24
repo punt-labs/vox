@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore, VoxConfig
 from punt_vox.dirs import find_config_dir
 from punt_vox.hook_payload import NotificationPayload, StopPayload
@@ -1014,6 +1015,24 @@ class TestChimeSpawnFailure:
         # The errno NUMBER must survive too -- %s on the full OSError yields
         # "[Errno 2] ...", locking the contract against a strerror-only log.
         assert any("Errno 2" in m for m in messages)
+
+
+class TestChimeViaVoxdWait:
+    """The blocking chime goes straight to voxd and survives a missing daemon."""
+
+    @patch("punt_vox.hooks._make_client")
+    def test_wait_chimes_through_voxd(self, mock_make: MagicMock) -> None:
+        _chime_via_voxd("farewell")
+        mock_make.return_value.chime.assert_called_once_with("farewell")
+
+    @patch("punt_vox.hooks._make_client")
+    def test_wait_skips_chime_when_voxd_is_down(
+        self, mock_make: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_make.return_value.chime.side_effect = VoxdConnectionError("refused")
+        with caplog.at_level(logging.WARNING, logger="punt_vox.hooks"):
+            _chime_via_voxd("farewell")  # must not raise
+        assert "voxd not running, skipping chime" in caplog.text
 
 
 # ---------------------------------------------------------------------------
