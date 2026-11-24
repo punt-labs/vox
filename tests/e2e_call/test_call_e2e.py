@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -24,6 +22,7 @@ import pytest
 
 from punt_vox.config import ConfigStore
 
+from .bare_path import BarePath
 from .fake_agent import FakeConvAIAgent
 from .fake_rest import FakeConvAIRest
 from .steps import (
@@ -95,14 +94,9 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     monkeypatch.setenv("HOME", str(home))
     repo = _git_repo(tmp_path / "repo")
     ConfigStore(ConfigStore.global_dir()).write_field("worker_repos", repr([str(repo)]))
-    # A bare PATH without tmux: the worker launch must fail on every machine,
-    # so the test never starts a real coding session. git stays for worktrees.
-    git = Path(shutil.which("git") or "/usr/bin/git").resolve().parent
     return {
         "HOME": str(home),
-        "PATH": os.pathsep.join(
-            {str(Path(sys.executable).parent): None, str(git): None}
-        ),
+        "PATH": BarePath(tmp_path).value,
         "PUNT_TELEMETRY": "off",
         "ELEVENLABS_API_KEY": "test",
         "VOX_CALL_ALLOW_LOOPBACK": "1",
