@@ -37,7 +37,7 @@ class SegmentFile:
         try:
             raw = json.loads(OptionFile(self._path, "--from").text())
         except json.JSONDecodeError as exc:
-            raise typer.BadParameter("--from file must contain valid JSON.") from exc
+            raise typer.BadParameter(f"{self._path}: invalid JSON: {exc}") from exc
         if not isinstance(raw, list):
             raise typer.BadParameter("--from file must contain a JSON array.")
         return cast("list[object]", raw)

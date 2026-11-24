@@ -215,6 +215,27 @@ class TestTextInputFromFile:
         with pytest.raises(typer.BadParameter, match="valid JSON"):
             TextInput(OutputFormatter()).resolve(None, path)
 
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    def test_invalid_json_precedes_provider_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        hermetic_config: Path,
+        command: list[str],
+    ) -> None:
+        (hermetic_config / "vox.md").unlink()
+        monkeypatch.chdir(tmp_path)
+        path = Path("broken.json")
+        path.write_text("{not json", encoding="utf-8")
+
+        result = CliRunner().invoke(app, [*command, "--from", str(path)])
+
+        stderr = unstyle(result.stderr)
+        assert result.exit_code == 2, stderr
+        assert "broken.json" in stderr
+        assert "invalid JSON" in stderr
+        assert "line 1 column 2" in stderr
+
     @pytest.mark.parametrize(
         "item",
         [{"text": False}, {"text": 0}, {"text": [1, 2]}, {"text": None}, {}],
