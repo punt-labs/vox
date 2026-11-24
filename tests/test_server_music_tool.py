@@ -11,11 +11,13 @@ asserted directly.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final, get_args
 
 import pytest
 from _program_fakes import FakeProgramGateway
 
+from punt_vox.album_export import AlbumExport
 from punt_vox.server_music_tool import MusicSubcommand, MusicTool
 from punt_vox.types_programs import ProgramName, ProgramStatus
 from punt_vox.types_programs.control import ProgramSummary
@@ -72,11 +74,11 @@ class _FakeCatalog:
         self._albums[album_id] = f"album-{album_id}"
         return album_id
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         self.calls.append(("get", (album_id, dest_dir)))
         if album_id not in self._albums:
             raise ValueError(f"no album named '{album_id}'")
-        return f"{dest_dir}/{self._albums[album_id]}"
+        return AlbumExport(Path(dest_dir) / self._albums[album_id])
 
     def remove(self, album_id: str) -> None:
         self.calls.append(("remove", album_id))
