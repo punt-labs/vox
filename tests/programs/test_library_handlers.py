@@ -260,6 +260,22 @@ class TestMusicManifestHandler:
         parts = reply["parts"]
         assert isinstance(parts, list)
         assert {str(p["part"]) for p in parts} == {"001.mp3", "002.mp3"}
+        assert reply["missing"] == []
+
+    def test_a_deleted_part_is_listed_missing_not_a_fault(self, tmp_path: Path) -> None:
+        """One track file deleted out of band still yields the surviving parts."""
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1, 2, name="pads", album_id="a3f1c9")
+        library = _library(root)
+        (root / locator / "002.mp3").unlink()
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "m1", "album": "a3f1c9"}
+        asyncio.run(MusicManifestHandler(library)(msg, ws))
+
+        reply = sent[-1]
+        assert reply["type"] == "manifest"
+        assert reply["parts"] == [{"part": "001.mp3", "bytes": 5}]
+        assert reply["missing"] == [{"part": "002.mp3"}]
 
     def test_unknown_album_id_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

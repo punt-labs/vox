@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
+from punt_vox.album_export import AlbumExport
 from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music_catalog import CatalogCli
 from punt_vox.client_errors import VoxdProtocolError
@@ -27,19 +28,22 @@ from punt_vox.types_programs.prompts import PromptSet
 class InMemoryCatalogGateway:
     """A filesystem-backed ``CatalogGateway`` fake for the authoring verbs."""
 
-    __slots__ = ("_albums", "_calls", "_playing")
+    __slots__ = ("_albums", "_calls", "_missing", "_playing")
     _albums: dict[str, str]
     _playing: set[str]
+    _missing: dict[str, tuple[str, ...]]
     _calls: list[tuple[str, str | None]]
 
     def __new__(
         cls,
         albums: dict[str, str] | None = None,
         playing: set[str] | None = None,
+        missing: dict[str, tuple[str, ...]] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._albums = dict(albums) if albums is not None else {}
         self._playing = set(playing) if playing is not None else set()
+        self._missing = dict(missing) if missing is not None else {}
         self._calls = []
         return self
 
@@ -54,13 +58,13 @@ class InMemoryCatalogGateway:
         self._albums[album_id] = f"album-{album_id}"
         return album_id
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         self._calls.append(("get", album_id))
         if album_id not in self._albums:
             raise VoxdProtocolError(f"no album named '{album_id}'")
         target = Path(dest_dir) / self._albums[album_id]
         target.mkdir(parents=True)  # exist_ok=False -> a collision raises
-        return str(target)
+        return AlbumExport(target, self._missing.get(album_id, ()))
 
     def remove(self, album_id: str) -> None:
         self._calls.append(("remove", album_id))
@@ -172,6 +176,25 @@ def test_get_exports_into_the_named_destination(tmp_path: Path) -> None:
     payload, text = _emitted(formatter)
     assert payload == {"album_id": "7f3a91", "path": str(written)}
     assert text == str(written)
+
+
+def test_get_names_parts_skipped_as_missing(tmp_path: Path) -> None:
+    """A track deleted from the daemon is named in both the payload and the text."""
+    gateway = InMemoryCatalogGateway(
+        {"7f3a91": "warm-pads-7f3a91"}, missing={"7f3a91": ("002.mp3",)}
+    )
+    cli, formatter = _cli(gateway)
+
+    cli.get("7f3a91", dest=str(tmp_path))
+
+    written = tmp_path / "warm-pads-7f3a91"
+    payload, text = _emitted(formatter)
+    assert payload == {
+        "album_id": "7f3a91",
+        "path": str(written),
+        "missing": ["002.mp3"],
+    }
+    assert text == f"{written}\nskipped (missing on disk): 002.mp3"
 
 
 def test_get_collision_is_clean_error(

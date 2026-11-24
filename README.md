@@ -222,7 +222,9 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox notify continuous` | Also announce real-time signals |
 | `vox speak n` | Chimes only (`vox speak y` turns speech back on) |
 | `vox voice` | List the voices for the active provider |
+| `vox voice --provider openai` | List OpenAI voices without switching providers |
 | `vox voice matilda` | Set the session voice |
+| `vox voice alloy --provider openai` | Set the session voice only if OpenAI is active |
 | `vox provider` | List the five providers and mark the current one |
 | `vox provider openai` | Set the TTS provider |
 | `vox model` | List the models the current provider offers |
@@ -240,6 +242,12 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox rec play 5b9fc536a112.mp3` | Play a stored recording on the daemon's machine |
 | `vox rec get 5b9fc536a112.mp3` | Copy a recording into the current directory |
 | `vox rec remove 5b9fc536a112.mp3` | Delete a recording from the store |
+
+Without `--name`, the recording id depends only on the text. Recording the
+same text again silently replaces the earlier take, even if you change the
+voice or rate. Use a different `--name` for each take (for example,
+`--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
+`--name` only works for a single text segment.
 
 #### Music
 
