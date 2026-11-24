@@ -18,6 +18,7 @@ _POLICIES = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, ValuePolicy.header_safe())
 _SETTING_POLICY = ValuePolicy.printable()
 _CREDENTIALS = HEADER_CARRIED_KEY_NAMES | {"AWS_SECRET_ACCESS_KEY"}
 _EMPTY = "empty in the environment"
+_AWS_PAIR = frozenset({"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
 AWS_SIGNING_KEYS = frozenset(
     {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
 )
@@ -85,8 +86,13 @@ class AwsCredentials:
         return {k for k, v in self._taken.items() if self._stored.get(k) != v}
 
     def stale(self, merged: Mapping[str, str]) -> tuple[str, ...]:
-        """Return the stored AWS keys left behind once *merged* replaced others."""
+        """Return the stored AWS keys left behind once *merged* replaced the pair.
+
+        Only a whole pair written from the shell drops them: a lone new key id
+        or secret leaves every stored AWS key where it is.
+        """
         written = {k for k, v in self._taken.items() if merged.get(k) == v}
-        if all(self._stored.get(k, merged[k]) == merged[k] for k in written):
+        kept = all(self._stored.get(k) == merged.get(k) for k in _AWS_PAIR)
+        if kept or not written >= _AWS_PAIR:
             return ()
         return tuple(sorted(self._stored.keys() - written))

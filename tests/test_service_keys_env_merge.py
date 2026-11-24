@@ -61,6 +61,22 @@ def test_rotate_to_a_static_pair_drops_the_stored_session_token() -> None:
     assert merge.removed == ("AWS_SESSION_TOKEN",)
 
 
+@pytest.mark.parametrize(
+    "shell",
+    [
+        {"AWS_ACCESS_KEY_ID": "AKIANEW"},
+        {"AWS_ACCESS_KEY_ID": "AKIANEW", "AWS_SECRET_ACCESS_KEY": ""},
+        {"AWS_ACCESS_KEY_ID": "AKIANEW", "AWS_SECRET_ACCESS_KEY": "bad\nline"},
+    ],
+)
+def test_rotate_without_a_whole_shell_pair_removes_nothing(
+    shell: dict[str, str],
+) -> None:
+    merge = KeysEnvMerge(_TEMPORARY_SET, shell, rotate=True)
+    assert merge.merged == _TEMPORARY_SET | {"AWS_ACCESS_KEY_ID": "AKIANEW"}
+    assert merge.removed == ()
+
+
 def test_a_matching_pair_keeps_its_stored_session_token() -> None:
     merge = KeysEnvMerge(_TEMPORARY_SET, _STATIC_PAIR | _TEMPORARY_SET)
     assert merge.merged == _TEMPORARY_SET
