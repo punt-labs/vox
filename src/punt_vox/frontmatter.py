@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.frontmatter_block import FrontmatterBlock
+from punt_vox.paths import run_dir
 from punt_vox.sibling_lock import SiblingLock
 
 logger = logging.getLogger(__name__)
@@ -82,9 +83,7 @@ class Frontmatter:
             lock_path = directory.parent / "local" / "vox" / f"{target.name}.lock"
         else:
             digest = hashlib.sha256(str(target).encode()).hexdigest()
-            lock_path = (
-                Path.home() / ".punt-labs" / "vox" / "run" / "config-locks" / digest
-            )
+            lock_path = run_dir() / "config-locks" / digest
         return SiblingLock(target, lock_path=lock_path, mode=0o666)
 
     def _write_fields(self, updates: dict[str, str]) -> None:

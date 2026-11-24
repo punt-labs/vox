@@ -252,13 +252,18 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   # unlike a shared tmp dir it is not writable by other local users -- so a
   # predictable per-session filename cannot be pre-empted by a symlink planted
   # at that path. Creating the directory 0700 matches paths.log_dir().
-  PANEL_LOG_DIR="$HOME/.punt-labs/vox/logs"
+  if ! PANEL_LOG_DIR=$(vox hook _log-dir </dev/null 2>/dev/null) ||
+    [[ "$PANEL_LOG_DIR" != "${HOME%/}/"*/*/logs || "$PANEL_LOG_DIR" == *$'\n'* ||
+       "$PANEL_LOG_DIR" == *//* || "$PANEL_LOG_DIR" == */./* || "$PANEL_LOG_DIR" == */../* ]]; then
+    PANEL_LOG_DIR="$HOME/.punt-labs/vox/logs"
+  fi
   mkdir -p "$PANEL_LOG_DIR" 2>/dev/null || true
   # Tighten the whole chain, not just the leaf: `mkdir -m` sets the mode only
   # on the deepest directory and only when it creates it, so a state root left
   # traversable by a permissive umask stays that way. This mirrors
   # private_state.ensure_private_tree() on the Python side.
-  chmod 700 "$HOME/.punt-labs" "$HOME/.punt-labs/vox" "$PANEL_LOG_DIR" 2>/dev/null || true
+  PANEL_STATE_DIR=${PANEL_LOG_DIR%/*}
+  chmod 700 "${PANEL_STATE_DIR%/*}" "$PANEL_STATE_DIR" "$PANEL_LOG_DIR" 2>/dev/null || true
   PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$SESSION_WATCH_PID.log"
   # An unwritable log path must cost this session its log, not its panel. The
   # `>>` redirects below are unguarded, and a failed redirect on a synchronous
