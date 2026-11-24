@@ -1367,6 +1367,8 @@ class TestApplyVibeForSynthesis:
             ("$1.005", "1.005$", "1.005 dollars"),
             ("€12.50", "12.50€", "12 euros and 50 cents"),
             ("€1.01", "1.01€", "1 euro and 1 cent"),
+            ("€0.50", "0.50€", "50 euro cents"),
+            ("€.01", ".01€", "1 euro cent"),
             ("£12.50", "12.50£", "12 pounds and 50 pence"),
             ("£1,000.25", "1,000.25£", "1,000 pounds and 25 pence"),
             ("£1.01", "1.01£", "1 pound and 1 penny"),

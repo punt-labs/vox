@@ -62,10 +62,11 @@ class CurrencySpeech:
         minor = int(fraction.ljust(2, "0"))
         if not minor:
             return f"{whole or '0'} {units[major != 1]}"
-        minor_text = f"{minor} {_MINOR_UNITS[symbol][minor != 1]}"
+        minor_unit = _MINOR_UNITS[symbol][minor != 1]
         if not major:
-            return minor_text
-        return f"{whole} {units[major != 1]} and {minor_text}"
+            qualifier = "euro " if symbol == "€" else ""
+            return f"{minor} {qualifier}{minor_unit}"
+        return f"{whole} {units[major != 1]} and {minor} {minor_unit}"
 
     @classmethod
     def _speak_bare_end(cls, match: re.Match[str]) -> str:
