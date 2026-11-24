@@ -31,6 +31,7 @@ from punt_vox.voxd.voice_agent.session import Conversation
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.launcher import CallLauncher
 from punt_vox.voxd.voice_call.progress import ProgressEvents
+from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 
 from .fakes import FakePlayback, FakeWorkers
 
@@ -549,3 +550,39 @@ class TestMicrophoneBeforeDial:
         await active.wait_connected(5)
         await active.cancel()
         assert stream.closed
+
+
+class TestDepartureNotSaved:
+    """A departure save failure is logged with its cause, never its path."""
+
+    async def test_a_permission_error_logs_the_errno_and_no_path(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="punt_vox.voxd.voice_call.launcher")
+
+        def refuse(_brief: ReturnBrief, _reported: dict[str, int]) -> None:
+            raise PermissionError(
+                13, "Permission denied", "/Users/x/calls/departure.json"
+            )
+
+        monkeypatch.setattr(ReturnBrief, "depart", refuse)
+        launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+        )
+        await active.wait_connected(5)
+        while active.running:
+            await asyncio.sleep(0.01)
+        (line,) = [
+            r.message
+            for r in caplog.records
+            if r.name == "punt_vox.voxd.voice_call.launcher"
+        ]
+        assert "/Users" not in line
+        assert line == (
+            "Call departure not saved (PermissionError: [Errno 13] Permission "
+            "denied: '<path>', errno 13)"
+        )

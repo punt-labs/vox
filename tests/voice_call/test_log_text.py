@@ -32,6 +32,14 @@ def test_reason_strips_line_breaks_and_absolute_paths(text: str, expected: str) 
         ),
         (OSError("first\nsecond"), "OSError: first second"),
         (ValueError(), "ValueError"),
+        (
+            PermissionError(13, "Permission denied", "/Users/x/departure.json"),
+            "PermissionError: [Errno 13] Permission denied: '<path>', errno 13",
+        ),
+        (
+            FileNotFoundError(2, "No such file"),
+            "FileNotFoundError: [Errno 2] No such file, errno 2",
+        ),
     ],
 )
 def test_failure_names_an_exception_by_type_and_safe_message(

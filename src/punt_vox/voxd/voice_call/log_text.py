@@ -24,5 +24,12 @@ class LogText:
 
     @classmethod
     def failure(cls, exc: BaseException) -> str:
-        """Name an exception as ``Type: message``, the message made safe."""
-        return cls.reason(f"{type(exc).__name__}: {exc}").removesuffix(": ")
+        """Name an exception as ``Type: message``, the message made safe.
+
+        An ``OSError`` that carries an errno has it appended, so a line whose
+        path was redacted still says which system failure it was.
+        """
+        named = cls.reason(f"{type(exc).__name__}: {exc}").removesuffix(": ")
+        if isinstance(exc, OSError) and exc.errno is not None:
+            return f"{named}, errno {exc.errno}"
+        return named
