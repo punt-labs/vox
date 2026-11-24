@@ -203,8 +203,21 @@ class TestWritableConfigDir:
         with patch("punt_vox.dirs.find_repo_root", return_value=None):
             assert writable_config_dir(child) == found
 
-    def test_no_config_anywhere(self, tmp_path: Path) -> None:
-        with patch("punt_vox.dirs.find_config_dir", return_value=None):
+    def test_first_write_targets_repo_root_without_seeding(
+        self, no_config_dir: Path
+    ) -> None:
+        (no_config_dir / ".git").mkdir()
+        child = no_config_dir / "src"
+        child.mkdir()
+
+        assert writable_config_dir(child) == no_config_dir / DEFAULT_CONFIG_DIR
+        assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
+
+    def test_no_config_or_repo(self, tmp_path: Path) -> None:
+        with (
+            patch("punt_vox.dirs.find_config_dir", return_value=None),
+            patch("punt_vox.dirs.find_repo_root", return_value=None),
+        ):
             assert writable_config_dir(tmp_path) is None
 
 

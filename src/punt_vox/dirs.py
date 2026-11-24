@@ -5,15 +5,13 @@ from __future__ import annotations
 import os
 import re
 import sys
+from itertools import product
 from pathlib import Path
 
 from punt_vox.config_seed import InheritedConfig
 
-# Per-repo subdirectory under .punt-labs/
-_REPO_SUBDIR = Path(".punt-labs") / "vox"
-
-DEFAULT_CONFIG_DIR = _REPO_SUBDIR  # Path(".punt-labs/vox")
-_CONFIG_FILES = ("vox.md", "vox.local.md")
+DEFAULT_CONFIG_DIR = Path(".punt-labs") / "vox"
+_CONFIG_FILES = (DEFAULT_CONFIG_DIR / "vox.md", DEFAULT_CONFIG_DIR / "vox.local.md")
 _XDG_MUSIC_SETTING = re.compile(r'^XDG_MUSIC_DIR="([^"]*)"', re.MULTILINE)
 
 
@@ -35,27 +33,25 @@ def find_config_dir(start: Path | None = None) -> Path | None:
     exists inside it.  No legacy fallback.  A repo with no config of its
     own inherits the nearest one above it (e.g. its workspace's).
     """
-    candidates = (parent / _REPO_SUBDIR for parent in _ancestors(start))
-    return next(
-        (d for d in candidates if any((d / f).exists() for f in _CONFIG_FILES)), None
-    )
+    paths = (base / name for base, name in product(_ancestors(start), _CONFIG_FILES))
+    return next((path.parent for path in paths if path.exists()), None)
 
 
 def writable_config_dir(start: Path | None = None) -> Path | None:
     """Return the config directory a setting write from *start* lands in.
 
-    Same as :func:`find_config_dir`, except when that config is inherited
-    from above the nearest git repo root: the write then goes to the repo's
-    own ``.punt-labs/vox/``, seeded with copies of the inherited files so
-    only the written setting differs, and the repo reads its own config
-    from then on.
+    Inside a git repo, reuse an existing config within the repo. If there
+    isn't one, write to the repo root's ``.punt-labs/vox/``, seeding it from
+    any config inherited from above the repo. Outside a git repo, use
+    :func:`find_config_dir` as-is.
     """
     found = find_config_dir(start)
     root = find_repo_root(start)
-    if found is None or root is None or found.is_relative_to(root):
+    if root is None or (found is not None and found.is_relative_to(root)):
         return found
-    own = root / _REPO_SUBDIR
-    InheritedConfig(found).seed(root, own)
+    own = root / DEFAULT_CONFIG_DIR
+    if found is not None:
+        InheritedConfig(found).seed(root, own)
     return own
 
 
