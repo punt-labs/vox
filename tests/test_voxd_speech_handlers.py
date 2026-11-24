@@ -245,12 +245,19 @@ class TestSynthesizeParseGuard:
         mock_synth.synthesize_to_file.assert_not_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("rate", [0, -10])
-    async def test_nonpositive_rate_is_rejected_before_synthesis(
-        self, rate: int
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("rate", 0, "rate must be greater than 0, got 0"),
+            ("rate", -10, "rate must be greater than 0, got -10"),
+            ("stability", 1.5, "stability must be between 0.0 and 1.0, got 1.5"),
+        ],
+    )
+    async def test_invalid_spec_field_is_rejected_before_synthesis(
+        self, field: str, value: float, message: str
     ) -> None:
-        """A wire rate of 0 or below is an id-stamped error, never sent to a
-        provider."""
+        """A value SynthesisSpec.validate refuses is an id-stamped error, never
+        sent to a provider."""
         mock_synth = MagicMock(spec=SynthesisPipeline)
         mock_synth.synthesize_to_file = AsyncMock()
         mock_synth.try_direct_play = AsyncMock()
@@ -263,17 +270,11 @@ class TestSynthesizeParseGuard:
             "id": "1",
             "text": "hello",
             "provider": "espeak",
-            "rate": rate,
+            field: value,
         }
         await handler(msg, ws)
 
-        assert sent == [
-            {
-                "type": "error",
-                "id": "1",
-                "message": f"rate must be greater than 0, got {rate}",
-            }
-        ]
+        assert sent == [{"type": "error", "id": "1", "message": message}]
         mock_synth.try_direct_play.assert_not_called()
         mock_synth.synthesize_to_file.assert_not_called()
 
