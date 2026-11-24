@@ -26,6 +26,7 @@ _SCALES = {
     "billion": "billion",
     "trillion": "trillion",
 }
+_SCALE_PATTERN = "|".join(_SCALES)
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+"
 _AMOUNT = (
     r"(?P<{p}sign_before>[-+\u2212])?"
@@ -57,7 +58,7 @@ class CurrencySpeech:
         return re.compile(
             rf"{_CODE_AMOUNT.pattern}(?P<word>{word})?"
             rf"(?:[-\u2013]{_AMOUNT.replace('{p}', 'end_')}(?P<end_word>{word})?"
-            rf"|\u2013(?P<bare_end>{_NUMBER}))?"
+            rf"|\u2013(?P<bare_end>{_NUMBER})(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
             rf"(?P<rates>(?:/{word})*)"
         )
 
@@ -83,18 +84,22 @@ class CurrencySpeech:
         sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
         word = match[prefix + "word"] or ""
         scale = _SCALES.get(word.lower(), "")
+        suffix = "" if scale else word
         singular, plural = _UNITS[symbol]
-        end = "" if prefix else match["bare_end"]
-        unit = singular if not (scale or end) and cls._is_one(amount) else plural
+        scale, span = cls._speak_span(match, prefix, scale)
+        unit = singular if not (scale or span) and cls._is_one(amount) else plural
         number = _SIGNS[sign] + cls._spoken_number(amount)
-        span = cls._speak_bare_end(end, scale) if end else ""
-        return " ".join(
-            filter(None, (number, scale, span, unit, "" if scale else word))
-        )
+        return " ".join(filter(None, (number, scale, span, unit, suffix)))
 
     @classmethod
-    def _speak_bare_end(cls, end: str, scale: str) -> str:
-        return " ".join(filter(None, ("to", cls._spoken_number(end), scale)))
+    def _speak_span(
+        cls, match: re.Match[str], prefix: str, scale: str
+    ) -> tuple[str, str]:
+        if prefix or not (end := match["bare_end"]):
+            return scale, ""
+        end_scale = _SCALES.get((match["bare_scale"] or "").lower(), "") or scale
+        span = " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
+        return scale or end_scale, span
 
     @staticmethod
     def _is_one(amount: str) -> bool:
