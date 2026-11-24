@@ -10,13 +10,11 @@ from typing import TYPE_CHECKING, Self, final
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.catalog import Album, Catalog
     from punt_vox.voxd.programs.service import ProgramService
+    from punt_vox.voxd.programs.types import AlbumListRow, ListRead
 
 __all__ = ["AlbumListReader"]
 
 logger = logging.getLogger(__name__)
-
-type _Row = dict[str, object]
-type _Read = tuple[Album, _Row | str]
 
 
 @final
@@ -32,7 +30,7 @@ class AlbumListReader:
         self._slot = asyncio.Lock()
         return self
 
-    async def read(self, service: ProgramService) -> list[_Row]:
+    async def read(self, service: ProgramService) -> list[AlbumListRow]:
         """Snapshot and reconcile the catalog on its loop; read its rows off-loop."""
         await self._slot.acquire()
         stopped = Event()
@@ -53,25 +51,25 @@ class AlbumListReader:
             raise
         return self._current_rows(service.catalog, reads)
 
-    def _release_slot(self, _: asyncio.Future[list[_Read]]) -> None:
+    def _release_slot(self, _: asyncio.Future[list[ListRead]]) -> None:
         self._slot.release()
 
     @staticmethod
-    def _report_abandoned_failure(work: asyncio.Future[list[_Read]]) -> None:
+    def _report_abandoned_failure(work: asyncio.Future[list[ListRead]]) -> None:
         if not work.cancelled() and (error := work.exception()) is not None:
             logger.error("Abandoned catalog read failed", exc_info=error)
 
     @classmethod
-    def _read_snapshot(cls, albums: tuple[Album, ...], stopped: Event) -> list[_Read]:
-        reads: list[_Read] = []
+    def _read_snapshot(cls, albums: tuple[Album, ...], stop: Event) -> list[ListRead]:
+        reads: list[ListRead] = []
         for album in albums:
-            if stopped.is_set():
+            if stop.is_set():
                 break
             reads.append((album, cls._read_or_error(album)))
         return reads
 
     @classmethod
-    def _read_or_error(cls, album: Album) -> _Row | str:
+    def _read_or_error(cls, album: Album) -> AlbumListRow | str:
         """Isolate a broken album so the rest of the listing survives."""
         try:
             return cls._row(album)
@@ -79,7 +77,7 @@ class AlbumListReader:
             return f"{type(error).__name__}: {error}"
 
     @staticmethod
-    def _row(album: Album) -> _Row:
+    def _row(album: Album) -> AlbumListRow:
         """Count Parts from the live manifest; fill can add them after startup."""
         manifest = album.read()
         tags = manifest.tags
@@ -95,9 +93,9 @@ class AlbumListReader:
         }
 
     @staticmethod
-    def _current_rows(catalog: Catalog, reads: list[_Read]) -> list[_Row]:
+    def _current_rows(catalog: Catalog, reads: list[ListRead]) -> list[AlbumListRow]:
         """Skip removed or replaced albums and report faults for current entries."""
-        rows: list[_Row] = []
+        rows: list[AlbumListRow] = []
         for album, row in reads:
             if catalog.by_id(album.id) is not album:
                 continue

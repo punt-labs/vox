@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.manifest import AlbumManifest
+    from punt_vox.voxd.programs.types import AlbumListRow
 
 
 @pytest.mark.parametrize("worker_fails", [False, True])
@@ -49,7 +50,7 @@ async def test_cancelled_list_keeps_slot_until_worker_stops_reading(
             raise RuntimeError("worker read failed")
         return original_read(album)
 
-    async def second_list() -> list[dict[str, object]]:
+    async def second_list() -> list[AlbumListRow]:
         second_started.set()
         return await reader.read(service)
 

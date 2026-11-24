@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     import pytest
 
+    from punt_vox.voxd.programs.types import AlbumListRow
+
 
 def _subsystem(root: Path) -> ProgramSubsystem:
     """Build a subsystem with a fake producer (Fix #5e: producer is injectable)."""
@@ -82,7 +84,7 @@ class TestHandlersBoundToService:
 
         async def track_reader(
             reader: AlbumListReader, service: ProgramService
-        ) -> list[dict[str, object]]:
+        ) -> list[AlbumListRow]:
             readers.append(reader)
             return await read(reader, service)
 
