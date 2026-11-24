@@ -7,15 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
-  real `voxd` subprocess places one scripted `vox call --script` call against
-  a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,
-  with no microphone, credentials or network. Two test-only daemon switches
-  make it possible: `VOX_CONVAI_BASE_URL` (honoured only for a loopback host)
-  and `VOX_CALL_ALLOW_LOOPBACK=1`.
-
 ### Removed
 
 - The unused voice and language resolver. Default voice selection is unchanged.
@@ -273,6 +264,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is evicted from the speech cache. (PL-1191)
 
 ### Added
+
+- A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
+  real `voxd` subprocess places one scripted `vox call --script` call against
+  a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,
+  with no microphone, credentials or network. Two test-only daemon switches
+  make it possible: `VOX_CONVAI_BASE_URL` (honoured only for a loopback host)
+  and `VOX_CALL_ALLOW_LOOPBACK=1`.
 
 - `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
   edit and list the repositories workers may start in, through the daemon;
