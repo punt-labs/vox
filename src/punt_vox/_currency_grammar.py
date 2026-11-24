@@ -61,9 +61,16 @@ class CurrencyGrammar:
 
     @classmethod
     def prefix_suffix_amounts(
-        cls, prose: str, *, tag: re.Pattern[str] | None = None
+        cls,
+        prose: str,
+        *,
+        tag: re.Pattern[str] | None = None,  # No tags in plain prose.
     ) -> str:
-        """Put prose amounts in prefix order for the shared money renderer."""
+        """Put prose amounts in prefix order for the shared money renderer.
+
+        When supplied, ``tag`` matches expressive tags that delimit amounts.
+        With ``None``, only ordinary prose boundaries apply.
+        """
         tag_pattern = tag.pattern if tag is not None else r"(?!)"
         return re.sub(
             rf"(?P<boundary>(?<!\S)|{tag_pattern}){_SUFFIX_AMOUNT}"
