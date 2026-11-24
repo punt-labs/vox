@@ -36,6 +36,22 @@ def _own(repo: Path) -> Path:
 
 
 class TestSeed:
+    def test_ignores_local_state_before_copying(
+        self, inherited: Path, repo: Path
+    ) -> None:
+        """The ignore rule exists by the time the copied vox.local.md does."""
+        seen: list[bool] = []
+        move_into = InheritedConfig._move_into
+
+        def _move_into(staging: Path, own: Path) -> None:
+            rules = (repo / ".gitignore").read_text()
+            seen.append(".punt-labs/vox/vox.local.md" in rules)
+            move_into(staging, own)
+
+        with patch.object(InheritedConfig, "_move_into", staticmethod(_move_into)):
+            InheritedConfig(inherited).seed(repo, _own(repo))
+        assert seen == [True]
+
     def test_copies_every_inherited_file(self, inherited: Path, repo: Path) -> None:
         InheritedConfig(inherited).seed(repo, _own(repo))
         for name in ("vox.md", "vox.local.md"):
@@ -51,14 +67,19 @@ class TestSeed:
         assert rules[0] == "build/"
         assert ".punt-labs/vox/vox.local.md" in rules
 
-    def test_symlinked_gitignore_is_left_alone(
-        self, inherited: Path, repo: Path, tmp_path: Path
+    def test_symlinked_gitignore_is_left_alone_with_a_warning(
+        self,
+        inherited: Path,
+        repo: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         target = tmp_path / "elsewhere"
         target.write_text("x\n")
         (repo / ".gitignore").symlink_to(target)
         InheritedConfig(inherited).seed(repo, _own(repo))
         assert target.read_text() == "x\n"
+        assert "vox.local.md left trackable" in caplog.text
         assert (_own(repo) / "vox.md").read_text() == _VOICE
 
     def test_links_into_an_existing_dir_without_config(

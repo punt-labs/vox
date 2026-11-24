@@ -32,6 +32,7 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import find_config_dir, writable_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.repo_config import RepoConfig
 from punt_vox.types_cli_options import (
     FromOpt,
     LanguageOpt,
@@ -418,14 +419,9 @@ _VoiceName = Annotated[
 ]
 
 
-def _ctx(*, writes: bool) -> Ctx:
-    """Wire the collaborators the command layer needs.
-
-    A command that *writes* resolves its config the way a write lands, so a
-    repo inheriting a workspace config gets its own instead of editing it.
-    """
-    config_dir = writable_config_dir() if writes else find_config_dir()
-    return Ctx(ConfigStore(config_dir), VoxClientSync())
+def _ctx() -> Ctx:
+    """Wire the collaborators the command layer needs."""
+    return Ctx(RepoConfig(), VoxClientSync())
 
 
 def _run(coro: Coroutine[object, object, CommandResult]) -> None:
@@ -458,7 +454,7 @@ def model_cmd(  # pyright: ignore[reportUnusedFunction]
     (``v3`` -> ``eleven_v3``, etc.) and writes it to ``.punt-labs/vox/vox.md``.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.model(_ctx(writes=name is not None), name))
+    _run(cmds.model(_ctx(), name))
 
 
 @app.command("provider")
@@ -478,7 +474,7 @@ def provider_cmd(  # pyright: ignore[reportUnusedFunction]
     request is an invalid API call.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.provider(_ctx(writes=name is not None), name))
+    _run(cmds.provider(_ctx(), name))
 
 
 @app.command("voice")
@@ -498,7 +494,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     voice it must match the active provider.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    _run(cmds.voice(_ctx(writes=name is not None), name, provider))
+    _run(cmds.voice(_ctx(), name, provider))
 
 
 # ---------------------------------------------------------------------------

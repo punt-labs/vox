@@ -9,11 +9,13 @@ codes); library callers inspect the fields directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.client_sync import VoxClientSync
-    from punt_vox.config import ConfigStore
+    from punt_vox.config import VoxConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,33 @@ class CommandResult:
         )
 
 
+class CommandStore(Protocol):
+    """The config reads and writes the command layer makes."""
+
+    def read(self) -> VoxConfig:
+        """Return every config field."""
+        ...
+
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Write one field."""
+        ...
+
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Write several fields in one write."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class Ctx:
     """Collaborators shared by every command function.
@@ -60,7 +89,7 @@ class Ctx:
             (e.g. ``voice`` needs the provider's voice roster).
     """
 
-    store: ConfigStore
+    store: CommandStore
     client: VoxClientSync
 
 

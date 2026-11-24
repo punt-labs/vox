@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import shutil
 import tempfile
@@ -12,6 +13,8 @@ from typing import Self, final
 from punt_vox.gitignore_entry import VoxGitignore
 
 __all__ = ["InheritedConfig"]
+
+logger = logging.getLogger(__name__)
 
 _CONFIG_FILES = ("vox.md", "vox.local.md")
 
@@ -45,9 +48,10 @@ class InheritedConfig:
         When *own* already exists without config (say, only the ``enabled``
         marker) each copy is linked in on its own, never replacing a file a
         concurrent writer created first.  The repo's ``.gitignore`` gains
-        vox's local-state rules so the copied ``vox.local.md`` is never
-        committed.
+        vox's local-state rules before any copy lands, so the copied
+        ``vox.local.md`` is never committed.
         """
+        self._ignore_local_state(repo)
         own.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".vox-seed-", dir=own.parent))
         try:
@@ -57,9 +61,14 @@ class InheritedConfig:
             self._move_into(staging, own)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        # Git does not read a symlinked .gitignore, which VoxGitignore refuses.
-        with contextlib.suppress(ValueError):
+
+    @staticmethod
+    def _ignore_local_state(repo: Path) -> None:
+        """Add vox's local-state rules to *repo*'s ``.gitignore``, or warn."""
+        try:
             VoxGitignore(repo).ensure()
+        except ValueError as exc:
+            logger.warning("vox.local.md left trackable: %s", exc)
 
     @staticmethod
     def _move_into(staging: Path, own: Path) -> None:

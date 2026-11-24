@@ -43,6 +43,15 @@ _CLI_LIST_KEY = "names"
 _MCP_LIST_KEY = "available"
 
 
+def _at(path: Path) -> Callable[[Path | None], Path]:
+    """Return a config-dir resolver pinned at *path*."""
+
+    def resolve(_start: Path | None = None) -> Path:
+        return path
+
+    return resolve
+
+
 @final
 class _FakeSession:
     """A minimal SessionConfig: mutable voice/provider/model, no config on disk."""
@@ -139,6 +148,8 @@ def test_model_list_reports_the_same_fields(
 
     # CLI surface: run `vox model --json` against the same config dir.
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["model", "--json"])
@@ -176,6 +187,8 @@ def test_model_shorthand_resolves_identically(
     # Reset config for the CLI leg.
     (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
@@ -209,6 +222,10 @@ def test_provider_list_reports_the_same_fields(
 
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
 
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
+
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["provider", "--json"])
@@ -238,6 +255,8 @@ def test_provider_set_writes_the_same_field(
     # Reset the file and drive the CLI.
     (tmp_path / "vox.md").unlink(missing_ok=True)
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
@@ -285,6 +304,10 @@ def test_voice_list_reports_the_same_names_and_current(
 
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
 
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
+
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     with patch(f"{_CLI}.VoxClientSync") as cli_client_cls:
         cli_client_cls.return_value.voices.return_value = roster
@@ -314,6 +337,8 @@ def test_voice_set_writes_the_same_field(
 
     store.write_field("voice", "")
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
@@ -345,6 +370,8 @@ def test_voice_set_strips_leading_at_on_both_surfaces(
 
     store.write_field("voice", "")
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _at(tmp_path))
     monkeypatch.setattr(f"{_CLI}.writable_config_dir", lambda: tmp_path)
     monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
