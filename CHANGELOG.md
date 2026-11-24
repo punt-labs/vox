@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Separate panel provider/model roster fetches and atomic commits from scene
+  orchestration without changing selector behavior. (PL-837)
+
 - Resolve non-repo config locks and SessionStart panel logs through the shared
   per-user paths without moving them. (PL-1444)
 
@@ -28,9 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the Ethos `vox-python` check set.
 
 ### Fixed
-
-- Stop hashing a download when the daemon receives a WebSocket disconnect,
-  including while the request is still waiting for a digest slot. (PL-1433)
 
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep the daemon responsive to other requests while it hashes a large store
   file before sending it. (PL-1430)
+
+- Stop hashing a download when the daemon receives a WebSocket disconnect,
+  including while the request is still waiting for a digest slot. (PL-1433)
 
 - Treat non-object JSON replies from voxd as protocol errors. Instead of
   crashing, `vox status` reports `unknown`. `vox daemon status` reports
