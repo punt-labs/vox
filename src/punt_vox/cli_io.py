@@ -102,19 +102,20 @@ class TextInput:
             return SegmentFile(from_file).segments()
         if text == "-":
             return [self._read_stdin()]
-        if text is not None:
-            return [text]
-        return [self._read_piped_stdin()]
-
-    def _read_piped_stdin(self) -> str:
-        """Read implicit stdin input only when it is piped."""
-        if sys.stdin.isatty():
+        if text is None:
+            if self._stdin_is_piped():
+                return [self._read_stdin()]
             self._formatter.error(
                 "provide TEXT argument, --from file, or piped stdin",
                 "Error: provide TEXT argument, --from file, or piped stdin.",
             )
             raise typer.Exit(code=1)
-        return self._read_stdin()
+        return [text]
+
+    @staticmethod
+    def _stdin_is_piped() -> bool:
+        """Check whether stdin can be read without prompting at a terminal."""
+        return not sys.stdin.isatty()
 
     def _read_stdin(self) -> str:
         """Read and return stripped text from stdin, or exit on empty input."""
