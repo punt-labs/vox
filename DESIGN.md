@@ -1233,9 +1233,7 @@ The daemon runs a Starlette ASGI server with active WebSocket connections. SIGTE
 
 ### Problem
 
-The vox daemon runs as a launchd (macOS) or systemd (Linux) service. These init systems start processes with a minimal environment — no direnv, no shell profile, no API keys. Without `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`, the daemon falls back to `say` (macOS) or `espeak` (Linux) — system TTS that sounds terrible.
-
-Before the daemon existed, vox ran inside Claude Code's process and inherited the shell environment. The daemon broke that model.
+Before the daemon existed, vox ran inside Claude Code's process and inherited its shell environment. A daemon started by launchd (macOS) or systemd (Linux) does not inherit the installing shell's direnv or shell profile, so it needs a separate way to get provider credentials.
 
 ### Rejected Alternatives
 
@@ -1247,20 +1245,17 @@ Before the daemon existed, vox ran inside Claude Code's process and inherited th
 
 ### Design
 
-A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and Linux). Simple `KEY=VALUE` format, chmod 0600.
+A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and Linux), with mode 0600.
 
-**Write path:** `vox daemon install` calls `_write_keys_env()` in service.py. This snapshots provider-relevant env vars (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`, `TTS_PROVIDER`, `TTS_MODEL`) from the caller's shell into the per-user config file at `~/.punt-labs/vox/keys.env`. Runs as the installing user — no sudo for the file write.
+**Write path:** `vox daemon install` runs as the installing user, not under `sudo`. [`KeysEnvWriter.write()`](src/punt_vox/service/keys_env.py) atomically merges allowed shell values into the file. [`PROVIDER_KEY_NAMES`](src/punt_vox/providers/credentials.py) lists the accepted inputs: API keys, selected AWS credential and configuration variables, and `TTS_PROVIDER`. An absent, blank, or rejected shell value leaves any stored value intact.
 
-**Read path:** `voxd` calls `_load_keys()` at startup, before logging or provider auto-detection. Sets `os.environ` for keys not already present. This means:
+**Read path:** At startup, [`DaemonConfig.load_keys()`](src/punt_vox/voxd/config.py) fills in allowed, non-empty values from `keys.env` only for variables absent from the daemon's environment. A value already in that environment wins, including when `voxd` is started manually from a shell.
 
-- launchd/systemd daemon: loads all keys from file (nothing in env)
-- Manual `voxd` from shell with direnv: env vars already set, file keys ignored
-
-**Resolution order:** shell env var > keys.env value > provider unavailable.
+**Provider and model selection:** Credential loading does not choose the provider or model for a request. An explicit per-request override can take precedence over the repo's `vox.md` settings; the environment cannot. `TTS_PROVIDER` is a hint for proposing a ready provider, such as when `vox enable` sets up a fresh repo. Install does not copy `TTS_MODEL` from the shell, and daemon startup does not load it from the file. See [Provider Authority](docs/provider-authority.md) for request resolution and readiness checks.
 
 ### Why a Flat File, Not TOML/YAML
 
-The file is never sourced by a shell. It's parsed by a 15-line Python function. No quoting, no escaping, no schema. One `KEY=VALUE` per line, `#` comments, blank lines ignored. The simplest format that works.
+The file is never sourced by a shell. Both paths use [`parse_keys_env()`](src/punt_vox/keys.py): one `KEY=VALUE` per line, no shell quoting or escaping, with blank lines and `#` comments ignored.
 
 ## DES-026: Stable Auth Token Across Daemon Restarts
 
