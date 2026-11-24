@@ -210,15 +210,21 @@ class VoiceAgentCall:
                 return
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
-        result, is_error = await self._tools.answer(call.tool_name, call.parameters)
-        CallLog.tool(call.tool_name, result, is_error=is_error)
-        if call.tool_name == "steer_worker" and not is_error:
-            receipt: dict[str, object] = json.loads(result)
+        answer = await self._tools.answer(call.tool_name, call.parameters)
+        CallLog.tool(call.tool_name, answer)
+        if call.tool_name == "steer_worker" and not answer.is_error:
+            receipt: dict[str, object] = json.loads(answer.result)
             if receipt.get("choice") in ("approve", "deny"):
                 receipt["prompt_seq"] = call.parameters.get("prompt_seq")
             self._trace.record("note", "worker_steer_receipt", receipt)
         self._tool_calls.append(
-            {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}
+            {
+                "tool": call.tool_name,
+                "arguments": call.parameters,
+                "error": answer.is_error,
+            }
         )
         if call.expects_response:
-            await conv.send_tool_result(call.tool_call_id, result, is_error=is_error)
+            await conv.send_tool_result(
+                call.tool_call_id, answer.result, is_error=answer.is_error
+            )

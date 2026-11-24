@@ -88,7 +88,7 @@ async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
         patch.object(WorkerActor, "workers", new=snapshot_then_next_prompt),
         patch.object(WorkerSteering, "_receipt", return_value=None),
     ):
-        result, error = await BossTools(actor, allowlist).answer(
+        reply = await BossTools(actor, allowlist).answer(
             "steer_worker",
             {
                 "worker_id": worker.id,
@@ -100,14 +100,14 @@ async def test_prompt_epoch_is_checked_under_delivery_lock_after_roster_lookup(
         rejected = advance == "after_roster" or (
             choice is not None and advance in ("before_roster", "cleared")
         )
-        assert error == rejected
+        assert reply.is_error == rejected
         if rejected:
             assert (
-                "different prompt now" in result
+                "different prompt now" in reply.result
                 if choice is not None
-                else "new prompt" in result
+                else "new prompt" in reply.result
             )
-            assert "ask the person again" in result
+            assert "ask the person again" in reply.result
             decide.assert_not_called()
             steer.assert_not_called()
         else:

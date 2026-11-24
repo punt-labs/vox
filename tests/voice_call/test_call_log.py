@@ -11,6 +11,7 @@ import pytest
 
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+from punt_vox.voxd.voice_call.tool_reply import ToolReply
 
 _LOGGER = "punt_vox.voxd.voice_call.call_log"
 _TRACE = Path("/traces/call-abc.jsonl")
@@ -59,21 +60,26 @@ def test_live_logs_the_conversation_id(records: pytest.LogCaptureFixture) -> Non
 
 class TestTool:
     def test_a_successful_tool_logs_ok(self, records: pytest.LogCaptureFixture) -> None:
-        CallLog.tool("list_workers", json.dumps({"workers": []}), is_error=False)
+        CallLog.tool("list_workers", ToolReply.ok(json.dumps({"workers": []})))
         assert _messages(records) == ["Call tool list_workers: ok"]
 
     def test_a_failed_tool_logs_the_error_text(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        result = json.dumps({"error": "task must be a non-empty string"})
-        CallLog.tool("start_worker", result, is_error=True)
+        CallLog.tool(
+            "start_worker", ToolReply.failed("task must be a non-empty string")
+        )
         assert _messages(records) == [
             "Call tool start_worker: error task must be a non-empty string"
         ]
 
-    def test_an_error_result_without_an_error_key_is_a_bug(self) -> None:
-        with pytest.raises(KeyError):
-            CallLog.tool("start_worker", json.dumps({"ok": True}), is_error=True)
+    @pytest.mark.parametrize("result", ["not json", '{"ok": true}'])
+    def test_an_error_whose_wire_text_is_not_an_error_object_still_logs(
+        self, records: pytest.LogCaptureFixture, result: str
+    ) -> None:
+        """The log never re-parses the wire text: the error travels structured."""
+        CallLog.tool("start_worker", ToolReply(result, "task must be text"))
+        assert _messages(records) == ["Call tool start_worker: error task must be text"]
 
 
 class TestEnded:
@@ -161,8 +167,8 @@ class TestRedaction:
     def test_a_tool_error_logs_no_absolute_path(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        result = json.dumps({"error": "not allowlisted in worker_repos: /Users/x/repo"})
-        CallLog.tool("start_worker", result, is_error=True)
+        answer = ToolReply.failed("not allowlisted in worker_repos: /Users/x/repo")
+        CallLog.tool("start_worker", answer)
         (line,) = _messages(records)
         assert "/Users" not in line
         assert line == (
@@ -172,8 +178,7 @@ class TestRedaction:
     def test_a_tool_error_with_a_newline_stays_on_one_line(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        result = json.dumps({"error": "first\nCall ended: forged"})
-        CallLog.tool("start_worker", result, is_error=True)
+        CallLog.tool("start_worker", ToolReply.failed("first\nCall ended: forged"))
         assert _messages(records) == [
             "Call tool start_worker: error first Call ended: forged"
         ]
@@ -181,7 +186,7 @@ class TestRedaction:
     def test_an_unknown_tool_name_with_a_newline_logs_unknown(
         self, records: pytest.LogCaptureFixture
     ) -> None:
-        CallLog.tool("x\nCall ended: forged", json.dumps({"ok": 1}), is_error=False)
+        CallLog.tool("x\nCall ended: forged", ToolReply.ok(json.dumps({"ok": 1})))
         assert _messages(records) == ["Call tool unknown: ok"]
 
     def test_the_end_line_error_logs_no_absolute_path(

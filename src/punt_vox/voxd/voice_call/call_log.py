@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from contextlib import contextmanager
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+    from punt_vox.voxd.voice_call.tool_reply import ToolReply
 
 __all__ = ["CallLog"]
 
@@ -74,11 +74,10 @@ class CallLog:
         logger.info("Call live: conversation %s", conversation_id)
 
     @staticmethod
-    def tool(name: str, result: str, *, is_error: bool) -> None:
+    def tool(name: str, answer: ToolReply) -> None:
         """Log one answered client tool call; an error names its redacted text."""
         tool = name if name in _TOOLS else "unknown"  # An agent-chosen name.
-        if is_error:
-            error: str = json.loads(result)["error"]
-            logger.info("Call tool %s: error %s", tool, LogText.reason(error))
-        else:
+        if answer.error is None:
             logger.info("Call tool %s: ok", tool)
+        else:
+            logger.info("Call tool %s: error %s", tool, LogText.reason(answer.error))
