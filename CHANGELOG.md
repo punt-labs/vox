@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
+  and `--quiet` (`-q`) after the subcommand. (PL-1560)
+
 - Unknown voice errors identify the unrecognized name and suggest each
   available voice once, without listing lookup aliases separately. (PL-1550)
 

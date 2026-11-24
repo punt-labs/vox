@@ -676,40 +676,39 @@ def uninstall() -> None:
 
 
 @cache_app.command("status")
-def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_status_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Show the daemon cache's entry count, size, and path (honors VOXD_HOST).
 
     Raises:
         typer.Exit: If the daemon cannot report cache status.
     """
-    try:
-        info = VoxClientSync().cache_status()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    size_kb = info.size_bytes / 1024
-    payload = {
-        "entries": info.entries,
-        "size_bytes": info.size_bytes,
-        "path": str(info.path),
-    }
-    text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
-    _formatter.emit(payload, text)
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).status(VoxClientSync())
 
 
 @cache_app.command("clear")
-def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_clear_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Delete all cached MP3 files on the daemon host.
 
     Raises:
         typer.Exit: If the daemon cannot clear the cache.
     """
-    try:
-        count = VoxClientSync().cache_clear()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).clear(VoxClientSync())
 
 
 # ---------------------------------------------------------------------------
