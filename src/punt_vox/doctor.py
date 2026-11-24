@@ -335,7 +335,7 @@ class DoctorCheck:
         out_dir = default_output_dir()
         if out_dir.is_dir():
             try:
-                with tempfile.TemporaryFile(dir=out_dir) as probe:
+                with tempfile.TemporaryFile(buffering=0, dir=out_dir) as probe:
                     probe.write(b"ok")
                 return [CheckResult.ok("output: writable")]
             except OSError:

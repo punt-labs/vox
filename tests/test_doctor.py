@@ -442,6 +442,7 @@ class TestCheckOutputDir:
             probe = temporary_file.return_value.__enter__.return_value
             probe.write.side_effect = OSError(errno.ENOSPC, "No space left on device")
             results = DoctorCheck().check_output_dir()
+        temporary_file.assert_called_once_with(buffering=0, dir=tmp_path)
         assert results[0].passed is False
         assert results[0].message == "output: not writable — check permissions"
 
