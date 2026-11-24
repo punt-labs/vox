@@ -15,6 +15,7 @@ from punt_vox.client_errors import (
     VoxdProtocolError,
     VoxdRejectionError,
 )
+from punt_vox.config import ConfigStore
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
@@ -24,6 +25,8 @@ from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.applets import ClickLatency
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
@@ -325,6 +328,24 @@ class TestApplyEvent:
         assert client.synth_calls == []
         assert changed is ControlPush.REFRESH
         assert service.scene().notice == PanelNotice.no_voice_selected()
+
+    def test_voice_preview_after_provider_is_cleared_points_to_provider_menu(
+        self, tmp_path: Path
+    ) -> None:
+        client = _FakeDaemonClient()
+        store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "elevenlabs", "voice": "roger"})
+        service = VoxPanelService(client, store)
+        service.prefetch()
+        assert service.scene().roster == ("aria", "roger")
+
+        store.write_field("provider", "")
+
+        assert service.apply_event(PanelTopic.VOICE_PREVIEW, {}) is ControlPush.REFRESH
+        assert client.synth_calls == []
+        assert service.scene().notice.message == (
+            "⚠ pick a provider from the Provider menu to preview a voice"
+        )
 
     def test_a_heard_preview_clears_a_stale_voxd_warning(self) -> None:
         """Audio the user just heard is proof the warning about voxd is stale.
