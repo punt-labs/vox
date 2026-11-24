@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox rec list` lists large recording stores without exceeding WebSocket frame
+  limits or blocking other daemon requests while it scans the directory.
+
 - `vox say --from` and `vox rec new --from` now reject a segments file with
   no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
   having said nothing, and skip whitespace-only segments instead of failing
