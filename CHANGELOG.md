@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox music list` reads saved album manifests off the daemon event loop, so
+  listing a large catalog does not delay unrelated requests. (PL-1546)
+
 - `vox say` and `vox rec new` share how they prepare synthesis settings and
   text segments. Command behavior is unchanged.
 
