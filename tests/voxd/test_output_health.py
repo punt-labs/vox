@@ -54,19 +54,32 @@ def test_inaccessible_output_root_is_not_reported_as_absent(tmp_path: Path) -> N
     assert verdict == {"output_dir": "not_writable", "music_dir_missing": False}
 
 
-@pytest.mark.parametrize("obstruction", ["file", "dangling-link", "parent-file"])
+@pytest.mark.parametrize(
+    "obstruction", ["file", "dangling-link", "parent-file", "parent-dangling-link"]
+)
 def test_obstructed_output_root_is_not_reported_as_absent(
     tmp_path: Path, obstruction: str
 ) -> None:
     root = tmp_path / "output"
-    if obstruction == "dangling-link":
+    if obstruction.endswith("dangling-link"):
         root.symlink_to(tmp_path / "missing")
     else:
         root.touch()
-        if obstruction == "parent-file":
-            root /= "album"
+    if obstruction.startswith("parent-"):
+        root /= "album"
 
     assert OutputHealth(root).probe()["output_dir"] == "not_writable"
+
+
+def test_missing_output_beneath_valid_symlink_is_reported_as_absent(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+
+    assert OutputHealth(link / "album").probe()["output_dir"] == "absent"
 
 
 def test_probe_reports_only_verdicts_for_the_configured_root(

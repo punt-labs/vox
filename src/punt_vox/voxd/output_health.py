@@ -79,5 +79,8 @@ class OutputHealth:
         try:
             path.stat()
         except FileNotFoundError:
-            return not path.is_symlink()
+            return not any(
+                part.is_symlink() and not part.exists()
+                for part in (path, *path.parents)
+            )
         return False
