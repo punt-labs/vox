@@ -276,13 +276,13 @@ folding only the discard markers onto a record that may carry a later
 worker report. A pending discard already has a stopped phase and a stopped
 provider, so done never contradicts the state invariant.
 
-\begin{schema}{DiscardRetryOnStop}
+\begin{schema}{DiscardRetryOnStopOfStarting}
   \Delta WorkerDiscards \\
   worker? : WORKER
 \where
   worker? \in \dom discard \\
-  discard~worker? \in \{dSkipped, dError\} \\
-  phase~worker? \in \{starting, stopped\} \\
+  discard~worker? = dSkipped \\
+  phase~worker? = starting \\
   phase' = phase \oplus \{worker? \mapsto stopped\} \\
   providerStopped' = providerStopped \cup \{worker?\} \\
   discard' = discard \oplus \{worker? \mapsto dPending\} \\
@@ -291,10 +291,37 @@ provider, so done never contradicts the state invariant.
   pending' = pending \cup \{worker?\}
 \end{schema}
 
-An explicit stop of a worker whose discard was skipped or failed stops the
-provider again and, once that succeeds, queues the discard once more; the
-queue then takes \textit{DiscardComplete}. A stop whose provider refuses
-again leaves the discard skipped and the checkout in place.
+\begin{schema}{DiscardRetryOnStopOfStopped}
+  \Delta WorkerDiscards \\
+  worker? : WORKER
+\where
+  worker? \in \dom discard \\
+  discard~worker? \in \{dSkipped, dError\} \\
+  phase~worker? = stopped \\
+  worker? \in providerStopped \\
+  discard' = discard \oplus \{worker? \mapsto dPending\} \\
+  phase' = phase \\
+  providerStopped' = providerStopped \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+\begin{zed}
+  DiscardRetryOnStop \defs
+    DiscardRetryOnStopOfStarting \lor DiscardRetryOnStopOfStopped
+\end{zed}
+
+An explicit stop retries a skipped or failed discard in one of two ways,
+by the phase it finds. A worker still \textit{starting} (its rollback
+could not stop the provider, so the discard was skipped) is stopped now:
+the provider stops, harness cleanup is owed, and the discard is queued. A
+worker already \textit{stopped} (its provider stopped and its discard
+failed, or a retry's stop succeeded but the discard failed again) owes no
+harness cleanup and no provider stop; only the discard is queued again.
+Either way the queue then takes \textit{DiscardComplete}. A stop of a
+starting worker whose provider refuses again leaves the discard skipped
+and the checkout in place.
 
 \section{Steering state and invariants}
 
