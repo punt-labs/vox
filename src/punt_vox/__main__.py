@@ -284,31 +284,29 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
         str,
         typer.Argument(
             help=(
-                "Mood word (e.g. 'excited', 'weary') pinned as manual, "
+                "Spoken delivery cue (e.g. 'excited', 'telling a secret'), "
                 "'auto' (mood follows session signals), or 'off' (neutral)."
             )
         ),
     ],
 ) -> None:
-    """Set the session mood the voice director translates into voice tags.
+    """Set the session mood for spoken delivery.
 
-    The daemon resolves the mood into 1-3 expressive tags (e.g. [excited],
-    [weary]) that ride the next synthesis call. A mode change ('auto' or
-    'off') resets the nudge cadence.
+    A manual mood is used as an expressive cue (e.g. [excited]) by ElevenLabs
+    v3. Other speech models do not apply it. 'auto' and 'off' clear the cue
+    and reset the nudge cadence.
 
     Example: vox vibe excited
     Example: vox vibe auto
 
     See also: vox status (current mood), mic:vibe (MCP peer).
     """
-    # Route through VibeChange so the CLI and MCP tool share one transition rule
-    # (a mode change resets the nudge cadence).
-    is_mode = mood in ("auto", "off")
-    change = VibeChange(
-        mood=None if is_mode else mood, tags=None, mode=mood if is_mode else "manual"
-    )
+    try:
+        change = VibeChange.from_cli(mood)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="mood") from exc
     ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(change.resolve())
-    if is_mode:
+    if change.mood is None:
         _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
     else:
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")

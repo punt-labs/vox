@@ -27,6 +27,21 @@ class VibeChange:
     tags: str | None
     mode: str | None
 
+    @classmethod
+    def from_cli(cls, mood: str) -> VibeChange:
+        """Use a standalone mood as one expressive cue, without an agent.
+
+        Raises:
+            ValueError: If a manual mood has no cue text.
+        """
+        if mood in ("auto", "off"):
+            return cls(mood=None, tags=None, mode=mood)
+        cue = " ".join(mood.translate(str.maketrans("[]", "  ")).split())
+        if not cue:
+            msg = "Mood must contain a spoken delivery cue."
+            raise ValueError(msg)
+        return cls(mood=mood, tags=f"[{cue}]", mode="manual")
+
     def validate(self) -> None:
         """Raise ``ValueError`` when the mode is not a recognized value.
 

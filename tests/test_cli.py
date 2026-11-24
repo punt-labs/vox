@@ -28,6 +28,7 @@ from punt_vox.client_errors import (
     VoxdRejectionError,
 )
 from punt_vox.client_results import RecordResult, SynthesizeResult
+from punt_vox.config import ConfigStore
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -1116,6 +1117,47 @@ class TestApiKeyInputPaths:
 
 
 class TestVibeCommand:
+    @pytest.mark.parametrize(
+        ("mood", "tag"),
+        [
+            ("whispering", "[whispering]"),
+            ("[telling   a secret]", "[telling a secret]"),
+        ],
+    )
+    def test_manual_vibe_reaches_synthesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, tag: str
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        ConfigStore(config_dir).write_fields(
+            {"provider": "elevenlabs", "model": "eleven_v3"}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["vibe", mood])
+        assert result.exit_code == 0, result.output
+
+        with patch("punt_vox.__main__.VoxClientSync") as client:
+            client.return_value.synthesize.return_value = SynthesizeResult(
+                request_id="abc"
+            )
+            result = runner.invoke(app, ["say", "Hello"])
+
+        assert result.exit_code == 0, result.output
+        assert client.return_value.synthesize.call_args.args[1].vibe_tags == tag
+
+    @pytest.mark.parametrize("mood", [" ", "[]"])
+    def test_vibe_rejects_empty_cue(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+
+        result = CliRunner().invoke(app, ["vibe", mood])
+
+        assert result.exit_code == 2, result.output
+        assert "Mood must contain a spoken delivery cue." in result.output
+        assert not (tmp_path / "vox.local.md").exists()
+
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
@@ -1133,6 +1175,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
@@ -1140,6 +1183,7 @@ class TestVibeCommand:
         assert "auto" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "auto"' in local
+        assert 'vibe_tags: ""' in local
         # A mode change resets the nudge cadence to a clean N-prompt runway.
         assert 'vibe_nudge_turns: "0"' in local
 
@@ -1148,6 +1192,7 @@ class TestVibeCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
@@ -1155,6 +1200,7 @@ class TestVibeCommand:
         assert "off" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "off"' in local
+        assert 'vibe_tags: ""' in local
         assert 'vibe_nudge_turns: "0"' in local
 
 
