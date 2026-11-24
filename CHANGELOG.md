@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject malformed daemon discovery ports before connecting, so status reports
+  an unknown daemon state rather than mistaking it for a stopped daemon. (PL-1421)
+
 - Preserve currency and signs when speaking attached amounts, rates, compact
   amounts, and price ranges such as `-$5off`, `$5/month`, `$10k`, and
   `$5-$10`. (PL-1414)

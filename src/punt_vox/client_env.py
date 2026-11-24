@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 from typing import final
 
+from punt_vox.client_port import PortText
+
 __all__ = ["DaemonEnv"]
 
 
@@ -45,12 +47,10 @@ class DaemonEnv:
             ValueError: If VOXD_PORT is not a decimal port from 1 through 65535.
         """
         raw = os.environ.get("VOXD_PORT", "").strip()
-        if not raw:
-            return None
-        if not raw.isdecimal() or not 1 <= int(raw) <= 65535:
-            msg = f"VOXD_PORT={raw!r} is not a port (1-65535)"
-            raise ValueError(msg)
-        return int(raw)
+        try:
+            return PortText.parse(raw) if raw else None
+        except ValueError as exc:
+            raise ValueError(f"VOXD_PORT={exc}") from None
 
     @staticmethod
     def names_host() -> bool:

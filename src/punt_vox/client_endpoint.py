@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdNotPublishedError
+from punt_vox.client_port import PortText
 from punt_vox.paths import run_dir as _user_run_dir
 
 if TYPE_CHECKING:
@@ -33,19 +34,17 @@ class RunFiles:
 
         Raises:
             VoxdConnectionError: If the file is unreadable or does not hold
-                a decimal port. This does not mean that voxd is absent.
+                a decimal port in 1-65535. This does not mean that voxd is absent.
         """
         port_file = _user_run_dir() / "serve.port"
         try:
-            text = RunFiles._read(port_file)
+            return PortText.parse(RunFiles._read(port_file))
         except FileNotFoundError:
             return None
         except OSError as exc:
             raise VoxdConnectionError(f"cannot read {port_file}: {exc}") from None
-        if not text.isdecimal():
-            msg = f"{port_file} does not hold a port: {text[:32]!r}"
-            raise VoxdConnectionError(msg)
-        return int(text)
+        except ValueError as exc:
+            raise VoxdConnectionError(f"{port_file}: {exc}") from None
 
     @staticmethod
     def token() -> str | None:
