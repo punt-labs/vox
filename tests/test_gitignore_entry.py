@@ -1,67 +1,63 @@
-"""Tests for the ``.gitignore`` line writer (``GitignoreEntry``)."""
+"""Tests for the ``.gitignore`` rule writer."""
 
 from __future__ import annotations
 
-import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
-from punt_vox.gitignore_entry import GitignoreEntry
+from punt_vox.gitignore_entry import VoxGitignore
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _ENTRY = ".punt-labs/vox/vox.local.md"
+_LOCK_RULES = (
+    ".punt-labs/local/",
+    "/.CLAUDE.md.punt-import.lock",
+    "/.claude/.settings.json.punt-import.lock",
+)
+_RULES = (_ENTRY, *_LOCK_RULES)
 
 
 def _host(tmp_path: Path) -> Path:
     return tmp_path / ".gitignore"
 
 
-def _entry(tmp_path: Path) -> GitignoreEntry:
-    return GitignoreEntry(_host(tmp_path), _ENTRY, lock_path=tmp_path / "gi.lock")
-
-
 def test_ensure_creates_missing_gitignore(tmp_path: Path) -> None:
-    assert _entry(tmp_path).ensure() is True
-    assert _host(tmp_path).read_text(encoding="utf-8") == f"{_ENTRY}\n"
+    assert VoxGitignore(tmp_path).ensure() is True
+    assert (
+        _host(tmp_path).read_bytes()
+        == b"\n".join(rule.encode() for rule in _RULES) + b"\n"
+    )
 
 
-def test_ensure_appends_after_user_rules(tmp_path: Path) -> None:
-    _host(tmp_path).write_text("# mine\nnode_modules/\n", encoding="utf-8")
-    assert _entry(tmp_path).ensure() is True
-    text = _host(tmp_path).read_text(encoding="utf-8")
-    assert text == f"# mine\nnode_modules/\n{_ENTRY}\n"
-
-
-def test_ensure_terminates_an_unterminated_last_rule(tmp_path: Path) -> None:
-    _host(tmp_path).write_text("dist/", encoding="utf-8")
-    _entry(tmp_path).ensure()
-    assert _host(tmp_path).read_text(encoding="utf-8") == f"dist/\n{_ENTRY}\n"
-
-
-def test_ensure_preserves_crlf(tmp_path: Path) -> None:
-    _host(tmp_path).write_bytes(b"dist/\r\n")
-    _entry(tmp_path).ensure()
-    assert _host(tmp_path).read_bytes() == f"dist/\r\n{_ENTRY}\r\n".encode()
+@pytest.mark.parametrize(
+    ("original", "appended_eol"),
+    [(b"dist/", b"\n"), (b"dist/\r", b"\n"), (b"# host\r\ndist/\r", b"\r\n")],
+)
+def test_ensure_terminates_an_unterminated_last_rule(
+    tmp_path: Path, original: bytes, appended_eol: bytes
+) -> None:
+    _host(tmp_path).write_bytes(original)
+    VoxGitignore(tmp_path).ensure()
+    rules = appended_eol.join(rule.encode() for rule in _RULES)
+    assert _host(tmp_path).read_bytes() == original + b"\n" + rules + appended_eol
 
 
 @pytest.mark.parametrize("existing", [_ENTRY, f"/{_ENTRY}", f"{_ENTRY}  "])
 def test_ensure_is_a_noop_when_listed(tmp_path: Path, existing: str) -> None:
-    original = f"dist/\n{existing}\n"
+    original = "\n".join(("dist/", existing, *_LOCK_RULES, ""))
     _host(tmp_path).write_text(original, encoding="utf-8")
-    entry = _entry(tmp_path)
-    assert entry.is_present() is True
-    assert entry.ensure() is False
+    assert VoxGitignore(tmp_path).ensure() is False
     assert _host(tmp_path).read_text(encoding="utf-8") == original
 
 
 def test_ensure_adds_the_entry_after_a_leading_space_variant(tmp_path: Path) -> None:
     _host(tmp_path).write_text(f" {_ENTRY}\n", encoding="utf-8")
-    assert _entry(tmp_path).ensure() is True
+    assert VoxGitignore(tmp_path).ensure() is True
     text = _host(tmp_path).read_text(encoding="utf-8")
-    assert text == f" {_ENTRY}\n{_ENTRY}\n"
+    assert text.splitlines() == [f" {_ENTRY}", *_RULES]
 
 
 def test_ensure_refuses_a_symlinked_host(tmp_path: Path) -> None:
@@ -69,37 +65,15 @@ def test_ensure_refuses_a_symlinked_host(tmp_path: Path) -> None:
     outside.write_text("keep\n", encoding="utf-8")
     _host(tmp_path).symlink_to(outside)
     with pytest.raises(ValueError, match="symlink"):
-        _entry(tmp_path).ensure()
+        VoxGitignore(tmp_path).ensure()
     assert outside.read_text(encoding="utf-8") == "keep\n"
 
 
-def test_ensure_twice_adds_one_line(tmp_path: Path) -> None:
-    entry = _entry(tmp_path)
-    entry.ensure()
-    assert entry.ensure() is False
-    lines = _host(tmp_path).read_text(encoding="utf-8").splitlines()
-    assert lines.count(_ENTRY) == 1
-
-
-@pytest.mark.subprocess
-def test_ensured_entry_is_honored_by_git(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    _entry(tmp_path).ensure()
-    result = subprocess.run(
-        ["git", "-C", str(tmp_path), "check-ignore", "-q", _ENTRY], check=False
-    )
-    assert result.returncode == 0
-
-
-@pytest.mark.parametrize(
-    "bad", ["", " x", "x ", "a\nb", "/abs", "#comment", "!negated"]
-)
-def test_rejects_entries_that_would_write_another_rule(
-    tmp_path: Path, bad: str
-) -> None:
-    with pytest.raises(ValueError, match="gitignore entry"):
-        GitignoreEntry(_host(tmp_path), bad, lock_path=tmp_path / "gi.lock")
-
-
-def test_entry_property(tmp_path: Path) -> None:
-    assert _entry(tmp_path).entry == _ENTRY
+def test_ensure_appends_only_missing_rules(tmp_path: Path) -> None:
+    original = f"/{_ENTRY}  \r\n.CLAUDE.md.punt-import.lock\r\nnode_modules/"
+    _host(tmp_path).write_bytes(original.encode())
+    entries = VoxGitignore(tmp_path)
+    assert entries.ensure() is True
+    assert entries.ensure() is False
+    appended = "\r\n.punt-labs/local/\r\n/.claude/.settings.json.punt-import.lock\r\n"
+    assert _host(tmp_path).read_bytes() == (original + appended).encode()
