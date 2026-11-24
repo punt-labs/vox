@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast, final
 
 from punt_vox.providers.live_check import LiveCheck
@@ -22,14 +23,14 @@ if TYPE_CHECKING:
 
 
 @final
+@dataclass(frozen=True, slots=True)
 class _Provider:
     """A provider stub whose health check runs *check*."""
 
-    def __init__(self, check: Callable[[], list[HealthCheck]]) -> None:
-        self._check = check
+    check: Callable[[], list[HealthCheck]]
 
     def check_health(self) -> list[HealthCheck]:
-        return self._check()
+        return self.check()
 
 
 def _builder(
