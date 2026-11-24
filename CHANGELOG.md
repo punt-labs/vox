@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox say --from` and `vox rec new --from` now reject a segments file with
+  no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
+  having said nothing, and skip whitespace-only segments instead of failing
+  the run. (PL-1483)
+
+- `vox enable` adds `.punt-labs/vox/vox.local.md` to the repo's `.gitignore`
+  (once, after any existing rules), so machine-local session state is never
+  committed. A symlinked `.gitignore`, which git does not read, stops enable
+  with an error instead of being written through. (PL-818)
+
 - `vox voice <name> --provider <provider>` rejects an inactive provider
   without changing the active provider or saved voice. (PL-1487)
 
