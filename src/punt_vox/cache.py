@@ -2,7 +2,8 @@
 
 Caches synthesized audio by text, voice, provider, and audio-affecting settings
 so repeated requests skip the TTS API. The versioned payload prevents serving
-legacy entries whose keys omitted settings.
+legacy entries whose keys omitted settings or whose audio predates postprocessing
+changes.
 
 This is the anonymous cache, using ambient provider credentials from keys.env.
 Per-call credential overrides bypass lookup and store in
@@ -57,7 +58,7 @@ class CacheKey:
     def filename(self) -> str:
         """On-disk filename: 32-char MD5 hex + .mp3."""
         payload = json.dumps(
-            {"version": 2, **asdict(self)}, sort_keys=True, separators=(",", ":")
+            {"version": 3, **asdict(self)}, sort_keys=True, separators=(",", ":")
         ).encode()
         digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
         return f"{digest}.mp3"
