@@ -93,6 +93,28 @@ def test_command_refusal_is_surfaced_without_exception_values(
     assert all(record.exc_info is None for record in caplog.records)
 
 
+@pytest.mark.parametrize("command", ["pause", "resume"])
+def test_idle_transport_reprojects_without_a_fault(
+    service: Mock, presenter: Mock, caplog: pytest.LogCaptureFixture, command: str
+) -> None:
+    caplog.set_level(logging.INFO)
+    transport = getattr(service, command)
+    transport.return_value = False
+    MusicEventReceiver(service, presenter).receive(
+        f"music.{command}", {"extra": _PRIVATE}
+    )
+    transport.assert_called_once_with()
+    presenter.present_transport_failure.assert_called_once_with()
+    assert f"received music.{command}; applying" in caplog.text
+    assert [
+        record.levelno
+        for record in caplog.records
+        if "ignoring transport control: Nothing playing." in record.getMessage()
+    ] == [logging.INFO]
+    assert all(record.levelno < logging.WARNING for record in caplog.records)
+    assert _PRIVATE not in caplog.text
+
+
 def test_unknown_topic_is_sanitized(
     service: Mock, presenter: Mock, caplog: pytest.LogCaptureFixture
 ) -> None:

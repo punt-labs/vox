@@ -45,11 +45,13 @@ class _FakeCommands:
     def prev(self) -> None:
         self.prevs += 1
 
-    def pause(self) -> None:
+    def pause(self) -> bool:
         self.pauses += 1
+        return True
 
-    def resume(self) -> None:
+    def resume(self) -> bool:
         self.resumes += 1
+        return True
 
 
 def test_play_album_applies_exactly_one_replay() -> None:
