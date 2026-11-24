@@ -24,9 +24,6 @@ import pytest
 
 _HOOKS_DIR = Path(__file__).resolve().parent.parent / "plugin" / "hooks"
 
-# Every test spawns the real hook/session-start shell scripts as subprocesses.
-pytestmark = pytest.mark.subprocess
-
 # hook script -> the hook_event_name it dispatches on. subagent.sh only calls
 # vox for Subagent* events; the rest ignore the event but a realistic value is
 # passed anyway.
@@ -201,6 +198,7 @@ def isolated_root() -> Iterator[Path]:
         shutil.rmtree(root, ignore_errors=True)
 
 
+@pytest.mark.subprocess
 class TestHookGate:
     @pytest.mark.parametrize("name", sorted(_GATED_HOOKS))
     def test_enabled_repo_reaches_vox(self, name: str, tmp_path: Path) -> None:
@@ -402,6 +400,23 @@ class TestHookGate:
         assert sentinel.exists(), "gate did not resolve the marker from git root"
 
 
+class TestPanelSpawnRecord:
+    def test_waits_for_complete_invocation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sentinel = tmp_path / "sentinel.log"
+        record = "123 --session-pid 456\n"
+        snapshots = iter(("", record.rstrip("\n"), record))
+
+        def finish_next_write(_seconds: float) -> None:
+            sentinel.write_text(next(snapshots), encoding="utf-8")
+
+        monkeypatch.setattr(time, "sleep", finish_next_write)
+
+        assert _wait_for_panel_spawn(sentinel) == record
+
+
+@pytest.mark.subprocess
 class TestPanelSpawn:
     """``session-start.sh``'s vox-panel spawn block: a different shape from the
     simple gated hooks above (it also deploys commands), so
@@ -533,20 +548,6 @@ class TestPanelSpawn:
             check=False,
         )
         return result.returncode
-
-    def test_waits_for_complete_invocation(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        sentinel = tmp_path / "sentinel.log"
-        record = "123 --session-pid 456\n"
-        snapshots = iter(("", record.rstrip("\n"), record))
-
-        def finish_next_write(_seconds: float) -> None:
-            sentinel.write_text(next(snapshots), encoding="utf-8")
-
-        monkeypatch.setattr(time, "sleep", finish_next_write)
-
-        assert _wait_for_panel_spawn(sentinel) == record
 
     def test_spawns_when_enabled_and_vox_panel_present(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -851,6 +852,7 @@ class TestPanelSpawn:
         assert rc == 0, "an unwritable log path aborted the hook"
 
 
+@pytest.mark.subprocess
 class TestManifestRefusal:
     """``session-start.sh`` refuses to guess dev-vs-prod it cannot read.
 
