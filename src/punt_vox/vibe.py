@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from punt_vox.types_errors import ConfigValueError
+
 VALID_VIBE_MODES: frozenset[str] = frozenset({"auto", "manual", "off"})
 
 __all__ = ["VALID_VIBE_MODES", "VibeChange"]
@@ -32,14 +34,14 @@ class VibeChange:
         """Use a standalone mood as one expressive cue, without an agent.
 
         Raises:
-            ValueError: If a manual mood has no cue text.
+            ConfigValueError: If a manual mood has no cue text to persist.
         """
         if mood in ("auto", "off"):
             return cls(mood=None, tags=None, mode=mood)
         cue = " ".join(mood.translate(str.maketrans("[]", "  ")).split())
         if not cue:
             msg = "Mood must contain a spoken delivery cue."
-            raise ValueError(msg)
+            raise ConfigValueError(msg)
         return cls(mood=mood, tags=f"[{cue}]", mode="manual")
 
     def validate(self) -> None:

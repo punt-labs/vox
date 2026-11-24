@@ -44,6 +44,7 @@ from punt_vox.types_cli_options import (
     StyleOpt,
     VoiceOpt,
 )
+from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -302,14 +303,14 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     See also: vox status (current mood), mic:vibe (MCP peer).
     """
     try:
-        change = VibeChange.from_cli(mood)
-    except ValueError as exc:
+        updates = VibeChange.from_cli(mood).resolve()
+        ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(updates)
+    except ConfigValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="mood") from exc
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(change.resolve())
-    if change.mood is None:
-        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
-    else:
+    if updates["vibe_mode"] == "manual":
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+    else:
+        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
 
 
 # ---------------------------------------------------------------------------

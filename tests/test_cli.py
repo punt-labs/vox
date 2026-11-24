@@ -1146,17 +1146,37 @@ class TestVibeCommand:
         assert result.exit_code == 0, result.output
         assert client.return_value.synthesize.call_args.args[1].vibe_tags == tag
 
-    @pytest.mark.parametrize("mood", [" ", "[]"])
-    def test_vibe_rejects_empty_cue(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str
+    @pytest.mark.parametrize(
+        ("mood", "error"),
+        [
+            (" ", "Mood must contain a spoken delivery cue."),
+            ("[]", "Mood must contain a spoken delivery cue."),
+            ('say "hi"', "config values must not contain"),
+            ("say\nhi", "config values must not contain"),
+        ],
+    )
+    def test_vibe_rejects_invalid_cue(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, error: str
     ) -> None:
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
         result = CliRunner().invoke(app, ["vibe", mood])
 
         assert result.exit_code == 2, result.output
-        assert "Mood must contain a spoken delivery cue." in result.output
+        assert error in click.unstyle(result.output)
         assert not (tmp_path / "vox.local.md").exists()
+
+    def test_vibe_surfaces_unreadable_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        local = tmp_path / "vox.local.md"
+        local.write_bytes(b"\xff")
+
+        result = CliRunner().invoke(app, ["vibe", "whispering"])
+
+        assert isinstance(result.exception, UnicodeDecodeError)
+        assert local.read_bytes() == b"\xff"
 
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
