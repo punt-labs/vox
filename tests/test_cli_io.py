@@ -164,6 +164,25 @@ class TestTextInputFromFile:
             assert message in unstyle(result.stderr)
             assert "Traceback" not in result.stderr
 
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("raw", ["[]", '["", {"text": ""}]', '["  ", "\\n"]'])
+    def test_no_text_is_usage_error(
+        self, tmp_path: Path, flags: list[str], command: list[str], raw: str
+    ) -> None:
+        """A file with no text fails like blank stdin instead of exiting 0."""
+        path = tmp_path / "segs.json"
+        path.write_text(raw, encoding="utf-8")
+        result = CliRunner().invoke(app, [*flags, *command, "--from", str(path)])
+        assert result.exit_code == 2
+        message = "Invalid value: --from file has no text to speak."
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert message in unstyle(result.stderr)
+
     def test_string_array(self, tmp_path: Path) -> None:
         path = tmp_path / "segs.json"
         path.write_text(json.dumps(["one", "two"]), encoding="utf-8")
@@ -172,10 +191,9 @@ class TestTextInputFromFile:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ([], []),
-            (["", {"text": ""}], []),
             (["héllo", {"text": "世界"}], ["héllo", "世界"]),
             ([{"text": ""}, "last"], ["last"]),
+            (["  ", {"text": "\n"}, "spoken"], ["spoken"]),
         ],
     )
     def test_segment_values(
