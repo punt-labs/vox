@@ -269,6 +269,7 @@ The tiers below reflect that shape, not a copy of biff's.
 | `subprocess` | Real local shell and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 157 |
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
+| `call_e2e` | A real `voxd` subprocess places a `vox call --script` call against a fake ElevenLabs Conversational AI agent and fake REST on loopback; scripted PCM in, no microphone, no credentials | `make test-call-e2e` | Yes, combined coverage job | 2 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/manual | 40 |
 | `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
 | `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |
