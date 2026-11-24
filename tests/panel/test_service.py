@@ -326,6 +326,17 @@ class TestApplyEvent:
         assert changed is ControlPush.REFRESH
         assert service.scene().notice == PanelNotice.no_voice_selected()
 
+    def test_voice_preview_with_no_provider_points_to_provider_menu(self) -> None:
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config(provider=None)))
+        service.prefetch()
+
+        assert service.apply_event(PanelTopic.VOICE_PREVIEW, {}) is ControlPush.REFRESH
+        assert client.synth_calls == []
+        assert service.scene().notice.message == (
+            "⚠ pick a provider from the Provider menu to preview a voice"
+        )
+
     def test_a_heard_preview_clears_a_stale_voxd_warning(self) -> None:
         """Audio the user just heard is proof the warning about voxd is stale.
 

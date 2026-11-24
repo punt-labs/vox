@@ -59,14 +59,15 @@ class VoicePreview:
 
         Builds the wire spec through :class:`SessionSpec` off a fresh read of
         the config store, so the preview sends the provider state declares
-        rather than letting voxd guess. An unconfigured or misconfigured state
-        answers :meth:`PanelNotice.voxd_rejected`; a voxd that cannot be
-        reached answers :meth:`PanelNotice.voxd_unavailable`. Anything else is
-        a bug and propagates.
+        rather than letting voxd guess. Missing providers get panel guidance;
+        invalid models and connection failures keep their existing warnings.
         """
         try:
             spec = SessionSpec(self._store.read()).fill(SynthesisSpec(voice=voice))
-        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+        except ProviderNotConfiguredError:
+            self._logger.warning("vox-panel: voice preview refused: no provider set")
+            return PanelNotice.no_provider_selected()
+        except ModelNotAvailableError as exc:
             self._logger.warning("vox-panel: voice preview refused: %s", exc)
             return PanelNotice.voxd_rejected(str(exc))
         try:
