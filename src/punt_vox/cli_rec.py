@@ -33,7 +33,18 @@ from punt_vox.client_errors import FetchWriteError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.recording_download import RecordingDownload
-from punt_vox.types_cli_options import LanguageOpt, RateOpt
+from punt_vox.types_cli_options import (
+    FromOpt,
+    LanguageOpt,
+    ModelOpt,
+    ProviderOpt,
+    RateOpt,
+    SimilarityOpt,
+    SpeakerBoostFlag,
+    StabilityOpt,
+    StyleOpt,
+    VoiceOpt,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
@@ -108,34 +119,12 @@ class ClientRecordGateway:
 _TextArg = Annotated[
     str | None, typer.Argument(help="Text to synthesize.", show_default=False)
 ]
-_FromOpt = Annotated[
-    Path | None,
-    typer.Option("--from", help="JSON file with segments array.", exists=True),
-]
-_VoiceOpt = Annotated[str | None, typer.Option("--voice", help="Voice name.")]
 _NameOpt = Annotated[
     str | None,
     typer.Option(
         "--name",
         help="Bare filename. Unnamed same-text takes overwrite. Use distinct names.",
     ),
-]
-_ProviderOpt = Annotated[
-    str | None,
-    typer.Option("--provider", help="TTS provider."),
-]
-_ModelOpt = Annotated[str | None, typer.Option("--model", help="Model name.")]
-_StabilityOpt = Annotated[
-    float | None, typer.Option("--stability", help="ElevenLabs stability (0.0-1.0).")
-]
-_SimilarityOpt = Annotated[
-    float | None, typer.Option("--similarity", help="ElevenLabs similarity (0.0-1.0).")
-]
-_StyleOpt = Annotated[
-    float | None, typer.Option("--style", help="ElevenLabs style (0.0-1.0).")
-]
-_SpeakerBoostFlag = Annotated[
-    bool, typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost.")
 ]
 _RefArg = Annotated[str, typer.Argument(help="Bare store recording id.")]
 _JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
@@ -181,17 +170,17 @@ class RecCli:
     def new(
         self,
         text: _TextArg = None,
-        from_file: _FromOpt = None,
-        voice: _VoiceOpt = None,
+        from_file: FromOpt = None,
+        voice: VoiceOpt = None,
         language: LanguageOpt = None,
         rate: RateOpt = 90,
         name: _NameOpt = None,
-        provider: _ProviderOpt = None,
-        model: _ModelOpt = None,
-        stability: _StabilityOpt = None,
-        similarity: _SimilarityOpt = None,
-        style: _StyleOpt = None,
-        speaker_boost: _SpeakerBoostFlag = False,  # noqa: FBT002 -- typer bool default
+        provider: ProviderOpt = None,
+        model: ModelOpt = None,
+        stability: StabilityOpt = None,
+        similarity: SimilarityOpt = None,
+        style: StyleOpt = None,
+        speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer bool default
         *,
         json_output: _JsonOutput = False,
         verbose: _Verbose = False,
