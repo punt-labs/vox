@@ -7,7 +7,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Self, cast, final
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
 
@@ -56,10 +56,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._seen()
         if not self._authorized():
             return
-        if self.path.startswith(_SIGNED_URL):
+        url = urlsplit(self.path)
+        if url.path != _SIGNED_URL:
+            self._unknown_path()
+            return
+        agent_id = parse_qs(url.query).get("agent_id", [""])[0]
+        if self._fake.issued(f"{_AGENTS}/{agent_id}"):
             self._reply({"signed_url": self._fake.signed_url})
         else:
-            self._unknown_path()
+            self._error("unknown agent_id")
+            self._reply({"detail": "not found"}, status=404)
 
     def do_DELETE(self) -> None:
         self._seen()
@@ -104,10 +110,11 @@ class FakeConvAIRest:
     Each request is recorded as ``(method, path)`` in ``requests`` so a test
     can prove the daemon provisioned before it dialled. Anything the daemon
     should never do -- a key other than the override placeholder, a path the
-    fake does not serve, a DELETE of an id the fake never issued, a request
-    that makes the handler raise -- is recorded in ``errors``, which the
-    fixture asserts is empty. A query string (the real client deletes with
-    ``?force=true``) never changes which id a DELETE names.
+    fake does not serve, a signed-URL request or a DELETE for an id the fake
+    never issued, a request that makes the handler raise -- is recorded in
+    ``errors``, which the fixture asserts is empty. A query string (the real
+    client deletes with ``?force=true``) never changes which id a request
+    names.
     """
 
     __slots__ = (

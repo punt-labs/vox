@@ -71,6 +71,27 @@ def test_a_forced_delete_of_an_issued_id_is_accepted() -> None:
     ]
 
 
+def test_signing_an_agent_the_fake_never_issued_is_an_error() -> None:
+    """The signed-URL route answers only an agent the fake handed out."""
+    with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
+        agent = http.post("/v1/convai/agents/create", json={}).json()["agent_id"]
+        signed = http.get(
+            "/v1/convai/conversation/get-signed-url", params={"agent_id": agent}
+        )
+        assert signed.json() == {"signed_url": "ws://127.0.0.1:1/x"}
+        other = http.get(
+            "/v1/convai/conversation/get-signed-url", params={"agent_id": "agent_9"}
+        )
+        assert other.status_code == 404
+        bare = http.get("/v1/convai/conversation/get-signed-url")
+        assert bare.status_code == 404
+    route = "GET /v1/convai/conversation/get-signed-url"
+    assert rest.errors == [
+        f"{route}?agent_id=agent_9: unknown agent_id",
+        f"{route}: unknown agent_id",
+    ]
+
+
 def test_deleting_an_id_the_fake_never_issued_is_an_error() -> None:
     with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
         assert http.delete("/v1/convai/agents/agent_other").status_code == 404
