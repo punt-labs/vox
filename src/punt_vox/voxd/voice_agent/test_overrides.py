@@ -11,6 +11,9 @@ reads them once per use, so a test sets them in the daemon's environment:
   never receives a real credential.
 - ``VOX_CALL_ALLOW_LOOPBACK=1`` trusts plaintext ``ws://`` loopback origins for
   the conversation socket, as the in-process ``allow_loopback`` flag does.
+  ``0`` and unset are off; any other value fails the call with a
+  :class:`ValueError` naming the variable, so a misspelt switch is never a
+  silent "Untrusted origin".
 - ``VOX_PCM_OUTPUT=silent`` plays the agent's voice through
   :class:`~punt_vox.voxd.pcm_silent.SilentOutputStream` instead of PortAudio,
   so a host with no sound card still plays, cuts and plays out agent audio.
@@ -96,4 +99,12 @@ class TestOverrides:
     @staticmethod
     def allow_loopback() -> bool:
         """Return whether plaintext loopback sockets are trusted by the environment."""
-        return os.environ.get(LOOPBACK_ENV) == "1"
+        value = os.environ.get(LOOPBACK_ENV, "0")
+        if value not in {"0", "1"}:
+            msg = f"{LOOPBACK_ENV} must be 0 or 1, not {value!r}"
+            raise ValueError(msg)
+        if value == "1":
+            logger.warning(
+                "%s=1: plaintext loopback ElevenLabs sockets are trusted", LOOPBACK_ENV
+            )
+        return value == "1"
