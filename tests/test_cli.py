@@ -37,6 +37,7 @@ from punt_vox.service.lifecycle_report import (
 )
 from punt_vox.types_health import HealthStatus
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1377,7 +1378,7 @@ class TestVoiceCommand:
         )
         assert config.read_text() == original
         mock_client_cls.return_value.voices.assert_called_once_with(
-            provider="elevenlabs"
+            VoiceTarget("elevenlabs")
         )
 
     @patch(f"{_CLI}.VoxClientSync")
@@ -1406,8 +1407,8 @@ class TestVoiceCommand:
         config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
         switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
 
-        def switch_provider(*, provider: str) -> list[str]:
-            assert provider == "elevenlabs"
+        def switch_provider(provider: VoiceTarget) -> list[str]:
+            assert provider.provider == "elevenlabs"
             config.write_text(switched)
             return ["roger"]
 
@@ -1498,7 +1499,10 @@ class TestVoiceCommand:
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
-        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        [
+            ([], VoiceTarget("elevenlabs", "eleven_v3")),
+            (["--provider", "polly"], VoiceTarget("polly")),
+        ],
         ids=["repo-default", "explicit-flag"],
     )
     @patch(f"{_CLI}.VoxClientSync")
@@ -1506,7 +1510,7 @@ class TestVoiceCommand:
         self,
         mock_client_cls: MagicMock,
         provider_args: list[str],
-        expected: str,
+        expected: VoiceTarget,
     ) -> None:
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
@@ -1514,7 +1518,7 @@ class TestVoiceCommand:
         result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with(provider=expected)
+        mock_client_cls.return_value.voices.assert_called_once_with(expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(

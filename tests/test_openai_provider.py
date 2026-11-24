@@ -149,8 +149,54 @@ class TestOpenAIProviderResolveVoice:
             provider.resolve_voice("bad")
         assert "alloy" in exc_info.value.available
 
+    @pytest.mark.parametrize("model", [None, "tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
+    def test_voice_catalog_matches_model(self, model: str | None) -> None:
+        provider = OpenAIProvider(model=model)
+        expected = [
+            "alloy",
+            "ash",
+            "coral",
+            "echo",
+            "fable",
+            "nova",
+            "onyx",
+            "sage",
+            "shimmer",
+        ]
+        if model == "gpt-4o-mini-tts":
+            expected.extend(("ballad", "cedar", "marin", "verse"))
+        assert provider.list_voices() == expected
+        for name in expected:
+            assert provider.resolve_voice(name.upper()) == name
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("marni")
+        assert exc_info.value.available == expected
+
+    @pytest.mark.parametrize("model", ["tts-1", "tts-1-hd"])
+    @pytest.mark.parametrize("voice", ["ballad", "cedar", "marin", "verse"])
+    def test_legacy_models_reject_mini_voices(self, model: str, voice: str) -> None:
+        provider = OpenAIProvider(model=model)
+        with pytest.raises(VoiceNotFoundError):
+            provider.resolve_voice(voice)
+
 
 class TestOpenAIProviderSynthesize:
+    @pytest.mark.parametrize("voice", ["ballad", "cedar", "marin", "verse"])
+    def test_synthesize_mini_voice(
+        self, voice: str, mock_openai_client: MagicMock, tmp_output_dir: Path
+    ) -> None:
+        model = "gpt-4o-mini-tts"
+        provider = OpenAIProvider(model=model, client=mock_openai_client)
+        request = SynthesisRequest(text="hello", voice=voice.upper())
+        out = tmp_output_dir / "mini.mp3"
+
+        result = provider.synthesize(request, out)
+
+        kwargs = mock_openai_client.audio.speech.create.call_args.kwargs
+        assert (kwargs["model"], kwargs["voice"]) == (model, voice)
+        assert result.voice == voice
+        assert out.stat().st_size > 0
+
     def test_synthesize_creates_file(
         self,
         openai_provider: OpenAIProvider,

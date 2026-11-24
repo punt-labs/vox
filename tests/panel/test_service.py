@@ -23,8 +23,10 @@ from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from punt_lux import LuxClient, RenderRequest, SceneShown
@@ -55,11 +57,11 @@ class _FakeDaemonClient:
         self.roster_reads = 0
         self.roster_reads_by_provider: list[str | None] = []
 
-    def voices(self, provider: str | None = None) -> list[str]:
+    def voices(self, provider: VoiceTarget) -> list[str]:
         self.roster_reads += 1
-        self.roster_reads_by_provider.append(provider)
-        if provider is not None and provider in self._voices_by_provider:
-            return self._voices_by_provider[provider]
+        self.roster_reads_by_provider.append(provider.provider)
+        if provider.provider in self._voices_by_provider:
+            return self._voices_by_provider[provider.provider]
         return self._voices
 
     def synthesize(
@@ -83,10 +85,20 @@ class _FakeStore:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(self, key: str, value: str) -> None:
-        self.written[key] = value
-
-    def write_fields(self, updates: dict[str, str]) -> None:
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        if check is not None:
+            check(
+                {
+                    "provider": self._cfg.provider or "",
+                    "model": self._cfg.model or "",
+                }
+                | self.written
+            )
         self.written.update(updates)
 
 
@@ -239,7 +251,7 @@ class TestPrefetch:
 
     def test_daemon_unavailable_keeps_the_empty_default(self) -> None:
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -252,7 +264,7 @@ class TestPrefetch:
 
     def test_daemon_unavailable_sets_the_notice(self) -> None:
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -267,7 +279,7 @@ class TestPrefetch:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
         class _MisbehavingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "unexpected reply"
                 raise VoxdProtocolError(msg)
 
@@ -313,6 +325,21 @@ class TestApplyEvent:
         service.apply_event(PanelTopic.VOICE, {"value": 1})
         assert store.written["voice"] == "aria"
         assert service.scene().voice == "aria"
+
+    def test_voice_pick_rejects_a_model_changed_on_disk(self, tmp_path: Path) -> None:
+        """RejectStaleVoice leaves the saved target and voice unchanged."""
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
+        )
+        service = VoxPanelService(_FakeDaemonClient(["alloy", "marin"]), store)
+        service.prefetch()
+        store.write_fields({"model": "tts-1", "voice": "alloy"})
+
+        with pytest.raises(ConfigValueError, match="active model changed"):
+            service.apply_event(PanelTopic.VOICE, {"value": 2})
+
+        assert store.read().voice == "alloy"
 
     def test_voice_preview_does_not_write_and_reports_no_repush(self) -> None:
         client = _FakeDaemonClient()
@@ -553,7 +580,7 @@ class TestApplyEvent:
         class _RejectingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     raise VoxdRejectionError(detail)
@@ -574,29 +601,66 @@ class TestApplyEvent:
         assert notice == PanelNotice.voxd_rejected(detail)
         assert detail in notice.message
 
-    def test_prefetch_wire_rejection_surfaces_notice_not_empty_state(self) -> None:
-        """A wire rejection during the roster read now sets the rejection notice.
-
-        Regression: a ``VoxdRejectionError`` propagating out of the resync
-        left the panel at ``PanelState.empty()`` (``roster=()``), rendering
-        ``Voice: (empty)`` with no explanation. The rejection is caught at
-        the service boundary now and surfaced via ``PanelNotice.voxd_rejected``.
-        """
-        detail = "Unknown provider ''. Available: elevenlabs, say"
+    def test_prefetch_rejected_model_keeps_model_picker_available(self) -> None:
+        detail = "Model 'tts-2' is not available for provider 'openai'"
 
         class _RejectingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
-                raise VoxdRejectionError(detail)
+            def voices(self, provider: VoiceTarget) -> list[str]:
+                if provider.model == "tts-2":
+                    raise VoxdRejectionError(detail)
+                assert provider == VoiceTarget("openai", "gpt-4o-mini-tts")
+                return ["alloy", "marin"]
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
                 raise NotImplementedError
 
-        service = VoxPanelService(_RejectingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        store = _FakeStore(_config(provider="openai", model="tts-2", voice="nova"))
+        service = VoxPanelService(_RejectingClient(), store)  # type: ignore[arg-type]
         service.refresh()
-        notice = service.scene().notice
-        assert notice == PanelNotice.voxd_rejected(detail)
-        assert detail in notice.message
-        assert service.scene().voice == PanelState.empty().voice
+        scene = service.scene()
+        assert scene.notice == PanelNotice.voxd_rejected(detail)
+        assert scene.provider == "openai"
+        assert scene.roster == ()
+        model_combo = next(
+            element
+            for element in scene.render_request().elements
+            if element["id"] == scene.roster_combo_id(PanelTopic.MODEL)
+        )
+        items = model_combo["items"]
+        assert isinstance(items, list)
+        service.apply_event(PanelTopic.MODEL, {"value": items.index("gpt-4o-mini-tts")})
+        assert store.written == {"model": "gpt-4o-mini-tts", "voice": "alloy"}
+
+    @pytest.mark.parametrize("rejected", [False, True])
+    def test_refresh_does_not_overwrite_concurrent_model_pick(
+        self, rejected: bool
+    ) -> None:
+        """RejectStaleRefresh preserves the newer model and its roster."""
+
+        class _RacingClient:
+            race = False
+
+            def voices(self, target: VoiceTarget) -> list[str]:
+                if target.model == "gpt-4o-mini-tts":
+                    return ["alloy", "marin"]
+                assert target == VoiceTarget("openai", "tts-1")
+                if self.race:
+                    service.apply_event(PanelTopic.MODEL, {"value": 3})
+                    if rejected:
+                        raise VoxdRejectionError("old roster refused")
+                return ["alloy"]
+
+        client = _RacingClient()
+        store = _FakeStore(_config(provider="openai", model="tts-1", voice="alloy"))
+        service = VoxPanelService(client, store)  # type: ignore[arg-type]
+        service.prefetch()
+        client.race = True
+
+        service.refresh()
+
+        assert store.written["model"] == "gpt-4o-mini-tts"
+        assert service.scene().model == "gpt-4o-mini-tts"
+        assert service.scene().roster == ("alloy", "marin")
 
     def test_provider_roster_fetch_error_aborts_the_write(self) -> None:
         """VoxdConnectionError on the roster fetch surfaces a notice, no disk write.
@@ -609,7 +673,7 @@ class TestApplyEvent:
         class _RosterFailingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     msg = "voxd unreachable"
@@ -639,6 +703,7 @@ class TestApplyEvent:
         assert service.scene().voice == "benno"
 
     def test_model_writes_the_name_and_updates_state(self) -> None:
+        """PanelSwitchTarget installs the model from the shown target."""
         service = VoxPanelService(
             _FakeDaemonClient(),
             (store := _FakeStore(_config(provider="openai", model="tts-1"))),
@@ -647,6 +712,46 @@ class TestApplyEvent:
         service.apply_event(PanelTopic.MODEL, {"value": 2})  # tts-1-hd
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
+
+    @pytest.mark.parametrize(
+        ("saved_provider", "saved_model", "saved_voice", "changed"),
+        [
+            ("polly", None, "Joanna", "provider"),
+            ("openai", "tts-1-hd", "nova", "model"),
+        ],
+    )
+    def test_model_pick_rejects_a_target_changed_on_disk(
+        self,
+        tmp_path: Path,
+        saved_provider: str,
+        saved_model: str | None,
+        saved_voice: str,
+        changed: str,
+    ) -> None:
+        """PanelSwitchTarget cannot write when the expected target is stale."""
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
+        )
+        service = VoxPanelService(_FakeDaemonClient(["alloy"]), store)
+        service.prefetch()
+        store.write_fields(
+            {
+                "provider": saved_provider,
+                "model": saved_model or "",
+                "voice": saved_voice,
+            }
+        )
+
+        with pytest.raises(ConfigValueError, match=f"active {changed} changed"):
+            service.apply_event(PanelTopic.MODEL, {"value": 1})
+
+        after = store.read()
+        assert (after.provider, after.model, after.voice) == (
+            saved_provider,
+            saved_model,
+            saved_voice,
+        )
 
     def test_model_click_indexes_past_the_sentinel(self) -> None:
         """The combo always leads with ``(none)``, so 1 is the first model.
@@ -676,7 +781,7 @@ class TestApplyEvent:
         class _RosterFailingClient:
             call_count = 0
 
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 self.call_count += 1
                 if self.call_count > 1:  # first call is the prefetch
                     msg = "voxd unreachable"
@@ -702,7 +807,7 @@ class TestApplyEvent:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
         class _MisbehavingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 return ["roger"]
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
@@ -721,11 +826,12 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
-                msg = "disk full"
-                raise OSError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
+            def write_fields(
+                self,
+                updates: dict[str, str],
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -745,11 +851,12 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
-                msg = "config values must not contain double-quotes"
-                raise ConfigValueError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
+            def write_fields(
+                self,
+                updates: dict[str, str],
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "config values must not contain double-quotes"
                 raise ConfigValueError(msg)
 
@@ -809,6 +916,29 @@ class TestPushScene:
         assert len(rest.rendered) == 1  # installed on the fresh connection
         assert rest.patched == []
 
+    @pytest.mark.parametrize("unreachable", [False, True], ids=["refused", "down"])
+    async def test_background_refresh_waits_for_an_explicit_install_after_push_failure(
+        self, tmp_path: Path, unreachable: bool
+    ) -> None:
+        """PollInactive skips a disarmed scene until a foreground install."""
+        store = ConfigStore(tmp_path)
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        rest = cast("LuxClient", _FakeRest())
+        await service.install_scene(rest)
+
+        service.apply_event(PanelTopic.NOTIFY, {"value": 1})
+        if unreachable:
+            with pytest.raises(HubUnavailableError):
+                await service.push_scene(cast("LuxClient", _DownRest()))
+        else:
+            await service.push_scene(cast("LuxClient", _FakeRest(refuse=True)))
+
+        store.write_field("notify", "n")
+        assert not await service.reconcile()
+        assert not await service.reconcile()
+        await service.install_scene(rest)
+        assert await service.reconcile()
+
 
 class TestRefreshDoesNotReinstall:
     async def test_a_second_push_of_a_changed_scene_patches(self) -> None:
@@ -834,10 +964,9 @@ class TestRefreshDoesNotReinstall:
         assert len(rest.rendered) == 1
         assert rest.patched == []
 
-    async def test_a_provider_change_patches_the_model_combo_in_one_batch(self) -> None:
-        # The model list changes with the provider, so items and selected move
-        # together. combo validates selected against items after the whole batch,
-        # so one batch is both correct and order-insensitive.
+    async def test_a_provider_change_reinstalls_the_model_combo_with_its_selection(
+        self,
+    ) -> None:
         store = _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
         service = VoxPanelService(_FakeDaemonClient(), store)
         service.refresh()
@@ -847,10 +976,19 @@ class TestRefreshDoesNotReinstall:
         service.apply_event(PanelTopic.PROVIDER, {"value": _openai_index()})
         await service.push_scene(cast("LuxClient", rest))
 
-        model = next(
-            entry for entry in rest.patched[0] if entry["id"] == "vox.panel.model"
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        before, after = (
+            next(
+                element
+                for element in request.elements
+                if element.get("label") == "Model"
+            )
+            for request in rest.rendered
         )
-        assert set(cast("dict[str, object]", model["set"])) == {"items", "selected"}
+        assert before["id"] != after["id"]
+        assert after["items"] == ["(none)", "tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
+        assert after["selected"] == 1
 
 
 class TestInstallScene:
@@ -886,11 +1024,12 @@ class TestCorrectScene:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(self, key: str, value: str) -> None:
-                msg = "disk full"
-                raise OSError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
+            def write_fields(
+                self,
+                updates: dict[str, str],
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -969,7 +1108,7 @@ class TestRefreshAndRecover:
         two unrelated subsystems failed, and the message must say both."""
 
         class _BrokenClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 msg = "voxd unreachable"
                 raise VoxdConnectionError(msg)
 
@@ -992,7 +1131,7 @@ class TestRefreshAndRecover:
         detail = "Unknown provider 'openai'"
 
         class _RejectingClient:
-            def voices(self, provider: str | None = None) -> list[str]:
+            def voices(self, provider: VoiceTarget) -> list[str]:
                 raise VoxdRejectionError(detail)
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
@@ -1040,14 +1179,17 @@ class TestConcurrentApplyEvent:
             def read(self) -> VoxConfig:
                 return store.read()
 
-            def write_field(self, key: str, value: str) -> None:
-                store.write_field(key, value)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
-                batches.append(updates.copy())
-                first_entered.set()
-                release_first.wait(timeout=2)
-                store.write_fields(updates)
+            def write_fields(
+                self,
+                updates: dict[str, str],
+                *,
+                check: Callable[[dict[str, str]], None] | None = None,
+            ) -> None:
+                if "notify" in updates:
+                    batches.append(updates.copy())
+                    first_entered.set()
+                    release_first.wait(timeout=2)
+                store.write_fields(updates, check=check)
 
         service = VoxPanelService(_FakeDaemonClient(), _BlockingStore())
         service.prefetch()

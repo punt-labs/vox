@@ -16,6 +16,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands import Ctx, voice
 from punt_vox.config import ConfigStore
 from punt_vox.sibling_lock import SiblingLock
+from punt_vox.voice_target import VoiceTarget
 
 
 def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
@@ -56,12 +57,24 @@ class TestList:
         assert result.json_data is not None
         assert result.json_data["current"] == "roger"
 
+    async def test_lists_voices_for_the_configured_model(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path, voices=["marin"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        result = await voice(ctx, provider="OpenAI")
+        assert not result.error
+        assert "marin" in result.text
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("OpenAI", "gpt-4o-mini-tts")
+        )
+
     async def test_passes_provider_through(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path, voices=["joanna"])
         result = await voice(ctx, None, provider="polly")
         assert result.error is False
         # The stub client received the caller-supplied provider unchanged.
-        ctx.client.voices.assert_called_once_with(provider="polly")  # type: ignore[attr-defined]
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("polly")
+        )
         assert result.json_data is not None
         assert result.json_data.get("provider") == "polly"
 
@@ -108,6 +121,16 @@ class TestList:
 class TestSet:
     """A name given -- normalize and write to config."""
 
+    async def test_selects_voice_for_the_configured_model(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path, voices=["cedar"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        result = await voice(ctx, "cedar")
+        assert not result.error
+        assert ctx.store.read().voice == "cedar"
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("openai", "gpt-4o-mini-tts")
+        )
+
     async def test_rejects_inactive_provider_without_writing(
         self, tmp_path: Path
     ) -> None:
@@ -145,6 +168,27 @@ class TestSet:
 
         assert result.exit_code == 1
         assert "the active provider is 'openai'" in result.text
+        assert config_path.read_bytes() == switched
+
+    async def test_rejects_model_switched_before_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path, voices=["marin"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        config_path = tmp_path / "vox.md"
+        switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
+        acquire = SiblingLock._acquire
+
+        def after_model_switch(lock: SiblingLock, descriptor: int) -> None:
+            config_path.write_bytes(switched)
+            acquire(lock, descriptor)
+
+        monkeypatch.setattr(SiblingLock, "_acquire", after_model_switch)
+
+        result = await voice(ctx, "marin")
+
+        assert result.error
+        assert "The active model changed" in result.text
         assert config_path.read_bytes() == switched
 
     async def test_checked_write_preserves_uneditable_config(
