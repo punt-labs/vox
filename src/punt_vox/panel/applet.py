@@ -19,12 +19,12 @@ from punt_lux.applets.claim import NoClaim, SessionClaim
 from punt_lux.applets.watch import NoSession, SessionWatch
 
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import DEFAULT_CONFIG_DIR, ConfigStore, find_config_dir
 from punt_vox.logging_config import configure_client_logging
 from punt_vox.panel.leg import VoxPanelLeg
 from punt_vox.panel.program import VoxPanelProgram
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.topics import PanelTopic
+from punt_vox.repo_config import RepoConfig
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class VoxPanelApplet:
         Hub connection over.
         """
         identity = AppletIdentity.for_session(_PROGRAM, session_pid)
-        store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR, durable_only=True)
+        store = RepoConfig(durable_only=True)
         service = VoxPanelService(VoxClientSync(), store)
         return VoxPanelLeg(identity.client, service, topics=_TOPICS)
 

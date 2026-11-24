@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from punt_vox.client_sync import VoxClientSync
-    from punt_vox.config import ConfigStore
+    from punt_vox.repo_config import CommandStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +60,7 @@ class Ctx:
             (e.g. ``voice`` needs the provider's voice roster).
     """
 
-    store: ConfigStore
+    store: CommandStore
     client: VoxClientSync
 
 
