@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.voxd.workers.codec import WorkerRecordCodec
 from punt_vox.voxd.workers.hooks import WorkerHooks
 from punt_vox.voxd.workers.steering import WorkerSteering
+from punt_vox.voxd.workers.types import WorkerDeadlines
 
 if TYPE_CHECKING:
     from punt_vox.voxd.hook_context_store import HookContextStore
@@ -50,12 +51,29 @@ class WorkerActor:
         provider: str = "tmux",
         harness: str = "claude",
     ) -> WorkerPayload:
-        """Start one persistent worker in an allowlisted project."""
-        async with self._lock:
+        """Start one persistent worker in an allowlisted project.
+
+        The lock is held for a whole start, so a start queued behind another
+        waits at most ``WorkerDeadlines.LOCK_WAIT`` and is then refused with
+        the reason; the client's budget covers one start, not two in a row.
+        """
+        await self._acquire_for_start()
+        try:
             record = await asyncio.to_thread(
                 self._registry.start, task, project, provider=provider, harness=harness
             )
+        finally:
+            self._lock.release()
         return WorkerRecordCodec.public(record)
+
+    async def _acquire_for_start(self) -> None:
+        """Take the actor lock within the start bound or refuse with the reason."""
+        try:
+            await asyncio.wait_for(self._lock.acquire(), WorkerDeadlines.LOCK_WAIT)
+        except TimeoutError:
+            raise ValueError(
+                "another worker is still starting; try again once it is ready"
+            ) from None
 
     async def stop(self, worker_id: str) -> WorkerPayload:
         """Stop one worker; its worktree and branch are retained.

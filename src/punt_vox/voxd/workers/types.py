@@ -21,8 +21,12 @@ class WorkerDeadlines:
     __slots__ = ()
     # `git worktree add` on a loaded machine has taken over 20 s.
     CREATE: Final = 90
-    # Resolution, lock wait, the saved record and a provider stop on rollback.
-    START_MARGIN: Final = 30
+    # A start waits this long for another start to release the actor, then
+    # is refused with the reason; the actor holds its lock for a whole start.
+    LOCK_WAIT: Final = 15
+    # The lock wait plus this start's own work once it holds the lock:
+    # resolution, the saved record and a provider stop on rollback.
+    START_MARGIN: Final = LOCK_WAIT + 15
     START: Final = CREATE + START_MARGIN
     CONTROL: Final = 30
 

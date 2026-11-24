@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import signal
 import subprocess
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -12,12 +14,16 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
+from test_workers import FakeWorkerProvider, _registry
 
 from punt_vox.config import ConfigStore
 from punt_vox.daemon_control import DaemonControl
+from punt_vox.voxd.workers.actor import WorkerActor
+from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
+from punt_vox.voxd.workers.types import WorkerDeadlines
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 from punt_vox.worker_client import WorkerClient
 
@@ -450,3 +456,39 @@ async def test_client_start_budget_outlives_the_daemon_create_deadline() -> None
     start, stop = (c.kwargs["timeout"] for c in rpc.call_args_list)
     assert start == WorkerWorktrees.CREATE_DEADLINE + 30
     assert stop < WorkerWorktrees.CREATE_DEADLINE
+
+
+@pytest.mark.asyncio
+async def test_start_queued_behind_a_slow_start_is_refused_with_the_reason(
+    tmp_path: Path,
+) -> None:
+    """A second start waits LOCK_WAIT for the actor, then hears why it failed.
+
+    The actor lock is held for a whole start. Without a bound the second
+    start waits out the first's 90 s create deadline and then spends its own,
+    so the client times out before any reason arrives.
+    """
+    started, release = threading.Event(), threading.Event()
+
+    class SlowProvider(FakeWorkerProvider):
+        def start(self, launch: WorkerLaunch, profile: HarnessProfile) -> None:
+            started.set()
+            assert release.wait(5)
+            super().start(launch, profile)
+
+    actor = WorkerActor(_registry(tmp_path, SlowProvider()))
+    first = asyncio.create_task(
+        actor.start("one", str(tmp_path), provider="fake", harness="test")
+    )
+    try:
+        await asyncio.to_thread(started.wait, 1)
+        with (
+            patch.object(WorkerDeadlines, "LOCK_WAIT", 0.05),
+            pytest.raises(ValueError, match="another worker is still starting"),
+        ):
+            async with asyncio.timeout(1):
+                await actor.start("two", str(tmp_path), provider="fake", harness="test")
+        assert not first.done()
+    finally:
+        release.set()
+    assert (await first)["state"] == "starting"
