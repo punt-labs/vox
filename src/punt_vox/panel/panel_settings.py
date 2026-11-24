@@ -84,14 +84,11 @@ class PanelSettings:
 
     def _fetch_roster_or_notice(
         self, provider: str, context: str
-    ) -> tuple[str, ...] | None:
-        """Fetch *provider*'s voice roster; on daemon fault, set the notice.
+    ) -> tuple[str, ...] | RosterError:
+        """Fetch *provider*'s voice roster or return the reported daemon fault.
 
-        Returns the roster tuple on success. On :class:`RosterError`
-        (voxd unreachable or malformed), sets ``PanelNotice.voxd_unavailable()``
-        under the lock and returns ``None`` -- the caller aborts its
-        commit. Extracted so ``commit_provider`` and ``commit_model``
-        share one fetch-and-guard body.
+        Failures set a notice under the lock, preserving the daemon's reason
+        when it rejected the request. The caller aborts its commit.
         """
         result = Cascade.fetch_roster(self._client, provider)
         if isinstance(result, RosterError):
@@ -113,7 +110,7 @@ class PanelSettings:
                     self._notice = PanelNotice.voxd_rejected(result.message)
                 else:
                     self._notice = PanelNotice.voxd_unavailable()
-            return None
+            return result
         return tuple(result)
 
     def commit_provider(self, provider: str) -> ControlPush:
@@ -149,7 +146,7 @@ class PanelSettings:
             if provider == pre_fetch_provider:
                 return self._cleared_notice()
         roster = self._fetch_roster_or_notice(provider, "provider-switch")
-        if roster is None:
+        if isinstance(roster, RosterError):
             return ControlPush.CORRECT
         model_default = Cascade.default_model(provider)
         voice_default = Cascade.first_or_empty(roster)
@@ -222,7 +219,7 @@ class PanelSettings:
             logger.info("vox-panel: model click ignored; no provider selected yet")
             return ControlPush.CORRECT
         roster = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
-        if roster is None:
+        if isinstance(roster, RosterError):
             return ControlPush.CORRECT
         voice_default = Cascade.first_or_empty(roster)
         with self._lock:
