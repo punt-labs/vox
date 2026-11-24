@@ -205,10 +205,13 @@ class RecTool:
         # Reject a bad rate or voice setting before any round-trip as a clean
         # {"error"} envelope (the sibling verbs' contract), not a bare exception.
         spec = SynthesisSpec(
+            voice=args.voice,
+            language=args.language,
             rate=args.rate,
             stability=args.stability,
             similarity=args.similarity,
             style=args.style,
+            speaker_boost=args.speaker_boost,
         )
         try:
             spec.validate()
@@ -245,17 +248,7 @@ class RecTool:
         # than a daemon guess. The per-call override carries the CLI-shaped
         # per-request fields; state fills provider / voice / model / vibe_tags.
         try:
-            defaults = SessionSpec(session).fill(
-                SynthesisSpec(
-                    voice=args.voice,
-                    language=args.language,
-                    rate=args.rate,
-                    stability=args.stability,
-                    similarity=args.similarity,
-                    style=args.style,
-                    speaker_boost=args.speaker_boost,
-                )
-            )
+            defaults = SessionSpec(session).fill(spec)
         except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
             return _error(str(exc))
         return SegmentBatch(segments, defaults).render(

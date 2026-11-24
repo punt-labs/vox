@@ -464,10 +464,18 @@ def unmute(
     """
     _session.refresh_from_config()
 
-    # Validate rate and voice settings via SynthesisSpec (single validation path).
-    SynthesisSpec(
-        rate=rate, stability=stability, similarity=similarity, style=style
-    ).validate()
+    # One per-call spec: validated before any side effect, filled from state below.
+    spec = SynthesisSpec(
+        voice=voice,
+        language=language,
+        rate=rate,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        vibe_tags=vibe_tags,
+    )
+    spec.validate()
 
     # ephemeral is accepted for callers but voxd cleans up internally today.
     _ = ephemeral
@@ -490,18 +498,7 @@ def unmute(
     # protocol-level ToolError instead of the ``{"error": ...}`` shape
     # every sibling surface returns.
     try:
-        defaults = _session.fill_defaults(
-            SynthesisSpec(
-                voice=voice,
-                language=language,
-                rate=rate,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost,
-                vibe_tags=vibe_tags,
-            )
-        )
+        defaults = _session.fill_defaults(spec)
     except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
         return _error(str(exc))
 
