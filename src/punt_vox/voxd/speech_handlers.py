@@ -153,7 +153,7 @@ class _SpeechRequest:
     async def reply_duplicate(self, hit: DedupHit) -> None:
         """Validate and acknowledge a duplicate without a synthesis advisory."""
         try:
-            SynthesisPipeline.normalized_text(self.text, self.spec)
+            SynthesisPipeline.prepare_audio_request(self.text, self.spec)
         except EmptyNormalizedTextError as exc:
             await self.fail(exc)
             return
