@@ -291,6 +291,8 @@ class TestSynthesizeParseGuard:
         )
         cache_lookup.assert_not_called()
         provider_factory.assert_not_called()
+        if dedup_hit:
+            assert dedup.check_and_record(text, 60) is not None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
