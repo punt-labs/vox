@@ -795,7 +795,7 @@ app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 # call subcommand group (Conversation Mode; implementation in commands/call.py)
 # ---------------------------------------------------------------------------
 
-app.add_typer(CallCli.build_app(), name="call")
+app.add_typer(CallCli.build_app(_formatter, _flags), name="call")
 
 
 # ---------------------------------------------------------------------------
