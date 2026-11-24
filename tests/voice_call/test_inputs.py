@@ -140,7 +140,7 @@ async def test_mic_logs_the_capture_level_of_the_first_second(
 ) -> None:
     loud = b"\x00\x40" * 320  # every sample 16384
     mic = _mic([loud] * 50 + [_FRAME] * 10)
-    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.capture_probe"):
+    with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.capture_level"):
         async for _ in mic.chunks():
             pass
     levels = [r for r in caplog.records if "capture level" in r.message]

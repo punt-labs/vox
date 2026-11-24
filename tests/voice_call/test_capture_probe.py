@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import pytest
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.voice_call.capture_probe import CaptureProbe
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 _LOGGER = "punt_vox.voxd.voice_call.capture_probe"
+_LEVEL_LOGGER = "punt_vox.voxd.voice_call.capture_level"
 _FRAME_S = 0.02
 _SILENCE = bytes(640)  # 20 ms of 16 kHz mono S16LE zeros
 _VOICE = b"\x10\x00" * 320  # 20 ms at sample value 16
@@ -79,7 +85,7 @@ def test_the_first_second_level_is_logged_once_with_peak_and_rms(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     loud = b"\x00\x40" * 320  # every sample 16384
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_LEVEL_LOGGER):
         _feed(CaptureProbe(), [loud] * 50 + [_SILENCE] * 10)
     assert _levels(caplog) == [
         "Call capture level over the first second: peak 16384, rms 16384"
@@ -90,7 +96,7 @@ def test_the_level_line_mixes_the_whole_first_second(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     half_loud = [b"\x00\x40" * 320] * 25 + [_SILENCE] * 25
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_LEVEL_LOGGER):
         _feed(CaptureProbe(), half_loud)
     # rms over 8000 samples at 16384 and 8000 at 0: isqrt(16384**2 / 2)
     assert _levels(caplog) == [
@@ -102,7 +108,7 @@ def test_the_level_line_uses_the_absolute_peak_of_negative_samples(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     negative = b"\x00\xc0" * 320  # every sample -16384
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_LEVEL_LOGGER):
         _feed(CaptureProbe(), [negative] * 50)
     assert _levels(caplog) == [
         "Call capture level over the first second: peak 16384, rms 16384"
@@ -112,7 +118,7 @@ def test_the_level_line_uses_the_absolute_peak_of_negative_samples(
 def test_no_level_line_before_a_full_second_of_audio(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_LEVEL_LOGGER):
         _feed(CaptureProbe(), [_VOICE] * 49)
     assert _levels(caplog) == []
 
@@ -120,7 +126,7 @@ def test_no_level_line_before_a_full_second_of_audio(
 def test_an_odd_trailing_byte_is_dropped_not_counted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_LEVEL_LOGGER):
         CaptureProbe().observe(b"\x00\x40\xff", 1.0)
     assert _levels(caplog) == [
         "Call capture level over the first second: peak 16384, rms 16384"
@@ -142,3 +148,19 @@ async def test_watch_forwards_pcm_and_fails_a_silent_stream() -> None:
         async for _ in CaptureProbe().watch(AudioChunk.as_async_iter(silent)):
             seen += 1
     assert seen == 2
+
+
+async def test_a_stream_that_never_delivers_fails_within_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("punt_vox.voxd.voice_call.capture_probe._SILENCE_LIMIT_S", 0.05)
+
+    async def never() -> AsyncIterator[AudioChunk]:
+        await asyncio.sleep(3600)
+        yield AudioChunk(pcm=_VOICE, duration_s=_FRAME_S)
+
+    with pytest.raises(ValueError, match="no audio for") as failure:
+        async with asyncio.timeout(2):
+            async for _ in CaptureProbe().watch(never()):
+                pass
+    assert "System Settings > Privacy & Security > Microphone" in str(failure.value)
