@@ -106,10 +106,10 @@
   "src/punt_vox/_speech_punctuation.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.17,
+    "avg_params": 1.14,
     "max_complexity": 5.0,
-    "avg_complexity": 2.17,
-    "module_size": 45.0,
+    "avg_complexity": 2.14,
+    "module_size": 55.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
