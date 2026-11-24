@@ -313,6 +313,7 @@ class TestApplyEvent:
         assert service.scene().voice == "aria"
 
     def test_voice_pick_rejects_a_model_changed_on_disk(self, tmp_path: Path) -> None:
+        """RejectStaleVoice leaves the saved target and voice unchanged."""
         store = ConfigStore(tmp_path)
         store.write_fields(
             {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
@@ -620,6 +621,8 @@ class TestApplyEvent:
     def test_refresh_does_not_overwrite_concurrent_model_pick(
         self, rejected: bool
     ) -> None:
+        """RejectStaleRefresh preserves the newer model and its roster."""
+
         class _RacingClient:
             race = False
 
@@ -686,6 +689,7 @@ class TestApplyEvent:
         assert service.scene().voice == "benno"
 
     def test_model_writes_the_name_and_updates_state(self) -> None:
+        """PanelSwitchTarget installs the model from the shown target."""
         service = VoxPanelService(
             _FakeDaemonClient(),
             (store := _FakeStore(_config(provider="openai", model="tts-1"))),
@@ -695,22 +699,44 @@ class TestApplyEvent:
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
 
-    def test_model_pick_rejects_provider_changed_on_disk(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("saved_provider", "saved_model", "saved_voice", "changed"),
+        [
+            ("polly", None, "Joanna", "provider"),
+            ("openai", "tts-1-hd", "nova", "model"),
+        ],
+    )
+    def test_model_pick_rejects_a_target_changed_on_disk(
+        self,
+        tmp_path: Path,
+        saved_provider: str,
+        saved_model: str | None,
+        saved_voice: str,
+        changed: str,
+    ) -> None:
+        """PanelSwitchTarget cannot write when the expected target is stale."""
         store = ConfigStore(tmp_path)
         store.write_fields(
             {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
         )
         service = VoxPanelService(_FakeDaemonClient(["alloy"]), store)
         service.prefetch()
-        store.write_fields({"provider": "polly", "model": "", "voice": "Joanna"})
+        store.write_fields(
+            {
+                "provider": saved_provider,
+                "model": saved_model or "",
+                "voice": saved_voice,
+            }
+        )
 
-        with pytest.raises(ConfigValueError, match="active provider changed"):
+        with pytest.raises(ConfigValueError, match=f"active {changed} changed"):
             service.apply_event(PanelTopic.MODEL, {"value": 1})
 
-        assert (store.read().provider, store.read().model, store.read().voice) == (
-            "polly",
-            None,
-            "Joanna",
+        after = store.read()
+        assert (after.provider, after.model, after.voice) == (
+            saved_provider,
+            saved_model,
+            saved_voice,
         )
 
     def test_model_click_indexes_past_the_sentinel(self) -> None:
