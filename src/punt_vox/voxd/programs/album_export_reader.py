@@ -24,9 +24,12 @@ class AlbumExportReader:
 
     __slots__ = ()
 
-    @staticmethod
+    @classmethod
     async def read(
-        album: Album, root: ContainmentRoot, require_album: Callable[[AlbumId], Album]
+        cls,
+        album: Album,
+        root: ContainmentRoot,
+        require_album: Callable[[AlbumId], Album],
     ) -> AlbumContents:
         """Read off-loop, then reject an album removed while the worker ran.
 
@@ -35,7 +38,14 @@ class AlbumExportReader:
         try:
             contents = await asyncio.to_thread(AlbumContents.from_album, album, root)
         except AlbumNotFoundError:
-            require_album(album.id)
+            cls._require_current(album, require_album)
             raise
-        require_album(album.id)
+        cls._require_current(album, require_album)
         return contents
+
+    @staticmethod
+    def _require_current(
+        album: Album, require_album: Callable[[AlbumId], Album]
+    ) -> None:
+        if require_album(album.id) is not album:
+            raise ValueError(f"no album named {album.id.value!r}")
