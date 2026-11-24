@@ -50,6 +50,7 @@ class CurrencyGrammar:
             rf"(?:[-\u2013]{_RANGE_END_AMOUNT}(?P<end_word>{word})?"
             rf"|{CurrencyPatterns.BARE_RANGE}(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
             rf"(?P<rates>(?:/{word})*)"
+            rf"(?(bare_end)(?![\W_]*[{_SYMBOLS}]))"
         )
 
     @classmethod
