@@ -18,7 +18,7 @@ def test_voice_selection_matches_advertised_names_case_insensitively() -> None:
     assert VoiceRoster.selection_error(client, "elevenlabs", "Matilda") is None
     assert (
         VoiceRoster.selection_error(client, "elevenlabs", "nobody")
-        == "nobody (available: matilda)"
+        == "Unknown voice 'nobody'. Available: ['matilda']"
     )
 
 

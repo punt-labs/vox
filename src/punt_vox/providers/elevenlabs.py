@@ -10,13 +10,12 @@ from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
-from punt_vox.providers.voice_resolver import VoiceResolver
+from punt_vox.providers.elevenlabs_voices import DESCRIPTION_SEPARATOR, ElevenLabsVoices
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
-    SynthesisSpec,
     TTSProvider,
 )
 
@@ -68,7 +67,7 @@ class ElevenLabsProvider(TTSProvider):
 
     _model: str
     _client: ElevenLabsClient
-    _voices: VoiceResolver[str]
+    _voices: ElevenLabsVoices
 
     def __new__(
         cls,
@@ -81,7 +80,7 @@ class ElevenLabsProvider(TTSProvider):
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = ElevenLabsClient(sdk=client)
-        self._voices = VoiceResolver(
+        self._voices = ElevenLabsVoices(
             self._fetch_voices,
             default_key="matilda",
             ttl_seconds=_VOICE_CACHE_TTL_S,
@@ -171,7 +170,7 @@ class ElevenLabsProvider(TTSProvider):
         logger.info("Wrote %s", output_path)
         display_voice = (
             resolved_voice
-            if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(resolved_voice)
+            if self._voices.is_id(resolved_voice)
             else resolved_voice.lower()
         )
         return SynthesisResult(
@@ -190,7 +189,7 @@ class ElevenLabsProvider(TTSProvider):
         multilingual (70+ languages with eleven_v3).
         """
         self._resolve_voice_id(name)
-        if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name):
+        if self._voices.is_id(name):
             return name
         return name.lower()
 
@@ -215,7 +214,7 @@ class ElevenLabsProvider(TTSProvider):
         but all voices are returned regardless. Only short names (without
         descriptions) are included.
         """
-        return [k for k in self._voices.list_all() if " - " not in k]
+        return [k for k in self._voices.list_all() if DESCRIPTION_SEPARATOR not in k]
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -247,7 +246,7 @@ class ElevenLabsProvider(TTSProvider):
                 fresh[full_name] = vid
 
             # Also store short name (before " - ") for convenient lookup.
-            short_name = full_name.split(" - ", 1)[0]
+            short_name = full_name.split(DESCRIPTION_SEPARATOR, 1)[0]
             if short_name != full_name and short_name not in fresh:
                 fresh[short_name] = vid
 
@@ -260,7 +259,7 @@ class ElevenLabsProvider(TTSProvider):
     def _resolve_voice_id(self, name: str) -> str:
         """Resolve a voice name or ID to a voice_id string."""
         # Accept raw voice_id (20 alphanumeric chars) directly.
-        if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name):
+        if self._voices.is_id(name):
             return name
 
         return self._voices.resolve(name)

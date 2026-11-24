@@ -468,7 +468,9 @@ def test_voice_set_rejects_unknown_name(tmp_path: Path) -> None:
 
     result = json.loads(voice.dispatch("nobody"))
 
-    assert result == {"error": "nobody (available: matilda, roger)"}
+    assert result == {
+        "error": "Unknown voice 'nobody'. Available: ['matilda', 'roger']"
+    }
     assert session.voice == "matilda"
     assert config.read_text() == original
 
