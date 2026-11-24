@@ -335,7 +335,7 @@ def test_worktree_create_git_failure_is_a_spoken_value_error(
     )
     assert isinstance(raised.value.__cause__, subprocess.CalledProcessError)
     line = next(r.getMessage() for r in caplog.records if "could not" in r.getMessage())
-    assert "git -C <path> worktree add -b vox-worker/x <path>" in line
+    assert "git -C <path> worktree add --quiet -b vox-worker/x <path>" in line
     assert "fatal: a branch named 'vox-worker/x' already exists" in line
     assert str(tmp_path) not in line
 
@@ -408,3 +408,32 @@ def test_worktree_create_logs_its_elapsed_time_when_git_cannot_start(
         r.getMessage() == "Worker worktree for shiny-repo could not start after 0.1 s"
         for r in caplog.records
     )
+
+
+def test_worktree_create_runs_git_quietly(tmp_path: Path) -> None:
+    """Without --quiet git prints a progress line to stderr before any error."""
+    with patch(POPEN, return_value=_git_process()) as popen:
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+    argv = popen.call_args.args[0]
+    assert "--quiet" in argv
+    assert argv.index("--quiet") > argv.index("add")
+
+
+def test_worktree_create_failure_reports_the_fatal_line_not_the_progress_line(
+    tmp_path: Path,
+) -> None:
+    stderr = (
+        "Preparing worktree (new branch 'vox-worker/x')\n"
+        "fatal: a branch named 'vox-worker/x' already exists\n"
+    )
+    with (
+        patch(POPEN, return_value=_git_process(128, stderr)),
+        pytest.raises(
+            ValueError,
+            match=(
+                r"^worker start could not create the worktree: "
+                r"fatal: a branch named 'vox-worker/x' already exists$"
+            ),
+        ),
+    ):
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")

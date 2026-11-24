@@ -10,6 +10,9 @@ from typing import Final, Self, final
 # An absolute path inside a git message or argv; it names the operator's
 # filesystem, which neither the log nor a worker record should carry.
 _ABSOLUTE_PATH: Final = re.compile(r"(?<![\w.])/[^\s'\":]+")
+# git's own error lines; progress lines such as "Preparing worktree" precede
+# them on stderr and are never the reason a command failed.
+_GIT_ERROR_LINE: Final = re.compile(r"^(?:fatal|error): .*$", re.MULTILINE)
 
 
 @final
@@ -54,27 +57,29 @@ class GitFailure:
     def __repr__(self) -> str:
         return f"GitFailure({self._kind!r}, {self._detail!r})"
 
-    @staticmethod
-    def _describe(exc: Exception) -> str:
+    @classmethod
+    def _describe(cls, exc: Exception) -> str:
         if not isinstance(
             exc, subprocess.CalledProcessError | subprocess.TimeoutExpired
         ):
             return str(exc)
         command = " ".join(str(word) for word in exc.cmd)
-        stderr = exc.stderr
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
+        stderr = cls._stderr_text(exc)
         return f"{command}: {stderr}" if stderr else command
 
     @classmethod
     def _reason_of(cls, exc: Exception, detail: str) -> str:
+        """Pick git's error line; a progress line ahead of it is not the reason."""
         if not isinstance(exc, subprocess.CalledProcessError):
             return detail
-        first = cls._stderr_text(exc).strip().split("\n", 1)[0]
+        text = cls._stderr_text(exc).strip()
+        first = (_GIT_ERROR_LINE.findall(text) or text.split("\n", 1))[0]
         return first or f"git exited {exc.returncode}"
 
     @staticmethod
-    def _stderr_text(exc: subprocess.CalledProcessError) -> str:
+    def _stderr_text(
+        exc: subprocess.CalledProcessError | subprocess.TimeoutExpired,
+    ) -> str:
         stderr = exc.stderr
         if isinstance(stderr, bytes):
             return stderr.decode(errors="replace")

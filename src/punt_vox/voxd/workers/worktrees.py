@@ -74,6 +74,9 @@ class WorkerWorktrees:
             str(project),
             "worktree",
             "add",
+            # Progress lines ("Preparing worktree ...") would otherwise reach
+            # stderr ahead of the fatal line the agent needs to hear.
+            "--quiet",
             "-b",
             branch,
             str(worktree),
