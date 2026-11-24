@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from typing import final
 
 from punt_vox.providers.voice_resolver import VoiceResolver
+from punt_vox.types_synthesis import SynthesisSpec
 
-_VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 DESCRIPTION_SEPARATOR = " - "
 
 
@@ -21,9 +20,17 @@ class ElevenLabsVoices(VoiceResolver[str]):
     @staticmethod
     def is_id(name: str) -> bool:
         """Return whether a name is accepted directly as a voice ID."""
-        return bool(_VOICE_ID_RE.match(name))
+        return SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name) is not None
 
     def _available_names(self) -> list[str]:
+        colliding_aliases = self._colliding_aliases()
+        names = {voice_id: voice_id for voice_id in self._cache.values()}
+        for name in sorted(self._cache, reverse=True):
+            if name not in colliding_aliases and not self.is_id(name):
+                names[self._cache[name]] = name
+        return sorted(names.values())
+
+    def _colliding_aliases(self) -> set[str]:
         groups: dict[str, set[str]] = defaultdict(set)
         described: set[tuple[str, str]] = set()
         for name, voice_id in self._cache.items():
@@ -31,18 +38,8 @@ class ElevenLabsVoices(VoiceResolver[str]):
             groups[short].add(voice_id)
             if separator:
                 described.add((short, voice_id))
-
-        names = {voice_id: voice_id for voice_id in self._cache.values()}
-        for name in sorted(self._cache, reverse=True):
-            short, separator, _ = name.partition(DESCRIPTION_SEPARATOR)
-            voice_id = self._cache[name]
-            if self.is_id(name):
-                continue
-            if (
-                not separator
-                and len(groups[short]) > 1
-                and (short, voice_id) in described
-            ):
-                continue
-            names[voice_id] = name
-        return sorted(names.values())
+        return {
+            short
+            for short, voice_id in described
+            if len(groups[short]) > 1 and self._cache.get(short) == voice_id
+        }

@@ -3,24 +3,17 @@
 One tool per concern, each with the same ``dispatch(name?)`` shape: name
 absent lists what is available and marks the current selection; name present
 writes to the session (and to ``.punt-labs/vox/vox.md``) and returns
-``{"<concern>": "<resolved-name>"}``. The three classes hold their own
-factories rather than share a base -- each owns a slightly different set of
-collaborators (VoiceTool needs the daemon-facing client; ModelTool needs the
-static shorthand resolver; ProviderTool needs neither), and forcing them
-under one abstract base would either widen the constructor to the union of
-what any concrete tool needs or push slot-empty attributes into two of them.
+``{"<concern>": "<resolved-name>"}``. The tools hold their own factories
+rather than force a shared base to own every collaborator.
 
-Held apart from ``server.py`` so that module stays under the module-size and
-class-count thresholds, mirroring how ``server_music_tool.py`` and
-``server_enablement.py`` are already split out. The three tools are wired
-into ``mcp`` in ``server.py`` alongside ``mic:music`` and ``mic:enablement``.
+Held apart from ``server.py`` so it stays under the module-size and class-count
+thresholds. The tools are wired into ``mcp`` in ``server.py``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import random
 from typing import TYPE_CHECKING, Final, Literal, Self, final
 
 from punt_vox.cascade import Cascade, RosterError
@@ -28,7 +21,7 @@ from punt_vox.config_writer import ConfigWriter
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
-from punt_vox.voices import VOICE_BLURBS
+from punt_vox.voice_roster import VoiceRoster
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,9 +53,6 @@ PROVIDER_NAMES: Final[tuple[ProviderName, ...]] = (
     "say",
     "espeak",
 )
-
-
-_FEATURED_CAP = 6
 
 
 def _error(message: str) -> str:
@@ -262,7 +252,7 @@ class VoiceTool:
     with featured-voice blurbs; ``dispatch("<name>")`` strips a stray leading
     ``@`` sigil via :meth:`SynthesisSpec.normalize_voice`, writes to the
     session and to ``.punt-labs/vox/vox.md``, and returns
-    ``{"voice": "<normalized-name>"}``. A daemon fault on the roster path,
+    ``{"voice": "<normalized-name>"}``. An unknown voice, a roster fault,
     or a filesystem/config fault at refresh or write, returns
     ``{"error": ...}`` -- the tool never raises across the MCP boundary.
     """
@@ -308,16 +298,24 @@ class VoiceTool:
 
         if name is None:
             return self._list(session)
-
         # Voice names are provider-scoped, so setting requires a provider.
-        if not session.provider:
+        provider = session.provider
+        if not provider:
             return _error(str(ProviderNotConfiguredError.for_mcp()))
 
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return _error("voice name is empty")
 
-        write_err = self._config.write("voice", normalized)
+        error = VoiceRoster.selection_error(
+            self._client_factory(), provider, normalized
+        )
+        if error is not None:
+            return _error(error)
+
+        write_err = self._config.write_voice(
+            normalized, VoiceRoster.provider_check(provider)
+        )
         if write_err is not None:
             return write_err
         session.voice = normalized
@@ -337,31 +335,14 @@ class VoiceTool:
         state is the substitution the whole subsystem exists to prevent.
         """
         provider = session.provider
-        if not provider:
-            return json.dumps(
-                {
-                    "provider": None,
-                    "current": session.voice,
-                    "available": [],
-                    "featured": [],
-                }
-            )
-        roster = Cascade.fetch_roster(self._client_factory(), provider)
+        roster = VoiceRoster.fetch(self._client_factory(), provider) if provider else []
         if isinstance(roster, RosterError):
             return _error(roster.message)
-        all_voices = roster
-
-        featured = [
-            {"name": name, "blurb": blurb}
-            for (prov, name), blurb in VOICE_BLURBS.items()
-            if prov == provider and name in all_voices
-        ]
-
         return json.dumps(
             {
                 "provider": provider,
                 "current": session.voice,
-                "available": all_voices,
-                "featured": random.sample(featured, min(_FEATURED_CAP, len(featured))),
+                "available": roster,
+                "featured": VoiceRoster.featured(provider, roster),
             }
         )

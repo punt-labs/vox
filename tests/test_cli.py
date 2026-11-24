@@ -1295,19 +1295,94 @@ class TestVoiceCommand:
     agree.
     """
 
-    def test_voice_set(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        import punt_vox.config as cfg
-
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_rejects_unknown_name(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        # Setting a voice with no provider configured refuses; seed
-        # provider so the set path exercises the write, not the refusal.
-        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
+        config = tmp_path / "vox.md"
+        original = '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+        config.write_text(original)
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
-        runner = CliRunner()
-        result = runner.invoke(app, ["voice", "matilda"])
-        assert result.exit_code == 0
-        assert "matilda" in result.output.lower()
+        result = CliRunner().invoke(app, ["voice", "nobody"])
+
+        assert result.exit_code == 1, result.output
+        assert "Error: Unknown voice 'nobody'. Available: ['matilda', 'roger']" in (
+            result.output
+        )
+        assert config.read_text() == original
+        mock_client_cls.return_value.voices.assert_called_once_with(
+            provider="elevenlabs"
+        )
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        config = tmp_path / "vox.md"
+        config.write_text('---\nprovider: "elevenlabs"\n---\n')
+        mock_client_cls.return_value.voices.return_value = ["matilda"]
+
+        result = CliRunner().invoke(
+            app, ["voice", "@Matilda", "--provider", "ElevenLabs"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Matilda's here." in result.output
+        assert 'voice: "Matilda"' in config.read_text()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_rejects_provider_change_during_roster_fetch(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        config = tmp_path / "vox.md"
+        config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
+        switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
+
+        def switch_provider(*, provider: str) -> list[str]:
+            assert provider == "elevenlabs"
+            config.write_text(switched)
+            return ["roger"]
+
+        mock_client_cls.return_value.voices.side_effect = switch_provider
+        result = CliRunner().invoke(app, ["voice", "roger"])
+
+        assert result.exit_code == 1, result.output
+        assert "the active provider is 'openai'" in result.output
+        assert config.read_text() == switched
+
+    @pytest.mark.parametrize("provider", ["elevenlabs", "openai"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_raw_id_only_for_elevenlabs(
+        self,
+        mock_client_cls: MagicMock,
+        provider: str,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        config = tmp_path / "vox.md"
+        original = f'---\nprovider: "{provider}"\n---\n'
+        config.write_text(original)
+        mock_client_cls.return_value.voices.return_value = ["alloy"]
+        voice_id = "XrExE9yKIg1WjnnlVkGX"
+
+        result = CliRunner().invoke(app, ["voice", voice_id, "--json"])
+
+        if provider == "elevenlabs":
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output) == {"voice": voice_id}
+            assert f'voice: "{voice_id}"' in config.read_text()
+            mock_client_cls.return_value.voices.assert_not_called()
+        else:
+            assert result.exit_code == 1, result.output
+            assert json.loads(result.output) == {
+                "error": f"Unknown voice {voice_id!r}. Available: ['alloy']"
+            }
+            assert config.read_text() == original
 
     def test_voice_empty_name_is_bad_parameter(
         self, tmp_path: Path, monkeypatch: MagicMock
@@ -1375,7 +1450,7 @@ class TestVoiceCommand:
         result = runner.invoke(app, ["voice", *provider_args])
 
         assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with(expected)
+        mock_client_cls.return_value.voices.assert_called_once_with(provider=expected)
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_voice_no_arg_json_carries_names_and_current(

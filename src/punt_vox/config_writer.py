@@ -13,7 +13,7 @@ on every tool.
 Holding the guard here (rather than duplicating three try/except pairs in
 ``server_switches.py``) means the invariant lives in one place; each switch
 tool composes a :class:`ConfigWriter` at construction and calls
-``self._config.refresh(...)`` / ``self._config.write(...)`` on its
+``self._config.refresh(...)`` and a guarded write on its
 config-side paths.
 """
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.config import ConfigStore
 
@@ -31,16 +31,11 @@ if TYPE_CHECKING:
 
     from punt_vox.server import SessionConfig
 
+    type _ConfigCheck = Callable[[dict[str, str]], None]
+
 __all__ = ["ConfigWriter"]
 
 logger = logging.getLogger(__name__)
-
-# Config-side faults on refresh and write paths. Filesystem trouble (disk
-# full, permission denied) surfaces as OSError; a malformed vox.md file or
-# a rejected value surfaces as ValueError. Both funnel to the same JSON
-# error envelope so the tools' "never raise across the boundary" invariant
-# holds on every path.
-_CONFIG_IO_ERRORS: Final = (OSError, ValueError)
 
 
 @final
@@ -60,24 +55,25 @@ class ConfigWriter:
         """Refresh *session* from disk; return an error envelope, or None on success."""
         return self._guarded(session.refresh_from_config)
 
-    def write(self, field: str, value: str) -> str | None:
-        """Persist *field* to disk; return an error envelope, or None on success."""
+    def write_voice(self, voice: str, check: _ConfigCheck) -> str | None:
+        """Persist *voice* after checking the current config under the write lock."""
         return self._guarded(
-            lambda: ConfigStore(self._config_dir_finder()).write_field(field, value)
+            lambda: self._store().write_field("voice", voice, check=check)
         )
 
     def write_fields(self, updates: dict[str, str]) -> str | None:
         """Persist *updates* in one write; return an error envelope, or None."""
-        return self._guarded(
-            lambda: ConfigStore(self._config_dir_finder()).write_fields(updates)
-        )
+        return self._guarded(lambda: self._store().write_fields(updates))
+
+    def _store(self) -> ConfigStore:
+        return ConfigStore(self._config_dir_finder())
 
     @staticmethod
     def _guarded(action: Callable[[], None]) -> str | None:
         """Run *action*, funnelling filesystem/config faults to a JSON envelope."""
         try:
             action()
-        except _CONFIG_IO_ERRORS as exc:
+        except (OSError, ValueError) as exc:
             logger.exception("Config I/O failed")
             return json.dumps({"error": str(exc)})
         return None

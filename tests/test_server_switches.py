@@ -459,9 +459,91 @@ def test_voice_no_arg_carries_blurbs_on_featured(tmp_path: Path) -> None:
         assert entry["blurb"]  # non-empty blurb
 
 
+def test_voice_set_rejects_unknown_name(tmp_path: Path) -> None:
+    session = _FakeSession(provider="elevenlabs", voice="matilda")
+    config = tmp_path / "vox.md"
+    original = '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+    config.write_text(original)
+    _, _, voice = _tools(session, tmp_path, voices=["matilda", "roger"])
+
+    result = json.loads(voice.dispatch("nobody"))
+
+    assert result == {
+        "error": "Unknown voice 'nobody'. Available: ['matilda', 'roger']"
+    }
+    assert session.voice == "matilda"
+    assert config.read_text() == original
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_voice_set_preserves_config_when_roster_unavailable(
+    tmp_path: Path, malformed: bool
+) -> None:
+    session = _FakeSession(provider="elevenlabs", voice="matilda")
+    config = tmp_path / "vox.md"
+    original = '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+    config.write_text(original)
+    client = MagicMock()
+    if malformed:
+        client.voices.return_value = ["roger", None]
+    else:
+        client.voices.side_effect = VoxdConnectionError("connection refused")
+    voice = VoiceTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
+
+    result = json.loads(voice.dispatch("roger"))
+
+    assert result == {
+        "error": "voxd returned an invalid voice roster."
+        if malformed
+        else "connection refused"
+    }
+    assert session.voice == "matilda"
+    assert config.read_text() == original
+
+
+@pytest.mark.parametrize("provider_after", ["openai", None])
+def test_voice_set_rejects_provider_change_during_roster_fetch(
+    tmp_path: Path, provider_after: str | None
+) -> None:
+    session = _FakeSession(provider="elevenlabs", voice="matilda")
+    config = tmp_path / "vox.md"
+    config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
+    switched = (
+        '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
+        if provider_after
+        else '---\nvoice: "matilda"\n---\n'
+    )
+    client = MagicMock()
+
+    def switch_provider(*, provider: str) -> list[str]:
+        assert provider == "elevenlabs"
+        config.write_text(switched)
+        return ["roger"]
+
+    client.voices.side_effect = switch_provider
+    voice = VoiceTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
+
+    result = json.loads(voice.dispatch("roger"))
+
+    if provider_after is None:
+        assert "no TTS provider" in result["error"]
+    else:
+        assert result == {
+            "error": "The active provider changed from 'elevenlabs' "
+            f"to {provider_after!r}. Retry setting the voice."
+        }
+    assert session.voice == "matilda"
+    assert config.read_text() == switched
+
+
 def test_voice_set_writes_session_and_config(tmp_path: Path) -> None:
     session = _FakeSession(provider="elevenlabs")
-    _, _, voice = _tools(session, tmp_path)
+    ConfigStore(tmp_path).write_field("provider", "elevenlabs")
+    _, _, voice = _tools(session, tmp_path, voices=["matilda"])
 
     result = json.loads(voice.dispatch("matilda"))
 
@@ -473,12 +555,29 @@ def test_voice_set_writes_session_and_config(tmp_path: Path) -> None:
 def test_voice_set_strips_leading_at_sigil(tmp_path: Path) -> None:
     """A ``@`` prefix is a common typo -- the tool strips it before writing."""
     session = _FakeSession(provider="elevenlabs")
-    _, _, voice = _tools(session, tmp_path)
+    ConfigStore(tmp_path).write_field("provider", "elevenlabs")
+    _, _, voice = _tools(session, tmp_path, voices=["sarah"])
 
     result = json.loads(voice.dispatch("@sarah"))
 
     assert result == {"voice": "sarah"}
     assert session.voice == "sarah"
+
+
+def test_voice_set_accepts_raw_elevenlabs_id_without_a_roster(tmp_path: Path) -> None:
+    voice_id = "XrExE9yKIg1WjnnlVkGX"
+    session = _FakeSession(provider="elevenlabs")
+    ConfigStore(tmp_path).write_field("provider", "elevenlabs")
+    client = MagicMock()
+    client.voices.side_effect = VoxdConnectionError("voxd unreachable")
+    voice = VoiceTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
+
+    assert json.loads(voice.dispatch(voice_id)) == {"voice": voice_id}
+    assert session.voice == voice_id
+    assert ConfigStore(tmp_path).read_field("voice") == voice_id
+    client.voices.assert_not_called()
 
 
 def test_voice_set_rejects_blank(tmp_path: Path) -> None:

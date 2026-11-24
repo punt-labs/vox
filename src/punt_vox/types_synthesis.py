@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import ClassVar
 
 __all__ = ["DEFAULT_RATE", "SynthesisSpec"]
 
@@ -23,6 +25,8 @@ class SynthesisSpec:
     "use the provider/session default."  Validation happens at the
     boundary via :meth:`validate`.
     """
+
+    ELEVENLABS_VOICE_ID: ClassVar[re.Pattern[str]] = re.compile(r"[0-9a-zA-Z]{20}")
 
     voice: str | None = None
     language: str | None = None
@@ -52,10 +56,7 @@ class SynthesisSpec:
         from mention-autocomplete -- still resolves to ``sarah``. A lone ``@`` or
         blank input carries no voice and returns ``None``.
         """
-        if name is None:
-            return None
-        cleaned = name.strip().removeprefix("@").strip()
-        return cleaned or None
+        return (name or "").strip().removeprefix("@").strip() or None
 
     def validate(self) -> None:
         """Validate voice settings ranges.
@@ -96,7 +97,6 @@ class SynthesisSpec:
             "speaker_boost": self.speaker_boost,
             "api_key": self.api_key,
             "vibe_tags": self.vibe_tags,
+            "rate": self.rate if self.rate is not None else DEFAULT_RATE,
         }
-        out: dict[str, object] = {k: v for k, v in optional.items() if v is not None}
-        out["rate"] = self.rate if self.rate is not None else DEFAULT_RATE
-        return out
+        return {k: v for k, v in optional.items() if v is not None}

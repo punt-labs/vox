@@ -1,18 +1,17 @@
 """``vox voice`` -- list or set the session voice for the active provider.
 
-The command is a callable object (:class:`VoiceCommand`) so both surfaces
-share one instance and the ratchet counts the class-per-command shape
-the rest of vox uses (see :class:`~punt_vox.server_switches.VoiceTool`).
+The CLI command and MCP voice tool share the voice-selection rules in
+:class:`~punt_vox.voice_roster.VoiceRoster`.
 """
 
 from __future__ import annotations
 
 from typing import Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
+from punt_vox.voice_roster import RosterError, VoiceRoster
 
 
 @final
@@ -31,7 +30,8 @@ class VoiceCommand:
         """List the roster (no arg) or set the session voice (name given).
 
         Listing uses the requested provider or the active one. Setting a
-        voice requires an active provider and rejects an explicit mismatch.
+        voice requires an active provider and accepts a roster name or a raw
+        ElevenLabs ID. An explicit provider must match the active one.
 
         Set branch: strip a stray leading ``@`` via
         :meth:`SynthesisSpec.normalize_voice`; a blank/lone-``@`` write
@@ -43,20 +43,27 @@ class VoiceCommand:
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return self._error("voice name is empty", prefix="")
+        return self._set(ctx, normalized, provider)
+
+    @classmethod
+    def _set(cls, ctx: Ctx, name: str, target: str | None) -> CommandResult:
         try:
-            ctx.store.write_field(
-                "voice",
-                normalized,
-                check=lambda fields: self._check(provider, fields.get("provider")),
-            )
+            active = cls._require_provider(target, ctx.store.read_field("provider"))
+            if (
+                error := VoiceRoster.selection_error(ctx.client, active, name)
+            ) is not None:
+                return cls._error(error)
+
+            def check(fields: dict[str, str]) -> None:
+                cls._require_provider(active, fields.get("provider"))
+
+            ctx.store.write_field("voice", name, check=check)
         except (OSError, ValueError) as exc:
-            return self._error(str(exc))
-        return CommandResult(
-            text=f"{normalized}'s here.", json_data={"voice": normalized}
-        )
+            return cls._error(str(exc))
+        return CommandResult(text=f"{name}'s here.", json_data={"voice": name})
 
     @staticmethod
-    def _check(target: str | None, active: str | None) -> None:
+    def _require_provider(target: str | None, active: str | None) -> str:
         if not active:
             raise ProviderNotConfiguredError.for_cli()
         if target and target.lower() != active.lower():
@@ -64,6 +71,7 @@ class VoiceCommand:
                 f"Cannot set a voice for {target!r}: the active provider is {active!r}."
             )
             raise ValueError(msg)
+        return active
 
     @classmethod
     def _list(
@@ -85,18 +93,13 @@ class VoiceCommand:
         authority on which provider voxd runs) so the empty-roster branch
         must not reach it.
         """
-        names: list[str] = []
-        if provider:
-            try:
-                names = ctx.client.voices(provider)
-            except (VoxdConnectionError, VoxdProtocolError) as exc:
-                return cls._error(str(exc))
-        listing = SwitchList(names=tuple(names), current=current)
-        payload = listing.payload()
-        payload["provider"] = provider
+        roster = VoiceRoster.fetch(ctx.client, provider) if provider else []
+        if isinstance(roster, RosterError):
+            return cls._error(roster.message)
+        listing = SwitchList(names=tuple(roster), current=current)
         return CommandResult(
             text=listing.render("" if provider else "No voices for this provider."),
-            json_data=payload,
+            json_data=listing.payload() | {"provider": provider},
         )
 
     @staticmethod
