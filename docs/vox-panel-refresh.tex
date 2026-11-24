@@ -1,0 +1,281 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\begin{document}
+\title{Vox Panel Refresh: A Z Specification}
+\maketitle
+
+\section{Scope}
+
+The panel polls durable Vox settings only while it has a confirmed Lux
+scene. Reading settings, publishing a snapshot for click routing, and
+sending a scene to Lux are distinct operations. A successful push
+acknowledges the Hub, not the display: even after a push succeeds, an
+event from an older widget may arrive. A failed push does not establish
+whether Lux kept the old scene, applied the new one, or lost both.
+
+A snapshot names a settings object, not just its value. Its target is
+the provider and optional model; its revision names the target and
+\emph{ordered} voice roster. Revisions are modeled as exact identities:
+digest collisions are outside the model. The revision need not change
+on a voice-only or notice-only update. Notices themselves are abstracted
+to whether a scene refresh was requested. The saved target abstracts
+config fields that the write precondition examines, not the whole file.
+
+\begin{zed}
+  [SNAPSHOT, TARGET, REVISION]
+\also
+  SceneState ::= neverShown | installed | disarmed
+\also
+  Work ::= idle | pushDue
+\also
+  Outcome ::= accepted | failed
+\also
+  RenderChange ::= identical | patchable | differentTree
+\also
+  Plan ::= noPush | patch | fullInstall
+\also
+  NoticeChange ::= noticeSame | noticeChanged
+\end{zed}
+
+\begin{axdef}
+  targetOf : SNAPSHOT \fun TARGET \\
+  revisionOf : SNAPSHOT \fun REVISION
+\where
+  \forall a, b : SNAPSHOT @ \\
+  \quad~ revisionOf(a) = revisionOf(b)
+    \implies targetOf(a) = targetOf(b)
+\end{axdef}
+
+\section{State and initialization}
+
+The optional confirmed render is the local patch base, not the
+display's observed state. Both inactive modes have no patch base; we
+distinguish them by history even though \texttt{LiveScene} represents
+both with \texttt{None}. The optional capture records the reference used
+by \texttt{replace\_if\_current}. The audit relation is ghost state: it
+records the event revision and the held revision at each successful
+roster-indexed write. Its diagonal invariant rules out stale writes.
+
+\begin{schema}{PanelRefresh}
+  phase : SceneState \\
+  shown, capture : \power SNAPSHOT \\
+  held : SNAPSHOT \\
+  saved : TARGET \\
+  work : Work \\
+  writes : REVISION \rel REVISION
+\where
+  \# shown \leq 1 \\
+  \# capture \leq 1 \\
+  phase = installed \iff shown \neq \emptyset \\
+  capture \neq \emptyset \implies phase = installed \land work = idle \\
+  writes \subseteq \id REVISION
+\end{schema}
+
+\begin{schema}{Init}
+  PanelRefresh'
+\where
+  phase' = neverShown \\
+  shown' = \emptyset \\
+  capture' = \emptyset \\
+  work' = idle \\
+  writes' = \emptyset
+\end{schema}
+
+\section{Reading and reconciling}
+
+An external edit does not synchronously alter the panel. A poll starts
+only with an installed scene, and captures the held settings by
+identity. To exercise the compare-and-replace seam, the model allows
+another publisher to replace the held snapshot during the read without
+going through the runner. Normal runner callbacks, including clicks,
+are serialized by its routing lock.
+
+\begin{schema}{ExternalEdit}
+  \Delta PanelRefresh \\
+  target? : TARGET
+\where
+  saved' = target? \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  capture' = capture \land work' = work \land writes' = writes
+\end{schema}
+
+\begin{schema}{PollInactive}
+  \Xi PanelRefresh
+\where
+  phase \neq installed \land work = idle
+\end{schema}
+
+\begin{schema}{StartPoll}
+  \Delta PanelRefresh
+\where
+  phase = installed \land work = idle \land capture = \emptyset \\
+  capture' = \{held\} \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  saved' = saved \land work' = work \land writes' = writes
+\end{schema}
+
+\begin{schema}{ConcurrentPublish}
+  \Delta PanelRefresh \\
+  next? : SNAPSHOT
+\where
+  capture \neq \emptyset \land next? \neq held \\
+  held' = next? \\
+  phase' = phase \land shown' = shown \land saved' = saved \\
+  capture' = capture \land work' = work \land writes' = writes
+\end{schema}
+
+Here \emph{next} is the snapshot proposed by the read. An equal-value
+read proposes the existing identity; unreadable disk or an unrelated
+roster refusal retains it as well. The proposal is not forced to match
+the latest saved target: the file can change again after the read. A
+changed notice alone can schedule a refresh. An obsolete read swaps
+neither settings nor notices and schedules no push.
+
+\begin{schema}{AcceptPoll}
+  \Delta PanelRefresh \\
+  next? : SNAPSHOT \\
+  notice? : NoticeChange
+\where
+  capture = \{held\} \\
+  held' = next? \land capture' = \emptyset \\
+  work' = \IF next? \neq held \lor notice? = noticeChanged
+    \THEN pushDue \ELSE idle \\
+  phase' = phase \land shown' = shown \land saved' = saved \\
+  writes' = writes
+\end{schema}
+
+\begin{schema}{DiscardPoll}
+  \Delta PanelRefresh
+\where
+  capture \neq \emptyset \land capture \neq \{held\} \\
+  capture' = \emptyset \\
+  phase' = phase \land shown' = shown \land held' = held \\
+  saved' = saved \land work' = work \land writes' = writes
+\end{schema}
+
+\section{Publishing to Lux}
+
+A queued refresh plans no push for equivalent renders, patches a
+compatible tree, or installs the whole scene. Without a patch base,
+the only plan is a full install; only a foreground event can queue
+such a push. Different revisions imply
+different widget IDs and cannot be patched in place. A patch refusal
+can fall back to a full install; \emph{outcome} below is the eventual
+result, after any fallback. Any final refusal or transport loss
+disarms polling. A foreground install (menu click or corrective
+re-push) can arm it again; a poll alone cannot.
+
+\begin{schema}{PushRefresh}
+  \Delta PanelRefresh \\
+  change? : RenderChange \\
+  outcome? : Outcome \\
+  plan! : Plan
+\where
+  work = pushDue \\
+  phase \neq installed \implies change? = differentTree \\
+  (\exists old : shown @ revisionOf(old) \neq revisionOf(held))
+    \implies change? = differentTree \\
+  plan! = \IF change? = identical \THEN noPush \\
+  \quad~ \ELSE (\IF change? = patchable \THEN patch \ELSE fullInstall) \\
+  plan! = noPush \implies outcome? = accepted \\
+  phase' = \IF outcome? = accepted \THEN installed \ELSE disarmed \\
+  shown' = \IF outcome? = accepted \THEN \{held\} \ELSE \emptyset \\
+  work' = idle \land capture' = capture \\
+  held' = held \land saved' = saved \land writes' = writes
+\end{schema}
+
+\begin{schema}{ForegroundInstall}
+  \Delta PanelRefresh \\
+  outcome? : Outcome
+\where
+  capture = \emptyset \land work = idle \\
+  phase' = \IF outcome? = accepted \THEN installed \ELSE disarmed \\
+  shown' = \IF outcome? = accepted \THEN \{held\} \ELSE \emptyset \\
+  held' = held \land saved' = saved \land writes' = writes \\
+  capture' = capture \land work' = work
+\end{schema}
+
+\section{Roster-indexed events}
+
+The runner checks the event ID against the scene projected from
+\emph{held} settings, not the last push acknowledged by Lux. An
+unrevisioned event fails the same check as a stale one. A matching ID
+reaches the commit path, where the provider and model must still
+match disk under the write lock. Only a valid choice that succeeds
+through those checks enters the commit operation; a failed choice
+does not persist a setting. The next snapshot represents the selected
+voice or the cascaded model, voice and roster. For a Voice pick its
+target stays unchanged. The operation is independent of $phase$:
+queued events can arrive even after disarm. The foreground correction
+or re-push that follows a routed event is modeled separately.
+
+\begin{schema}{RejectStaleRevision}
+  \Xi PanelRefresh \\
+  revision? : \power REVISION
+\where
+  capture = \emptyset \land work = idle \\
+  \# revision? \leq 1 \\
+  revision? \neq \{revisionOf(held)\}
+\end{schema}
+
+\begin{schema}{RejectStaleTarget}
+  \Xi PanelRefresh \\
+  revision? : REVISION
+\where
+  capture = \emptyset \land work = idle \\
+  revision? = revisionOf(held) \land targetOf(held) \neq saved
+\end{schema}
+
+\begin{schema}{CommitRosterChoice}
+  \Delta PanelRefresh \\
+  revision? : REVISION \\
+  next? : SNAPSHOT
+\where
+  capture = \emptyset \land work = idle \\
+  revision? = revisionOf(held) \land targetOf(held) = saved \\
+  held' = next? \land saved' = targetOf(next?) \\
+  writes' = writes \cup \{revision? \mapsto revisionOf(held)\} \\
+  phase' = phase \land shown' = shown \\
+  capture' = capture \land work' = pushDue
+\end{schema}
+
+The provider picker does not use a roster revision. A successful
+provider switch persists and publishes its new target together, then
+queues a push. This can also leave an earlier Voice or Model event
+waiting to be delivered. The operation abstracts the validation and
+roster fetch that must already have succeeded.
+
+\begin{schema}{CommitProvider}
+  \Delta PanelRefresh \\
+  next? : SNAPSHOT
+\where
+  capture = \emptyset \land work = idle \\
+  targetOf(next?) \neq targetOf(held) \\
+  held' = next? \land saved' = targetOf(next?) \\
+  phase' = phase \land shown' = shown \land writes' = writes \\
+  capture' = capture \land work' = pushDue
+\end{schema}
+
+\section{Consequences and test correspondence}
+
+\begin{description}
+\item[DiscardPoll] The settings test rejects an old resync without
+replacing the current snapshot or its notice. The guard compares
+identities even when revisions are equal.
+\item[RejectStaleRevision] The runner seam test delivers delayed Voice
+and Model picks after both external and in-panel provider changes.
+\item[RejectStaleTarget] The runner seam test switches the disk provider
+before polling, then sends Voice and Model events from the old scene.
+\item[PollInactive] The service test requires a foreground install
+before polling resumes after either a push refusal or unavailability.
+\end{description}
+
+This policy prioritizes not pushing blindly after losing the patch
+base. If Lux still shows the old render, a transient failure can
+therefore leave it stale until a foreground action. Recovery without
+foreground action would require a way to re-establish the scene's
+presence, not just a successful settings read. It is a liveness
+limitation, not a violation of the stale-event safety invariant.
+
+\end{document}
