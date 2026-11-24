@@ -289,6 +289,26 @@ class TestCheckProviderReadiness:
         assert results[0].passed is True
         assert any("openai: ready" in r.message for r in results[1:])
 
+    def test_asks_the_daemon_to_verify_keys_live(self) -> None:
+        # A present key is not an accepted key, so doctor asks the
+        # daemon for its authenticated check rather than the presence gate.
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.return_value = self._payload(
+            (
+                ProviderReadiness(
+                    name="elevenlabs",
+                    ready=False,
+                    reason="check_failed",
+                    detail="ElevenLabs subscription: API key rejected (HTTP 401)",
+                ),
+            ),
+            preferred=None,
+        )
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        mock_client.provider_status.assert_called_once_with(verify=True)
+        line = next(r for r in results if "elevenlabs" in r.message)
+        assert "API key rejected (HTTP 401)" in line.message
+
     def test_unready_provider_is_a_warn_not_a_fail(self) -> None:
         # A single-provider host is a normal configuration -- only the
         # state-declared provider being unavailable is a hard failure,

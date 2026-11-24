@@ -332,6 +332,28 @@ class TestSubscriptionCheck:
         assert not check.passed
         assert check.message == f"ElevenLabs subscription: refused (HTTP 403: {code})"
 
+    @pytest.mark.parametrize(
+        ("status", "code", "required"),
+        [
+            (401, "missing_permissions", False),
+            (403, "quota_exceeded", True),
+            (401, "invalid_api_key", True),
+        ],
+    )
+    def test_only_a_key_scoped_away_from_the_endpoint_is_advisory(
+        self, status: int, code: str, *, required: bool
+    ) -> None:
+        """A key that lacks only the user-read scope authenticated and speaks,
+        so its failed subscription line must not mark the provider unusable."""
+        sdk = MagicMock()
+        body = {"detail": {"status": code}}
+        sdk.user.subscription.get.side_effect = ApiError(status_code=status, body=body)
+
+        check = ElevenLabsClient(sdk=sdk).subscription_check()
+
+        assert not check.passed
+        assert check.required is required
+
     def test_api_error_is_a_failed_line(self) -> None:
         sdk = MagicMock()
         sdk.user.subscription.get.side_effect = ApiError(status_code=500)

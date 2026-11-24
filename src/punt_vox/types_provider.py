@@ -24,7 +24,7 @@ representation is a straight serialisation of that verdict.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Self, cast, final
+from typing import Literal, Self, cast, final, get_args
 
 from punt_vox.types_programs import JsonObject
 
@@ -38,11 +38,11 @@ __all__ = [
 
 # The closed set of reasons a ``ProviderReadiness`` can carry, and where
 # each value comes from. Each reason is produced by one or more code paths named
-# below; the paired :data:`PROVIDER_STATUS_REASONS` frozenset is the
+# below; the derived :data:`PROVIDER_STATUS_REASONS` frozenset is the
 # runtime mirror, and :meth:`ProviderReadiness.__post_init__` refuses a
-# value not in either.  A new reason -- or a new producer of an
+# value not in it.  A new reason -- or a new producer of an
 # existing reason -- must land at the same time in the Literal, the
-# frozenset, the raise/assemble site that produces it, and every render
+# raise/assemble site that produces it, and every render
 # branch in :mod:`punt_vox.doctor` and :mod:`punt_vox.server`.  Grep
 # ``ProviderReadiness(\n\s*reason=`` and ``reason="<value>"`` to verify
 # every construction site is one of the producers listed here.
@@ -50,6 +50,8 @@ __all__ = [
 #     unconfigured     server._provider_status_block when session.provider None
 #     unknown_provider ProviderCredentials.report on a name with no requirement
 #     no_credentials   ProviderCredentials.report when satisfied() False
+#     check_failed     LiveCheck.confirm when the provider's own authenticated
+#                      health check fails (``provider_status`` with ``verify``)
 #     voxd_unavailable server._provider_status_block on _DAEMON_ERRORS
 #     voxd_unavailable server._provider_status_block when the daemon reply
 #                      omits the requested provider row (protocol-bug path)
@@ -58,17 +60,17 @@ type ProviderStatusReason = Literal[
     "unconfigured",
     "unknown_provider",
     "no_credentials",
+    "check_failed",
     "voxd_unavailable",
 ]
 
 
-# The runtime mirror of the Literal above -- kept next to the type on
-# purpose, because a value that is not a member cannot be a legal
+# The runtime mirror of the Literal above, derived from it so the two cannot
+# drift: a value that is not a member cannot be a legal
 # ``ProviderReadiness.reason`` and the guard below enforces it at
-# construction time.  Any new reason lands here in the same edit as the
-# Literal; ``ProviderReadiness.__new__`` will refuse a mismatch.
+# construction time.
 PROVIDER_STATUS_REASONS: frozenset[str] = frozenset(
-    {"ok", "unconfigured", "unknown_provider", "no_credentials", "voxd_unavailable"}
+    get_args(ProviderStatusReason.__value__)
 )
 
 
@@ -91,7 +93,8 @@ class ProviderReadiness:
     a client can say better than the daemon's ``Available: ...`` list
     in the second), populated for ``no_credentials`` (the exact
     :class:`~punt_vox.providers.credential_requirements.CredentialRequirement.unmet_message`
-    text) and ``voxd_unavailable`` (the transport failure message).
+    text), ``check_failed`` (the provider's failed live check) and
+    ``voxd_unavailable`` (the transport failure message).
     """
 
     name: str

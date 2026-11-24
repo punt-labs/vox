@@ -212,9 +212,10 @@ class DoctorCheck:
 
         Every credentials error message points here (``... run `vox doctor```).
         The daemon owns the verdict -- ``ProviderCredentials.report_all`` walks
-        the same requirement dispatch the resolution gate uses, so a provider
-        this reports ready is exactly a provider ``mic:unmute`` will not refuse
-        for credentials reasons, and vice versa. An unready provider is a
+        the same requirement dispatch the resolution gate uses, and ``verify``
+        then confirms each ready provider with an authenticated live call
+        (``LiveCheck``), so a present but rejected or expired key reports not
+        ready with the provider's reason rather than ``ready``. An unready provider is a
         warning rather than a hard fail because a single-provider host is a
         normal configuration; only the state-declared provider being
         unavailable is fatal, and that surfaces at synthesis.
@@ -226,7 +227,7 @@ class DoctorCheck:
         """
         client = self._client or VoxClientSync()
         try:
-            payload = client.provider_status()
+            payload = client.provider_status(verify=True)
         except VoxdConnectionError as exc:
             # Daemon down or unreachable is already a fail from
             # ``check_daemon_health``; here it would be a duplicate hard-fail

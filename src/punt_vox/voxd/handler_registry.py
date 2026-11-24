@@ -85,7 +85,7 @@ class HandlerRegistry:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
-            "provider_status": ProviderStatusHandler(),
+            "provider_status": ProviderStatusHandler(env_lock=self._synthesis.env_lock),
             **WorkerContext.handlers(
                 self._playback,
                 lifetime,

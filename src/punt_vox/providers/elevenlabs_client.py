@@ -159,6 +159,7 @@ class ElevenLabsClient:
 
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
+        required = True
         try:
             sub = self.call(lambda sdk: sdk.user.subscription.get())
         except ProviderRefusalError as exc:
@@ -166,6 +167,8 @@ class ElevenLabsClient:
             # this endpoint, or an exhausted quota, still speaks.
             verdict = "API key rejected" if exc.reason is None else "refused"
             reason = f"{verdict} ({exc.answer})"
+            # A key lacking only this endpoint's scope was authenticated.
+            required = exc.reason != "missing_permissions"
         except ProviderStatusError as exc:
             reason = exc.reason
         except TRANSPORT_ERRORS as exc:
@@ -178,7 +181,11 @@ class ElevenLabsClient:
                     f"({sub.character_count:,}/{sub.character_limit:,} chars)"
                 ),
             )
-        return HealthCheck(passed=False, message=f"ElevenLabs subscription: {reason}")
+        return HealthCheck(
+            passed=False,
+            message=f"ElevenLabs subscription: {reason}",
+            required=required,
+        )
 
     def _new_sdk(self) -> ElevenLabs:
         """Construct the SDK client with the key this client was built with.

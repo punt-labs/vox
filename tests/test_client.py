@@ -1475,6 +1475,22 @@ async def test_provider_status_sends_optional_provider_filter(
         assert sent["provider"] == provider
 
 
+async def test_provider_status_verify_flag_reaches_the_wire() -> None:
+    ws = _make_mock_ws()
+    ws.recv = AsyncMock(
+        return_value=json.dumps(
+            {"type": "provider_status", "providers": [], "preferred": None}
+        )
+    )
+    client = VoxClient(port=8421, token="tok")
+    client._transport._ws = ws  # pyright: ignore[reportPrivateUsage]
+
+    await client.provider_status(verify=True)
+
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent["verify"] is True
+
+
 class TestVoxClientProgram:
     """The program_* methods parse the daemon's wire replies into typed values."""
 
