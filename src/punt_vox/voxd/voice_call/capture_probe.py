@@ -47,7 +47,8 @@ class CaptureProbe:
     __slots__ = ("_heard", "_level", "_seen_s", "_waited_s")
     _heard: bool
     _seen_s: float
-    _waited_s: float  # Time spent waiting for blocks before signal was heard.
+    # Time spent waiting for blocks: a budget only until signal is heard.
+    _waited_s: float
     _level: CaptureLevel
 
     def __new__(cls) -> Self:

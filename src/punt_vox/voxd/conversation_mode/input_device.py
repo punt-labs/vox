@@ -74,13 +74,19 @@ class PortAudio:
         that opened but would not start is closed before it is raised, so
         no device handle outlives the failure.
 
+        The device is named before the stream is opened: a device that was
+        unplugged or grabbed is exactly one a later query would fail on,
+        and that failure would replace the open or start error the caller
+        must see.
+
         Raises:
-            OSError: When PortAudio refuses the stream: the device is busy,
-                has no input channels, rejects the sample rate, or will not
-                start.
+            OSError: When PortAudio has no default input device, or refuses
+                the stream: the device is busy, has no input channels,
+                rejects the sample rate, or will not start.
         """
         from sounddevice import PortAudioError, RawInputStream
 
+        device = PortAudio.device()
         try:
             stream = RawInputStream(
                 samplerate=samplerate,
@@ -90,12 +96,12 @@ class PortAudio:
                 callback=callback,
             )
         except PortAudioError as exc:
-            raise PortAudio._refused(exc) from exc
+            raise PortAudio._refused(device, exc) from exc
         try:
             return stream.__enter__()
         except PortAudioError as exc:
             PortAudio._close_unstarted(stream)
-            raise PortAudio._refused(exc) from exc
+            raise PortAudio._refused(device, exc) from exc
 
     @staticmethod
     def _close_unstarted(stream: RawInputStream) -> None:
@@ -104,8 +110,7 @@ class PortAudio:
         The start failure is the error the caller must see: it names the
         device and is the OSError the launcher releases the call ID on. A
         second PortAudio error, from the close, would replace it, so that
-        one is a warning only, and the close runs before the device is
-        named so a query failure cannot skip it either.
+        one is a warning only.
         """
         from sounddevice import PortAudioError
 
@@ -118,11 +123,10 @@ class PortAudio:
             )
 
     @staticmethod
-    def _refused(exc: Exception) -> OSError:
+    def _refused(device: InputDevice, exc: Exception) -> OSError:
         """Name the device PortAudio would not open or start, with a remedy."""
-        device = PortAudio.device().name
         return OSError(
-            f"cannot open input device {device}: {exc}. Close another "
+            f"cannot open input device {device.name}: {exc}. Close another "
             "application holding the microphone, or choose a device with "
             "an input channel"
         )

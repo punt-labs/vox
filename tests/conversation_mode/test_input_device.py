@@ -78,7 +78,11 @@ def test_no_default_device_is_an_oserror_carrying_portaudios_text(
 def test_open_requests_a_raw_mono_int16_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install(monkeypatch, RawInputStream=FakeInputStream)
+    _install(
+        monkeypatch,
+        RawInputStream=FakeInputStream,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
 
     def callback(*_args: object) -> None:
         pass
@@ -192,3 +196,37 @@ def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
         "Input stream not closed after a start failure "
         "(_FakePortAudioError: Error closing stream: Device unavailable [-9985])"
     )
+
+
+def test_a_device_query_that_fails_after_the_open_does_not_hide_the_start_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The device is read once, before the stream; the error path never asks.
+
+    A device that was unplugged or grabbed is exactly when a second query
+    fails, and the caller would otherwise be told "no default input device"
+    with the real start error demoted to __context__.
+    """
+    constructed: list[FakeInputStream] = []
+
+    def query_devices(kind: str) -> DeviceInfo:
+        if constructed:  # The device went away once the stream existed.
+            raise _FakePortAudioError("Error querying device input")
+        return {"name": "USB Audio", "default_samplerate": 48000.0}
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("start failed")
+        stream = FakeInputStream.unstartable(error, **kwargs)
+        constructed.append(stream)
+        return stream
+
+    _install(monkeypatch, RawInputStream=construct, query_devices=query_devices)
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "start failed" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    assert str(failure.value.__cause__) == "start failed"
