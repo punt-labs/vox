@@ -217,7 +217,7 @@ vox also works as a standalone TTS tool, without Claude Code.
 |---------|--------------|
 | `vox say "Hello world"` | Synthesize and play text; reads stdin when piped |
 | `vox say "Wall broadcast" --once 600` | Skip the play if the same text played in the last 600 seconds |
-| `vox vibe excited` | Set the session mood |
+| `vox vibe excited` | Set the session mood and use it as a speech cue on ElevenLabs v3 |
 | `vox notify normal` | Notify on task completion and permission prompts |
 | `vox notify continuous` | Also announce real-time signals |
 | `vox speak n` | Chimes only (`vox speak y` turns speech back on) |
