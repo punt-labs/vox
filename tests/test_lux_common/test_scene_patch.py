@@ -9,8 +9,10 @@ they stand at setter time, so ``rows`` must go first).
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from typing import cast
 
+import pytest
 from punt_lux import RenderRequest
 
 from punt_vox.lux_common.scene_patch import ElementPatch, ScenePatchSet, SceneTree
@@ -26,6 +28,36 @@ def _text(element_id: str, content: str) -> dict[str, object]:
 
 def _tree(*elements: dict[str, object]) -> SceneTree:
     return SceneTree.of(_scene(*elements))
+
+
+@pytest.mark.parametrize(
+    ("value", "equal_value"),
+    [
+        pytest.param(
+            ElementPatch("one", {"content": "a"}),
+            ElementPatch("one", {"content": "a"}),
+            id="element-patch",
+        ),
+        pytest.param(
+            ScenePatchSet((ElementPatch("one", {"content": "a"}),)),
+            ScenePatchSet((ElementPatch("one", {"content": "a"}),)),
+            id="patch-set",
+        ),
+        pytest.param(ScenePatchSet(()), ScenePatchSet(()), id="empty-patch-set"),
+        pytest.param(
+            _tree(_text("one", "a")), _tree(_text("one", "a")), id="scene-tree"
+        ),
+        pytest.param(SceneTree((), 0), SceneTree((), 0), id="empty-scene-tree"),
+    ],
+)
+def test_scene_value_is_structurally_equal_and_unhashable(
+    value: object, equal_value: object
+) -> None:
+    assert value is not equal_value
+    assert value == equal_value
+    with pytest.raises(TypeError, match="unhashable type"):
+        hash(value)
+    assert not isinstance(value, Hashable)
 
 
 class TestElementPatch:
@@ -65,6 +97,11 @@ class TestFlatten:
         tree = _tree({"kind": "text", "content": "anonymous"})
         assert tree.unidentified == 1
         assert not tree.patchable_against(tree)
+
+    def test_an_opaque_child_is_counted_without_skipping_its_siblings(self) -> None:
+        tree = _tree({"kind": "group", "id": "g", "children": [None, _text("t", "a")]})
+        assert tree.ids == ("g", "t")
+        assert tree.unidentified == 1
 
 
 class TestPatchability:
