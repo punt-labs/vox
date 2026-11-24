@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep the daemon responsive to other requests while it hashes a large store
   file before sending it. (PL-1430)
 
+- Stop hashing a download when the daemon receives a WebSocket disconnect,
+  including while the request is still waiting for a digest slot. (PL-1433)
+
 - Treat non-object JSON replies from voxd as protocol errors. Instead of
   crashing, `vox status` reports `unknown`. `vox daemon status` reports
   `unresponsive` for an identified local daemon and `unknown` for an

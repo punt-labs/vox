@@ -1,0 +1,191 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+\title{Vox WebSocket Receive-Ahead: A Z Specification}
+\author{Daemon session ordering and cancellation}
+\maketitle
+
+\section{Scope}
+
+One accepted socket dispatches one handler at a time. Only fetch allows
+receive-ahead. Label frames with consecutive ordinals in ASGI receive
+order; payloads and digest slots are outside the model. A receive can
+remain outstanding across fetch completion, including one whose result
+is already ready but has not yet been inspected by the session.
+
+\section{State}
+
+\begin{zed}
+  Phase ::= idle | handling | fetching | closed
+\end{zed}
+
+\begin{zed}
+  ReadState ::= noRead | oneRead | deferredError | readyDisconnect
+\end{zed}
+
+\begin{zed}
+  WaitRead ::= waitNoDisconnect | waitDisconnect
+\end{zed}
+
+\begin{schema}{Session}
+  phase : Phase \\
+  reader : ReadState \\
+  received, dispatched : \nat \\
+  queued : \seq \nat
+  \where
+  dispatched \leq received \\
+  \# queued \leq 32 \\
+  received = dispatched + \# queued \\
+  \forall i : \dom queued @ queued(i) = dispatched + i \\
+  \# queued = 32 \implies reader = noRead \\
+  reader = readyDisconnect \implies
+    (phase = fetching \lor (phase = idle \land queued = \langle \rangle)) \\
+  phase = closed \implies reader = noRead
+\end{schema}
+
+\begin{schema}{Init}
+  Session'
+  \where
+  phase' = idle \\
+  reader' = noRead \\
+  received' = 0 \\
+  dispatched' = 0 \\
+  queued' = \langle \rangle
+\end{schema}
+
+\section{Transitions}
+
+Start a read only with no outstanding read, either directly from idle
+with no backlog or while fetching with room left. Reusing an existing
+read issues no new read.
+
+\begin{schema}{StartRead}
+  \Delta Session
+  \where
+  reader = noRead \\
+  (phase = idle \land queued = \langle \rangle) \lor
+    (phase = fetching \land \# queued < 32) \\
+  reader' = oneRead \\
+  phase' = phase \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+\begin{schema}{BufferFrame}
+  \Delta Session
+  \where
+  phase = fetching \\
+  reader = oneRead \\
+  \# queued < 32 \\
+  reader' = noRead \\
+  phase' = phase \\
+  received' = received + 1 \\
+  dispatched' = dispatched \\
+  queued' = queued \cat \langle received' \rangle
+\end{schema}
+
+Both normal and fetch handlers start via the same dispatch operation.
+The empty-queue branch consumes the outstanding read directly; the
+nonempty branch dispatches the FIFO head and leaves any read untouched.
+
+\begin{schema}{Dispatch}
+  \Delta Session \\
+  kind? : Phase \\
+  frame! : \nat
+  \where
+  phase = idle \\
+  kind? \in \{handling, fetching\} \\
+  phase' = kind? \\
+  dispatched' = dispatched + 1 \\
+  frame! = dispatched' \\
+  (queued \neq \langle \rangle \land frame! = queued(1) \land
+      reader' = reader \land received' = received) \\
+  \quad \lor (queued = \langle \rangle \land reader = oneRead \land
+      queued' = queued \land reader' = noRead \land
+      received' = received + 1) \\
+  \forall i : \dom queued' @ queued'(i) = queued(i + 1)
+\end{schema}
+
+\begin{schema}{FinishHandler}
+  \Delta Session \\
+  waitRead? : WaitRead
+  \where
+  phase \in \{handling, fetching\} \\
+  phase = fetching \implies waitRead? = waitNoDisconnect \\
+  reader \neq readyDisconnect \\
+  phase' = idle \\
+  reader' = reader \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+A non-disconnect receive failure is retained during a fetch. It surfaces
+only when the next ordered receive has drained the buffer.
+
+\begin{schema}{DeferReceiveError}
+  \Delta Session
+  \where
+  phase = fetching \\
+  reader = oneRead \\
+  reader' = deferredError \\
+  phase' = phase \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+A disconnect becomes ready in this model when it is visible to the
+ordered receive or in the set of completed tasks returned to the fetch
+watcher. When that set also contains the fetch task, record the disconnect
+first: \texttt{FinishHandler} is then disabled, so buffered requests
+cannot start before \texttt{Disconnect} closes the session.
+
+\begin{schema}{ObserveDisconnectReady}
+  \Delta Session \\
+  waitRead? : WaitRead
+  \where
+  waitRead? = waitDisconnect \\
+  reader = oneRead \\
+  phase = fetching \lor (phase = idle \land queued = \langle \rangle) \\
+  reader' = readyDisconnect \\
+  phase' = phase \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+\begin{schema}{CloseSession}
+  \Delta Session
+  \where
+  phase \neq closed \\
+  phase' = closed \\
+  reader' = noRead \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+\begin{schema}{Disconnect}
+  CloseSession
+  \where
+  reader = readyDisconnect
+\end{schema}
+
+\begin{schema}{ReceiveFailure}
+  CloseSession
+  \where
+  phase = idle \\
+  queued = \langle \rangle \\
+  reader \in \{oneRead, deferredError\}
+\end{schema}
+
+At saturation, no read is outstanding, so the model does not allow
+\texttt{Disconnect} until there is a new read. Normal cancellation and
+handler failures instead use \texttt{CloseSession}, which tears down any
+outstanding read and permits no subsequent dispatch.
+
+\end{document}
