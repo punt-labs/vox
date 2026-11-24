@@ -13,10 +13,12 @@ from websockets.exceptions import ConnectionClosed
 
 from .steps import (
     ExpectAudioChunks,
+    ExpectPong,
     HangUp,
     SendAgentResponse,
     SendAudio,
     SendInterruption,
+    SendPing,
     SendToolCall,
     SendUserTranscript,
     WaitForToolResult,
@@ -58,6 +60,7 @@ class FakeConvAIAgent:
         "_cut_short",
         "_fault",
         "_initiation",
+        "_pongs",
         "_port",
         "_received",
         "_stack",
@@ -70,6 +73,7 @@ class FakeConvAIAgent:
     _initiation: Message  # Empty until the client's first message arrives.
     _received: list[Message]
     _tool_results: dict[str, Message]
+    _pongs: set[int]
     _audio_chunks: int
     _closed: bool
     _fault: BaseException | None  # None until the reader or player fails.
@@ -84,6 +88,7 @@ class FakeConvAIAgent:
         self._initiation = {}
         self._received = []
         self._tool_results = {}
+        self._pongs = set()
         self._audio_chunks = 0
         self._closed = False
         self._fault = None
@@ -110,6 +115,10 @@ class FakeConvAIAgent:
     @property
     def audio_chunks(self) -> int:
         return self._audio_chunks
+
+    @property
+    def pongs(self) -> frozenset[int]:
+        return frozenset(self._pongs)
 
     @property
     def fault(self) -> BaseException | None:  # None while the fake has not failed.
@@ -198,6 +207,11 @@ class FakeConvAIAgent:
                 await socket.send(
                     json.dumps({"type": "interruption", "interruption_event": body})
                 )
+            case SendPing(event_id):
+                body = {"event_id": event_id, "ping_ms": 0}
+                await socket.send(json.dumps({"type": "ping", "ping_event": body}))
+            case ExpectPong(event_id):
+                await self._wait_for(step, lambda: event_id in self._pongs)
             case WaitForToolResult(tool_call_id):
                 await self._wait_for(step, lambda: tool_call_id in self._tool_results)
             case ExpectAudioChunks(count):
@@ -211,7 +225,7 @@ class FakeConvAIAgent:
         try:
             with suppress(ConnectionClosed):
                 async for raw in socket:
-                    await self._record(socket, json.loads(raw))
+                    await self._record(json.loads(raw))
         finally:
             await self._mark_closed()
 
@@ -221,17 +235,15 @@ class FakeConvAIAgent:
             self._fault = exc
         await socket.close(code=1011, reason=f"fake agent fault: {exc}"[:123])
 
-    async def _record(self, socket: ServerConnection, message: Message) -> None:
+    async def _record(self, message: Message) -> None:
         if not self._initiation:
             self._initiation = message
         else:
             self._received.append(message)
         if message.get("type") == "client_tool_result":
             self._tool_results[str(message["tool_call_id"])] = message
-        elif message.get("type") == "ping":
-            await socket.send(
-                json.dumps({"type": "pong", "event_id": message["event_id"]})
-            )
+        elif message.get("type") == "pong":
+            self._pongs.add(int(str(message["event_id"])))
         elif "user_audio_chunk" in message:
             self._audio_chunks += 1
         async with self._changed:

@@ -26,9 +26,11 @@ from .bare_path import BarePath
 from .fake_agent import FakeConvAIAgent
 from .fake_rest import FakeConvAIRest
 from .steps import (
+    ExpectPong,
     HangUp,
     SendAgentResponse,
     SendInterruption,
+    SendPing,
     SendToolCall,
     SendUserTranscript,
     WaitForToolResult,
@@ -48,6 +50,8 @@ _CALL_TIMEOUT_S = 45.0
 _STOP_TIMEOUT_S = 10.0
 _TASK = "add greeting.py"
 _TOOL_CALL_STEPS: tuple[Step, ...] = (
+    SendPing(1),
+    ExpectPong(1),
     SendUserTranscript("please add a greeting"),
     SendAgentResponse("Starting a worker on that now.", 1),
     SendToolCall("start_worker", "call_1", {"task": _TASK}),
@@ -209,6 +213,7 @@ def test_scripted_call_reaches_the_tool_result(
     assert ") -> error" in report
     events = _trace_events(report)
     assert "ws_open" in events
+    assert "pong" in events
     assert "client_tool_result" in events
 
 

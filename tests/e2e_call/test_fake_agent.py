@@ -14,10 +14,12 @@ from websockets.exceptions import ConnectionClosed
 from .fake_agent import FakeConvAIAgent
 from .steps import (
     ExpectAudioChunks,
+    ExpectPong,
     HangUp,
     SendAgentResponse,
     SendAudio,
     SendInterruption,
+    SendPing,
     SendToolCall,
     SendUserTranscript,
     WaitForToolResult,
@@ -130,17 +132,18 @@ async def test_hang_up_closes_the_socket() -> None:
             await socket.recv()
 
 
-async def test_ping_is_answered_with_pong() -> None:
-    steps: tuple[Step, ...] = (ExpectAudioChunks(1), HangUp())
+async def test_server_ping_is_the_real_shape_and_the_pong_is_awaited() -> None:
+    """The fake pings as ElevenLabs does and waits for the client's pong."""
+    steps: tuple[Step, ...] = (SendPing(7), ExpectPong(7), HangUp())
     async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
         socket = await _open(agent)
         await _recv(socket)
-        await socket.send(json.dumps({"type": "ping", "ping_event": {}, "event_id": 7}))
-        pong = await _recv(socket)
-        await socket.send(json.dumps({"user_audio_chunk": ""}))
+        ping = await _recv(socket)
+        assert ping == {"type": "ping", "ping_event": {"event_id": 7, "ping_ms": 0}}
+        await socket.send(json.dumps({"type": "pong", "event_id": 7}))
         await socket.wait_closed()
-    assert pong == {"type": "pong", "event_id": 7}
-    assert [m["type"] for m in agent.received if "type" in m] == ["ping"]
+    assert agent.pongs == {7}
+    assert agent.cut_short is None
 
 
 @pytest.mark.parametrize(

@@ -6,10 +6,12 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "ExpectAudioChunks",
+    "ExpectPong",
     "HangUp",
     "SendAgentResponse",
     "SendAudio",
     "SendInterruption",
+    "SendPing",
     "SendToolCall",
     "SendUserTranscript",
     "Step",
@@ -58,6 +60,20 @@ class SendInterruption:
 
 
 @dataclass(frozen=True, slots=True)
+class SendPing:
+    """Send the server's keepalive ping the client must answer with a pong."""
+
+    event_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectPong:
+    """Block until the client has answered the ping with this event id."""
+
+    event_id: int
+
+
+@dataclass(frozen=True, slots=True)
 class WaitForToolResult:
     """Block until the client answers the named tool call."""
 
@@ -82,6 +98,8 @@ type Step = (
     | SendAgentResponse
     | SendToolCall
     | SendInterruption
+    | SendPing
+    | ExpectPong
     | WaitForToolResult
     | ExpectAudioChunks
     | HangUp
