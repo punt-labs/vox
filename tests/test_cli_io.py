@@ -236,9 +236,11 @@ class TestTextInputFromFile:
         path = Path("broken.json")
         path.write_text("{not json", encoding="utf-8")
 
-        result = CliRunner().invoke(app, [*command, "--from", str(path)])
+        result = CliRunner().invoke(
+            app, [*command, "--from", str(path)], env={"COLUMNS": "42"}
+        )
 
-        stderr = unstyle(result.stderr)
+        stderr = " ".join(unstyle(result.stderr).replace("│", " ").split())
         assert result.exit_code == 2, stderr
         assert "broken.json" in stderr
         assert "invalid JSON" in stderr
