@@ -49,46 +49,42 @@ class SpeechMarkdown:
         """Yield code and link bounds from the original Markdown parse."""
         if "`" not in text and "](" not in text:
             return
-        for token, lines in cls._inline_sources(text, vibed=vibed):
-            offsets = MarkdownOffsets.from_content(text, lines, token.content)
-            for child, relative in cls._source_tokens(token.children or ()):
+        for content, children, lines in cls._inline_sources(text, vibed=vibed):
+            offsets = MarkdownOffsets.from_content(text, lines, content)
+            for child, relative in cls._source_tokens(children):
                 if span := cls._source_span(child, relative, offsets):
                     yield span
 
-    @classmethod
-    def _source_span(
-        cls, token: Token, offset: int, positions: dict[int, int]
-    ) -> CodeSpan | LinkSpan | None:
-        if token.type == "code_inline":
-            opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
-            width = len(token.markup)
-            if mapped := cls._project(positions, offset, (opening, end - width)):
-                start, close = mapped
-                return CodeSpan(start, start + width, close)
-        elif token.type == "link_open" and _SOURCE_OFFSET in token.meta:
-            opening, label_end, end = cast(
-                "tuple[int, int, int]", token.meta[_SOURCE_OFFSET]
-            )
-            if mapped := cls._project(positions, offset, (opening, label_end, end)):
-                start, label_stop, close = mapped
-                return LinkSpan(start, label_stop, close + 1)
-        return None
-
     @staticmethod
-    def _project(
-        positions: dict[int, int], offset: int, marks: tuple[int, ...]
-    ) -> list[int] | None:
-        mapped = [positions.get(offset + mark, -1) for mark in marks]
-        return None if -1 in mapped else mapped
+    def _source_span(
+        token: Token, offset: int, positions: dict[int, int]
+    ) -> CodeSpan | LinkSpan | None:
+        at = positions.get
+        match token.type, token.meta.get(_SOURCE_OFFSET):
+            case "code_inline", _:
+                opening, end = cast("tuple[int, int]", token.meta[_SOURCE_OFFSET])
+                width = len(token.markup)
+                match at(offset + opening), at(offset + end - width):
+                    case int(start), int(close):
+                        return CodeSpan(start, start + width, close)
+            case "link_open", (int(opening), int(label_end), int(end)):
+                match at(offset + opening), at(offset + label_end), at(offset + end):
+                    case int(start), int(label_stop), int(close):
+                        return LinkSpan(start, label_stop, close + 1)
+        return None
 
     @classmethod
     def _inline_sources(
         cls, text: str, *, vibed: bool
-    ) -> Iterator[tuple[Token, list[int]]]:
+    ) -> Iterator[tuple[str, list[Token], list[int]]]:
         lines = MarkdownOffsets.line_boundaries(text)
         for token in cls._MARKDOWN.parse(text, {_VIBED: vibed}):
             if token.type == "inline" and token.map is not None and token.children:
-                yield token, lines[token.map[0] : token.map[1] + 1]
+                yield (
+                    token.content,
+                    token.children,
+                    lines[token.map[0] : token.map[1] + 1],
+                )
 
     @classmethod
     def _source_tokens(
