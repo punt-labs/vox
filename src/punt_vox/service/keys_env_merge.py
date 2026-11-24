@@ -18,6 +18,7 @@ from punt_vox.service.keys_env_report import KeyNotice, KeysEnvReport
 # the plain settings (profile, provider) need only stay on their own line.
 _POLICIES = dict.fromkeys(HEADER_CARRIED_KEY_NAMES, ValuePolicy.header_safe())
 _SETTING_POLICY = ValuePolicy.printable()
+_CREDENTIALS = HEADER_CARRIED_KEY_NAMES | {"AWS_SECRET_ACCESS_KEY"}
 _EMPTY = "empty in the environment"
 _DIFFERS = "the environment's value differs (--rotate-keys replaces it)"
 _HEADER = (
@@ -37,9 +38,10 @@ class KeysEnvMerge:
     credential. A value its :class:`ValuePolicy` refuses is skipped too, which
     stops any line break smuggling extra ``key=value`` lines into the file.
 
-    A value that differs from the stored one replaces it only when *rotate*
-    is set: a stale key exported by the installing shell must not silently
-    replace a working one. Otherwise the stored value is kept and noted.
+    A credential that differs from the stored one replaces it only when
+    *rotate* is set: a stale key exported by the installing shell must not
+    silently replace a working one. Otherwise the stored value is kept and
+    noted. A setting (profile, region, provider) still follows the shell.
     """
 
     __slots__ = ("_merged", "_notices", "_rotate", "_rotated")
@@ -102,8 +104,8 @@ class KeysEnvMerge:
             self._notices.append(KeyNotice(key, reason, key in self._merged))
 
     def _kept_over(self, key: str, value: str) -> str | None:
-        """Return why a differing stored value stays; record it when rotated."""
-        if self._merged.get(key, value) == value:
+        """Return why a differing stored credential stays; record it when rotated."""
+        if key not in _CREDENTIALS or self._merged.get(key, value) == value:
             return None
         if not self._rotate:
             return _DIFFERS

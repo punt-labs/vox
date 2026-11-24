@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swap a working key for a revoked one and fail speech with HTTP 401. The
   stored key is kept and the install output names it; `--rotate-keys`
   replaces it and reports each key it replaced. Values are never shown.
-  (PL-1322)
+  Settings (`TTS_PROVIDER`, `AWS_PROFILE`, `AWS_DEFAULT_REGION`) still
+  follow the shell. (PL-1322)
 
 - `vox say --provider <other>` without `--voice` now uses that provider's
   default voice instead of failing with `VoiceNotFoundError` on the saved

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from punt_vox.service.keys_env_merge import KeysEnvMerge
 from punt_vox.service.keys_env_report import KeyNotice
 
@@ -24,6 +26,21 @@ def test_rotate_replaces_a_different_stored_value_and_names_it() -> None:
     assert merge.merged == {"OPENAI_API_KEY": "sk-new"}
     assert merge.notices == ()
     assert merge.rotated == ("OPENAI_API_KEY",)
+
+
+@pytest.mark.parametrize("key", ["AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID"])
+def test_a_different_aws_credential_is_kept_without_rotate(key: str) -> None:
+    merge = KeysEnvMerge({key: "stored"}, {key: "shell"})
+    assert merge.merged == {key: "stored"}
+    assert merge.notices == (KeyNotice(key, _DIFFERS, kept=True),)
+
+
+@pytest.mark.parametrize("key", ["TTS_PROVIDER", "AWS_PROFILE", "AWS_DEFAULT_REGION"])
+def test_a_different_setting_follows_the_shell_without_rotate(key: str) -> None:
+    merge = KeysEnvMerge({key: "stored"}, {key: "shell"})
+    assert merge.merged == {key: "shell"}
+    assert merge.notices == ()
+    assert merge.rotated == ()
 
 
 def test_the_same_value_in_both_places_is_silent() -> None:
