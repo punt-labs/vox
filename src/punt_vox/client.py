@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Self
 if TYPE_CHECKING:
     from types import TracebackType
 
-from punt_vox.bare_name import BareName
+from punt_vox.album_export import AlbumExport as AlbumExport, ExportManifest
 from punt_vox.client_errors import (
     VoxdProtocolError,
 )
@@ -512,7 +512,7 @@ class VoxClient:
         """
         await self._command("music_remove", album=album_id)
 
-    async def music_get(self, album_id: str, dest_dir: Path) -> Path:
+    async def music_get(self, album_id: str, dest_dir: Path) -> AlbumExport:
         """Copy an album into *dest_dir* as ``<album-name>/`` of its parts.
 
         Fetches the manifest and refuses an album with no ready parts before
@@ -521,7 +521,8 @@ class VoxClient:
         collision guard. With parts to write, it creates the album directory
         (refusing a collision, D-1), then chunk-fetches every part and writes it
         atomically. On any failure the half-written directory is removed, so a
-        fault leaves nothing.
+        fault leaves nothing. Parts the daemon reports missing on disk (deleted
+        out of band) are skipped and named on the returned export.
 
         Raises:
             ValueError: If the album has no parts to fetch.
@@ -532,34 +533,20 @@ class VoxClient:
             OSError: If the destination cannot be created or written.
             FileExistsError: If the destination album directory already exists.
         """
-        manifest = await self._command("music_manifest", album=album_id)
+        reply = await self._command("music_manifest", album=album_id)
         with self._wire_guard():
-            obj = JsonObject.coerce(manifest, "music_manifest")
-            # Validate daemon-supplied names as bare filenames before joining, so
-            # a tampered frame cannot write outside dest_dir (guard raises pre-mkdir).
-            album_name = BareName(obj.require_str("album"), "album name").value
-            parts = [
-                BareName(
-                    JsonObject.coerce(item, "manifest.parts").require_str("part"),
-                    "part name",
-                ).value
-                for item in obj.require_list("parts")
-            ]
-        if not parts:
-            # The manifest lists only ready parts, so an empty list means the album
-            # is still generating -- fail before mkdir so the CWD is left untouched.
-            msg = f"album {album_id} has no ready parts to export (still generating)"
-            raise ValueError(msg)
-        target = dest_dir / album_name
+            manifest = ExportManifest.parse(reply)  # names validated pre-mkdir
+        manifest.require_parts(album_id)  # fail before mkdir: CWD left untouched
+        target = dest_dir / manifest.album
         target.mkdir(parents=True)  # exist_ok=False: a collision raises (D-1)
         try:
-            for part in parts:
+            for part in manifest.parts:
                 data = await self.fetch_part(album_id, part)
                 self._write_atomically(target / part, data)
         except BaseException:
             shutil.rmtree(target, ignore_errors=True)
             raise
-        return target
+        return AlbumExport(target, manifest.missing)
 
     @staticmethod
     def _write_atomically(dest: Path, data: bytes) -> None:
