@@ -77,20 +77,20 @@ class RecordStore:
     naming and play/fetch references reject the same hostile inputs.
     """
 
-    __slots__ = ("_root",)
+    __slots__ = ("_containment",)
 
-    _root: Path
+    _containment: ContainmentRoot
 
     def __new__(cls, root: Path) -> Self:
         """Create a record store."""
         self = super().__new__(cls)
-        self._root = root
+        self._containment = ContainmentRoot(root, _NAME_LABEL)
         return self
 
     @property
     def root(self) -> Path:
         """Return the recordings root every write is contained within."""
-        return self._root
+        return self._containment.root
 
     def resolve(self, name: str | None, text: str) -> Path:
         """Resolve the destination for a record write, contained in the root.
@@ -99,18 +99,32 @@ class RecordStore:
         ``None`` (absent) content-addresses by *text* -- the canonical name every
         other vox MP3 uses. An explicit empty or whitespace-only string is an
         invalid name, not "absent", so it is rejected (``ValueError``), as are
-        absolute, separated, traversing, and NUL-bearing names.
+        absolute, separated, traversing, NUL-bearing, and overlong names. If
+        necessary, create the private store so the filesystem can check the name.
         """
-        return self._resolve_within_root(RecordingName.for_take(name, text).value)
+        dest = self._containment.resolve(RecordingName.for_take(name, text).value)
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Non-strict resolve() hides ENAMETOOLONG; stat applies the actual
+        # filesystem's name rules and PathStatus treats a missing take as normal.
+        try:
+            PathStatus.of(dest)
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            raise ValueError(
+                f"{_NAME_LABEL} is too long for the recordings filesystem"
+            ) from exc
+        return dest
 
     def resolve_ref(self, ref: str) -> Path:
         """Resolve a play/fetch reference to a contained store path.
 
-        Same validation as :meth:`resolve`: a bare name only, no path escape.
+        References require a bare name and no path escape, not the additional
+        rules for naming a new take.
         The caller checks existence -- an unknown but well-formed name resolves
         to a path inside the root that simply does not exist yet.
         """
-        return self._resolve_within_root(ref)
+        return self._containment.resolve(ref)
 
     def place(self, *, source: Path, text: str, name: str | None) -> RecordWrite:
         """Land *source* at its contained destination atomically; return path + bytes.
@@ -120,10 +134,7 @@ class RecordStore:
         is replaced atomically, never with a partial write.
         """
         dest = self.resolve(name, text)
-        # dest is a bare name under the root, so the parent is the root itself;
-        # create it 0700 defensively (the daemon also does this at startup).
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._root.chmod(0o700)
+        self.root.chmod(0o700)
 
         moved = self._move(source, dest)
         return moved if moved is not None else self._copy(source, dest)
@@ -133,22 +144,17 @@ class RecordStore:
 
         A missing root is empty. An inaccessible root raises OSError.
         """
-        if not PathStatus.of(self._root).is_directory:
+        if not PathStatus.of(self.root).is_directory:
             return
-        # Build the shared bare-name validator once; every child is judged by the
-        # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
-        validator = ContainmentRoot(self._root, _NAME_LABEL)
-        with os.scandir(self._root) as children:
+        with os.scandir(self.root) as children:
             for batch in batched(children, _SCAN_BATCH_SIZE, strict=False):
                 yield [
                     entry
                     for child in batch
-                    if (entry := self._entry_for(Path(child.path), validator))
-                    is not None
+                    if (entry := self._entry_for(Path(child.path))) is not None
                 ]
 
-    @staticmethod
-    def _entry_for(child: Path, validator: ContainmentRoot) -> RecordingEntry | None:
+    def _entry_for(self, child: Path) -> RecordingEntry | None:
         """Return *child*'s entry, or ``None`` to skip an unlistable child.
 
         One ``lstat`` (no symlink follow) both classifies and sizes the child, so
@@ -171,7 +177,7 @@ class RecordStore:
         if not stat.S_ISREG(info.st_mode):
             return None
         try:
-            validator.contained_child(child.name)
+            self._containment.contained_child(child.name)
         except ValueError:
             return None
         return RecordingEntry(child.name, info.st_size)
@@ -192,7 +198,7 @@ class RecordStore:
         Raises:
             FileNotFoundError: If the reference is neither a stored file nor a symlink.
         """
-        path = self._child_within_root(ref)
+        path = self._containment.contained_child(ref)
         # A no-follow classify accepts a link entry (even a broken one) so its
         # removal deletes the link, and a real recording; a directory or an absent
         # name matches neither and is "not found". Classifying from one stat means
@@ -202,19 +208,6 @@ class RecordStore:
             msg = f"no recording named {ref!r}"
             raise FileNotFoundError(msg)
         path.unlink()
-
-    def _resolve_within_root(self, candidate: str) -> Path:
-        """Validate a bare name and resolve it within the shared containment root."""
-        return ContainmentRoot(self._root, _NAME_LABEL).resolve(candidate)
-
-    def _child_within_root(self, name: str) -> Path:
-        """Validate a bare name and return its child under the root, unfollowed.
-
-        The removal counterpart of :meth:`_resolve_within_root`: the shared
-        validator rejects a hostile name, but the entry is *not* symlink-resolved,
-        so acting on it touches the link itself rather than its target.
-        """
-        return ContainmentRoot(self._root, _NAME_LABEL).contained_child(name)
 
     @staticmethod
     def _move(source: Path, dest: Path) -> RecordWrite | None:

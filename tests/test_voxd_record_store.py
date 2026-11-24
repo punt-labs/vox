@@ -8,6 +8,7 @@ empty, or NUL-bearing -- can cause a write outside the daemon-owned root.
 from __future__ import annotations
 
 import errno
+import os
 from itertools import chain
 from pathlib import Path
 
@@ -339,6 +340,19 @@ class TestPlacement:
         assert write.path == (store.root / "out.mp3").resolve()
         assert write.path.read_bytes() == b"\xff\xfb" * 100
         assert write.byte_count == 200
+
+    def test_name_at_filename_limit_lands_bytes(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+        name = "é" + "a" * (limit - len(os.fsencode("é")))
+        source = tmp_path / "src.mp3"
+        source.write_bytes(b"audio")
+
+        write = store.place(source=source, text="hello", name=name)
+
+        assert write.path == store.root / name
+        assert write.path.read_bytes() == b"audio"
 
     def test_default_names_by_content_hash(
         self, store: RecordStore, tmp_path: Path
