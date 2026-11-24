@@ -212,3 +212,31 @@ async def test_a_silence_failure_closes_the_source_before_it_reaches_the_caller(
         async for _ in CaptureProbe().watch(dead()):
             pass
     assert closed_at == [True]
+
+
+async def test_time_the_consumer_spends_away_does_not_count_against_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wall budget measures waiting for audio, not the consumer's absence.
+
+    A live microphone delivers an initial silent block promptly; the consumer
+    then spends longer than the limit away (a slow socket send) before pulling
+    again. The next pull must not time out: the mic has more audio ready, and
+    the voiced block that follows proves the capture is alive.
+    """
+    limit = 0.2
+    monkeypatch.setattr(
+        "punt_vox.voxd.voice_call.capture_probe._SILENCE_LIMIT_S", limit
+    )
+
+    async def prompt() -> AsyncGenerator[AudioChunk]:
+        yield AudioChunk(pcm=_SILENCE, duration_s=_FRAME_S)
+        yield AudioChunk(pcm=_VOICE, duration_s=_FRAME_S)
+
+    forwarded: list[bytes] = []
+    async with asyncio.timeout(5):
+        async for pcm in CaptureProbe().watch(prompt()):
+            forwarded.append(pcm)
+            if pcm == _SILENCE:
+                await asyncio.sleep(limit * 1.5)  # the consumer is away
+    assert forwarded == [_SILENCE, _VOICE]
