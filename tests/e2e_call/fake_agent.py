@@ -38,6 +38,7 @@ __all__ = ["FakeConvAIAgent"]
 type Message = dict[str, object]
 
 _CONVERSATION_ID = "conv_fake"
+_INITIATION_TYPE = "conversation_initiation_client_data"
 _AUDIO_FORMAT = "pcm_16000"
 
 
@@ -57,6 +58,7 @@ class FakeConvAIAgent:
         "_audio_chunks",
         "_changed",
         "_closed",
+        "_connections",
         "_cut_short",
         "_fault",
         "_initiation",
@@ -78,6 +80,7 @@ class FakeConvAIAgent:
     _closed: bool
     _fault: BaseException | None  # None until the reader or player fails.
     _cut_short: Step | None  # None unless a client close ended a wait step.
+    _connections: int
     _changed: asyncio.Condition
 
     def __new__(cls, steps: Iterable[Step]) -> Self:
@@ -93,6 +96,7 @@ class FakeConvAIAgent:
         self._closed = False
         self._fault = None
         self._cut_short = None
+        self._connections = 0
         self._changed = asyncio.Condition()
         return self
 
@@ -146,6 +150,12 @@ class FakeConvAIAgent:
             raise self._fault
 
     async def _handle(self, socket: ServerConnection) -> None:
+        self._connections += 1
+        if self._connections > 1:
+            # One script, one conversation: a second dial is a daemon bug.
+            msg = f"second connection to the fake agent (#{self._connections})"
+            await self._fail(socket, RuntimeError(msg))
+            return
         tasks = {
             asyncio.create_task(self._read(socket)),
             asyncio.create_task(self._play(socket)),
@@ -237,6 +247,10 @@ class FakeConvAIAgent:
 
     async def _record(self, message: Message) -> None:
         if not self._initiation:
+            kind = message.get("type")
+            if kind != _INITIATION_TYPE:
+                msg = f"first client message must be {_INITIATION_TYPE}, not {kind!r}"
+                raise ValueError(msg)
             self._initiation = message
         else:
             self._received.append(message)

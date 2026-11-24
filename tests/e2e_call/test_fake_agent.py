@@ -216,3 +216,35 @@ async def test_a_completed_script_is_not_cut_short() -> None:
         await socket.send(chunk)
         await socket.wait_closed()
     assert agent.cut_short is None
+
+
+async def test_a_first_message_that_is_not_the_initiation_is_a_fault() -> None:
+    """The fake refuses a client that skips conversation_initiation_client_data."""
+    agent = FakeConvAIAgent([HangUp()])
+    with pytest.raises(ValueError, match="conversation_initiation_client_data"):
+        async with asyncio.timeout(1), agent:
+            socket = await connect(agent.signed_url)
+            await socket.send(json.dumps({"type": "pong", "event_id": 1}))
+            with pytest.raises(ConnectionClosed) as closed:
+                await socket.recv()
+            assert closed.value.rcvd is not None
+            assert closed.value.rcvd.code == 1011
+    assert isinstance(agent.fault, ValueError)
+    assert agent.initiation == {}
+
+
+async def test_a_second_connection_is_refused_as_a_fault() -> None:
+    """One script serves one conversation; a second dial is a daemon bug."""
+    steps: tuple[Step, ...] = (WaitForToolResult("never"), HangUp())
+    agent = FakeConvAIAgent(steps)
+    with pytest.raises(RuntimeError, match="second connection"):
+        async with asyncio.timeout(1), agent:
+            first = await _open(agent)
+            await _recv(first)
+            second = await connect(agent.signed_url)
+            with pytest.raises(ConnectionClosed) as closed:
+                await second.recv()
+            assert closed.value.rcvd is not None
+            assert closed.value.rcvd.code == 1011
+            await first.close()
+    assert isinstance(agent.fault, RuntimeError)
