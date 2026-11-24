@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Self, final
+from typing import Self, cast, final
 
 import websockets
 import websockets.asyncio.client
@@ -69,26 +69,28 @@ class VoxdExchange:
         except (websockets.exceptions.WebSocketException, OSError) as exc:
             raise VoxdConnectionError(self._failure(exc)) from exc
 
-    async def reply(self, timeout: float) -> dict[str, Any]:
+    # Reply fields vary by request; this boundary only validates the envelope.
+    async def reply(self, timeout: float) -> dict[str, object]:
         """Receive and decode the request's single reply within *timeout*.
 
         Raises:
             VoxdConnectionError: If the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
-            AttributeError: If the daemon sends a non-object JSON reply.
-            VoxdProtocolError: If JSON is invalid or the deadline expires.
+            VoxdProtocolError: If the reply is not a JSON object or times out.
         """
         timeout_msg = f"Timeout waiting for response to '{self.op}'"
-        return self.decode(await self._recv_within(timeout, timeout_msg))
+        return await self._recv_within(timeout, timeout_msg)
 
-    async def recv_before(self, deadline: float, expected: str) -> object:
-        """Receive one frame before *deadline*, or raise a timeout protocol error.
+    # Stream frames have different fields depending on the frame type.
+    async def recv_before(self, deadline: float, expected: str) -> dict[str, object]:
+        """Receive and decode one frame before *deadline*.
 
         *expected* names the frame awaited; the timeout names it in the op.
 
         Raises:
             VoxdConnectionError: If the connection is lost.
-            VoxdProtocolError: If the deadline expires.
+            VoxdRejectionError: If the daemon sends an error frame.
+            VoxdProtocolError: If the frame is not a JSON object or times out.
         """
         timeout_msg = f"Timeout waiting for '{expected}' in '{self.op}'"
         remaining = deadline - asyncio.get_running_loop().time()
@@ -105,47 +107,48 @@ class VoxdExchange:
         Raises:
             VoxdConnectionError: If the connection is lost.
             VoxdRejectionError: If the daemon sends an error frame.
-            AttributeError: If the daemon sends a non-object JSON frame.
             VoxdProtocolError: If a frame is invalid or out of order, the stream
                 fails verification, or the deadline expires.
         """
-        begin = self.decode(await self.recv_before(deadline, "fetch_begin"))
-        assembly = FetchAssembly.begin(begin)
+        assembly = FetchAssembly.begin(await self.recv_before(deadline, "fetch_begin"))
         for seq in range(assembly.chunks):
-            frame = self.decode(await self.recv_before(deadline, "chunk"))
-            assembly.append(frame, seq)
-        end = self.decode(await self.recv_before(deadline, "fetch_end"))
-        return assembly.finish(end)
+            assembly.append(await self.recv_before(deadline, "chunk"), seq)
+        return assembly.finish(await self.recv_before(deadline, "fetch_end"))
 
-    async def _recv_within(self, timeout: float, timeout_msg: str) -> object:
-        """Receive one frame within *timeout*, wrapping every transport failure.
+    # The receive path is shared by single replies and streamed frames.
+    async def _recv_within(self, timeout: float, timeout_msg: str) -> dict[str, object]:
+        """Receive and decode one frame, wrapping every transport failure.
 
         A timeout is a protocol failure; a dropped socket is a connection one.
         """
         try:
-            return await asyncio.wait_for(self._ws.recv(), timeout=timeout)
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
         except TimeoutError as exc:
             raise VoxdProtocolError(timeout_msg) from exc
         except (websockets.exceptions.WebSocketException, OSError) as exc:
             raise VoxdConnectionError(self._failure(exc)) from exc
+        return self.decode(raw)
 
     def _failure(self, exc: Exception) -> str:
         """Describe a lost/closed connection for a wrapped transport error."""
         return f"connection to voxd lost during '{self.op}': {exc}"
 
     @staticmethod
-    def decode(raw: object) -> dict[str, Any]:
+    # Wire objects have string keys, but field schemas depend on the operation.
+    def decode(raw: object) -> dict[str, object]:
         """Parse an object frame, rejecting invalid JSON and daemon error replies.
 
         Raises:
-            VoxdProtocolError: If the frame is not valid JSON.
+            VoxdProtocolError: If the frame is not a JSON object.
             VoxdRejectionError: If the frame is a daemon ``error`` reply.
-            AttributeError: If the frame is valid JSON but not an object.
         """
         try:
-            resp: dict[str, Any] = json.loads(str(raw))
-        except json.JSONDecodeError as exc:
+            parsed: object = json.loads(str(raw))
+        except (ValueError, RecursionError) as exc:
             raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise VoxdProtocolError("expected a JSON object from voxd")
+        resp = cast("dict[str, object]", parsed)  # JSON object keys are always strings.
         if resp.get("type") == "error":
             raise VoxdRejectionError(str(resp.get("message", "unknown error")))
         return resp

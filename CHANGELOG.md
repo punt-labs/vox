@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Treat non-object JSON replies from voxd as protocol errors. Instead of
+  crashing, `vox status` reports `unknown`. `vox daemon status` reports
+  `unresponsive` for an identified local daemon and `unknown` for an
+  explicitly configured endpoint. (PL-1422)
+
 - `vox say --provider <other>` without `--voice` now uses that provider's
   default voice instead of failing with `VoiceNotFoundError` on the saved
   voice of the configured provider. (PL-799)
