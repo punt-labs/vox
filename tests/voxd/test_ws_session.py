@@ -34,10 +34,11 @@ def router(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WebSocketRouter:
 class _FetchPeer:
     """Drive the router's receive and send sides independently."""
 
-    __slots__ = ("_inbox", "_receive_failed", "_sent", "_task")
+    __slots__ = ("_inbox", "_receive_failed", "_received", "_sent", "_task")
 
     _inbox: asyncio.Queue[str | Exception]
     _receive_failed: asyncio.Event
+    _received: asyncio.Queue[str]
     _sent: list[dict[str, object]]
     _task: asyncio.Task[None]
 
@@ -45,6 +46,7 @@ class _FetchPeer:
         self = super().__new__(cls)
         self._inbox = asyncio.Queue()
         self._receive_failed = asyncio.Event()
+        self._received = asyncio.Queue()
         self._sent = []
         socket = AsyncMock(spec=WebSocket)
         socket.headers = {}
@@ -64,6 +66,9 @@ class _FetchPeer:
     async def wait_receive_failure(self) -> None:
         await self._receive_failed.wait()
 
+    async def wait_received(self) -> str:
+        return await self._received.get()
+
     def send(self, kind: str, label: str) -> None:
         self._inbox.put_nowait(json.dumps({"type": kind, "id": label, "ref": label}))
 
@@ -77,6 +82,7 @@ class _FetchPeer:
         if isinstance(frame, Exception):
             self._receive_failed.set()
             raise frame
+        self._received.put_nowait(frame)
         return frame
 
 
@@ -199,6 +205,10 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
                 peer.disconnect(RuntimeError("broken receive"))
                 await peer.wait_receive_failure()
                 await watcher_finished.wait()
+            else:
+                assert json.loads(await peer.wait_received())["id"] == "r.mp3"
+                assert json.loads(await peer.wait_received())["id"] == "after"
+                assert not peer.sent
             resume.set()
             await finished.wait()
     finally:
