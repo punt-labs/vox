@@ -70,7 +70,7 @@ class ProviderCommand:
             ctx.store.write_fields(updates)
         except ConfigValueError as exc:
             return CommandResult.failure(str(exc))
-        return CommandResult(text=f"Provider: {name}", json_data=updates)
+        return CommandResult(text=f"Provider: {name}", json_data={**updates})
 
 
 provider: ProviderCommand = ProviderCommand()
