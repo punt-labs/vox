@@ -60,13 +60,27 @@ class PortAudio:
     def open(
         *, samplerate: float, blocksize: int, callback: RawInputCallback
     ) -> InputStreamHandle:
-        """Open a raw mono int16 stream on the default input device."""
-        from sounddevice import RawInputStream
+        """Open a raw mono int16 stream on the default input device.
 
-        return RawInputStream(
-            samplerate=samplerate,
-            blocksize=blocksize,
-            channels=1,
-            dtype="int16",
-            callback=callback,
-        )
+        Raises:
+            OSError: When PortAudio refuses the stream: the device is busy,
+                has no input channels, or rejects the sample rate.
+        """
+        from sounddevice import PortAudioError, RawInputStream
+
+        try:
+            return RawInputStream(
+                samplerate=samplerate,
+                blocksize=blocksize,
+                channels=1,
+                dtype="int16",
+                callback=callback,
+            )
+        except PortAudioError as exc:
+            device = PortAudio.device().name
+            msg = (
+                f"cannot open input device {device}: {exc}. Close another "
+                "application holding the microphone, or choose a device with "
+                "an input channel"
+            )
+            raise OSError(msg) from exc

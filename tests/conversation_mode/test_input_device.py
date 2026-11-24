@@ -89,3 +89,26 @@ def test_open_requests_a_raw_mono_int16_stream(
         "dtype": "int16",
         "callback": callback,
     }
+
+
+def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy, zero-channel or invalid device is an OSError, not a code bug."""
+
+    def refuse(**_kwargs: object) -> FakeInputStream:
+        raise _FakePortAudioError(
+            "Error opening RawInputStream: Invalid number of channels [-9998]"
+        )
+
+    _install(
+        monkeypatch,
+        RawInputStream=refuse,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=lambda *_: None)
+    message = str(failure.value)
+    assert "Invalid number of channels" in message
+    assert "another application" in message
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
