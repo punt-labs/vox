@@ -52,7 +52,6 @@ test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` ser
 test-call-e2e: ## Voice-call e2e -- a real voxd against a fake ElevenLabs agent on loopback, no credentials
 	uv run pytest tests/e2e_call -m call_e2e -q
 
-
 lint: check-comments check-docstrings ## Lint and format check (Python + shell)
 	uv run ruff check .
 	uv run ruff format --check .

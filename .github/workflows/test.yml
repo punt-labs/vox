@@ -353,11 +353,12 @@ jobs:
       - run: make coverage
       # Voice-call e2e: a real voxd subprocess dials a fake ElevenLabs agent
       # and fake REST on loopback with scripted PCM, no microphone and no
-      # credentials. `make coverage` depends on `make install`, so the wheel
-      # is already built; the tier runs as its own step, the way the
-      # packaging-e2e job runs `make test-e2e` after its install, so a
-      # call-path break is reported as this step and never buried in the
-      # coverage run.
+      # credentials. The coverage run above already collects this tier
+      # (tools/run_coverage.py selects every credential-free marker, and the
+      # daemon and CLI it spawns report through the subprocess coverage hook),
+      # so this step adds no coverage. It runs again on its own, from the uv
+      # venv, so a call-path break is reported as this step and never buried
+      # in the coverage run.
       - run: make test-call-e2e
       - name: Save main coverage baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
