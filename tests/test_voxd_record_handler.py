@@ -505,7 +505,9 @@ class TestRecordHandler:
         )
         handler = RecordHandler(synthesis=synth, store=store)
         ws, sent = _capturing_ws()
-        name = "é" * (os.pathconf(tmp_path, "PC_NAME_MAX") + 1)
+        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+        name = "é" * (limit // len(os.fsencode("é")) + 1)
+        assert len(name) <= limit < len(os.fsencode(name))
 
         msg: dict[str, object] = {
             "type": "record",
