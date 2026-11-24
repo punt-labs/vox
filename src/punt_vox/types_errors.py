@@ -25,7 +25,7 @@ class ConfigValueError(ValueError):
 class VoiceNotFoundError(ValueError):
     """Raised when a voice name cannot be resolved by a provider.
 
-    Renders as ``"Unknown voice '<name>'. Available: <a>, <b>, ..."``
+    Renders as ``"Unknown voice '<name>'. Available: ['<a>', '<b>', ...]"``
     via :meth:`__str__`.
     ``__str__`` is the load-bearing override: ``BaseException.__init__``
     runs after ``__new__`` and overwrites ``args`` with the constructor's
@@ -55,7 +55,7 @@ class VoiceNotFoundError(ValueError):
 
     def __str__(self) -> str:
         """Render the message so ``str(exc)`` is user-facing, not a tuple repr."""
-        return f"Unknown voice {self._name!r}. Available: {', '.join(self._available)}"
+        return f"Unknown voice {self._name!r}. Available: {list(self._available)!r}"
 
     @property
     def voice_name(self) -> str:

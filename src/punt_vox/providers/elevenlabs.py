@@ -10,7 +10,7 @@ from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
-from punt_vox.providers.elevenlabs_voices import ElevenLabsVoices
+from punt_vox.providers.elevenlabs_voices import DESCRIPTION_SEPARATOR, ElevenLabsVoices
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -214,7 +214,7 @@ class ElevenLabsProvider(TTSProvider):
         but all voices are returned regardless. Only short names (without
         descriptions) are included.
         """
-        return [k for k in self._voices.list_all() if " - " not in k]
+        return [k for k in self._voices.list_all() if DESCRIPTION_SEPARATOR not in k]
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -246,7 +246,7 @@ class ElevenLabsProvider(TTSProvider):
                 fresh[full_name] = vid
 
             # Also store short name (before " - ") for convenient lookup.
-            short_name = full_name.split(" - ", 1)[0]
+            short_name = full_name.split(DESCRIPTION_SEPARATOR, 1)[0]
             if short_name != full_name and short_name not in fresh:
                 fresh[short_name] = vid
 

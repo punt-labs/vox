@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import ssl
 import time
@@ -83,7 +84,7 @@ class TestElevenLabsProviderResolveVoice:
         assert exc_info.value.available == ["drew", "matilda"]
 
     def test_unknown_voice_keeps_distinct_voices_with_the_same_short_name(
-        self, mock_elevenlabs_client: MagicMock
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
     ) -> None:
         other_drew = MagicMock()
         other_drew.name = "Drew - baritone"
@@ -94,7 +95,23 @@ class TestElevenLabsProviderResolveVoice:
         with pytest.raises(VoiceNotFoundError) as exc_info:
             provider.resolve_voice("nonexistent")
 
-        assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
+        expected = {
+            "drew - baritone": "AAAAAAAAAAAAAAAAAAAA",
+            "drew - eloquent, calm": "29vD33N1CtxCmqQRPOHJ",
+            "matilda": "XrExE9yKIg1WjnnlVkGX",
+        }
+        assert exc_info.value.available == list(expected)
+        rendered = str(exc_info.value).split(". Available: ", 1)[1]
+        assert ast.literal_eval(rendered) == list(expected)
+
+        for name in [*exc_info.value.available, "drew"]:
+            provider.synthesize(
+                SynthesisRequest(text="Hello", voice=name), tmp_path / "voice.mp3"
+            )
+            bound = mock_elevenlabs_client.text_to_speech.stream.call_args
+            assert bound.kwargs["voice_id"] == expected.get(
+                name, expected["drew - eloquent, calm"]
+            )
 
     def test_unknown_voice_skips_names_interpreted_as_ids(
         self, mock_elevenlabs_client: MagicMock, tmp_path: Path

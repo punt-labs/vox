@@ -259,7 +259,9 @@ class TestVoiceNotFoundError:
     def test_str_renders_the_f5_sentence(self) -> None:
         exc = VoiceNotFoundError("bella", ["alloy", "ash", "ballad"])
 
-        assert str(exc) == "Unknown voice 'bella'. Available: alloy, ash, ballad"
+        assert (
+            str(exc) == "Unknown voice 'bella'. Available: ['alloy', 'ash', 'ballad']"
+        )
 
     def test_str_is_not_the_tuple_repr(self) -> None:
         """Regression: without ``__str__`` this would render as the args tuple.
@@ -308,5 +310,5 @@ class TestVoiceNotFoundError:
         available.append("added-after-raise")
         available[0] = "MUTATED"
 
-        assert str(exc) == "Unknown voice 'bella'. Available: alloy, ash"
+        assert str(exc) == "Unknown voice 'bella'. Available: ['alloy', 'ash']"
         assert exc.available == ["alloy", "ash"]

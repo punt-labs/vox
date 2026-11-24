@@ -791,7 +791,7 @@ class TestSynthesizeHandlerTypedErrorRouting:
         assert sent[-1]["type"] == "error"
         assert (
             sent[-1]["message"]
-            == "Unknown voice 'bella'. Available: alloy, ash, ballad"
+            == "Unknown voice 'bella'. Available: ['alloy', 'ash', 'ballad']"
         )
         assert not any(
             f.get("type") == "fault" or f.get("message") == "operation failed"
