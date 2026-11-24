@@ -21,6 +21,8 @@ from punt_vox.voxd.wire_reply import WireReply
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.output_health import OutputHealth
+
 __all__ = ["ChimeHandler", "HealthHandler", "VoicesHandler"]
 
 logger = logging.getLogger(__name__)
@@ -128,18 +130,21 @@ class VoicesHandler(MessageHandler):
 class HealthHandler(MessageHandler):
     """Handle 'health' messages over the authenticated WebSocket."""
 
-    __slots__ = ("_health",)
+    __slots__ = ("_health", "_output_health")
 
     _health: DaemonHealth
+    _output_health: OutputHealth | None
 
     def __new__(
         cls,
         *,
         health: DaemonHealth,
+        output_health: OutputHealth | None = None,
     ) -> Self:
         """Create a health handler."""
         self = super().__new__(cls)
         self._health = health
+        self._output_health = output_health
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
@@ -152,5 +157,7 @@ class HealthHandler(MessageHandler):
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         payload = self._health.full_payload()
+        if msg.get("output_dirs") is True and self._output_health is not None:
+            payload.update(await self._output_health.probe_within_budget() or {})
         payload["type"] = "health"
         await reply.send(payload)
