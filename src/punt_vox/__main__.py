@@ -237,10 +237,12 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Save stdout and check Vox's exit status separately from jq:
 
-    \b
     status=0
+
     vox say --from segments.json --json > out.jsonl || status=$?
+
     jq -c . out.jsonl
+
     echo "Vox exit status: $status" >&2
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)

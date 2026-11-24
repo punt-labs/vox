@@ -70,7 +70,8 @@ def test_batch_json_lines_help_preserves_shell_example(
 
     assert result.returncode == 0, result.stderr
     assert "\b" not in result.stdout
-    lines = [line.strip() for line in click.unstyle(result.stdout).splitlines()]
+    stdout = click.unstyle(result.stdout)
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     assert "status=0" in lines, result.stdout
     start = lines.index("status=0")
     assert lines[start : start + 4] == [
