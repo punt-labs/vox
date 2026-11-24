@@ -15,21 +15,17 @@ On cross-filesystem ``EXDEV``, it is copied through the private descriptor
 
 from __future__ import annotations
 
-import contextlib
-import errno
 import os
-import shutil
 import stat
-import tempfile
 from dataclasses import dataclass
 from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.types import generate_filename
+from punt_vox.recording_name import RecordingName
 from punt_vox.voxd.containment import ContainmentRoot
-from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.path_status import PathStatus
+from punt_vox.voxd.record_target import RecordTarget, RecordWrite
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,24 +34,6 @@ __all__ = ["RecordStore", "RecordWrite"]
 
 _NAME_LABEL = "recording name"
 _SCAN_BATCH_SIZE = 128
-
-
-@dataclass(frozen=True, slots=True)
-class RecordWrite:
-    """The landed recording: its final path and byte count.
-
-    ``byte_count`` is the size the daemon wrote, echoed to the client so the
-    caller can assert the on-disk file matches (byte-correct delivery).
-    """
-
-    path: Path
-    byte_count: int
-
-    @property
-    def wire_path(self) -> str:
-        """Return the landed path relativized for the wire, never a host prefix."""
-        rel = relativize_to_data_root(self.path)
-        return str(rel.path) if rel is not None else self.path.name
 
 
 @final
@@ -77,41 +55,50 @@ class RecordStore:
     naming and play/fetch references reject the same hostile inputs.
     """
 
-    __slots__ = ("_root",)
+    __slots__ = ("_containment",)
 
-    _root: Path
+    _containment: ContainmentRoot
 
     def __new__(cls, root: Path) -> Self:
         """Create a record store."""
         self = super().__new__(cls)
-        self._root = root
+        self._containment = ContainmentRoot(root, _NAME_LABEL)
         return self
 
     @property
     def root(self) -> Path:
         """Return the recordings root every write is contained within."""
-        return self._root
+        return self._containment.root
 
     def resolve(self, name: str | None, text: str) -> Path:
         """Resolve the destination for a record write, contained in the root.
 
-        A client-supplied *name* is validated as a bare filename; only ``None``
-        (absent) content-addresses by *text* -- the canonical name every other
-        vox MP3 uses. An explicit empty string is an invalid name, not "absent",
-        so it is rejected (``ValueError``), as are absolute, separated,
-        traversing, and NUL-bearing names.
+        A client-supplied *name* is validated as a :class:`RecordingName`; only
+        ``None`` (absent) content-addresses by *text* -- the canonical name every
+        other vox MP3 uses. An explicit empty or whitespace-only string is an
+        invalid name, not "absent", so it is rejected (``ValueError``), as are
+        absolute, separated, traversing, NUL-bearing, and overlong names. If
+        necessary, create the private store so the filesystem can check the name.
         """
-        candidate = generate_filename(text) if name is None else name
-        return self._resolve_within_root(candidate)
+        return self._resolve_target(name, text).path
+
+    def _resolve_target(self, name: str | None, text: str) -> RecordTarget:
+        """Return a contained, filesystem-checked target for a new recording."""
+        dest = self._containment.resolve(RecordingName.for_take(name, text).value)
+        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target = RecordTarget(dest)
+        target.check_name()
+        return target
 
     def resolve_ref(self, ref: str) -> Path:
         """Resolve a play/fetch reference to a contained store path.
 
-        Same validation as :meth:`resolve`: a bare name only, no path escape.
+        References require a bare name and no path escape, not the additional
+        rules for naming a new take.
         The caller checks existence -- an unknown but well-formed name resolves
         to a path inside the root that simply does not exist yet.
         """
-        return self._resolve_within_root(ref)
+        return self._containment.resolve(ref)
 
     def place(self, *, source: Path, text: str, name: str | None) -> RecordWrite:
         """Land *source* at its contained destination atomically; return path + bytes.
@@ -120,36 +107,26 @@ class RecordStore:
         copy only on cross-filesystem ``EXDEV``. Either way the destination
         is replaced atomically, never with a partial write.
         """
-        dest = self.resolve(name, text)
-        # dest is a bare name under the root, so the parent is the root itself;
-        # create it 0700 defensively (the daemon also does this at startup).
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._root.chmod(0o700)
-
-        moved = self._move(source, dest)
-        return moved if moved is not None else self._copy(source, dest)
+        target = self._resolve_target(name, text)
+        self.root.chmod(0o700)
+        return target.place(source)
 
     def entry_batches(self) -> Iterator[list[RecordingEntry]]:
         """Yield bounded batches of immediate, non-symlink recording files.
 
         A missing root is empty. An inaccessible root raises OSError.
         """
-        if not PathStatus.of(self._root).is_directory:
+        if not PathStatus.of(self.root).is_directory:
             return
-        # Build the shared bare-name validator once; every child is judged by the
-        # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
-        validator = ContainmentRoot(self._root, _NAME_LABEL)
-        with os.scandir(self._root) as children:
+        with os.scandir(self.root) as children:
             for batch in batched(children, _SCAN_BATCH_SIZE, strict=False):
                 yield [
                     entry
                     for child in batch
-                    if (entry := self._entry_for(Path(child.path), validator))
-                    is not None
+                    if (entry := self._entry_for(Path(child.path))) is not None
                 ]
 
-    @staticmethod
-    def _entry_for(child: Path, validator: ContainmentRoot) -> RecordingEntry | None:
+    def _entry_for(self, child: Path) -> RecordingEntry | None:
         """Return *child*'s entry, or ``None`` to skip an unlistable child.
 
         One ``lstat`` (no symlink follow) both classifies and sizes the child, so
@@ -172,7 +149,7 @@ class RecordStore:
         if not stat.S_ISREG(info.st_mode):
             return None
         try:
-            validator.contained_child(child.name)
+            self._containment.contained_child(child.name)
         except ValueError:
             return None
         return RecordingEntry(child.name, info.st_size)
@@ -193,7 +170,7 @@ class RecordStore:
         Raises:
             FileNotFoundError: If the reference is neither a stored file nor a symlink.
         """
-        path = self._child_within_root(ref)
+        path = self._containment.contained_child(ref)
         # A no-follow classify accepts a link entry (even a broken one) so its
         # removal deletes the link, and a real recording; a directory or an absent
         # name matches neither and is "not found". Classifying from one stat means
@@ -203,67 +180,3 @@ class RecordStore:
             msg = f"no recording named {ref!r}"
             raise FileNotFoundError(msg)
         path.unlink()
-
-    def _resolve_within_root(self, candidate: str) -> Path:
-        """Validate a bare name and resolve it within the shared containment root."""
-        return ContainmentRoot(self._root, _NAME_LABEL).resolve(candidate)
-
-    def _child_within_root(self, name: str) -> Path:
-        """Validate a bare name and return its child under the root, unfollowed.
-
-        The removal counterpart of :meth:`_resolve_within_root`: the shared
-        validator rejects a hostile name, but the entry is *not* symlink-resolved,
-        so acting on it touches the link itself rather than its target.
-        """
-        return ContainmentRoot(self._root, _NAME_LABEL).contained_child(name)
-
-    @staticmethod
-    def _move(source: Path, dest: Path) -> RecordWrite | None:
-        """Atomically rename *source* onto *dest*, or None when it can't (EXDEV).
-
-        Only a cross-filesystem rename (``EXDEV``) warrants the copy fallback;
-        for any other ``OSError`` (``EACCES``, ``ENOENT``, ...) the copy path
-        would not help and would mask the real cause, so re-raise it.
-
-        The byte count is read from the *source* before the rename: reading
-        ``dest`` afterwards would report a concurrent same-name write's size, not
-        the bytes this call landed (mirrors the cross-device copy path).
-        """
-        try:
-            byte_count = source.stat().st_size
-            source.replace(dest)
-        except OSError as exc:
-            if exc.errno == errno.EXDEV:
-                return None  # cross-device -- caller falls back to copy
-            raise
-        # An ephemeral source may not be private; the copy path's mkstemp temp is
-        # 0600, so match that here to keep the recording private.
-        dest.chmod(0o600)
-        return RecordWrite(path=dest, byte_count=byte_count)
-
-    @staticmethod
-    def _copy(source: Path, dest: Path) -> RecordWrite:
-        """Copy *source* to a sibling temp then atomically rename onto *dest*.
-
-        The byte count is taken from the temp *before* the rename (the commit
-        point); the ephemeral-source cleanup afterwards is best-effort, so a
-        failure past the commit never turns a completed write into a failure.
-        """
-        # Write THROUGH the descriptor mkstemp returned (0600, O_EXCL) -- never
-        # close it and reopen the temp by name. The name could be swapped for a
-        # symlink between close and reopen (TOCTOU); writing to the fd targets
-        # the exact inode mkstemp created.
-        fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".mp3.tmp")
-        tmp = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "wb") as dst, source.open("rb") as src:
-                shutil.copyfileobj(src, dst)
-            byte_count = tmp.stat().st_size
-            tmp.replace(dest)  # commit point -- the write is complete after this
-        except OSError:
-            tmp.unlink(missing_ok=True)
-            raise
-
-        with contextlib.suppress(OSError):
-            source.unlink(missing_ok=True)
-        return RecordWrite(path=dest, byte_count=byte_count)

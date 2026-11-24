@@ -641,3 +641,19 @@ class TestStripVibeTags:
     )
     def test_parametrized(self, input_text: str, expected: str) -> None:
         assert strip_vibe_tags(input_text) == expected
+
+
+class TestLanguageNames:
+    def test_cpp_and_csharp_are_spoken_distinctly(self) -> None:
+        assert normalize_for_speech("I write C++ and C#.") == (
+            "I write C plus plus and C sharp."
+        )
+
+    def test_underscore_emphasis_keeps_language_names(self) -> None:
+        assert normalize_for_speech("I like _C#_ and __C++__.") == (
+            "I like C sharp and C plus plus."
+        )
+
+    def test_language_names_are_idempotent(self) -> None:
+        once = normalize_for_speech("Port the C# tool to C++.")
+        assert normalize_for_speech(once) == once

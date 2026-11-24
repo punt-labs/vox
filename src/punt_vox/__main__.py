@@ -32,6 +32,18 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.types_cli_options import (
+    FromOpt,
+    LanguageOpt,
+    ModelOpt,
+    ProviderOpt,
+    RateOpt,
+    SimilarityOpt,
+    SpeakerBoostFlag,
+    StabilityOpt,
+    StyleOpt,
+    VoiceOpt,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -93,51 +105,6 @@ JsonOutput = Annotated[
     bool,
     typer.Option("--json", help="Output JSON."),
 ]
-ProviderOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--provider",
-        help=(
-            "TTS provider (elevenlabs, polly, openai, say, espeak)."
-            " Default: this repo's vox.md provider (vox provider <name>)."
-        ),
-    ),
-]
-ModelOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--model",
-        help="Model name (e.g. eleven_v3, tts-1). Provider-specific.",
-    ),
-]
-VoiceOpt = Annotated[
-    str | None,
-    typer.Option("--voice", help="Voice name. Default: provider-specific."),
-]
-LanguageOpt = Annotated[
-    str | None,
-    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
-]
-RateOpt = Annotated[
-    int,
-    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
-]
-StabilityOpt = Annotated[
-    float | None,
-    typer.Option("--stability", help="ElevenLabs voice stability (0.0-1.0)."),
-]
-SimilarityOpt = Annotated[
-    float | None,
-    typer.Option("--similarity", help="ElevenLabs voice similarity boost (0.0-1.0)."),
-]
-StyleOpt = Annotated[
-    float | None,
-    typer.Option("--style", help="ElevenLabs voice style/expressiveness (0.0-1.0)."),
-]
-SpeakerBoostFlag = Annotated[
-    bool,
-    typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost."),
-]
 OnceOpt = Annotated[
     int | None,
     typer.Option(
@@ -195,10 +162,6 @@ ApiKeyStdinFlag = Annotated[
             "tty."
         ),
     ),
-]
-FromOpt = Annotated[
-    Path | None,
-    typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
 TextArg = Annotated[
     str | None, typer.Argument(help="Text to synthesize.", show_default=False)
@@ -594,21 +557,21 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command()
-def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
+def doctor(  # pyright: ignore[reportUnusedFunction]
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Check system health for vox.
 
     Raises:
         typer.Exit: If any diagnostic check fails.
     """
-    from punt_vox.doctor import DoctorCheck
-    from punt_vox.doctor_result import CheckResults
+    from punt_vox.cli_doctor import DoctorCli
 
-    check = DoctorCheck(client=VoxClientSync())
-    payload, text = CheckResults(check.run_all()).format()
-    _formatter.emit(payload, text)
-
-    if payload.get("failed", 0):
-        raise typer.Exit(code=1)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    DoctorCli.emit(_formatter, VoxClientSync())
 
 
 # ---------------------------------------------------------------------------
@@ -683,40 +646,39 @@ def uninstall() -> None:
 
 
 @cache_app.command("status")
-def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_status_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Show the daemon cache's entry count, size, and path (honors VOXD_HOST).
 
     Raises:
         typer.Exit: If the daemon cannot report cache status.
     """
-    try:
-        info = VoxClientSync().cache_status()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    size_kb = info.size_bytes / 1024
-    payload = {
-        "entries": info.entries,
-        "size_bytes": info.size_bytes,
-        "path": str(info.path),
-    }
-    text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
-    _formatter.emit(payload, text)
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).status(VoxClientSync())
 
 
 @cache_app.command("clear")
-def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_clear_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Delete all cached MP3 files on the daemon host.
 
     Raises:
         typer.Exit: If the daemon cannot clear the cache.
     """
-    try:
-        count = VoxClientSync().cache_clear()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).clear(VoxClientSync())
 
 
 # ---------------------------------------------------------------------------

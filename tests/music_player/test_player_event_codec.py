@@ -50,16 +50,16 @@ class _FakeCommands:
     def stop(self) -> None:
         self.stops += 1
 
-    def advance(self) -> None:  # pragma: no cover - unused here
+    def advance(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def prev(self) -> None:  # pragma: no cover - unused here
+    def prev(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def pause(self) -> None:  # pragma: no cover - unused here
+    def pause(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def resume(self) -> None:  # pragma: no cover - unused here
+    def resume(self) -> bool:  # pragma: no cover - unused here
         raise NotImplementedError
 
 

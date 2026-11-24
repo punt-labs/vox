@@ -53,20 +53,14 @@ class RecordHandler(MessageHandler):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and store it under a daemon-owned name."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        # One pre-ack boundary: a non-string typed field or empty text (from
-        # from_msg), a non-string name, or a hostile name (from _validate_name)
-        # raises ValueError, which becomes a clean error frame rather than escape
-        # the router's broad except and tear the connection down. A client
-        # supplies at most a bare name; the daemon content-addresses ONLY when
-        # the name is absent. parse_present_str keeps an explicit "" distinct
-        # from absence (unlike parse_optional_str's empty-to-None collapse) so an
-        # explicit empty name is rejected downstream rather than content-addressed.
+        # Keep an explicit "" distinct from absence so only unnamed takes
+        # content-address. Defer hashing unnamed takes to place().
         try:
             req = _SpeechRequest.from_msg(msg, websocket)
             name = parse_present_str(msg, "name")
-            self._validate_name(name, req.text)
-        except ValueError as exc:
-            await reply.error(exc)
+            await self._validate_name(name, req.text)
+        except (ValueError, OSError) as exc:
+            await reply.reject_or_fault(exc)
             return
 
         logger.info(
@@ -111,17 +105,10 @@ class RecordHandler(MessageHandler):
             }
         )
 
-    def _validate_name(self, name: str | None, text: str) -> None:
-        """Raise ``ValueError`` if a client-supplied *name* is hostile.
-
-        The single pre-ack name gate: ``store.resolve`` raises on any name that
-        is absolute, separated, traversing, empty, NUL-bearing, or non-printable.
-        A no-name request is content-addressed by ``place()`` daemon-side, so it
-        skips the resolve -- otherwise the full text would be MD5'd here and again
-        in ``place()``, a double hash on the hot path before the ack.
-        """
+    async def _validate_name(self, name: str | None, text: str) -> None:
+        """Check a supplied name before synthesis, including filesystem limits."""
         if name is not None:
-            self._store.resolve(name, text)
+            await asyncio.to_thread(self._store.resolve, name, text)
 
     async def _store_outcome(
         self, req: _SpeechRequest, name: str | None, outcome: SynthesisOutcome

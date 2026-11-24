@@ -186,7 +186,9 @@ The conjuncts discharge the invariants as follows.
     from \texttt{playing} or \texttt{paused} (Section~\ref{sec:forks},
     Fork~A) --- while \texttt{pause}, \texttt{resume}, \texttt{stop},
     \texttt{prev}, and \texttt{next} each carry the mode guard named in their
-    schema. It cannot live in the state predicate, because it constrains
+    schema. For \texttt{prev} and \texttt{next} those are execution guards;
+    admission to the FIFO is specified separately below.
+    It cannot live in the state predicate, because it constrains
     \emph{steps}, not \emph{states}; recording it as prose here would be
     exactly the mistake the brief warns against, so it is recorded instead as
     the precondition line of every operation schema.
@@ -348,6 +350,35 @@ Emptying the album empties the cursor, so \texttt{T2} is restored to its idle
 shape; $advancing' = zfalse$ and $glyph' = inertGlyph$ follow from $mode' =
 idle$.
 
+\subsection{Admission of queued steps}
+\label{sec:stepadmission}
+
+Before enqueuing a \texttt{Prev} or \texttt{Next} request, inspect pending
+source changes in FIFO order, ignoring commands that do not start or stop a
+source. A start or switch projects an active source; a stop projects
+\texttt{idle}. The last such change wins, or the current mode decides when
+none is queued.
+
+\begin{zed}
+  SourceChange ::= startSource | stopSource
+\end{zed}
+
+\begin{schema}{StepAdmission}
+  \Xi PlayerView \\
+  pending? : \seq SourceChange \\
+  admitted! : ZBOOL
+  \where
+  admitted! = ztrue \iff \\
+  \t1 (pending? = \langle \rangle \land mode \neq idle) \lor \\
+  \t1 (\exists prior : \seq SourceChange @
+  pending? = prior \cat \langle startSource \rangle)
+\end{schema}
+
+An admitted step receives an enqueue acknowledgement, not a guarantee that
+the cursor moves. The writer applies the execution guard and boundary rules
+when it drains the step. A refused step is not enqueued and returns
+\texttt{applied: false} with \texttt{Nothing playing.}
+
 \subsection{Prev --- previous part, floored at 1}
 \label{sec:prev}
 
@@ -490,8 +521,10 @@ than papering over it.
 \section{Type-checking and model-checking}
 \label{sec:results}
 
-The specification is \texttt{fuzz}-clean: \texttt{fuzz -t} exits~0. It was then
-model-checked with ProB (\texttt{probcli}, $maxPart = 3$, the given set
+The specification is \texttt{fuzz}-clean: \texttt{fuzz -t} exits~0. The
+playback transitions, excluding the FIFO admission schema
+(Section~\ref{sec:stepadmission}), were model-checked with ProB
+(\texttt{probcli}, $maxPart = 3$, the given set
 \texttt{ALBUM} at cardinality~2, integers bounded to $0 \upto 3$).
 
 Over the faithful state space --- the boot catalog ranging over every subset of

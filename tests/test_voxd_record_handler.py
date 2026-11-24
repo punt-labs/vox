@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import threading
@@ -359,6 +360,35 @@ class TestRecordHandler:
         assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
         synth.synthesize_to_file.assert_not_called()
 
+    @pytest.mark.parametrize("rate", [0, -10])
+    def test_nonpositive_rate_is_an_error(self, tmp_path: Path, rate: int) -> None:
+        """A wire rate of 0 or below is rejected before the ack, so no provider
+        call is made and nothing lands in the store."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock()
+        store = _store(tmp_path)
+        handler = RecordHandler(synthesis=synth, store=store)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "provider": "elevenlabs",
+            "rate": rate,
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": f"rate must be greater than 0, got {rate}",
+            }
+        ]
+        synth.synthesize_to_file.assert_not_called()
+        assert not store.root.exists() or not any(store.root.iterdir())
+
     def test_non_string_voice_is_a_clean_error(self, tmp_path: Path) -> None:
         """A non-string typed field yields an error frame before the ack; the
         parse must not escape the handler and tear the connection down."""
@@ -435,6 +465,95 @@ class TestRecordHandler:
         assert sent[-1]["type"] == "error"
         assert "empty" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
+
+    def test_whitespace_wire_name_rejected_before_ack(self, tmp_path: Path) -> None:
+        """A whitespace-only wire name is refused, so no blank-id take lands."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": "  ",
+        }
+        asyncio.run(_handler(store, src)(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": "recording name must not be empty or whitespace",
+            }
+        ]
+        assert not store.root.exists() or not any(store.root.iterdir())
+
+    @pytest.mark.parametrize("root_exists", [True, False])
+    def test_overlong_wire_name_rejected_before_synthesis(
+        self, tmp_path: Path, *, root_exists: bool
+    ) -> None:
+        store = _store(tmp_path)
+        if root_exists:
+            store.root.mkdir()
+        synth = MagicMock()
+        source = tmp_path / "source.mp3"
+        source.write_bytes(b"audio")
+        synth.synthesize_to_file = AsyncMock(
+            return_value=SynthesisOutcome(path=source, cached=False)
+        )
+        handler = RecordHandler(synthesis=synth, store=store)
+        ws, sent = _capturing_ws()
+        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+        name = "é" * (limit // len(os.fsencode("é")) + 1)
+        assert len(name) <= limit < len(os.fsencode(name))
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": name,
+        }
+        asyncio.run(handler(msg, ws))
+
+        synth.synthesize_to_file.assert_not_called()
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": "recording name is too long for the recordings filesystem",
+            }
+        ]
+        assert not any(store.root.iterdir())
+
+    def test_record_name_probe_permission_error_is_a_safe_fault(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        dest = store.root / "take.mp3"
+        real_stat = Path.stat
+
+        def denied(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            if path == dest:
+                raise PermissionError(errno.EACCES, "permission denied", str(path))
+            return real_stat(path, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock()
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": dest.name,
+        }
+
+        asyncio.run(RecordHandler(synthesis=synth, store=store)(msg, ws))
+
+        synth.synthesize_to_file.assert_not_called()
+        assert sent == [{"type": "error", "id": "r1", "message": "operation failed"}]
 
     def test_absolute_name_rejected_before_ack(self, tmp_path: Path) -> None:
         """An absolute name over the wire is refused before the ack (P1)."""

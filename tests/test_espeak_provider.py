@@ -227,6 +227,22 @@ class TestEspeakProviderResolveVoice:
             espeak_provider.resolve_voice("nonexistent")
         assert exc_info.value.voice_name == "nonexistent"
 
+    def test_unknown_voice_lists_each_distinct_config_once(
+        self, espeak_provider: EspeakProvider
+    ) -> None:
+        lines = [
+            "Pty  Language  Age/Gender  VoiceName   File",
+            " 5     en             M  english      default",
+            " 5     en-us          M  english-us   other/en-us",
+        ]
+        with (
+            patch.object(EspeakProvider, "_voices_lines", return_value=lines),
+            pytest.raises(VoiceNotFoundError) as exc_info,
+        ):
+            espeak_provider.resolve_voice("nonexistent")
+
+        assert exc_info.value.available == ["en", "en-us"]
+
     def test_matching_language(
         self,
         espeak_provider: EspeakProvider,

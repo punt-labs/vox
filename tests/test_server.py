@@ -560,6 +560,21 @@ class TestUnmute:
         with pytest.raises(ValueError, match="stability"):
             unmute(text="Hello", stability=1.5)
 
+    @pytest.mark.parametrize("rate", [0, -10])
+    def test_nonpositive_rate_rejected_before_synthesis(
+        self, monkeypatch: pytest.MonkeyPatch, rate: int
+    ) -> None:
+        """A rate of 0 or below is refused before voxd is contacted."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        with pytest.raises(
+            ValueError, match=f"rate must be greater than 0, got {rate}"
+        ):
+            unmute(text="Hello", rate=rate)
+
+        mock_client.synthesize.assert_not_called()
+
     def test_language_passed_to_synthesize(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

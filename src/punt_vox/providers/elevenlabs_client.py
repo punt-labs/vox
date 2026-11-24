@@ -15,7 +15,6 @@ leaves as a vox type, so nothing past the providers knows the SDK exists.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Self, final
 
 import httpx
@@ -27,8 +26,8 @@ from elevenlabs.types import (
     VoiceSettings,
 )
 
-from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.elevenlabs_answer import ElevenLabsAnswer
+from punt_vox.providers.elevenlabs_credential import ElevenLabsCredential
 from punt_vox.providers.lazy_sdk import LazySdk
 from punt_vox.providers.provider_faults import TRANSPORT_ERRORS
 from punt_vox.providers.provider_refusal import ProviderRefusalError
@@ -47,9 +46,6 @@ __all__ = [
     "SpeechToTextWordResponseModel",
     "VoiceSettings",
 ]
-
-# The variable the readiness gate names for this provider, not a second literal.
-_KEY_CHECK = ApiKeyCheck.for_provider("elevenlabs")
 
 
 @final
@@ -74,9 +70,8 @@ class ElevenLabsClient:
     a :class:`ProviderStatusError` the caller routes on.
     """
 
-    __slots__ = ("_api_key", "_sdk")
-    # None: no key was given and none is in the environment; key_check says so.
-    _api_key: str | None
+    __slots__ = ("_credential", "_sdk")
+    _credential: ElevenLabsCredential
     _sdk: LazySdk[ElevenLabs]
 
     def __new__(
@@ -90,13 +85,16 @@ class ElevenLabsClient:
     ) -> Self:
         """Create an eleven labs client."""
         self = super().__new__(cls)
-        self._api_key = (
-            api_key if api_key is not None else os.environ.get(_KEY_CHECK.source)
-        )
+        self._credential = ElevenLabsCredential(api_key, injected_sdk=sdk is not None)
         # RequestError, not TransportError: httpx raises DecodingError and
         # TooManyRedirects outside TransportError, and the SDK lets both escape.
         self._sdk = LazySdk(self._new_sdk, transport=httpx.RequestError, sdk=sdk)
         return self
+
+    @property
+    def catalog_scope(self) -> bytes | None:
+        """Identify the captured key without exposing it to the catalog index."""
+        return self._credential.catalog_scope
 
     def call[R](self, request: Callable[[ElevenLabs], R]) -> R:
         """Run *request* against the SDK, building the SDK on first use.
@@ -155,7 +153,7 @@ class ElevenLabsClient:
 
     def key_check(self) -> HealthCheck:
         """Report whether this client has an API key it can send."""
-        return _KEY_CHECK.report("ElevenLabs", self._api_key)
+        return self._credential.key_check()
 
     def subscription_check(self) -> HealthCheck:
         """Report the account's subscription tier and character usage."""
@@ -199,4 +197,4 @@ class ElevenLabsClient:
             ProviderUnavailableError: No key was set when this client was
                 built; a request without one would only be refused.
         """
-        return ElevenLabs(api_key=_KEY_CHECK.require_set(self._api_key, "elevenlabs"))
+        return ElevenLabs(api_key=self._credential.require_key())

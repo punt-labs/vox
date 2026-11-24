@@ -246,6 +246,40 @@ class TestSynthesizeParseGuard:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("rate", 0, "rate must be greater than 0, got 0"),
+            ("rate", -10, "rate must be greater than 0, got -10"),
+            ("stability", 1.5, "stability must be between 0.0 and 1.0, got 1.5"),
+        ],
+    )
+    async def test_invalid_spec_field_is_rejected_before_synthesis(
+        self, field: str, value: float, message: str
+    ) -> None:
+        """A value SynthesisSpec.validate refuses is an id-stamped error, never
+        sent to a provider."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        mock_synth.try_direct_play = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {
+            "id": "1",
+            "text": "hello",
+            "provider": "espeak",
+            field: value,
+        }
+        await handler(msg, ws)
+
+        assert sent == [{"type": "error", "id": "1", "message": message}]
+        mock_synth.try_direct_play.assert_not_called()
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         "api_key",
         [
             "SECRETKEY123\n",
@@ -789,7 +823,10 @@ class TestSynthesizeHandlerTypedErrorRouting:
         sent = await self._drive(handler)
 
         assert sent[-1]["type"] == "error"
-        assert sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert (
+            sent[-1]["message"]
+            == "Unknown voice 'bella'. Available: ['alloy', 'ash', 'ballad']"
+        )
         assert not any(
             f.get("type") == "fault" or f.get("message") == "operation failed"
             for f in sent

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reuse the ElevenLabs voice catalog across syntheses with the same API key,
+  so repeat voice-name lookups do not add a network request. (PL-1561)
+
 - `vox music list` reads saved album manifests off the daemon event loop, so
   listing a large catalog does not delay unrelated requests. (PL-1546)
 
@@ -47,15 +50,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
+  and `--quiet` (`-q`) after the subcommand. (PL-1560)
+
+- Unknown voice errors identify the unrecognized name and suggest each
+  available voice once, without listing lookup aliases separately. (PL-1550)
+
+- `vox doctor` accepts `--json`, `--verbose` (`-v`), and `--quiet` (`-q`)
+  after the command. (PL-1554)
+
+- `vox rec new --name` rejects a whitespace-only name with
+  `Error: recording name must not be empty or whitespace` instead of storing a
+  recording whose id lists as a blank row. Existing blank-named recordings
+  can still be played, fetched, and removed. (PL-1557)
+
 - A config write that is refused, such as `vox voice` with no provider set,
   no longer leaves a lock file or empty `.punt-labs/` directories behind.
   (PL-1552)
+
+- `vox music pause` and `vox music resume` report "Nothing playing." instead
+  of claiming success when music is off. (PL-1553)
+
+- `vox music next` and `vox music prev` report "Nothing playing." instead of
+  claiming success when the last queued start or stop projects music to be off
+  (or music is already off and neither is queued). (PL-1559)
 
 - `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
   text mode. JSON output is unchanged. (PL-1549)
 
 - `vox daemon status --json` and `vox doctor` report the actual listening port
   when `voxd --port 0` lets the operating system choose a port.
+
+- `vox voice` and `mic:voice` reject unknown voice names without changing the
+  saved voice. Raw ElevenLabs voice IDs still work. (PL-1551)
 
 - `vox --json rec` reports operational errors, including an unavailable daemon,
   as JSON on stdout, matching `vox --json music`. (PL-1538)

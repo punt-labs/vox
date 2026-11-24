@@ -8,6 +8,7 @@ empty, or NUL-bearing -- can cause a write outside the daemon-owned root.
 from __future__ import annotations
 
 import errno
+import os
 from itertools import chain
 from pathlib import Path
 
@@ -86,6 +87,22 @@ class TestContainment:
             store.resolve("", "some text")
         # None still content-addresses (the daemon-generated no-name path).
         assert store.resolve(None, "some text").name.endswith(".mp3")
+
+    @pytest.mark.parametrize("name", ["  ", " \t ", "\u3000"])
+    def test_whitespace_name_rejected_by_store(
+        self, store: RecordStore, name: str
+    ) -> None:
+        """A whitespace-only name would land a recording whose id reads as blank."""
+        with pytest.raises(ValueError, match="empty or whitespace"):
+            store.resolve(name, "some text")
+
+    def test_existing_whitespace_take_stays_removable(self, store: RecordStore) -> None:
+        """A blank-named take recorded before the rule can still be removed."""
+        store.root.mkdir(parents=True)
+        (store.root / "  ").write_bytes(b"x")
+        assert store.resolve_ref("  ") == store.root / "  "
+        store.remove("  ")
+        assert not (store.root / "  ").exists()
 
     @pytest.mark.parametrize("hostile", _HOSTILE_NAMES)
     def test_write_cannot_escape_root(self, store: RecordStore, hostile: str) -> None:
@@ -324,6 +341,21 @@ class TestPlacement:
         assert write.path.read_bytes() == b"\xff\xfb" * 100
         assert write.byte_count == 200
 
+    @pytest.mark.parametrize("bytes_below_limit", [0, 1])
+    def test_name_at_or_just_below_filename_limit_lands_bytes(
+        self, store: RecordStore, tmp_path: Path, bytes_below_limit: int
+    ) -> None:
+        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+        count, remaining = divmod(limit - bytes_below_limit, len(os.fsencode("é")))
+        name = "é" * count + "x" * remaining
+        source = tmp_path / "src.mp3"
+        source.write_bytes(b"audio")
+
+        write = store.place(source=source, text="hello", name=name)
+
+        assert write.path == store.root / name
+        assert write.path.read_bytes() == b"audio"
+
     def test_default_names_by_content_hash(
         self, store: RecordStore, tmp_path: Path
     ) -> None:
@@ -342,94 +374,3 @@ class TestPlacement:
         store.place(source=src, text="hi", name="out.mp3")
 
         assert not src.exists()
-
-    def test_move_reports_this_calls_bytes_not_a_racing_write(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The reported size is the bytes this call wrote, not a racing dest write."""
-        src = tmp_path / "mine.mp3"
-        src.write_bytes(b"mine!")  # 5 bytes -- what THIS call lands
-
-        real_replace = Path.replace
-
-        def racing_replace(self: Path, target: str | Path) -> Path:
-            # A concurrent same-name write lands a larger file at dest right after
-            # our rename; a byte count read from dest afterwards would misreport it.
-            result = real_replace(self, target)
-            Path(target).write_bytes(b"someone-elses-larger-bytes")
-            return result
-
-        monkeypatch.setattr(Path, "replace", racing_replace)
-
-        write = store.place(source=src, text="t", name="out.mp3")
-
-        assert write.byte_count == 5
-
-        assert not src.exists()
-
-    def test_fresh_uses_move_and_lands_0600(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Fresh synthesis takes the atomic-move path (no copy) at 0600."""
-
-        def no_copy(*_args: object, **_kwargs: object) -> None:
-            raise AssertionError("fresh synthesis must move, not copy")
-
-        monkeypatch.setattr("punt_vox.voxd.record_store.shutil.copyfileobj", no_copy)
-
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"fresh-audio")
-        src.chmod(0o644)
-        write = store.place(source=src, text="hi", name="out.mp3")
-
-        assert write.path.read_bytes() == b"fresh-audio"
-        assert write.path.stat().st_mode & 0o777 == 0o600
-        assert not src.exists()
-
-    def test_cross_device_falls_back_to_copy(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When the atomic move can't cross filesystems, copy still lands 0600."""
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"xdev-audio")
-        original_replace = Path.replace
-
-        def selective_replace(self: Path, target: Path) -> Path:
-            if self == src:
-                raise OSError(errno.EXDEV, "cross-device link")
-            return original_replace(self, target)
-
-        monkeypatch.setattr(Path, "replace", selective_replace)
-
-        write = store.place(source=src, text="hi", name="out.mp3")
-
-        assert write.path.read_bytes() == b"xdev-audio"
-        assert write.path.stat().st_mode & 0o777 == 0o600
-        assert not src.exists()
-
-    def test_non_exdev_move_error_propagates(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A non-EXDEV OSError from the move re-raises; no silent copy fallback."""
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"nope")
-
-        def denied_replace(self: Path, target: Path) -> Path:
-            raise OSError(errno.EACCES, "permission denied")
-
-        monkeypatch.setattr(Path, "replace", denied_replace)
-
-        with pytest.raises(OSError, match="permission denied"):
-            store.place(source=src, text="hi", name="out.mp3")
-
-        assert not (store.root / "out.mp3").exists()
-        assert not list(store.root.glob("*.mp3.tmp"))
-
-    def test_missing_source_leaves_no_partial_file(
-        self, store: RecordStore, tmp_path: Path
-    ) -> None:
-        with pytest.raises(OSError, match="No such file"):
-            store.place(source=tmp_path / "missing.mp3", text="hi", name="out.mp3")
-
-        assert not (store.root / "out.mp3").exists()
-        assert not list(store.root.glob("*.mp3.tmp"))

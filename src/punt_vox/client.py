@@ -54,10 +54,9 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_SYNTHESIS = 30.0
 _TIMEOUT_SHORT = 5.0
-# provider_status with verify runs each provider's live check in parallel,
-# each bounded by LiveCheck's 10s deadline on the daemon, after waiting out any
-# synthesis holding the env lock; leave headroom for both.
-_TIMEOUT_PROVIDER_CHECK = 30.0
+# Provider operations can take 10s. Verified status may also wait for
+# synthesis to release the daemon's env lock.
+_TIMEOUT_PROVIDER = 30.0
 # play waits for the host-side playback to FINISH (not just enqueue) so a
 # failure surfaces, so its deadline must cover a full track. Bounded like the
 # record cap so a wedged daemon is still detected within ten minutes.
@@ -541,7 +540,7 @@ class VoxClient:
             VoxdRejectionError: If the daemon rejects the request.
         """
         msg: dict[str, object] = {"type": "voices", "provider": provider}
-        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
+        resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_PROVIDER)
         if "voices" not in resp:
             raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")
         voice_list: list[str] = resp["voices"]
@@ -605,7 +604,7 @@ class VoxClient:
             msg["provider"] = provider
         if verify:
             msg["verify"] = True
-        deadline = _TIMEOUT_PROVIDER_CHECK if verify else _TIMEOUT_SHORT
+        deadline = _TIMEOUT_PROVIDER if verify else _TIMEOUT_SHORT
         resp = await self._transport.send_and_recv(msg, timeout=deadline)
         with self._wire_guard():
             return ProviderStatusPayload.from_wire(

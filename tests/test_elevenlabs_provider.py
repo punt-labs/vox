@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import ssl
-import time
+from collections import OrderedDict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import httpx
 import pytest
 from elevenlabs.core import ApiError
 
 from punt_vox.providers.ca_bundle import CaBundleError
-from punt_vox.providers.elevenlabs import (
+from punt_vox.providers.elevenlabs import ElevenLabsProvider
+from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
+from punt_vox.providers.elevenlabs_catalog_entry import (
     _VOICE_CACHE_TTL_S,  # pyright: ignore[reportPrivateUsage]
-    ElevenLabsProvider,
 )
 from punt_vox.providers.provider_faults import ProviderTransportError
 from punt_vox.providers.provider_status import ProviderStatusError
@@ -33,6 +37,50 @@ class TestElevenLabsProviderName:
 
     def test_default_voice(self, elevenlabs_provider: ElevenLabsProvider) -> None:
         assert elevenlabs_provider.default_voice == "matilda"
+
+
+class TestElevenLabsSharedCatalog:
+    @pytest.fixture(autouse=True)
+    def _isolate_catalogs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(ElevenLabsCatalog, "_shared", OrderedDict())
+
+    def test_raw_id_does_not_fetch_catalog(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_elevenlabs_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        with patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ):
+            voice_id = "XrExE9yKIg1WjnnlVkGX"
+            result = ElevenLabsProvider().synthesize(
+                SynthesisRequest(text="hello", voice=voice_id), tmp_path / "id.mp3"
+            )
+        assert result.voice == voice_id
+        mock_elevenlabs_client.voices.get_all.assert_not_called()
+
+    def test_named_syntheses_reuse_catalog_across_provider_instances(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_elevenlabs_client: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        request = SynthesisRequest(text="hello", voice="matilda")
+        with patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ):
+            ElevenLabsProvider().synthesize(request, tmp_path / "first.mp3")
+            ElevenLabsProvider(model="eleven_flash_v2_5").synthesize(
+                request, tmp_path / "second.mp3"
+            )
+
+        mock_elevenlabs_client.voices.get_all.assert_called_once()
+        assert mock_elevenlabs_client.text_to_speech.stream.call_count == 2
 
 
 class TestElevenLabsProviderResolveVoice:
@@ -80,6 +128,86 @@ class TestElevenLabsProviderResolveVoice:
         assert exc_info.value.voice_name == "nonexistent"
         assert isinstance(exc_info.value.available, list)
         assert len(exc_info.value.available) > 0
+        assert exc_info.value.available == ["drew", "matilda"]
+
+    def test_unknown_voice_keeps_distinct_voices_with_the_same_short_name(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+        assert mock_elevenlabs_client.voices.get_all.call_count == 2
+
+        expected = {
+            "drew - baritone": "AAAAAAAAAAAAAAAAAAAA",
+            "drew - eloquent, calm": "29vD33N1CtxCmqQRPOHJ",
+            "matilda": "XrExE9yKIg1WjnnlVkGX",
+        }
+        assert exc_info.value.available == list(expected)
+        rendered = str(exc_info.value).split(". Available: ", 1)[1]
+        assert ast.literal_eval(rendered) == list(expected)
+
+        for name in [*exc_info.value.available, "drew"]:
+            provider.synthesize(
+                SynthesisRequest(text="Hello", voice=name), tmp_path / "voice.mp3"
+            )
+            bound = mock_elevenlabs_client.text_to_speech.stream.call_args
+            assert bound.kwargs["voice_id"] == expected.get(
+                name, expected["drew - eloquent, calm"]
+            )
+
+    def test_unknown_voice_skips_names_interpreted_as_ids(
+        self, mock_elevenlabs_client: MagicMock, tmp_path: Path
+    ) -> None:
+        voice_id = "XrExE9yKIg1WjnnlVkGX"
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("ABCDEFGHIJKLMNOPQRST - bright, calm", voice_id),
+            ("Drew - eloquent, calm", "29vD33N1CtxCmqQRPOHJ"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        suggestion = "abcdefghijklmnopqrst - bright, calm"
+        assert exc_info.value.available == [suggestion, "drew"]
+        provider.synthesize(
+            SynthesisRequest(text="Hello", voice=suggestion), tmp_path / "voice.mp3"
+        )
+        assert (
+            mock_elevenlabs_client.text_to_speech.stream.call_args.kwargs["voice_id"]
+            == voice_id
+        )
+
+    def test_unknown_voice_keeps_a_colliding_full_name_without_a_description(
+        self, mock_elevenlabs_client: MagicMock
+    ) -> None:
+        mock_elevenlabs_client.voices.get_all.side_effect = lambda: self._voice_catalog(
+            ("Matilda - knowledgable, professional", "XrExE9yKIg1WjnnlVkGX"),
+            ("Drew", "29vD33N1CtxCmqQRPOHJ"),
+            ("Drew - baritone", "AAAAAAAAAAAAAAAAAAAA"),
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+
+        with pytest.raises(VoiceNotFoundError) as exc_info:
+            provider.resolve_voice("nonexistent")
+
+        assert exc_info.value.available == ["drew", "drew - baritone", "matilda"]
+
+    @staticmethod
+    def _voice_catalog(*entries: tuple[str, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            voices=[
+                SimpleNamespace(name=name, voice_id=voice_id)
+                for name, voice_id in entries
+            ]
+        )
 
     def test_rejected_key_on_voice_lookup_is_provider_auth_error(
         self, mock_elevenlabs_client: MagicMock
@@ -397,10 +525,8 @@ class TestElevenLabsProviderCharLimits:
     def test_v3_chunks_above_5k(self) -> None:
         """eleven_v3 should chunk text exceeding 5,000 chars."""
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
-        provider._voices._cache["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
-        provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
         text = "a" * 5_001
-        request = SynthesisRequest(text=text, voice="matilda")
+        request = SynthesisRequest(text=text, voice="XrExE9yKIg1WjnnlVkGX")
         with (
             patch("punt_vox.providers.elevenlabs.chunked_synthesize") as mock_chunked,
             patch.object(provider, "_single_synthesize"),
@@ -411,10 +537,8 @@ class TestElevenLabsProviderCharLimits:
     def test_flash_single_call_under_40k(self) -> None:
         """eleven_flash_v2_5 should use single call for text under 40k."""
         provider = ElevenLabsProvider(model="eleven_flash_v2_5", client=MagicMock())
-        provider._voices._cache["matilda"] = "XrExE9yKIg1WjnnlVkGX"  # pyright: ignore[reportPrivateUsage]
-        provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
         text = "a" * 10_000
-        request = SynthesisRequest(text=text, voice="matilda")
+        request = SynthesisRequest(text=text, voice="XrExE9yKIg1WjnnlVkGX")
         with (
             patch.object(provider, "_single_synthesize") as mock_single,
             patch("punt_vox.providers.elevenlabs.chunked_synthesize"),
@@ -491,6 +615,12 @@ class TestElevenLabsProviderLanguageSupport:
 class TestElevenLabsVoiceCacheTTL:
     """Voice cache TTL: stale cache triggers re-fetch, fresh does not."""
 
+    @pytest.fixture
+    def clock(self) -> Iterator[MagicMock]:
+        with patch("punt_vox.providers.voice_resolver.time") as resolver_clock:
+            resolver_clock.monotonic.return_value = 100.0
+            yield resolver_clock.monotonic
+
     def test_no_refetch_within_ttl(
         self,
         mock_elevenlabs_client: MagicMock,
@@ -505,20 +635,25 @@ class TestElevenLabsVoiceCacheTTL:
     def test_refetch_after_ttl_expires(
         self,
         mock_elevenlabs_client: MagicMock,
+        clock: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """After TTL expires, the next call re-fetches from the API."""
-        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
-        provider.list_voices()
-        assert mock_elevenlabs_client.voices.get_all.call_count == 1
-        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
-            time.monotonic() - _VOICE_CACHE_TTL_S - 1
-        )
-        provider.list_voices()
+        """The original TTL also expires a catalog shared by new clients."""
+        monkeypatch.setenv("ELEVENLABS_API_KEY", uuid4().hex)
+        with patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ):
+            ElevenLabsProvider().resolve_voice("matilda")
+            mock_elevenlabs_client.voices.get_all.assert_called_once()
+            clock.return_value += _VOICE_CACHE_TTL_S + 1
+            ElevenLabsProvider().resolve_voice("matilda")
         assert mock_elevenlabs_client.voices.get_all.call_count == 2
 
     def test_new_voice_found_after_ttl_expiry(
         self,
         mock_elevenlabs_client: MagicMock,
+        clock: MagicMock,
     ) -> None:
         """A voice added after initial fetch is found after TTL expiry."""
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
@@ -536,10 +671,7 @@ class TestElevenLabsVoiceCacheTTL:
         updated_response.voices = [*list(old_voices), voice_aria]
         mock_elevenlabs_client.voices.get_all.return_value = updated_response
 
-        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
-            time.monotonic() - _VOICE_CACHE_TTL_S - 1
-        )
-        provider._voices._force_refreshed_at = 0.0  # pyright: ignore[reportPrivateUsage]
+        clock.return_value += _VOICE_CACHE_TTL_S + 1
 
         result = provider.resolve_voice("aria")
         assert result == "aria"
@@ -547,6 +679,7 @@ class TestElevenLabsVoiceCacheTTL:
     def test_deleted_voice_removed_after_ttl_expiry(
         self,
         mock_elevenlabs_client: MagicMock,
+        clock: MagicMock,
     ) -> None:
         """A voice removed from the account disappears after TTL expiry."""
         provider = ElevenLabsProvider(client=mock_elevenlabs_client)
@@ -560,9 +693,7 @@ class TestElevenLabsVoiceCacheTTL:
         updated_response.voices = [voice_matilda]
         mock_elevenlabs_client.voices.get_all.return_value = updated_response
 
-        provider._voices._loaded_at = (  # pyright: ignore[reportPrivateUsage]
-            time.monotonic() - _VOICE_CACHE_TTL_S - 1
-        )
+        clock.return_value += _VOICE_CACHE_TTL_S + 1
         voices_after = provider.list_voices()
         assert "drew" not in voices_after
 

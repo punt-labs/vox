@@ -74,9 +74,9 @@ class StopMusic:
 class Prev:
     """Transport prev -- ``music.prev`` projected onto the deterministic step-back."""
 
-    def apply(self, service: PlayerCommands) -> None:
-        """Step the replay cursor back one part (Z ``Prev``)."""
-        service.prev()
+    def apply(self, service: PlayerCommands) -> bool:
+        """Enqueue a step back one part (Z ``Prev``)."""
+        return service.prev()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused prev (names no album; double dispatch)."""
@@ -88,9 +88,9 @@ class Prev:
 class Next:
     """Transport next -- ``music.next`` projected onto the deterministic step."""
 
-    def apply(self, service: PlayerCommands) -> None:
-        """Step the replay cursor forward one part (Z ``Next``)."""
-        service.advance()
+    def apply(self, service: PlayerCommands) -> bool:
+        """Enqueue a step forward one part (Z ``Next``)."""
+        return service.advance()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused next (names no album; double dispatch)."""
@@ -102,9 +102,9 @@ class Next:
 class Pause:
     """Transport pause -- ``music.pause`` projected onto the suspend transition."""
 
-    def apply(self, service: PlayerCommands) -> None:
+    def apply(self, service: PlayerCommands) -> bool:
         """Suspend the active source in place (Z ``Pause``)."""
-        service.pause()
+        return service.pause()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused pause (names no album; double dispatch)."""
@@ -116,9 +116,9 @@ class Pause:
 class Resume:
     """Transport resume -- ``music.resume`` projected onto the resume transition."""
 
-    def apply(self, service: PlayerCommands) -> None:
+    def apply(self, service: PlayerCommands) -> bool:
         """Continue the suspended source (Z ``Resume``)."""
-        service.resume()
+        return service.resume()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused resume (names no album; dispatch)."""
