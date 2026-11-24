@@ -17,6 +17,7 @@ from test_workers import FakeWorkerProvider, TrivialProfile, _fake_policy, _regi
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.workers.context import WorkerContext
+from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
@@ -217,17 +218,23 @@ def test_timed_out_launch_discards_the_worktree_git_finished_anyway(
     assert not (tmp_path / "workers" / record.id).exists()
 
 
+def _raise(exc: Exception) -> None:
+    raise exc
+
+
 def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
     provider = FakeWorkerProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
-    worktrees.discard.side_effect = OSError("busy")
+    busy = DiscardError()
+    busy.attempt("rmtree", lambda: _raise(OSError("busy")))
+    worktrees.discard.side_effect = busy
     registry = _registry(tmp_path, provider, worktrees)
     with pytest.raises(OSError, match="launch failed"):
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
     record = registry.list()[0]
     assert record.last_report["launch_error"] == "OSError"
-    assert record.last_report["discard_error"] == "OSError: busy"
+    assert record.last_report["discard_error"] == "rmtree: OSError: busy"
     assert "worktree_discarded" not in record.last_report
 
 

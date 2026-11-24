@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, final
 from uuid import UUID
 
-from punt_vox.voxd.workers.git_failure import GitFailure
+from punt_vox.voxd.workers.git_failure import DiscardError, GitFailure
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.model import WorkerRecord
@@ -95,10 +95,11 @@ class WorkerWorktrees:
         note: dict[str, object] = {"worktree_discarded": True}
         try:
             self.discard(Path(record.project), Path(record.worktree), record.id)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            failure = GitFailure(exc)
-            logger.warning("Worker %s worktree discard failed: %s", record.id, failure)
-            note = {"discard_error": str(failure)}
+        except (ValueError, DiscardError) as exc:
+            # ValueError: the path guard refused before any step ran.
+            detail = exc if isinstance(exc, DiscardError) else GitFailure(exc)
+            logger.warning("Worker %s worktree discard failed: %s", record.id, detail)
+            note = {"discard_error": str(detail)}
         return replace(record, last_report={**record.last_report, **note})
 
     def discard(self, project: Path, worktree: Path, worker_id: str) -> None:
@@ -110,22 +111,41 @@ class WorkerWorktrees:
         ``git worktree remove --force`` unregisters this worker's entry whether
         or not its directory still exists; the repository is never pruned,
         since that would drop another checkout whose directory is away for a
-        moment.
+        moment. Every step runs even when an earlier one failed, and the
+        failures are raised together as :class:`DiscardError`.
         """
         owner = str(UUID(worker_id))
         if worktree.name != _WORKTREE_LEAF or worktree.parent.name != owner:
             raise ValueError(f"not the worker's own worktree: {worktree}")
+        failures = DiscardError()
+        failures.attempt("remove", lambda: self._unregister(project, worktree))
+        failures.attempt("rmtree", lambda: self._remove_tree(worktree))
+        failures.attempt(
+            "branch", lambda: self._delete_branch(project, f"vox-worker/{owner}")
+        )
+        failures.attempt("rmdir", lambda: self._remove_empty_parent(worktree))
+        if failures:
+            raise failures
+
+    def _unregister(self, project: Path, worktree: Path) -> None:
         if self._registered(project, worktree):
             # Two --force: git locks a worktree ("initializing") while adding
             # it, and a run killed at the deadline leaves that lock in place.
             self._git(
                 project, "worktree", "remove", "--force", "--force", str(worktree)
             )
+
+    @staticmethod
+    def _remove_tree(worktree: Path) -> None:
         if worktree.exists():
             shutil.rmtree(worktree)
-        branch = f"vox-worker/{owner}"
+
+    def _delete_branch(self, project: Path, branch: str) -> None:
         if self._has_branch(project, branch):
             self._git(project, "branch", "-D", branch)
+
+    @staticmethod
+    def _remove_empty_parent(worktree: Path) -> None:
         if worktree.parent.is_dir() and not any(worktree.parent.iterdir()):
             worktree.parent.rmdir()
 

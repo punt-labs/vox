@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -12,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from punt_vox.config import ConfigStore
+from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
@@ -146,7 +148,7 @@ def test_branch_probe_failure_raises_instead_of_reading_absent(
     worker_id = str(uuid4())
     with (
         patch("subprocess.run", side_effect=_git_answering(128)),
-        pytest.raises(subprocess.CalledProcessError),
+        pytest.raises(DiscardError, match=r"^branch: CalledProcessError: "),
     ):
         WorkerWorktrees().discard(
             tmp_path, tmp_path / worker_id / "worktree", worker_id
@@ -161,7 +163,7 @@ def test_branch_probe_failure_is_recorded_as_a_discard_error(
         record = WorkerWorktrees().discard_recorded(_record(tmp_path, worker_id))
     error = record.last_report["discard_error"]
     assert isinstance(error, str)
-    assert error.startswith("CalledProcessError: git -C <path> show-ref ")
+    assert error.startswith("branch: CalledProcessError: git -C <path> show-ref ")
     assert "worktree_discarded" not in record.last_report
 
 
@@ -174,9 +176,11 @@ def test_discard_failure_logs_the_command_and_scrubbed_stderr(
         ["git", "-C", "/Users/x/repo", "worktree", "remove", "--force", "/Users/x/y"],
         stderr="fatal: /Users/x/y\nhint: is it locked?\n",
     )
+    refused = DiscardError()
+    refused.attempt("remove", lambda: _raise(failure))
     with (
         caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
-        patch.object(WorkerWorktrees, "discard", side_effect=failure),
+        patch.object(WorkerWorktrees, "discard", side_effect=refused),
     ):
         record = WorkerWorktrees().discard_recorded(_record(tmp_path, worker_id))
     line = next(r.getMessage() for r in caplog.records if worker_id in r.getMessage())
@@ -185,9 +189,13 @@ def test_discard_failure_logs_the_command_and_scrubbed_stderr(
     assert "/Users" not in line
     error = record.last_report["discard_error"]
     assert error == (
-        "CalledProcessError: git -C <path> worktree remove --force <path>: "
-        "fatal: <path> hint: is it locked?"
+        "remove: CalledProcessError: git -C <path> worktree remove --force "
+        "<path>: fatal: <path> hint: is it locked?"
     )
+
+
+def _raise(exc: Exception) -> None:
+    raise exc
 
 
 def test_worktree_create_timeout_logs_its_elapsed_time(
@@ -229,3 +237,71 @@ def test_worktree_create_git_failure_logs_its_elapsed_time(
         r.getMessage() == "Worker worktree for shiny-repo failed in 2.5 s"
         for r in caplog.records
     )
+
+
+def _git_failing_at(
+    worktree: Path, *steps: str
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], list[list[str]]]:
+    """Fake git: *worktree* is registered and its branch exists; the named
+    verbs ("remove", "branch") exit 128. Returns the fake and its call log."""
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        verb = argv[4] if argv[3] == "worktree" else argv[3]
+        if verb == "list":
+            return subprocess.CompletedProcess(argv, 0, f"worktree {worktree}\n", "")
+        if verb == "show-ref":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if verb in steps:
+            raise subprocess.CalledProcessError(
+                128, argv, stderr=f"fatal: {verb} refused: /Users/x/y\n"
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    return run, calls
+
+
+def _registered_record(tmp_path: Path, worker_id: str) -> WorkerRecord:
+    """A record whose worktree path is what the fake listing reports."""
+    return replace(
+        _record(tmp_path, worker_id),
+        project=str(tmp_path),
+        worktree=str(tmp_path / worker_id / "worktree"),
+    )
+
+
+def test_discard_attempts_every_step_after_a_failed_remove(tmp_path: Path) -> None:
+    worker_id = str(uuid4())
+    record = _registered_record(tmp_path, worker_id)
+    run, calls = _git_failing_at(Path(record.worktree), "remove")
+    with patch("subprocess.run", side_effect=run):
+        record = WorkerWorktrees().discard_recorded(record)
+    assert ["branch", "-D", f"vox-worker/{worker_id}"] in [c[3:6] for c in calls]
+    error = record.last_report["discard_error"]
+    assert error == (
+        "remove: CalledProcessError: git -C <path> worktree remove --force "
+        "--force <path>: fatal: remove refused: <path>"
+    )
+    assert "worktree_discarded" not in record.last_report
+
+
+def test_discard_records_every_failed_step(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    worker_id = str(uuid4())
+    record = _registered_record(tmp_path, worker_id)
+    run, _ = _git_failing_at(Path(record.worktree), "remove", "branch")
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
+        patch("subprocess.run", side_effect=run),
+    ):
+        record = WorkerWorktrees().discard_recorded(record)
+    error = record.last_report["discard_error"]
+    assert isinstance(error, str)
+    assert error.startswith("remove: CalledProcessError: ")
+    assert "; branch: CalledProcessError: git -C <path> branch -D " in error
+    assert "/Users" not in error
+    line = next(r.getMessage() for r in caplog.records if worker_id in r.getMessage())
+    assert "remove: CalledProcessError" in line
+    assert "; branch: CalledProcessError" in line

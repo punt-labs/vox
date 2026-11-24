@@ -1,9 +1,10 @@
-"""Describe a failed git command for a log line and a worker record, paths scrubbed."""
+"""Describe failed git commands for a log line and a worker record, paths scrubbed."""
 
 from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from typing import Final, Self, final
 
 # An absolute path inside a git message or argv; it names the operator's
@@ -58,3 +59,38 @@ class GitFailure:
     def _scrub(text: str) -> str:
         """Collapse newlines to one line and replace every absolute path."""
         return _ABSOLUTE_PATH.sub("<path>", " ".join(text.split()))
+
+
+@final
+class DiscardError(Exception):
+    """Every step of a discard that failed, each named and scrubbed.
+
+    A discard attempts all of its steps so one refusal (a locked worktree,
+    a busy directory) does not leave the later artefacts behind; this is
+    raised at the end when any step failed.
+    """
+
+    __slots__ = ("_steps",)
+    _steps: list[tuple[str, GitFailure]]
+
+    def __new__(cls, *args: object) -> Self:
+        """Start with no failed step; ``attempt`` records each one that fails."""
+        self = super().__new__(cls, *args)
+        self._steps = []
+        return self
+
+    def attempt(self, step: str, run: Callable[[], None]) -> None:
+        """Run one step, keeping its failure under *step* instead of raising."""
+        try:
+            run()
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            self._steps.append((step, GitFailure(exc)))
+
+    def __bool__(self) -> bool:
+        return bool(self._steps)
+
+    def __str__(self) -> str:
+        return "; ".join(f"{step}: {failure}" for step, failure in self._steps)
+
+    def __repr__(self) -> str:
+        return f"DiscardError({self._steps!r})"
