@@ -73,11 +73,11 @@ class ScriptInput:
 
     @staticmethod
     def open() -> None:
-        """A script needs no device: the turns were read at construction."""
+        """Open nothing: a script's turns were read at construction."""
 
     @staticmethod
     def close() -> None:
-        """A script holds nothing to release."""
+        """Release nothing: a script holds no device."""
 
     async def chunks(self) -> AsyncIterator[bytes]:
         """Yield 20 ms frames on a real-time schedule that does not drift."""

@@ -532,10 +532,12 @@ async def test_spoken_label_can_find_worker_outside_bounded_roster(
     )
 
     tools = BossTools(workers, workers, spoken_labels=brief.labels)
-    reply = await tools.answer("worker_status", {"worker_id": "worker 200 in repo"})
+    result, error = await tools.answer(
+        "worker_status", {"worker_id": "worker 200 in repo"}
+    )
 
-    assert not reply.is_error
-    assert json.loads(reply.result)["worker_id"] == workers.known[-1]["id"]
+    assert not error
+    assert json.loads(result)["worker_id"] == workers.known[-1]["id"]
 
 
 def test_return_opener_numbers_case_equivalent_projects_together(

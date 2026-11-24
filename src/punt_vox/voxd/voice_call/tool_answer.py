@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.log_sanitize import SANITIZER
 from punt_vox.voxd.voice_call.result_cache import ToolResultCache
-from punt_vox.voxd.voice_call.tool_reply import ToolReply
 from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
@@ -26,7 +25,7 @@ type Request = tuple[Arguments, Arguments]
 
 @final
 class ToolAnswer:
-    """Turn a tool request's outcome into a :class:`ToolReply` for the agent.
+    """Turn a tool request's outcome into ``(json, is_error)`` for the agent.
 
     One execution per distinct request is shared through the call's
     :class:`ToolResultCache`. A refused request (a bad field, an unknown
@@ -58,7 +57,7 @@ class ToolAnswer:
         operation: Callable[[Arguments], Awaitable[object]],
         *,
         durable: bool,
-    ) -> ToolReply:
+    ) -> tuple[str, bool]:
         """Resolve *request*, run *operation* on it, and answer the outcome.
 
         Resolution runs inside the same boundary as the operation: reading the
@@ -82,12 +81,12 @@ class ToolAnswer:
             subprocess.SubprocessError,
         ) as exc:
             return self.error(str(exc))
-        return ToolReply.ok(result)
+        return result, False
 
     @staticmethod
-    def error(message: str) -> ToolReply:
-        """Return *message* as the agent's error answer, kept for the log."""
-        return ToolReply.failed(message)
+    def error(message: str) -> tuple[str, bool]:
+        """Return *message* as the agent's error answer."""
+        return json.dumps({"error": message}, ensure_ascii=False), True
 
     @staticmethod
     def _fault(name: str, exc: OSError | UnicodeDecodeError) -> str:

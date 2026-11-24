@@ -31,6 +31,20 @@ class ToolReply:
         """Build the agent's ``{"error": ...}`` reply and keep the message."""
         return cls(json.dumps({"error": error}, ensure_ascii=False), error)
 
+    @classmethod
+    def from_wire(cls, result: str, *, is_error: bool) -> Self:
+        """Read the error once from the wire text the tool runner produced.
+
+        The runner speaks ``{"error": ...}`` for a failure; this is the one
+        place that parses it, so the log and the call never do.
+        """
+        if not is_error:
+            return cls(result, None)
+        error = json.loads(result)["error"]
+        if not isinstance(error, str):
+            raise ValueError(f"tool error is not text: {error!r}")
+        return cls(result, error)
+
     @property
     def is_error(self) -> bool:
         """Return whether the tool failed; the agent is told so with the result."""

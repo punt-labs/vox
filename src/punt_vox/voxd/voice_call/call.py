@@ -19,6 +19,7 @@ from punt_vox.voxd.voice_agent.events import (
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_outcome import CallOutcome
 from punt_vox.voxd.voice_call.progress import CallProgress
+from punt_vox.voxd.voice_call.tool_reply import ToolReply
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -210,7 +211,8 @@ class VoiceAgentCall:
                 return
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
-        answer = await self._tools.answer(call.tool_name, call.parameters)
+        result, is_error = await self._tools.answer(call.tool_name, call.parameters)
+        answer = ToolReply.from_wire(result, is_error=is_error)
         CallLog.tool(call.tool_name, answer)
         if call.tool_name == "steer_worker" and not answer.is_error:
             receipt: dict[str, object] = json.loads(answer.result)

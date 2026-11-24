@@ -22,18 +22,22 @@ async def test_result_is_json_and_not_an_error() -> None:
     async def operation(arguments: dict[str, object]) -> object:
         return {"started": arguments["task"]}
 
-    reply = await ToolAnswer().run("start_worker", _request, operation, durable=True)
-    assert not reply.is_error
-    assert json.loads(reply.result) == {"started": "fix x"}
+    result, error = await ToolAnswer().run(
+        "start_worker", _request, operation, durable=True
+    )
+    assert not error
+    assert json.loads(result) == {"started": "fix x"}
 
 
 async def test_refusal_is_spoken_verbatim() -> None:
     async def operation(_arguments: dict[str, object]) -> object:
         raise ValueError("name a project")
 
-    reply = await ToolAnswer().run("start_worker", _request, operation, durable=True)
-    assert reply.is_error
-    assert reply.error == "name a project"
+    result, error = await ToolAnswer().run(
+        "start_worker", _request, operation, durable=True
+    )
+    assert error
+    assert json.loads(result)["error"] == "name a project"
 
 
 async def test_config_fault_is_spoken_without_the_path(
@@ -43,11 +47,11 @@ async def test_config_fault_is_spoken_without_the_path(
         raise OSError(errno.EBADMSG, "no closing ---", "/home/someone/vox.md")
 
     with caplog.at_level(logging.ERROR):
-        reply = await ToolAnswer().run(
+        result, error = await ToolAnswer().run(
             "start_worker", _request, operation, durable=True
         )
-    assert reply.is_error
-    assert reply.error == "operation failed"
+    assert error
+    assert json.loads(result)["error"] == "operation failed"
     logged = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert any("/home/someone/vox.md" in line for line in logged)
 
@@ -62,9 +66,11 @@ async def test_fault_while_resolving_the_request_is_classified_too(
         raise AssertionError("never reached")
 
     with caplog.at_level(logging.ERROR):
-        reply = await ToolAnswer().run("start_worker", request, operation, durable=True)
-    assert reply.is_error
-    assert reply.error == "operation failed"
+        result, error = await ToolAnswer().run(
+            "start_worker", request, operation, durable=True
+        )
+    assert error
+    assert json.loads(result)["error"] == "operation failed"
 
 
 async def test_durable_request_replays_the_first_answer() -> None:

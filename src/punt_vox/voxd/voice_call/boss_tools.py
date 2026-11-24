@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 from punt_vox.voxd.voice_agent.contracts import ClientTool
 from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.voice_call.tool_answer import ToolAnswer
-from punt_vox.voxd.voice_call.tool_reply import ToolReply
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
@@ -137,8 +136,12 @@ class BossTools:
         """Return how many tool calls were answered from an earlier execution."""
         return self._answer.replayed
 
-    async def answer(self, name: str, arguments: dict[str, object]) -> ToolReply:
-        """Return the JSON result for the agent, with its error when it failed."""
+    async def answer(self, name: str, arguments: dict[str, object]) -> tuple[str, bool]:
+        """Return the JSON result for the agent and whether it reports an error.
+
+        :class:`ToolAnswer` classifies the outcome: a refusal is spoken
+        verbatim, a daemon-side fault is spoken without its path.
+        """
         steering = SteeringTool(self._workers, self._directory)
         operations: dict[str, Callable[[dict[str, object]], Awaitable[object]]] = {
             "start_worker": self._start,
