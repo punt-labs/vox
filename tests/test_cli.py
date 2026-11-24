@@ -94,11 +94,16 @@ finally:
 class TestSayCommand:
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
-        ("provider_args", "expected_provider", "expected_model"),
+        ("provider_args", "expected_provider", "expected_model", "expected_voice"),
         [
-            ([], "elevenlabs", "eleven_v3"),
-            (["--provider", "polly"], "polly", None),
-            (["--provider", "openai", "--model", "tts-1-hd"], "openai", "tts-1-hd"),
+            ([], "elevenlabs", "eleven_v3", "adam"),
+            (["--provider", "polly"], "polly", None, None),
+            (
+                ["--provider", "openai", "--model", "tts-1-hd"],
+                "openai",
+                "tts-1-hd",
+                None,
+            ),
         ],
         ids=["repo-default", "explicit-provider", "explicit-model"],
     )
@@ -109,6 +114,7 @@ class TestSayCommand:
         provider_args: list[str],
         expected_provider: str,
         expected_model: str | None,
+        expected_voice: str | None,
     ) -> None:
         from punt_vox.client import SynthesizeResult
 
@@ -120,7 +126,11 @@ class TestSayCommand:
         assert result.exit_code == 0, result.output
         synthesize.assert_called_once()
         spec = synthesize.call_args.args[1]
-        assert (spec.provider, spec.model) == (expected_provider, expected_model)
+        assert (spec.provider, spec.model, spec.voice) == (
+            expected_provider,
+            expected_model,
+            expected_voice,
+        )
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_basic(

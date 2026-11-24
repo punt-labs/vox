@@ -487,7 +487,7 @@ def test_explicit_model_override_wins_even_when_provider_also_overridden() -> No
 def test_per_call_provider_override_drops_states_voice(
     state_provider: str, override_provider: str
 ) -> None:
-    """``--provider B`` against state provider A synthesizes with B's default voice.
+    """Drop state's voice when ``--provider`` names a different provider.
 
     Voice names are provider-scoped exactly like models: ``adam`` is an
     ElevenLabs voice, so carrying it into an espeak or polly request fails
@@ -502,7 +502,7 @@ def test_per_call_provider_override_drops_states_voice(
 
 
 def test_per_call_override_matching_state_provider_keeps_states_voice() -> None:
-    """A redundant ``--provider`` naming state's provider still inherits the voice."""
+    """Keep state's voice when ``--provider`` names state's own provider."""
     state = _State(provider="  elevenlabs  ", voice="adam")
 
     spec = SessionSpec(state).fill(SynthesisSpec(provider="elevenlabs"))
@@ -511,7 +511,7 @@ def test_per_call_override_matching_state_provider_keeps_states_voice() -> None:
 
 
 def test_explicit_voice_override_wins_even_when_provider_also_overridden() -> None:
-    """A per-call ``voice`` override is kept across a provider override."""
+    """Keep a per-call ``voice`` override across a provider override."""
     state = _State(provider="elevenlabs", voice="adam")
 
     spec = SessionSpec(state).fill(SynthesisSpec(provider="espeak", voice="en-us"))
