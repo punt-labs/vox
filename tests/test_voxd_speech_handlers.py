@@ -586,6 +586,7 @@ class TestHandleSynthesizeCachedSignal:
         ("provider", "rate", "warns"),
         [
             ("elevenlabs", 120, True),
+            ("ElevenLabs", 120, True),
             ("elevenlabs", 100, True),
             ("elevenlabs", 90, False),
             ("elevenlabs", None, False),

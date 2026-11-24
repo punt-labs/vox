@@ -14,7 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.caller_errors import CALLER_ERRORS
-from punt_vox.types_synthesis import DEFAULT_RATE, SynthesisSpec
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
     parse_optional_int,
@@ -23,13 +23,13 @@ from punt_vox.voxd._parse import (
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
+from punt_vox.voxd.speech_reply import SpeechReply
 from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     _LOCAL_PROVIDERS,
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_fault import SafeFault
-from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -146,13 +146,7 @@ class _SpeechRequest:
         disconnect-safe send the store handlers use, instead of a raw
         ``send_json`` that raises out of the handler when the client has left.
         """
-        rate = self.spec.rate
-        if self.spec.provider == "elevenlabs" and rate not in (None, DEFAULT_RATE):
-            payload = {
-                **payload,
-                "warning": f"ElevenLabs ignores the requested speech rate ({rate}%).",
-            }
-        await WireReply(self.websocket, self.request_id).send(payload)
+        await SpeechReply(self.websocket, self.request_id).audio(self.spec, payload)
 
     async def fault(self, fault: SafeFault) -> None:
         """Audit a server-side OPERATIONAL failure and send a prefix-free frame.
@@ -164,7 +158,7 @@ class _SpeechRequest:
         The *fault* carries a prefix-free wire message and the raw log detail, so
         no absolute prefix reaches the client.
         """
-        await WireReply(self.websocket, self.request_id).fault(fault)
+        await SpeechReply(self.websocket, self.request_id).fault(fault)
 
     async def reject(self, cause: ValueError) -> None:
         """Audit a client-side rejection and send the cause's message verbatim.
@@ -179,7 +173,7 @@ class _SpeechRequest:
         F2/F3/F5 promise (design §3.5) is that a diagnosable failure
         reaches the caller with a message they can act on.
         """
-        await WireReply(self.websocket, self.request_id).error(cause)
+        await SpeechReply(self.websocket, self.request_id).error(cause)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -214,7 +208,7 @@ class SynthesizeHandler(MessageHandler):
             once = parse_optional_int(msg, "once")
         except ValueError as exc:
             # WireReply makes a gone-peer send a clean no-op, matching the siblings.
-            await WireReply(websocket, str(msg.get("id", ""))).error(exc)
+            await SpeechReply(websocket, str(msg.get("id", ""))).error(exc)
             return
 
         dedup_recorded = await self._respond_if_deduped(req, once)
