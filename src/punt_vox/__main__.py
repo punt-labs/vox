@@ -32,7 +32,18 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.types_cli_options import LanguageOpt, RateOpt
+from punt_vox.types_cli_options import (
+    FromOpt,
+    LanguageOpt,
+    ModelOpt,
+    ProviderOpt,
+    RateOpt,
+    SimilarityOpt,
+    SpeakerBoostFlag,
+    StabilityOpt,
+    StyleOpt,
+    VoiceOpt,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -94,43 +105,6 @@ JsonOutput = Annotated[
     bool,
     typer.Option("--json", help="Output JSON."),
 ]
-ProviderOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--provider",
-        help=(
-            "TTS provider (elevenlabs, polly, openai, say, espeak)."
-            " Default: this repo's vox.md provider (vox provider <name>)."
-        ),
-    ),
-]
-ModelOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--model",
-        help="Model name (e.g. eleven_v3, tts-1). Provider-specific.",
-    ),
-]
-VoiceOpt = Annotated[
-    str | None,
-    typer.Option("--voice", help="Voice name. Default: provider-specific."),
-]
-StabilityOpt = Annotated[
-    float | None,
-    typer.Option("--stability", help="ElevenLabs voice stability (0.0-1.0)."),
-]
-SimilarityOpt = Annotated[
-    float | None,
-    typer.Option("--similarity", help="ElevenLabs voice similarity boost (0.0-1.0)."),
-]
-StyleOpt = Annotated[
-    float | None,
-    typer.Option("--style", help="ElevenLabs voice style/expressiveness (0.0-1.0)."),
-]
-SpeakerBoostFlag = Annotated[
-    bool,
-    typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost."),
-]
 OnceOpt = Annotated[
     int | None,
     typer.Option(
@@ -188,10 +162,6 @@ ApiKeyStdinFlag = Annotated[
             "tty."
         ),
     ),
-]
-FromOpt = Annotated[
-    Path | None,
-    typer.Option("--from", help="JSON file with segments array.", exists=True),
 ]
 TextArg = Annotated[
     str | None, typer.Argument(help="Text to synthesize.", show_default=False)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import get_args
 
 import pytest
-from _cli_introspect import command_opts
+from _cli_introspect import command_opts, option_help
 from typer.models import OptionInfo
 
 from punt_vox.types_cli_options import LanguageOpt, RateOpt
@@ -27,3 +27,23 @@ def test_synthesis_option_annotations(
     assert option.help
     assert flags <= command_opts("say")
     assert flags <= command_opts("rec", "new")
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--from",
+        "--language",
+        "--lang",
+        "--model",
+        "--provider",
+        "--rate",
+        "--similarity",
+        "--speaker-boost",
+        "--stability",
+        "--style",
+        "--voice",
+    ],
+)
+def test_say_and_rec_new_share_synthesis_help(flag: str) -> None:
+    assert option_help("rec", "new", option=flag) == option_help("say", option=flag)

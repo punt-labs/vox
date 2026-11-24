@@ -364,6 +364,29 @@ class TestSayCommand:
         assert synthesize.call_args.kwargs["once"] == expected_ttl
 
     @patch(f"{_CLI}.VoxClientSync")
+    def test_say_once_json_reports_deduplicated_playback(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.synthesize.return_value = SynthesizeResult(
+            request_id="abc123",
+            deduped=True,
+            original_played_at=1700000000.0,
+            ttl_seconds_remaining=42.0,
+        )
+
+        result = CliRunner().invoke(
+            app, ["say", "hello", "--provider", "espeak", "--once", "60", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {
+            "id": "abc123",
+            "deduped": True,
+            "original_played_at": 1700000000.0,
+            "ttl_seconds_remaining": 42.0,
+        }
+
+    @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
         self,
         mock_client_cls: MagicMock,
