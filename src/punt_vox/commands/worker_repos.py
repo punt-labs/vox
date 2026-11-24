@@ -38,22 +38,34 @@ class WorkerReposCli:
             typer.echo(path)
 
     @staticmethod
-    def _named(operation: str, path: str) -> RepoSpellings:
-        """Resolve PATH in the caller's directory, keeping the spelling as typed.
-
-        A blank PATH is refused by name: resolved, it would name the cwd, a
-        repository the operator never typed.
-        """
+    def _present(operation: str, path: str) -> str:
+        """Refuse a blank PATH by name: resolved, it would name the cwd."""
         if not path.strip():
             typer.echo(f"vox: worker {operation}: PATH must not be blank", err=True)
             raise typer.Exit(2)
-        return RepoSpellings(str(Path(path).expanduser().resolve()), path)
+        return path
+
+    @staticmethod
+    def _resolved(path: str) -> str | None:  # None: the client cannot resolve it.
+        """Resolve PATH in the caller's directory, or ``None`` when that fails.
+
+        ``~user`` for an unknown account, or a path resolution the filesystem
+        refuses, has no resolved form on this host.
+        """
+        try:
+            return str(Path(path).expanduser().resolve())
+        except (RuntimeError, OSError):
+            return None
 
     @staticmethod
     def allow(path: str, *, as_json: JsonFlag = False) -> None:
         """Allow workers in a repository; PATH must be a git top level."""
-        project = WorkerReposCli._named("allow", path).resolved
-        WorkerReposCli._paths("allow", as_json=as_json, project=project)
+        typed = WorkerReposCli._present("allow", path)
+        resolved = WorkerReposCli._resolved(typed)
+        if resolved is None:
+            typer.echo(f"vox: worker allow: cannot resolve PATH: {typed}", err=True)
+            raise typer.Exit(1)
+        WorkerReposCli._paths("allow", as_json=as_json, project=resolved)
 
     @staticmethod
     def disallow(path: str, *, as_json: JsonFlag = False) -> None:
@@ -64,7 +76,13 @@ class WorkerReposCli:
         when it differs, so a stored entry that does not resolve (one written
         by hand) can still be removed by typing it exactly.
         """
-        named = WorkerReposCli._named("disallow", path)
+        typed = WorkerReposCli._present("disallow", path)
+        resolved = WorkerReposCli._resolved(typed)
+        # No resolved form: the typed text is the only spelling the daemon
+        # can match, so it goes as the project itself.
+        named = (
+            RepoSpellings(typed) if resolved is None else RepoSpellings(resolved, typed)
+        )
         WorkerReposCli._paths("disallow", as_json=as_json, **named.fields())
 
     @staticmethod

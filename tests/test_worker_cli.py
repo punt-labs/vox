@@ -202,3 +202,31 @@ def test_repos_rejects_a_reply_that_is_not_a_list(reply: object) -> None:
         result = CliRunner().invoke(app, ["worker", "repos"])
     assert result.exit_code == 1, result.output
     assert "vox: worker repos: expected a list of paths" in result.output
+
+
+def test_disallow_sends_a_spelling_the_client_cannot_resolve_as_typed() -> None:
+    """A ``~user`` path for an unknown account still reaches the daemon.
+
+    The client cannot resolve it, so the typed text is the only spelling and
+    goes as the project; the daemon's exact-text match removes the entry.
+    """
+    typed = "~no-such-user-for-this-test/repo"
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[],
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "disallow", typed])
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with("disallow", project=typed)
+
+
+def test_allow_still_refuses_a_path_the_client_cannot_resolve() -> None:
+    typed = "~no-such-user-for-this-test/repo"
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request", new_callable=AsyncMock
+    ) as request:
+        result = CliRunner().invoke(app, ["worker", "allow", typed])
+    assert result.exit_code == 1, result.output
+    assert "cannot resolve" in result.output
+    request.assert_not_awaited()

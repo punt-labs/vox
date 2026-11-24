@@ -70,6 +70,16 @@ class RepoSpellings:
     @staticmethod
     def _resolved(
         text: str,
-    ) -> Path | None:  # None: a relative spelling has no resolved form.
-        path = Path(text).expanduser()
-        return path.resolve() if path.is_absolute() else None
+    ) -> Path | None:  # None: the spelling has no resolved form.
+        """Return the resolved path of an absolute spelling, else ``None``.
+
+        A relative spelling has no resolved form. Neither does one whose
+        home directory cannot be found (``~user`` for an unknown account) or
+        whose resolution fails on disk: such an entry can only ever match by
+        text, and it must never stop the other entries from being compared.
+        """
+        try:
+            path = Path(text).expanduser()
+            return path.resolve() if path.is_absolute() else None
+        except (RuntimeError, OSError):
+            return None

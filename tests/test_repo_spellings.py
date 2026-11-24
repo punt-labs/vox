@@ -53,3 +53,16 @@ def test_wire_fields_carry_the_spelling_only_when_it_differs() -> None:
     }
     assert RepoSpellings("/repo", "/repo").fields() == {"project": "/repo"}
     assert RepoSpellings("/repo").fields() == {"project": "/repo"}
+
+
+def test_a_spelling_that_cannot_expand_matches_by_text_alone() -> None:
+    """A ``~user`` spelling for an unknown account has no resolved form.
+
+    It must neither raise nor block the comparison of other stored entries,
+    so a hand-edited entry can still be removed by typing it exactly.
+    """
+    typed = "~no-such-user-for-this-test/repo"
+    named = RepoSpellings("/elsewhere", typed)
+    assert named.names(typed)
+    assert not named.names("/elsewhere/other")
+    assert not RepoSpellings("/elsewhere").names(typed)
