@@ -1200,6 +1200,24 @@ def test_switch_errors_have_one_json_error_key(
     assert json.loads(machine.stdout) == {"error": message}
 
 
+@patch(f"{_CLI}.VoxClientSync")
+def test_model_roster_failure_has_one_json_error_key(
+    mock_client_cls: MagicMock, hermetic_config: Path
+) -> None:
+    config = hermetic_config / "vox.md"
+    original = config.read_text()
+    mock_client_cls.return_value.voices.side_effect = VoxdConnectionError(
+        "voice roster unavailable"
+    )
+
+    result = CliRunner().invoke(app, ["model", "v3", "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {"error": "voice roster unavailable"}
+    assert config.read_text() == original
+
+
 class TestVoiceCommand:
     """Tests for the extended ``vox voice`` switch command (.3).
 
