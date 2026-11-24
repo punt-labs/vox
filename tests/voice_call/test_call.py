@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from conversation_mode._mic_fakes import fake_sounddevice
 from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, _registry
 from websockets.asyncio.server import serve
@@ -58,6 +59,12 @@ _METADATA = {
     },
 }
 _LOOPBACK = functools.partial(Conversation.open, allow_loopback=True)
+
+
+@pytest.fixture(autouse=True)
+def _fake_microphone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mic-mode call_start opens the microphone before it dials: fake it."""
+    fake_sounddevice(monkeypatch)
 
 
 def _audio(pcm: bytes, event_id: int) -> str:
@@ -912,12 +919,21 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
 
 
 class _SlowConnector:
+    """Provisioning that holds until released; ``entered`` says it has begun.
+
+    The hold has no wall-clock bound: the test decides when provisioning
+    ends, so load cannot turn the hold into a provisioning failure.
+    """
+
     def __init__(self) -> None:
+        self.entered = asyncio.Event()
         self.release = threading.Event()
+        self._loop = asyncio.get_running_loop()
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
-        self.release.wait(5)
+        self._loop.call_soon_threadsafe(self.entered.set)
+        self.release.wait()
         raise ConvAIError("agent provisioning failed")
 
     def teardown(self) -> None:
@@ -930,17 +946,17 @@ async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
     handlers = _handlers(
         workers, FakePlayback(), tmp_path, connector=connector, opener=_LOOPBACK
     )
-    async with asyncio.timeout(5):
-        start = asyncio.create_task(
-            _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
-        )
-        while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
-            "state": "idle"
-        }:
-            await asyncio.sleep(0.01)
-        stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
-        connector.release.set()
-        await start
+    try:
+        async with asyncio.timeout(30):
+            start = asyncio.create_task(
+                _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
+            )
+            await connector.entered.wait()  # provisioning is now in progress
+            stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
+            connector.release.set()
+            await start
+    finally:
+        connector.release.set()  # never leave the provisioning thread blocked
     assert cast("dict[str, object]", stopped)["state"] == "ended"
 
 
