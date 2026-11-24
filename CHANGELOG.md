@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify in CLI help and docs that same-text recordings without `--name`
+  replace the earlier take and that distinct names keep takes separate. (PL-1486)
+
 - Separate panel provider/model roster fetches and atomic commits from scene
   orchestration without changing selector behavior. (PL-837)
 
@@ -36,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no text (`[]`, `[""]`, `["  "]`) as a usage error instead of exiting 0
   having said nothing, and skip whitespace-only segments instead of failing
   the run. (PL-1483)
+
+- `vox voice <name> --provider <provider>` rejects an inactive provider
+  without changing the active provider or saved voice. (PL-1487)
 
 - `vox music get` and `mic:music get` now export an album's surviving tracks
   when a track file was deleted out of band, naming each skipped track
