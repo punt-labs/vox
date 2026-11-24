@@ -25,18 +25,18 @@ class RecordingSummary:
 
 @final
 class RecordingListing:
-    """Collect a complete listing under one deadline; never return a partial list."""
+    """Collect a complete listing, with a deadline for each page."""
 
     @staticmethod
     async def read(
         exchange: VoxdExchange, *, timeout: float
     ) -> tuple[RecordingSummary, ...]:
-        """Read every page before the shared deadline."""
-        deadline = asyncio.get_running_loop().time() + timeout
+        """Bound the wait for the first page and for each subsequent page."""
+        loop = asyncio.get_running_loop()
         rows: list[RecordingSummary] = []
         page = 0
         while True:
-            frame = await exchange.recv_before(deadline, "recordings_page")
+            frame = await exchange.recv_before(loop.time() + timeout, "recordings_page")
             obj = JsonObject.coerce(frame, "rec_list")
             if obj.require_str("type") != "recordings_page" or (
                 obj.require_int("page") != page

@@ -9,12 +9,51 @@ import pytest
 
 from punt_vox.client import VoxClient
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.client_exchange import VoxdExchange
+from punt_vox.client_recordings import RecordingListing
 
 
 def _make_mock_ws() -> AsyncMock:
     ws = AsyncMock()
     ws.transport = MagicMock()
     return ws
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delays", [(4, 4), (6, 1), (4, 6)])
+async def test_rec_list_times_out_only_when_a_page_stalls(
+    delays: tuple[int, int],
+) -> None:
+    now = 0
+    page = 0
+
+    async def recv_before(deadline: float, expected: str) -> dict[str, object]:
+        nonlocal now, page
+        now += delays[page]
+        if now > deadline:
+            raise VoxdProtocolError(f"Timeout waiting for {expected}")
+        frame = {
+            "type": expected,
+            "page": page,
+            "more": page == 0,
+            "entries": [{"name": f"{page}.mp3", "bytes": page}],
+        }
+        page += 1
+        return frame
+
+    exchange = MagicMock(spec=VoxdExchange)
+    exchange.recv_before.side_effect = recv_before
+    with patch("punt_vox.client_recordings.asyncio") as clock:
+        clock.get_running_loop.return_value.time.side_effect = lambda: now
+        if max(delays) > 5:
+            with pytest.raises(VoxdProtocolError, match="Timeout waiting"):
+                await RecordingListing.read(exchange, timeout=5)
+        else:
+            rows = await RecordingListing.read(exchange, timeout=5)
+            assert [(row.name, row.byte_count) for row in rows] == [
+                ("0.mp3", 0),
+                ("1.mp3", 1),
+            ]
 
 
 @pytest.mark.asyncio
