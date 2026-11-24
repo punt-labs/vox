@@ -3142,6 +3142,61 @@ class TestCacheCommands:
     ``VOXD_TOKEN`` like ``vox status`` and ``vox voices``.
     """
 
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @pytest.mark.parametrize("flag", ["--json", "-q", "--quiet", "-v", "--verbose"])
+    @pytest.mark.parametrize("global_flag", [False, True])
+    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_io.configure_client_logging")
+    def test_output_flags(
+        self,
+        mock_logging: MagicMock,
+        mock_client_cls: MagicMock,
+        command: str,
+        flag: str,
+        global_flag: bool,
+    ) -> None:
+        from punt_vox.client import CacheStatus
+
+        cache_path = Path("/daemon/cache")
+        mock_client_cls.return_value.cache_status.return_value = CacheStatus(
+            entries=4, size_bytes=8192, path=cache_path
+        )
+        mock_client_cls.return_value.cache_clear.return_value = 9
+        args = ["cache", command]
+        args.insert(0 if global_flag else len(args), flag)
+
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        if flag == "--json":
+            expected = (
+                {"entries": 4, "size_bytes": 8192, "path": str(cache_path)}
+                if command == "status"
+                else {"cleared": 9}
+            )
+            assert json.loads(result.stdout) == expected
+        elif flag in ("-q", "--quiet"):
+            assert result.stdout == ""
+        else:
+            mock_logging.assert_called_with(role="cli", verbose=True)
+            expected_text = "Entries: 4" if command == "status" else "Cleared 9"
+            assert expected_text in result.stdout
+
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_trailing_json_reports_daemon_connection_error(
+        self, mock_client_cls: MagicMock, command: str
+    ) -> None:
+        rpc = getattr(mock_client_cls.return_value, f"cache_{command}")
+        rpc.side_effect = VoxdConnectionError("refused")
+
+        result = CliRunner().invoke(app, ["cache", command, "--json"])
+
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert json.loads(result.stdout) == {"error": "refused"}
+        assert result.stderr == ""
+        rpc.assert_called_once_with()
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_status_routes_through_client(self, mock_client_cls: MagicMock) -> None:
         from punt_vox.client import CacheStatus
