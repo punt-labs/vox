@@ -137,6 +137,22 @@ def test_a_silent_daemon_times_out_naming_the_frame_and_the_op(
         asyncio.run(run())
 
 
+def test_a_non_object_playback_frame_is_a_protocol_error() -> None:
+    ws = AsyncMock()
+    ws.transport = MagicMock()
+    ws.recv.side_effect = ['{"type":"playing"}', "1"]
+    transport = VoxdTransport("127.0.0.1", 1, _TOKEN)
+
+    with (
+        patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            AsyncMock(return_value=ws),
+        ),
+        pytest.raises(VoxdProtocolError, match="expected a JSON object from voxd"),
+    ):
+        asyncio.run(transport.send_and_drain({"type": "synthesize"}, timeout=1))
+
+
 class _LateRosterDaemon:
     """A real WebSocket server that answers the first roster request late.
 

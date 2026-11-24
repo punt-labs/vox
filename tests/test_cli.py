@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
@@ -2768,6 +2768,26 @@ class TestDaemonStatusCommand:
         result, payload = self._remote_status(garbled, monkeypatch)
         assert result.exit_code == 1
         assert payload["status"] == "unknown"
+
+    def test_remote_non_object_json_reply_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VOXD_HOST", "127.0.0.1")
+        monkeypatch.setenv("VOXD_PORT", "8421")
+        ws = AsyncMock()
+        ws.transport = MagicMock()
+        ws.recv.return_value = "[]"
+        with patch(
+            "punt_vox.client_transport.websockets.asyncio.client.connect",
+            AsyncMock(return_value=ws),
+        ):
+            result = CliRunner().invoke(app, ["daemon", "status", "--json"])
+        ws.send.assert_awaited_once_with(json.dumps({"type": "health"}))
+        assert result.exit_code == 1
+        assert json.loads(result.output) == {
+            "status": "unknown",
+            "reason": "expected a JSON object from voxd",
+        }
 
     def test_refused_as_root_exits_2(self) -> None:
         refusal = LifecycleRefusedError("vox daemon must run as your normal user")

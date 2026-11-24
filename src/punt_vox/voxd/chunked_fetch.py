@@ -4,9 +4,10 @@
 ``docs/vox-chunked-transfer.tex``: a ``fetch_begin`` announcing the total byte
 count, chunk count, and sha256; then strictly-increasing ``chunk`` frames, each at
 most ``FETCH_CHUNK_BYTES`` raw bytes; then a ``fetch_end`` -- or, on a mid-stream
-read fault, an ``error`` terminal instead. The file is read in slices twice (once
-to declare the totals and hash, once to send), so memory stays bounded for a file
-of any size and the declared byte count is a guard the client checks against.
+read fault, an ``error`` terminal instead. The same open file is read in slices
+twice (once to declare the totals and hash, once to send), so memory stays
+bounded for a file of any size and the declared byte count is a guard the client
+checks against.
 
 Containment happens *before* a transfer is handed here: the caller resolves the
 reference once and passes a ``Path``, so no byte is ever emitted for an
@@ -16,7 +17,6 @@ uncontained reference (the ``RejectBeforeBegin`` property).
 from __future__ import annotations
 
 import base64
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Self, final
 
@@ -25,6 +25,7 @@ from punt_vox.voxd.wire_fault import SafeFault
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.fetch_digest import FetchDigest, MeasuredFile
     from punt_vox.voxd.wire_reply import WireReply
 
 __all__ = ["ChunkedTransfer"]
@@ -36,23 +37,16 @@ logger = logging.getLogger(__name__)
 class ChunkedTransfer:
     """Read a file in ``chunk_bytes`` slices and stream it as begin/chunk*/end."""
 
-    __slots__ = ("_chunk_bytes", "_reply")
+    __slots__ = ("_digest", "_reply")
 
     _reply: WireReply
-    _chunk_bytes: int
+    _digest: FetchDigest
 
-    def __new__(cls, reply: WireReply, chunk_bytes: int) -> Self:
-        """Create a chunked transfer.
-
-        Raises:
-            ValueError: If chunk_bytes is not positive.
-        """
-        if chunk_bytes <= 0:
-            msg = f"chunk_bytes must be positive, got {chunk_bytes}"
-            raise ValueError(msg)
+    def __new__(cls, reply: WireReply, digest: FetchDigest) -> Self:
+        """Create a chunked transfer."""
         self = super().__new__(cls)
         self._reply = reply
-        self._chunk_bytes = chunk_bytes
+        self._digest = digest
         return self
 
     async def stream(self, path: Path, ref: str) -> None:
@@ -64,112 +58,67 @@ class ChunkedTransfer:
         file is ever claimed for an interrupted transfer.
         """
         try:
-            total, chunks, digest = self._measure(path)
+            measured = await self._digest.measure(path)
+            with measured.handle:
+                complete = await self._send_file(measured, ref)
         except OSError as exc:
-            await self._abort_before_begin(exc)
+            await self._fault(exc)
             return
+        if complete:
+            await self._reply.send(
+                {"type": "fetch_end", "ref": ref, "bytes": measured.total}
+            )
 
+    async def _send_file(self, measured: MeasuredFile, ref: str) -> bool:
         if not await self._reply.send(
             {
                 "type": "fetch_begin",
                 "ref": ref,
-                "bytes": total,
-                "chunks": chunks,
-                "sha256": digest,
+                "bytes": measured.total,
+                "chunks": measured.chunks,
+                "sha256": measured.sha256,
             }
         ):
-            return
+            return False
         logger.info(
             "Fetch begin: id=%r ref=%r bytes=%d chunks=%d",
             self._reply.request_id,
             ref,
-            total,
-            chunks,
+            measured.total,
+            measured.chunks,
         )
-        await self._send_chunks(path, ref, total)
+        return await self._pump(measured)
 
-    def _measure(self, path: Path) -> tuple[int, int, str]:
-        """Return ``(total_bytes, chunk_count, sha256_hex)`` from one bounded read."""
-        hasher = hashlib.sha256()
-        total = 0
-        with path.open("rb") as handle:
-            while slice_ := handle.read(self._chunk_bytes):
-                hasher.update(slice_)
-                total += len(slice_)
-        chunks = -(-total // self._chunk_bytes)  # ceil; 0 for an empty file
-        return total, chunks, hasher.hexdigest()
-
-    async def _send_chunks(self, path: Path, ref: str, total: int) -> None:
-        """Send the data frames in order, then ``fetch_end`` -- or abort on a fault."""
-        try:
-            sent = await self._pump(path, total)
-        except OSError as exc:
-            await self._abort_mid_stream(exc)
-            return
-        if sent is None:
-            # The peer left mid-stream: a silent end, like a gone peer at begin.
-            # Nothing to deliver and no fault to report -- do not claim the file
-            # "changed".
-            return
-        if sent != total:
-            await self._abort_mid_stream(
-                OSError(f"file changed mid-fetch: sent {sent} of {total} bytes")
-            )
-            return
-        await self._reply.send({"type": "fetch_end", "ref": ref, "bytes": total})
-
-    async def _pump(self, path: Path, total: int) -> int | None:
-        """Send one ``chunk`` per slice up to ``total`` bytes; return the bytes sent.
+    async def _pump(self, measured: MeasuredFile) -> bool:
+        """Send exactly ``total`` bytes, or return False if the peer disconnects.
 
         Bounded by the declared ``total``, not the live file size: a file grown
-        after the measure pass transfers exactly its declared prefix, and a file
-        that shrank yields an early EOF so ``sent < total`` aborts the stream.
+        after the measure pass transfers exactly its declared prefix.
 
-        Returns ``None`` -- a terminal peer-gone state, not a byte count -- when a
-        chunk send finds the peer already disconnected: reading and base64-encoding
-        the rest of the file would deliver nothing, so the pump stops at once.
+        Raises:
+            OSError: If reading fails or the file ends before the declared total.
         """
+        handle = measured.handle
+        total = measured.total
         seq = 0
         sent = 0
-        with path.open("rb") as handle:
-            while sent < total:
-                slice_ = handle.read(min(self._chunk_bytes, total - sent))
-                if not slice_:
-                    break  # EOF before the declared total -- the file shrank
-                if not await self._reply.send(
-                    {
-                        "type": "chunk",
-                        "seq": seq,
-                        "data": base64.b64encode(slice_).decode("ascii"),
-                    }
-                ):
-                    return None  # peer gone -- stop reading and encoding further
-                seq += 1
-                sent += len(slice_)
-        return sent
+        while sent < total:
+            slice_ = handle.read(min(self._digest.chunk_bytes, total - sent))
+            if not slice_:
+                msg = f"file changed mid-fetch: sent {sent} of {total} bytes"
+                raise OSError(msg)
+            if not await self._reply.send(
+                {
+                    "type": "chunk",
+                    "seq": seq,
+                    "data": base64.b64encode(slice_).decode("ascii"),
+                }
+            ):
+                return False  # peer gone -- stop reading and encoding further
+            seq += 1
+            sent += len(slice_)
+        return True
 
-    async def _abort_before_begin(self, exc: OSError) -> None:
-        """Refuse a transfer that faulted before any byte -- no begin, a fault frame.
-
-        A read fault measuring the file is a server-side operational failure, not
-        a client rejection, so it routes through ``fault`` (the ERROR "operation
-        failed" audit) rather than a bare error frame -- the debugger reading
-        vox.log sees a daemon fault, never a mislabeled rejected request.
-
-        :class:`SafeFault` rebuilds the client-facing message from *exc*'s own
-        fields, so an in-jail read fault crosses as its relativized path and cause
-        while the absolute prefix stays in the log.
-        """
-        await self._reply.fault(SafeFault.from_exception(exc))
-
-    async def _abort_mid_stream(self, exc: OSError) -> None:
-        """End a started stream with a fault terminal so the client discards it.
-
-        A read fault (or a file that changed size) after ``fetch_begin`` is a
-        server-side operational failure: it routes through ``fault`` for the same
-        reason as :meth:`_abort_before_begin`, so an interrupted transfer is
-        audited as a daemon fault and no complete file is ever claimed for it. The
-        message is rebuilt from *exc* by :class:`SafeFault`, keeping the absolute
-        prefix out of the wire frame.
-        """
+    async def _fault(self, exc: OSError) -> None:
+        """Audit a failed read and send a terminal error without exposing paths."""
         await self._reply.fault(SafeFault.from_exception(exc))
