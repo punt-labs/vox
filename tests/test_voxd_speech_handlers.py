@@ -533,6 +533,8 @@ class TestHandleSynthesizeCachedSignal:
         monkeypatch: pytest.MonkeyPatch,
         *,
         cached: bool,
+        provider: str = "elevenlabs",
+        rate: int | None = None,
     ) -> list[dict[str, object]]:
         """Run the handler once with a stubbed outcome; return sent messages."""
 
@@ -560,7 +562,8 @@ class TestHandleSynthesizeCachedSignal:
                     "type": "synthesize",
                     "id": "x",
                     "text": "hi",
-                    "provider": "elevenlabs",
+                    "provider": provider,
+                    "rate": rate,
                 },
                 ws,
             )
@@ -578,6 +581,37 @@ class TestHandleSynthesizeCachedSignal:
         playing = [m for m in sent if m.get("type") == "playing"]
         assert len(playing) == 1
         assert playing[0]["cached"] is False
+
+    @pytest.mark.parametrize(
+        ("provider", "rate", "warns"),
+        [
+            ("elevenlabs", 120, True),
+            ("elevenlabs", 100, True),
+            ("elevenlabs", 90, False),
+            ("elevenlabs", None, False),
+            ("openai", 120, False),
+            ("polly", 120, False),
+        ],
+    )
+    def test_warns_only_for_nondefault_elevenlabs_rate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: str,
+        rate: int | None,
+        *,
+        warns: bool,
+    ) -> None:
+        sent = self._drive_with_cached(
+            monkeypatch, cached=True, provider=provider, rate=rate
+        )
+        assert [frame["type"] for frame in sent] == ["playing", "done"]
+        for frame in sent:
+            if warns:
+                assert frame["warning"] == (
+                    f"ElevenLabs ignores the requested speech rate ({rate}%)."
+                )
+            else:
+                assert "warning" not in frame
 
 
 async def test_queued_cache_hit_survives_eviction(

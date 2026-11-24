@@ -14,7 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox.providers.api_key import ApiKeyCheck
 from punt_vox.providers.caller_errors import CALLER_ERRORS
-from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis import DEFAULT_RATE, SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
     parse_optional_int,
@@ -140,12 +140,18 @@ class _SpeechRequest:
             await self.fault(SafeFault.opaque(f"play_directly failed with rc={result}"))
 
     async def reply(self, payload: dict[str, object]) -> None:
-        """Send *payload* stamped with this request's id, safe on a gone peer.
+        """Send a success reply with the request id and any ignored-rate warning.
 
         Routing through :class:`WireReply` gives this request the same id-stamped,
         disconnect-safe send the store handlers use, instead of a raw
         ``send_json`` that raises out of the handler when the client has left.
         """
+        rate = self.spec.rate
+        if self.spec.provider == "elevenlabs" and rate not in (None, DEFAULT_RATE):
+            payload = {
+                **payload,
+                "warning": f"ElevenLabs ignores the requested speech rate ({rate}%).",
+            }
         await WireReply(self.websocket, self.request_id).send(payload)
 
     async def fault(self, fault: SafeFault) -> None:

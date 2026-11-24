@@ -52,3 +52,9 @@ class OutputFormatter:
             typer.echo(json.dumps({"error": detail}))
         else:
             typer.echo(text, err=True)
+
+    @staticmethod
+    def warn(message: str | None) -> None:
+        """Write a warning to stderr without changing the command output."""
+        if message is not None:
+            typer.echo(f"Warning: {message}", err=True)

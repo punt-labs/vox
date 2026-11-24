@@ -50,9 +50,6 @@ from punt_vox.vibe import VibeChange
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
-    # Annotation-only; keeps `client` off __main__'s runtime import graph.
-    from punt_vox.client import SynthesizeResult
-
 logger = logging.getLogger(__name__)
 
 app = VoxGroup.app()
@@ -189,18 +186,6 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 # ---------------------------------------------------------------------------
 
 
-def _dedup_fields(result: SynthesizeResult) -> dict[str, object]:
-    """Return the dedup annotations for a played result, empty if fresh."""
-    if not result.deduped:
-        return {}
-    fields: dict[str, object] = {"deduped": True}
-    if result.original_played_at is not None:
-        fields["original_played_at"] = result.original_played_at
-    if result.ttl_seconds_remaining is not None:
-        fields["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-    return fields
-
-
 def _speak_segments(
     segments: list[str],
     spec: SynthesisSpec,
@@ -214,7 +199,8 @@ def _speak_segments(
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
-        payload: dict[str, object] = {"id": result.request_id, **_dedup_fields(result)}
+        _formatter.warn(result.warning)
+        payload: dict[str, object] = {"id": result.request_id, **result.dedup_fields()}
         _formatter.emit(payload, seg_text)
 
 

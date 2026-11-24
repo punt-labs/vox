@@ -236,11 +236,14 @@ class RecTool:
         def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
             # Bare id only -- no store path leaks to the agent (CLI parity).
             result = client.record(seg_text, seg_spec, name=single_name)
-            return {
+            entry: dict[str, object] = {
                 "id": result.name,
                 "bytes": result.byte_count,
                 "cached": result.cached,
             }
+            if result.warning is not None:
+                entry["warning"] = result.warning
+            return entry
 
         # Route through SessionSpec so ``rec new`` shares the one state-to-spec
         # constructor every synthesis surface uses -- state is the sole authority

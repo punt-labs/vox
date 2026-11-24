@@ -74,6 +74,7 @@ class RecordResult:
     relative to the daemon's data root (``recordings/foo.mp3``) -- a logical
     locator with no absolute prefix, never a path on the client's own disk.
     ``byte_count`` is the size the daemon wrote; ``cached`` reports a cache hit.
+    ``warning`` carries an advisory from the daemon when one was sent.
     """
 
     id: str
@@ -81,6 +82,7 @@ class RecordResult:
     store_path: Path
     byte_count: int
     cached: bool = False
+    warning: str | None = None
 
     @classmethod
     def from_audio(cls, terminal: dict[str, Any]) -> Self:  # a decoded frame
@@ -107,12 +109,14 @@ class RecordResult:
                 f"'audio' response has non-integer 'bytes': {terminal['bytes']!r}"
             ) from exc
         store_name = str(terminal["name"])
+        warning = terminal.get("warning")
         return cls(
             id=store_name,
             name=store_name,
             store_path=Path(str(terminal["path"])),
             byte_count=byte_count,
             cached=bool(terminal.get("cached", False)),
+            warning=warning if isinstance(warning, str) else None,
         )
 
 
@@ -129,6 +133,8 @@ class SynthesizeResult:
     content-addressed cache (True) or synthesized it fresh (False) -- the
     observability signal a caller asserts to confirm a cache hit. A dedup
     short-circuit leaves it False since no synthesis path ran.
+
+    ``warning`` carries an advisory from the daemon when one was sent.
     """
 
     request_id: str
@@ -136,6 +142,7 @@ class SynthesizeResult:
     original_played_at: float | None = None
     ttl_seconds_remaining: float | None = None
     cached: bool = False
+    warning: str | None = None
 
     @classmethod
     def from_terminal(cls, request_id: str, terminal: dict[str, Any]) -> Self:
@@ -145,14 +152,30 @@ class SynthesizeResult:
             ValueError: If a deduplication timestamp is not numeric.
             TypeError: If a deduplication timestamp is null or cannot become seconds.
         """
+        warning = terminal.get("warning")
+        notice = warning if isinstance(warning, str) else None
         if not terminal.get("deduped"):
-            return cls(request_id, cached=bool(terminal.get("cached", False)))
+            return cls(
+                request_id, cached=bool(terminal.get("cached", False)), warning=notice
+            )
         return cls(
             request_id,
             deduped=True,
             original_played_at=cls._seconds(terminal, "original_played_at"),
             ttl_seconds_remaining=cls._seconds(terminal, "ttl_seconds_remaining"),
+            warning=notice,
         )
+
+    def dedup_fields(self) -> dict[str, object]:
+        """Return the dedup annotations shared by CLI and MCP responses."""
+        if not self.deduped:
+            return {}
+        fields: dict[str, object] = {"deduped": True}
+        if self.original_played_at is not None:
+            fields["original_played_at"] = self.original_played_at
+        if self.ttl_seconds_remaining is not None:
+            fields["ttl_seconds_remaining"] = self.ttl_seconds_remaining
+        return fields
 
     @staticmethod
     def _seconds(terminal: dict[str, Any], key: str) -> float | None:
