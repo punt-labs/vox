@@ -189,6 +189,10 @@ async def test_remote_hangup_ends_the_call(
             if cast("dict[str, object]", status)["state"] != "live":
                 break
             await asyncio.sleep(0.01)
+        # The state reads "ended" while the last reply plays out and the
+        # departure is saved; stop joins the call's task, after which it has
+        # logged its end.
+        await _rpc(handlers, {"type": "call_stop"})
     assert cast("dict[str, object]", status)["state"] == "ended"
     messages = [r.message for r in caplog.records]
     started = [m for m in messages if m.startswith("Call starting:")]
