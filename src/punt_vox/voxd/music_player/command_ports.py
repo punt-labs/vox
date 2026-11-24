@@ -33,14 +33,14 @@ class PlayerCommands(Protocol):
         ...
 
     def advance(self) -> bool:
-        """Admit a forward step while active or with a start already queued.
+        """Admit a forward step if the queue tail projects an active source.
 
         Return False otherwise. Admission does not confirm cursor movement.
         """
         ...
 
     def prev(self) -> bool:
-        """Admit a backward step while active or with a start already queued.
+        """Admit a backward step if the queue tail projects an active source.
 
         Return False otherwise. Admission does not confirm cursor movement.
         """

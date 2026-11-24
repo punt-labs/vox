@@ -482,6 +482,7 @@ application = [
     "punt_vox.voxd.programs.command_handler",
     "punt_vox.voxd.programs.control_channel",
     "punt_vox.voxd.programs.control_queue",
+    "punt_vox.voxd.programs.step_admission",
     "punt_vox.voxd.programs.fill_reconciler",
     "punt_vox.voxd.programs.fill_recorder",
     "punt_vox.voxd.programs.filler",

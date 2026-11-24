@@ -130,7 +130,7 @@ class ControlChannel:
         return self._interrupt
 
     def post(self, signal: ControlSignal) -> bool:
-        """Enqueue a command, or refuse a user step with no active or pending start."""
+        """Enqueue a command, or refuse a user step if the queue tail is off."""
         return self._queue.post(self._source, signal)
 
     async def serve(self) -> None:

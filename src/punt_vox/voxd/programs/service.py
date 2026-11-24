@@ -344,7 +344,7 @@ class ProgramService:
         The user's next (Z ``Next``) is distinct from the loop's end-of-part
         auto-advance (Z ``AutoAdvance``, which the loop posts as its own ``Rotate``):
         on a single-album replay it walks the ordered pool by one and stalls at the
-        last part, rather than wrapping. Return False if off with no start pending.
+        last part, rather than wrapping. Return False if the queue tail is off.
         """
         return self._channel.post(StepForward())
 
@@ -353,7 +353,7 @@ class ProgramService:
 
         Only a replay Selection has an ordered position; a generate Program has no
         previous, so the signal is rejected as a lost race there (Z ``Prev``).
-        Return False if off with no start pending.
+        Return False if the queue tail is off.
         """
         return self._channel.post(StepBack())
 

@@ -113,9 +113,14 @@ class TestMutatingHandlers:
         reply = await _reply(handlers["program_prev"], {"id": "3"})
         assert reply == {"type": "program_prev", "id": "3"}
 
-    async def test_next_and_prev_follow_a_queued_replay(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("queued_stop", [False, True])
+    async def test_next_and_prev_follow_a_queued_replay(
+        self, tmp_path: Path, queued_stop: bool
+    ) -> None:
         seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
         service = _service(tmp_path)
+        if queued_stop:
+            await _reply(StopHandler(service), {"id": "s"})
         await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
         assert service.status().is_idle
         handlers = TransportHandler.handlers(service)
@@ -128,6 +133,8 @@ class TestMutatingHandlers:
             "id": "b",
         }
         async with asyncio.timeout(1):
+            if queued_stop:
+                await service.run_once()
             await service.run_once()
             await service.run_once()
             advanced = service.status().now_playing
@@ -138,6 +145,32 @@ class TestMutatingHandlers:
         await _reply(StopHandler(service), {"id": "s"})
         await service.run_once()
         assert (await _reply(handlers["program_next"], {"id": "n"}))["applied"] is False
+
+    @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
+    @pytest.mark.parametrize("initially_active", [False, True])
+    async def test_step_after_queued_start_then_stop(
+        self, tmp_path: Path, wire_type: str, initially_active: bool
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        if initially_active:
+            await _reply(SelectHandler(service), {"id": "a", "style": "trance"})
+            await service.run_once()
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        await _reply(StopHandler(service), {"id": "s"})
+        assert service.status().is_idle is not initially_active
+
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "t"})
+
+        assert reply == {
+            "type": wire_type,
+            "id": "t",
+            "applied": False,
+            "message": "Nothing playing.",
+        }
+        await service.run_once()
+        await service.run_once()
+        assert service.status().is_idle
 
     @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
     async def test_next_and_prev_report_nothing_playing(

@@ -6,11 +6,8 @@ import asyncio
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_programs.mode import Mode
-from punt_vox.voxd.programs.lifecycle_signal import TurnOn
-from punt_vox.voxd.programs.playback_signal import StepBack, StepForward
 from punt_vox.voxd.programs.program import Program
-from punt_vox.voxd.programs.select_signal import SwitchSelection
-from punt_vox.voxd.programs.switch_signal import SwitchProgram
+from punt_vox.voxd.programs.step_admission import StepAdmission
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.control_signal import ControlSignal
@@ -18,22 +15,20 @@ if TYPE_CHECKING:
 
 __all__ = ["ControlQueue"]
 
-_START_SIGNALS = (SwitchProgram, SwitchSelection, TurnOn)
-
 
 @final
 class ControlQueue:
-    """Keep later steps behind starts the writer has yet to process."""
+    """Admit steps against the source projected at the tail of the queue."""
 
-    __slots__ = ("_pending_starts", "_queue")
-    _pending_starts: int
+    __slots__ = ("_admission", "_queue")
+    _admission: StepAdmission
     _queue: asyncio.Queue[ControlSignal]
 
     def __new__(cls) -> Self:
-        """Create an empty queue with no pending starts."""
+        """Create an empty queue with no pending source changes."""
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
-        self._pending_starts = 0
+        self._admission = StepAdmission()
         return self
 
     @staticmethod
@@ -42,24 +37,20 @@ class ControlQueue:
         return isinstance(source, Program) and source.mode is Mode.OFF
 
     def post(self, source: PlaybackSource, signal: ControlSignal) -> bool:
-        """Reject steps while off unless a start is already ahead in the FIFO.
+        """Admit steps if the last queued start or stop projects an active source.
 
-        Return True on admission, not on application or cursor movement.
+        With no queued source change, check the current source instead. True
+        means the signal was enqueued, not that it moved the cursor.
         """
-        if (
-            isinstance(signal, (StepBack, StepForward))
-            and self.is_off(source)
-            and not self._pending_starts
-        ):
+        if not self._admission.admit(signal, active=not self.is_off(source)):
             return False
         self._queue.put_nowait(signal)
-        self._pending_starts += isinstance(signal, _START_SIGNALS)
         return True
 
     async def get(self) -> ControlSignal:
-        """Forget a start as the writer takes it; applying it does not yield."""
+        """Forget a source change as the writer takes it for synchronous apply."""
         signal = await self._queue.get()
-        self._pending_starts -= isinstance(signal, _START_SIGNALS)
+        self._admission.consume(signal)
         return signal
 
     def task_done(self) -> None:

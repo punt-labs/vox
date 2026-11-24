@@ -66,7 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of claiming success when music is off. (PL-1553)
 
 - `vox music next` and `vox music prev` report "Nothing playing." instead of
-  claiming success when music is off and no start is pending. (PL-1559)
+  claiming success when the last queued start or stop projects music to be off
+  (or music is already off and neither is queued). (PL-1559)
 
 - `vox model` and `vox provider` prefix invalid-name errors with `Error:` in
   text mode. JSON output is unchanged. (PL-1549)
