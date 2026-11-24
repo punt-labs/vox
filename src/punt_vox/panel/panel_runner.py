@@ -1,12 +1,9 @@
 """``PanelRunner`` -- the work the panel's leg starts and never waits on.
 
-Three pieces of work reach the panel: the warm-up behind a handshake, a menu
-click, and a subscribed control change. Every one of them blocks -- a voxd
-RPC, a config write, a scene push over HTTP -- so every one runs on a worker
-thread rather than the leg's loop, which has a session lease to keep alive.
-And every one carries its own failure boundary, because the leg starts them
-and nothing awaits them: a failure escaping this far would have nowhere left
-to go but a task nobody reads.
+Work reaches the panel on handshake, menu clicks, subscribed control changes,
+and polling ticks. Blocking config I/O and voxd RPCs run on worker threads;
+scene pushes use async HTTP. Each operation has a failure boundary so it
+cannot end the leg's listener or interrupt its session lease.
 
 Holding them here leaves :class:`~punt_vox.panel.leg.VoxPanelLeg` with the
 connection and the dispatch, the way ``punt_lux.applets.AppletLeg`` keeps its
@@ -43,13 +40,14 @@ __all__ = ["PanelRunner"]
 
 @final
 class PanelRunner:
-    """The panel's three pieces of work: the warm-up, a click, a control change."""
+    """Run the work dispatched by the panel's connection."""
 
     _service: VoxPanelService
     _rest_factory: Callable[[], LuxClient]
     _guard: PanelGuard
     _logger: logging.Logger
-    __slots__ = ("_guard", "_logger", "_rest_factory", "_service")
+    _routing: asyncio.Lock
+    __slots__ = ("_guard", "_logger", "_rest_factory", "_routing", "_service")
 
     def __new__(
         cls,
@@ -64,6 +62,7 @@ class PanelRunner:
         self._rest_factory = rest_factory
         self._guard = guard
         self._logger = logger
+        self._routing = asyncio.Lock()
         return self
 
     async def warmed(self) -> None:
@@ -79,8 +78,9 @@ class PanelRunner:
         to correct, and the notice rides the first click's own push.
         """
         try:
-            with self._guard.offscreen_rejection("the settings read on connect"):
-                await asyncio.to_thread(self._service.prefetch)
+            async with self._routing:
+                with self._guard.offscreen_rejection("the settings read on connect"):
+                    await asyncio.to_thread(self._service.prefetch)
         except Exception:
             self._logger.exception("the panel's warm-up failed; the first click waits")
 
@@ -94,10 +94,23 @@ class PanelRunner:
                 "a panel click could not be served; the leg stays up"
             )
 
+    async def reconciled(self) -> None:
+        """Bring an installed panel up to date after an external config edit."""
+        try:
+            async with (
+                self._routing,
+                self._guard.rejection("an external settings refresh"),
+            ):
+                if await self._service.reconcile():
+                    await self._guard.repush()
+        except Exception:
+            self._logger.exception("an external settings refresh failed")
+
     async def changed(self, topic: str, payload: Mapping[str, object]) -> None:
         """Apply one subscribed control change, re-pushing if it took."""
         try:
-            await self._apply(topic, payload)
+            async with self._routing:
+                await self._apply(topic, payload)
         except Exception:
             self._logger.exception(
                 "a panel control event could not be applied: %s %r", topic, payload
@@ -107,7 +120,10 @@ class PanelRunner:
         latency = ClickLatency(self._service.entry.callback_id)
         rest = self._rest_factory()
         await self._service.acknowledge(rest, latency)
-        async with self._guard.rejection("the settings read behind a panel click"):
+        async with (
+            self._routing,
+            self._guard.rejection("the settings read behind a panel click"),
+        ):
             await self._service.service(rest, latency)
         latency.report()
 
@@ -133,7 +149,7 @@ class PanelRunner:
         widget already shows the change optimistically, and a diff against the
         last render this session successfully pushed sees nothing to fix --
         only a full reinstall (see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`) snaps it back. A
+        :class:`~punt_vox.panel.panel_push.PanelPush`) snaps it back. A
         refusal from voxd is deliberately not handled here -- the
         :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection guard around
         the caller owns that one, and answers the same way.
@@ -152,6 +168,10 @@ class PanelRunner:
         turned that handled case into an unhandled one -- ``PanelTopic``
         refuses the unknown value, and the refusal escapes both handlers.
         """
+        if topic in (PanelTopic.VOICE, PanelTopic.MODEL):
+            expected = self._service.scene().roster_combo_id(PanelTopic(topic))
+            if payload.get("element_id") != expected:
+                return ControlPush.CORRECT
         try:
             changed = self._service.apply_event(topic, payload)
         except (ConfigValueError, OSError):

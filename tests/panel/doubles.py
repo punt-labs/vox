@@ -24,6 +24,7 @@ from punt_lux.operations import Ok
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.lux_common import MenuEntry
 from punt_vox.panel.control_push import ControlPush
+from punt_vox.panel.panel_scene import PanelScene
 from punt_vox.types_errors import ConfigValueError
 
 if TYPE_CHECKING:
@@ -253,6 +254,9 @@ class FakeService:
         self.calls.append("service")
         self.serviced += 1
         await self.push_scene(client)
+
+    def scene(self) -> PanelScene:
+        return PanelScene(notify="n", speak="y", voice=None, roster=())
 
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
         if self._raise_on == "apply":

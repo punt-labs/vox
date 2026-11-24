@@ -34,7 +34,8 @@ class PanelSettings:
     _lock: threading.Lock
     _state: PanelState
     _notice: PanelNotice
-    __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
+    _refresh_notice: PanelNotice
+    __slots__ = ("_client", "_lock", "_notice", "_refresh_notice", "_state", "_store")
 
     def __new__(cls, client: RosterClient, store: SettingsStore) -> Self:
         """Create empty settings for a session."""
@@ -44,6 +45,7 @@ class PanelSettings:
         self._lock = threading.Lock()
         self._state = PanelState.empty()
         self._notice = PanelNotice.silent()
+        self._refresh_notice = PanelNotice.silent()
         return self
 
     def snapshot(self) -> PanelState:
@@ -54,15 +56,34 @@ class PanelSettings:
     def scene(self) -> PanelScene:
         """Read the confirmed settings and notice together."""
         with self._lock:
-            return replace(self._state.scene(), notice=self._notice)
+            notice = self._notice if self._notice.is_present else self._refresh_notice
+            return replace(self._state.scene(), notice=notice)
 
     def replace_if_current(
-        self, before: PanelState, state: PanelState, notice: PanelNotice
-    ) -> None:
-        """Install a resync only if nothing committed while it fetched voices."""
+        self,
+        before: PanelState,
+        state: PanelState,
+        notice: PanelNotice,
+        *,
+        refresh_notice: bool = False,
+    ) -> bool:
+        """Install changed settings or notice if *before* is still current."""
         with self._lock:
-            if self._state is before:
-                self._state, self._notice = state, notice
+            if self._state is not before:
+                return False
+            changed = self._state != state
+            if changed:
+                self._state = state
+            if refresh_notice:
+                changed = self._refresh_notice != notice or changed
+                self._refresh_notice = notice
+                return changed
+            changed = (
+                self._notice != notice or self._refresh_notice.is_present or changed
+            )
+            self._notice = notice
+            self._refresh_notice = PanelNotice.silent()
+            return changed
 
     def note(self, notice: PanelNotice) -> None:
         """Set the notice without changing the confirmed settings."""

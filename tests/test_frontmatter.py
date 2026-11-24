@@ -186,6 +186,23 @@ class TestRead:
     def test_strict_read_of_a_missing_file_is_absent(self, tmp_path: Path) -> None:
         assert Frontmatter(tmp_path / "vox.md").read_field("voice", strict=True) is None
 
+    def test_strict_reads_take_the_same_lock_as_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        config = Frontmatter(path)
+        config.write_field("voice", "fin")
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        read_text = Path.read_text
+
+        def read_during_lock(file: Path, **kwargs: str) -> str:
+            with lock.open("rb") as descriptor, pytest.raises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return read_text(file, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read_during_lock)
+        assert config.read_fields(strict=True) == {"voice": "fin"}
+
 
 class TestWrite:
     def test_read_only_config_fails_the_write(self, tmp_path: Path) -> None:

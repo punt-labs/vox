@@ -147,7 +147,7 @@ class PanelGuard:
         successfully landed -- would see nothing to patch and leave the
         widget's wrong guess on screen. A full reinstall reasserts every field,
         the control's included, correcting what is already on screen (see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`).
+        :class:`~punt_vox.panel.panel_push.PanelPush`).
         """
         with self.outage("luxd unavailable; dropped the panel correction"):
             await self._service.correct_scene(self._rest_factory())

@@ -1,7 +1,7 @@
 """``PanelPush`` -- how the panel's held scene reaches luxd, and with what intent.
 
-Three verbs, because a push carries an intent as well as a tree. :meth:`install`
-shows the whole scene, and is the answer to the ``Vox`` menu click. Reopening a
+Two verbs, because a push carries an intent as well as a tree. :meth:`install`
+shows the whole scene after a menu click or to correct a failed change. Reopening a
 panel the user closed is not done here: the menu entry is registered with the
 frame's id and the display reopens the frame itself on the click.
 :meth:`refresh` writes the changed fields onto the installed scene and touches
@@ -9,8 +9,8 @@ frame, focus, and tab state not at all, which is what the confirm push behind a
 click and every control-change re-push want: the panel is already on screen, and
 where the user put it is where it should stay.
 
-:meth:`correct` is the third verb, and it exists because ``refresh``'s diff is
-computed against the wrong tree for a failure snap-back. A control widget
+For a failure snap-back, ``refresh``'s diff is computed against the wrong tree.
+A control widget
 applies its change optimistically client-side the instant it fires, before
 voxd has answered -- so when voxd's answer is a write failure, a rejection, or
 a malformed event, the display already shows the guessed value and only luxd
@@ -19,11 +19,8 @@ knows it. ``refresh`` diffs the corrective render against ``_live``'s last
 supposed to keep showing -- so if the correction is otherwise identical to
 that last push (the common case: only the notice text differs, or nothing at
 all in the malformed-event path), the diff finds nothing to patch and the
-widget never gets snapped back. :meth:`correct` disarms ``_live`` first, so
-the plan has no ``_previous`` to diff against and falls back to a full
-reinstall that reasserts every field, control included. Unlike
-:meth:`install` it answers no menu click: it corrects what the display already
-shows.
+widget never gets snapped back. A full reinstall reasserts every field,
+control included, without answering a menu click.
 
 Talking to luxd is a different job from holding the session's settings, so it
 lives here rather than on :class:`~punt_vox.panel.service.VoxPanelService` --
@@ -85,8 +82,13 @@ class PanelPush:
         self._lock = asyncio.Lock()
         return self
 
+    @property
+    def has_confirmed_scene(self) -> bool:
+        """Return whether a background push has a confirmed scene to refresh."""
+        return self._live.armed
+
     async def install(self, client: LuxClient, request: RenderRequest) -> None:
-        """Show ``request`` in full, whether or not it changed (a menu click).
+        """Show ``request`` in full, whether or not it changed.
 
         The display reopens a closed frame on the click itself, so this push only
         has to make sure the content is there.
@@ -102,20 +104,6 @@ class PanelPush:
         changed and no patch could express it.
         """
         async with self._lock:
-            await self._complete(client, self._live.plan(request))
-
-    async def correct(self, client: LuxClient, request: RenderRequest) -> None:
-        """Reinstall ``request`` in full to snap the display back after a failure.
-
-        Disarms ``_live`` before planning, so the plan has no ``_previous`` of
-        its own to diff against and falls back to a full install unconditionally
-        -- ``refresh``'s diff would otherwise compare against the last render
-        this object successfully pushed, which is the value a failure snap-back
-        needs reasserted, not skipped as unchanged. Unlike :meth:`install`, a
-        snap-back corrects what is already on screen; it answers no menu click.
-        """
-        async with self._lock:
-            self._live.disarm()
             await self._complete(client, self._live.plan(request))
 
     async def _complete(self, client: LuxClient, push: ScenePush) -> None:

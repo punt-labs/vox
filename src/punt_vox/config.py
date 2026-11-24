@@ -163,20 +163,24 @@ class SpeakMode:
 class ConfigStore:
     """Owns a config directory and provides read/write access to vox config."""
 
-    __slots__ = ("_dir", "_durable", "_ephemeral", "_repo_name")
+    __slots__ = ("_dir", "_durable", "_durable_only", "_ephemeral", "_repo_name")
 
     _dir: Path
     _durable: Frontmatter
     _ephemeral: Frontmatter
     _repo_name: str | None
+    _durable_only: bool
 
-    def __new__(cls, config_dir: Path | None = None) -> Self:
+    def __new__(
+        cls, config_dir: Path | None = None, *, durable_only: bool = False
+    ) -> Self:
         """Create a config store."""
         self = super().__new__(cls)
         self._dir = config_dir or DEFAULT_CONFIG_DIR
         self._durable = Frontmatter(self._dir / DURABLE_FILENAME)
         self._ephemeral = Frontmatter(self._dir / EPHEMERAL_FILENAME)
         self._repo_name = cls._repo_name_for(self._dir)
+        self._durable_only = durable_only
         return self
 
     @staticmethod
@@ -209,14 +213,18 @@ class ConfigStore:
         ``vox.md``, session state from ``vox.local.md``.  Filtering both
         sides keeps the split drift-proof -- a stale ``vibe_mode`` left in a
         committed ``vox.md`` is ignored rather than resurrected.
+
+        Durable-only readers need a confirmed snapshot and never consult
+        the session-state file.
         """
         fields: dict[str, str] = {}
 
-        durable = self._durable.read_fields()
+        durable = self._durable.read_fields(strict=self._durable_only)
         fields.update({k: v for k, v in durable.items() if k in DURABLE_KEYS})
 
-        local = self._ephemeral.read_fields()
-        fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
+        if not self._durable_only:
+            local = self._ephemeral.read_fields()
+            fields.update({k: v for k, v in local.items() if k in EPHEMERAL_KEYS})
 
         return VoxConfig.from_fields(
             fields, repo_name=self._repo_name, source=self._ephemeral.path

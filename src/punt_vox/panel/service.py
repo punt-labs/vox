@@ -129,18 +129,25 @@ class VoxPanelService:
 
         Reached only after a control-change failure that a widget already
         applied client-side before voxd answered -- see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct` for why a diff-based
+        :class:`~punt_vox.panel.panel_push.PanelPush` for why a diff-based
         refresh cannot express this correction.
         """
-        await self._push.correct(client, self._settings.scene().render_request())
+        await self.install_scene(client)
 
-    def refresh(self) -> None:
+    def refresh(self, *, external: bool = False) -> bool:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
-        self._resync(
+        return self._resync(
             PanelNotice.silent(),
             on_read_failure=PanelNotice.voxd_unavailable(),
             on_rejection=PanelNotice.voxd_rejected,
+            external=external,
         )
+
+    async def reconcile(self) -> bool:
+        """Check external settings for an installed panel; report if it needs a push."""
+        if not self._push.has_confirmed_scene:
+            return False
+        return await asyncio.to_thread(self.refresh, external=True)
 
     def recover_from_write_failure(self, field: str) -> None:
         """Re-sync from the real settings after a failed persist, and flag the scene."""
@@ -245,15 +252,13 @@ class VoxPanelService:
 
     def _resync(
         self,
-        notice: PanelNotice,
+        notice_on_success: PanelNotice,
         *,
         on_read_failure: PanelNotice,
         on_rejection: Callable[[str], PanelNotice],
-    ) -> None:
-        """Read fresh settings, retaining the last-known state if voxd is down.
-
-        A rejected roster still leaves the config available so the panel
-        can show the model picker and let the user choose a supported model.
+        external: bool = False,
+    ) -> bool:
+        """Re-read settings fresh, holding the last-known ones if voxd is down.
 
         *on_read_failure* and *on_rejection* are the caller's choice, not
         hardcoded generic notices: ``recover_from_write_failure`` already
@@ -264,22 +269,38 @@ class VoxPanelService:
         subsystem -- the caller supplies a composed notice for each.
         """
         before = self._settings.snapshot()
-        fresh = PanelState.read(self._store)
+        fresh = before
+        failure: Exception | None = None
+        notice = notice_on_success
         try:
-            fresh = fresh.with_roster(self._client)
-        except VoxdRejectionError as exc:
-            # Daemon was reached and refused the roster fetch. The caller
-            # supplies the composition so a write-failure in flight is not
-            # dropped when the confirming read also hits a rejection.
-            logger.warning("vox-panel: voxd refused the resync: %s", exc)
-            notice = on_rejection(str(exc))
-        except VoxdConnectionError:
-            logger.warning(
-                "vox-panel: voxd unreachable during resync: %s",
-                on_read_failure.message,
+            fresh = PanelState.read(self._store)
+            fresh = fresh.with_roster(
+                self._client, previous=before if external else None
             )
-            fresh, notice = before, on_read_failure
-        self._settings.replace_if_current(before, fresh, notice)
+        except (OSError, UnicodeDecodeError) as exc:
+            fresh, failure = before, exc
+            notice = (
+                notice_on_success
+                if notice_on_success.is_present
+                else PanelNotice.config_unreadable()
+            )
+        except VoxdRejectionError as exc:
+            failure = exc
+            notice = on_rejection(str(exc))
+        except VoxdConnectionError as exc:
+            fresh, failure, notice = before, exc, on_read_failure
+        changed = self._settings.replace_if_current(
+            before,
+            fresh,
+            notice,
+            refresh_notice=external
+            or (failure is not None and not notice_on_success.is_present),
+        )
+        if changed and failure is not None:
+            logger.warning(
+                "vox-panel: resync failed: %s", notice.message, exc_info=failure
+            )
+        return changed
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:
