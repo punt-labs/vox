@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from functools import partial
-from typing import TYPE_CHECKING, TypedDict, cast, final
+from typing import TYPE_CHECKING, cast, final
 
 from punt_vox.cascade import Cascade, RosterError
 from punt_vox.types_errors import VoiceNotFoundError
@@ -16,13 +16,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.cascade import RosterClient
+    from punt_vox.types_voice_roster import FeaturedVoice
 
 __all__ = ["RosterError", "VoiceRoster"]
-
-
-class _FeaturedVoice(TypedDict):
-    name: str
-    blurb: str
 
 
 @final
@@ -79,9 +75,9 @@ class VoiceRoster:
             raise ValueError(msg)
 
     @staticmethod
-    def featured(provider: str | None, roster: list[str]) -> list[_FeaturedVoice]:
+    def featured(provider: str | None, roster: list[str]) -> list[FeaturedVoice]:
         """Sample up to six roster names that have provider-specific blurbs."""
-        featured: list[_FeaturedVoice] = [
+        featured: list[FeaturedVoice] = [
             {"name": name, "blurb": blurb}
             for (prov, name), blurb in VOICE_BLURBS.items()
             if prov == provider and name in roster
