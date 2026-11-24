@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI voice listings and validation follow the selected model. The
   `gpt-4o-mini-tts` roster includes marin, cedar, ballad, and verse. (PL-1568)
 
+- SessionEnd resets the auto-vibe counter even when notifications are off
+  (`notify=n`), so the count no longer carries into the next session. (PL-1567)
+
 - `vox say` and `vox rec new` report `Error: empty text after normalization`
   when the requested model leaves nothing to synthesize, without contacting
   the speech provider. (PL-1566)
