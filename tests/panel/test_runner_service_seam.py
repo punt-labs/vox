@@ -405,7 +405,7 @@ class TestRunnerServiceSeam:
         await runner.changed(PanelTopic.MODEL, {"element_id": model_id, "value": 2})
         assert store.read().model == "tts-1-hd"
 
-    async def test_an_unreadable_config_takes_priority_over_an_old_control_notice(
+    async def test_an_unreadable_config_and_control_notices_both_show(
         self, tmp_path: Path
     ) -> None:
         store = ConfigStore(tmp_path, durable_only=True)
@@ -421,11 +421,22 @@ class TestRunnerServiceSeam:
 
         path.write_bytes(b"\xff")
         assert await service.reconcile()
-        assert service.scene().notice == PanelNotice.config_unreadable()
+        unreadable = PanelNotice.config_unreadable()
+        assert (
+            service.scene().notice.message
+            == f"{control_notice.message}\n{unreadable.message}"
+        )
+
+        service.note_control_rejected("model")
+        latest_control = PanelNotice.control_rejected("model")
+        assert (
+            service.scene().notice.message
+            == f"{latest_control.message}\n{unreadable.message}"
+        )
 
         path.write_bytes(original)
         assert await service.reconcile()
-        assert service.scene().notice == control_notice
+        assert service.scene().notice == latest_control
 
     @pytest.mark.parametrize("external", [True, False], ids=["poll", "menu"])
     @pytest.mark.parametrize(
