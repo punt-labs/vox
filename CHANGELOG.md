@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox status` reports the running daemon's live log level after `vox log`,
   or `unknown` when the daemon can't report it. (PL-854)
 
+- `vox status` and `vox status --json` report Claude Desktop as
+  `platform unsupported` instead of failing on platforms where Vox cannot
+  locate its config. (PL-804)
+
 - Reject malformed daemon discovery ports before connecting, so status reports
   an unknown daemon state rather than mistaking it for a stopped daemon. (PL-1421)
 

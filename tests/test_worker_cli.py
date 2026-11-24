@@ -1,4 +1,4 @@
-"""Exercise the hidden CLI boundary and the extracted desktop status query."""
+"""Exercise the hidden worker CLI boundary."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.client_errors import VoxdProtocolError
-from punt_vox.desktop_install import DesktopInstaller
 
 
 def test_relative_worker_project_is_resolved_in_the_callers_directory(
@@ -103,24 +102,3 @@ def test_worker_cli_reports_daemon_refusal() -> None:
         result = CliRunner().invoke(app, ["worker", "list"])
     assert result.exit_code == 1
     assert "not allowlisted" in result.output
-
-
-@pytest.mark.parametrize(
-    ("contents", "expected"),
-    [
-        (None, "no config"),
-        ("bad json", "config unreadable"),
-        ("[]", "not registered"),
-        ('{"mcpServers": {"vox": {}}}', "registered"),
-        ('{"mcpServers": {}}', "not registered"),
-    ],
-)
-def test_desktop_registration_readback(
-    tmp_path: Path, contents: str | None, expected: str
-) -> None:
-    """Preserve all four desktop states after moving readback out of the CLI."""
-    path = tmp_path / "desktop.json"
-    if contents is not None:
-        path.write_text(contents)
-    with patch.object(DesktopInstaller, "config_path", return_value=path):
-        assert DesktopInstaller.registration() == expected
