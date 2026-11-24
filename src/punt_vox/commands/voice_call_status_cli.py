@@ -34,8 +34,10 @@ class CallStatusCli:
     def __new__(cls, output: tuple[OutputFormatter, OutputFlags] | None) -> Self:
         """Use the root's output pair, or create a pair for a standalone group."""
         self = super().__new__(cls)
-        self._formatter = output[0] if output is not None else OutputFormatter()
-        self._flags = output[1] if output is not None else OutputFlags(self._formatter)
+        if output is None:
+            formatter = OutputFormatter()
+            output = (formatter, OutputFlags(formatter))
+        self._formatter, self._flags = output
         return self
 
     def status(

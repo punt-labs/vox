@@ -39,6 +39,15 @@ def test_call_status_uses_the_supplied_output_pair() -> None:
     assert json.loads(result.stdout) == _ended_status()
 
 
+def test_standalone_call_status_applies_command_output_flags() -> None:
+    with patch.object(DaemonControl, "request", side_effect=[_ended_status()]):
+        result = runner.invoke(CallCli.build_app(), ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert not result.stderr
+    assert json.loads(result.stdout) == _ended_status()
+
+
 @pytest.mark.parametrize("global_flag", [True, False])
 @pytest.mark.parametrize("flag", ["--json", "--quiet"])
 def test_call_status_output_flags(flag: str, *, global_flag: bool) -> None:
