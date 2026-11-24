@@ -7048,10 +7048,10 @@
   "src/punt_vox/voxd/workers/worktrees.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.91,
+    "avg_params": 1.92,
     "max_complexity": 4.0,
-    "avg_complexity": 2.36,
-    "module_size": 142.0,
+    "avg_complexity": 2.31,
+    "module_size": 163.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import replace
@@ -37,22 +40,7 @@ class WorkerWorktrees:
         """
         started = time.monotonic()
         try:
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(project),
-                    "worktree",
-                    "add",
-                    "-b",
-                    branch,
-                    str(worktree),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=self.CREATE_DEADLINE,
-            )
+            self._add(project, worktree, branch)
         except subprocess.TimeoutExpired as exc:
             self._timed(project, started, "timed out after")
             raise ValueError(
@@ -67,6 +55,48 @@ class WorkerWorktrees:
                 f"worker start could not create the worktree: {failure.reason}"
             ) from exc
         self._timed(project, started, "created in")
+
+    @classmethod
+    def _add(cls, project: Path, worktree: Path, branch: str) -> None:
+        """Run ``git worktree add`` in its own session, under the deadline.
+
+        git may spawn hooks; past the deadline the whole process group is
+        killed, so nothing keeps writing into a directory the discard is
+        about to remove.
+        """
+        argv = [
+            "git",
+            "-C",
+            str(project),
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            str(worktree),
+        ]
+        with subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        ) as process:
+            try:
+                _, stderr = process.communicate(timeout=cls.CREATE_DEADLINE)
+            except subprocess.TimeoutExpired:
+                cls._kill_group(process)
+                raise
+            if process.returncode:
+                raise subprocess.CalledProcessError(
+                    process.returncode, argv, stderr=stderr
+                )
+
+    @staticmethod
+    def _kill_group(process: subprocess.Popen[str]) -> None:
+        """Kill git and everything it spawned; the group is its own session."""
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
     @staticmethod
     def _timed(project: Path, started: float, outcome: str) -> None:

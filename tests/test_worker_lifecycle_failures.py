@@ -188,16 +188,21 @@ def test_timed_out_launch_discards_the_worktree_git_finished_anyway(
     registry = WorkerRegistry(
         policy, records, {"fake": FakeWorkerProvider()}, {"test": TrivialProfile()}
     )
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
-    def slow_git(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        done = real_run(argv, check=True, capture_output=True, text=True)
-        if "add" in argv:  # git finished, but only after the deadline passed
-            raise subprocess.TimeoutExpired(argv, 90)
-        return done
+    def slow_git(argv: list[str], **kwargs: object) -> subprocess.Popen[str]:
+        process: subprocess.Popen[str] = real_popen(argv, **kwargs)  # type: ignore[call-overload]
+        if "add" not in argv:  # the discard's own git calls run normally
+            return process
+        process.wait()  # git finished, but only after the deadline passed
+        late = MagicMock(wraps=process)
+        late.pid = process.pid
+        late.__enter__.return_value = late
+        late.communicate.side_effect = subprocess.TimeoutExpired(argv, 90)
+        return late
 
     with (
-        patch("punt_vox.voxd.workers.worktrees.subprocess.run", side_effect=slow_git),
+        patch("punt_vox.voxd.workers.worktrees.subprocess.Popen", side_effect=slow_git),
         pytest.raises(
             ValueError,
             match="worker start timed out creating the worktree after 90 s",

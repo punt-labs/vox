@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import signal
 import subprocess
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,23 @@ from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
+
+POPEN = "punt_vox.voxd.workers.worktrees.subprocess.Popen"
+
+
+def _git_process(
+    returncode: int = 0, stderr: str = "", *, late: bool = False
+) -> MagicMock:
+    """A fake ``Popen`` for ``git worktree add``; *late* never finishes in time."""
+    process = MagicMock()
+    process.pid = 4242
+    process.returncode = returncode
+    process.__enter__.return_value = process
+    if late:
+        process.communicate.side_effect = subprocess.TimeoutExpired(["git"], 90)
+    else:
+        process.communicate.return_value = ("", stderr)
+    return process
 
 
 def _policy(tmp_path: Path) -> WorkerRepoPolicy:
@@ -39,12 +57,10 @@ def test_worker_resolve_has_a_short_deadline(tmp_path: Path) -> None:
 def test_worktree_create_waits_ninety_seconds_for_git_under_load(
     tmp_path: Path,
 ) -> None:
-    with patch(
-        "subprocess.run",
-        return_value=subprocess.CompletedProcess([], 0, "", ""),
-    ) as run:
+    process = _git_process()
+    with patch(POPEN, return_value=process):
         _policy(tmp_path).create(tmp_path, tmp_path / "worktree", "worker")
-    assert run.call_args.kwargs.get("timeout") == 90
+    assert process.communicate.call_args.kwargs.get("timeout") == 90
     assert WorkerWorktrees.CREATE_DEADLINE == 90
 
 
@@ -55,10 +71,7 @@ def test_worktree_create_logs_its_elapsed_time_with_the_repository_name(
     repo.mkdir()
     with (
         caplog.at_level(logging.INFO, logger="punt_vox.voxd.workers.worktrees"),
-        patch(
-            "subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, "", ""),
-        ),
+        patch(POPEN, return_value=_git_process()),
     ):
         WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
     record = next(r for r in caplog.records if "shiny-repo" in r.getMessage())
@@ -71,10 +84,8 @@ def test_worktree_create_past_its_deadline_is_a_spoken_value_error(
     tmp_path: Path,
 ) -> None:
     with (
-        patch(
-            "subprocess.run",
-            side_effect=subprocess.TimeoutExpired(["git"], 90),
-        ),
+        patch(POPEN, return_value=_git_process(late=True)),
+        patch("punt_vox.voxd.workers.worktrees.os.killpg"),
         pytest.raises(
             ValueError,
             match=r"^worker start timed out creating the worktree after 90 s$",
@@ -208,7 +219,8 @@ def test_worktree_create_timeout_logs_its_elapsed_time(
         patch(
             "punt_vox.voxd.workers.worktrees.time.monotonic", side_effect=[0.0, 90.0]
         ),
-        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["git"], 90)),
+        patch(POPEN, return_value=_git_process(late=True)),
+        patch("punt_vox.voxd.workers.worktrees.os.killpg"),
         pytest.raises(ValueError, match="timed out creating the worktree after 90 s"),
     ):
         WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
@@ -226,10 +238,7 @@ def test_worktree_create_git_failure_logs_its_elapsed_time(
     with (
         caplog.at_level(logging.INFO, logger="punt_vox.voxd.workers.worktrees"),
         patch("punt_vox.voxd.workers.worktrees.time.monotonic", side_effect=[0.0, 2.5]),
-        patch(
-            "subprocess.run",
-            side_effect=subprocess.CalledProcessError(128, ["git"], stderr="fatal"),
-        ),
+        patch(POPEN, return_value=_git_process(128, "fatal")),
         pytest.raises(ValueError, match="could not create the worktree: fatal"),
     ):
         WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
@@ -313,16 +322,10 @@ def test_worktree_create_git_failure_is_a_spoken_value_error(
     """git's reason reaches the agent; the repository's path reaches no one."""
     repo = tmp_path / "shiny-repo"
     repo.mkdir()
-    failure = subprocess.CalledProcessError(
-        128,
-        ["git", "-C", str(repo), "worktree", "add", "-b", "vox-worker/x", "/w/x"],
-        stderr=(
-            f"fatal: a branch named 'vox-worker/x' already exists\nhint: see {repo}\n"
-        ),
-    )
+    stderr = f"fatal: a branch named 'vox-worker/x' already exists\nhint: see {repo}\n"
     with (
         caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.worktrees"),
-        patch("subprocess.run", side_effect=failure),
+        patch(POPEN, return_value=_git_process(128, stderr)),
         pytest.raises(ValueError) as raised,
     ):
         WorkerWorktrees().create(repo, tmp_path / "worktree", "vox-worker/x")
@@ -341,13 +344,48 @@ def test_worktree_create_git_failure_without_stderr_names_the_exit(
     tmp_path: Path,
 ) -> None:
     with (
-        patch(
-            "subprocess.run",
-            side_effect=subprocess.CalledProcessError(128, ["git"], stderr=""),
-        ),
+        patch(POPEN, return_value=_git_process(128, "")),
         pytest.raises(
             ValueError,
             match=r"^worker start could not create the worktree: git exited 128$",
         ),
     ):
         WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+
+
+def test_worktree_create_starts_git_in_its_own_process_group(tmp_path: Path) -> None:
+    process = _git_process()
+    with patch(POPEN, return_value=process) as popen:
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert process.communicate.call_args.kwargs["timeout"] == 90
+
+
+def test_worktree_create_timeout_kills_the_whole_process_group(
+    tmp_path: Path,
+) -> None:
+    """A hook git spawned must not keep writing into the directory rmtree removes."""
+    process = _git_process(late=True)
+    with (
+        patch(POPEN, return_value=process),
+        patch("punt_vox.voxd.workers.worktrees.os.killpg") as killpg,
+        pytest.raises(ValueError, match="timed out creating the worktree"),
+    ):
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+    killpg.assert_called_once_with(4242, signal.SIGKILL)
+    process.wait.assert_called_once()
+
+
+def test_worktree_create_timeout_tolerates_a_group_already_gone(
+    tmp_path: Path,
+) -> None:
+    process = _git_process(late=True)
+    with (
+        patch(POPEN, return_value=process),
+        patch(
+            "punt_vox.voxd.workers.worktrees.os.killpg", side_effect=ProcessLookupError
+        ),
+        pytest.raises(ValueError, match="timed out creating the worktree"),
+    ):
+        WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
+    process.wait.assert_called_once()
