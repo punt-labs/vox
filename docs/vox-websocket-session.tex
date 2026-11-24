@@ -22,7 +22,11 @@ is already ready but has not yet been inspected by the session.
 \end{zed}
 
 \begin{zed}
-  ReadState ::= noRead | oneRead | deferredError
+  ReadState ::= noRead | oneRead | deferredError | readyDisconnect
+\end{zed}
+
+\begin{zed}
+  WaitRead ::= waitNoDisconnect | waitDisconnect
 \end{zed}
 
 \begin{schema}{Session}
@@ -36,6 +40,8 @@ is already ready but has not yet been inspected by the session.
   received = dispatched + \# queued \\
   \forall i : \dom queued @ queued(i) = dispatched + i \\
   \# queued = 32 \implies reader = noRead \\
+  reader = readyDisconnect \implies
+    (phase = fetching \lor (phase = idle \land queued = \langle \rangle)) \\
   phase = closed \implies reader = noRead
 \end{schema}
 
@@ -104,9 +110,12 @@ nonempty branch dispatches the FIFO head and leaves any read untouched.
 \end{schema}
 
 \begin{schema}{FinishHandler}
-  \Delta Session
+  \Delta Session \\
+  waitRead? : WaitRead
   \where
   phase \in \{handling, fetching\} \\
+  phase = fetching \implies waitRead? = waitNoDisconnect \\
+  reader \neq readyDisconnect \\
   phase' = idle \\
   reader' = reader \\
   received' = received \\
@@ -115,10 +124,7 @@ nonempty branch dispatches the FIFO head and leaves any read untouched.
 \end{schema}
 
 A non-disconnect receive failure is retained during a fetch. It surfaces
-only when the next ordered receive has drained the buffer. A disconnect
-observed during a fetch instead cancels the handler immediately. If both
-the fetch and its read are ready in the same wait, the read result is
-processed first.
+only when the next ordered receive has drained the buffer.
 
 \begin{schema}{DeferReceiveError}
   \Delta Session
@@ -126,6 +132,26 @@ processed first.
   phase = fetching \\
   reader = oneRead \\
   reader' = deferredError \\
+  phase' = phase \\
+  received' = received \\
+  dispatched' = dispatched \\
+  queued' = queued
+\end{schema}
+
+A disconnect becomes ready in this model when it is visible to the
+ordered receive or in the set of completed tasks returned to the fetch
+watcher. When that set also contains the fetch task, record the disconnect
+first: \texttt{FinishHandler} is then disabled, so buffered requests
+cannot start before \texttt{Disconnect} closes the session.
+
+\begin{schema}{ObserveDisconnectReady}
+  \Delta Session \\
+  waitRead? : WaitRead
+  \where
+  waitRead? = waitDisconnect \\
+  reader = oneRead \\
+  phase = fetching \lor (phase = idle \land queued = \langle \rangle) \\
+  reader' = readyDisconnect \\
   phase' = phase \\
   received' = received \\
   dispatched' = dispatched \\
@@ -146,8 +172,7 @@ processed first.
 \begin{schema}{Disconnect}
   CloseSession
   \where
-  reader = oneRead \\
-  phase = fetching \lor (phase = idle \land queued = \langle \rangle)
+  reader = readyDisconnect
 \end{schema}
 
 \begin{schema}{ReceiveFailure}

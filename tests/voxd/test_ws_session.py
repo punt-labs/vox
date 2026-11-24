@@ -318,6 +318,54 @@ async def test_fetch_completion_preserves_the_outstanding_read(
     ]
 
 
+async def test_fetch_completion_yields_to_a_ready_disconnect(
+    router: WebSocketRouter, tmp_path: Path
+) -> None:
+    (tmp_path / "r.mp3").write_bytes(b"data")
+    receive_waiting, ending, finish = (asyncio.Event() for _ in range(3))
+    socket = AsyncMock(spec=WebSocket)
+    socket.headers = {}
+    socket.application_state = WebSocketState.CONNECTED
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> str:
+        match socket.receive_text.await_count:
+            case 1:
+                return json.dumps({"type": "fetch", "id": "r", "ref": "r.mp3"})
+            case 2:
+                return json.dumps({"type": "next", "id": "buffered"})
+            case _:
+                receive_waiting.set()
+                await finish.wait()
+                raise WebSocketDisconnect(1000)
+
+    async def send(frame: dict[str, object]) -> None:
+        if frame["type"] == "fetch_end":
+            ending.set()
+            await finish.wait()
+        sent.append(frame)
+
+    async def next_request(msg: dict[str, object], websocket: WebSocket) -> None:
+        await websocket.send_json({"type": "next", "id": msg["id"]})
+
+    socket.receive_text.side_effect = receive
+    socket.send_json.side_effect = send
+    router.handlers["next"] = next_request
+    task = asyncio.create_task(router.handle_connection(socket))
+    try:
+        async with asyncio.timeout(2):
+            await ending.wait()
+            await receive_waiting.wait()
+            finish.set()
+            await asyncio.shield(task)
+    finally:
+        finish.set()
+        await asyncio.wait_for(task, timeout=5)
+
+    assert [frame["type"] for frame in sent] == ["fetch_begin", "chunk", "fetch_end"]
+    assert socket.receive_text.await_count == 3
+
+
 async def test_fetch_teardown_failure_is_logged_on_disconnect(
     router: WebSocketRouter,
     tmp_path: Path,
