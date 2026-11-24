@@ -69,6 +69,7 @@ class TestPanelSettings:
         self, tmp_path: Path
     ) -> None:
         store = ConfigStore(tmp_path)
+        store.write_fields({"provider": "openai", "model": "tts-1", "voice": "nova"})
         settings = PanelSettings(_Roster(), store)
         settings.replace_if_current(
             settings.snapshot(),
@@ -88,6 +89,18 @@ class TestPanelSettings:
         assert settings.commit_model("tts-1") is ControlPush.REFRESH
 
         assert settings.snapshot().roster == ("alloy", "nova")
+
+    def test_voice_pick_does_not_overwrite_a_newer_model(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        settings = PanelSettings(_Roster(), store)
+        settings.commit_provider("openai")
+        settings.commit_model("gpt-4o-mini-tts")
+        shown = settings.snapshot()
+
+        settings.commit_model("tts-1")
+
+        assert settings.commit_voice(shown, "marin") is ControlPush.CORRECT
+        assert store.read().voice == "alloy"
 
     def test_provider_yields_when_another_thread_won_the_race(
         self, tmp_path: Path

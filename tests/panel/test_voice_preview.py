@@ -67,16 +67,12 @@ class _Store:
             vibe_tags=None,
         )
 
-    def write_field(
+    def write_fields(
         self,
-        key: str,
-        value: str,
+        updates: dict[str, str],
         *,
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
-        raise NotImplementedError
-
-    def write_fields(self, updates: dict[str, str]) -> None:
         raise NotImplementedError
 
 

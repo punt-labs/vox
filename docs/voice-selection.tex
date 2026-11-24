@@ -24,6 +24,14 @@ the shown roster, never in a different target's roster.
   roster \subseteq available(shown)
 \end{schema}
 
+\begin{schema}{Init}
+  VoiceSelection
+\where
+  shown = saved \\
+  voice = \emptyset \\
+  roster = \emptyset
+\end{schema}
+
 \begin{schema}{SwitchTarget}
   \Delta VoiceSelection \\
   target? : TARGET \\

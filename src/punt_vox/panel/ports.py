@@ -59,18 +59,13 @@ class SettingsSource(Protocol):
 class SettingsStore(SettingsSource, Protocol):
     """The config-store read and write ``VoxPanelService`` needs."""
 
-    def write_field(
+    def write_fields(
         self,
-        key: str,
-        value: str,
+        updates: dict[str, str],
         *,
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
-        """Write one config field, raising on a value it cannot store or a bad write."""
-        ...
-
-    def write_fields(self, updates: dict[str, str]) -> None:
-        """Write several fields in one atomic step; readers see them together."""
+        """Write fields atomically, checking the current file when requested."""
         ...
 
 

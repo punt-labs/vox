@@ -85,10 +85,9 @@ class _FakeStore:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(
+    def write_fields(
         self,
-        key: str,
-        value: str,
+        updates: dict[str, str],
         *,
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
@@ -100,9 +99,6 @@ class _FakeStore:
                 }
                 | self.written
             )
-        self.written[key] = value
-
-    def write_fields(self, updates: dict[str, str]) -> None:
         self.written.update(updates)
 
 
@@ -699,6 +695,24 @@ class TestApplyEvent:
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
 
+    def test_model_pick_rejects_provider_changed_on_disk(self, tmp_path: Path) -> None:
+        store = ConfigStore(tmp_path)
+        store.write_fields(
+            {"provider": "openai", "model": "gpt-4o-mini-tts", "voice": "alloy"}
+        )
+        service = VoxPanelService(_FakeDaemonClient(["alloy"]), store)
+        service.prefetch()
+        store.write_fields({"provider": "polly", "model": "", "voice": "Joanna"})
+
+        with pytest.raises(ConfigValueError, match="active provider changed"):
+            service.apply_event(PanelTopic.MODEL, {"value": 1})
+
+        assert (store.read().provider, store.read().model, store.read().voice) == (
+            "polly",
+            None,
+            "Joanna",
+        )
+
     def test_model_click_indexes_past_the_sentinel(self) -> None:
         """The combo always leads with ``(none)``, so 1 is the first model.
 
@@ -772,17 +786,12 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(
+            def write_fields(
                 self,
-                key: str,
-                value: str,
+                updates: dict[str, str],
                 *,
                 check: Callable[[dict[str, str]], None] | None = None,
             ) -> None:
-                msg = "disk full"
-                raise OSError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -802,17 +811,12 @@ class TestApplyEvent:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(
+            def write_fields(
                 self,
-                key: str,
-                value: str,
+                updates: dict[str, str],
                 *,
                 check: Callable[[dict[str, str]], None] | None = None,
             ) -> None:
-                msg = "config values must not contain double-quotes"
-                raise ConfigValueError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
                 msg = "config values must not contain double-quotes"
                 raise ConfigValueError(msg)
 
@@ -949,17 +953,12 @@ class TestCorrectScene:
             def read(self) -> VoxConfig:
                 return _config()
 
-            def write_field(
+            def write_fields(
                 self,
-                key: str,
-                value: str,
+                updates: dict[str, str],
                 *,
                 check: Callable[[dict[str, str]], None] | None = None,
             ) -> None:
-                msg = "disk full"
-                raise OSError(msg)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
                 msg = "disk full"
                 raise OSError(msg)
 
@@ -1108,20 +1107,16 @@ class TestConcurrentApplyEvent:
             def read(self) -> VoxConfig:
                 return store.read()
 
-            def write_field(
+            def write_fields(
                 self,
-                key: str,
-                value: str,
+                updates: dict[str, str],
                 *,
                 check: Callable[[dict[str, str]], None] | None = None,
             ) -> None:
-                if key == "notify":
+                if "notify" in updates:
                     first_entered.set()
                     release_first.wait(timeout=2)
-                store.write_field(key, value)
-
-            def write_fields(self, updates: dict[str, str]) -> None:
-                store.write_fields(updates)
+                store.write_fields(updates, check=check)
 
         service = VoxPanelService(_FakeDaemonClient(), _BlockingStore())
         service.prefetch()

@@ -268,17 +268,28 @@ class ConfigStore:
         store = self._ephemeral if key in EPHEMERAL_KEYS else self._durable
         store.write_fields({key: value}, check=check)
 
-    def write_fields(self, updates: dict[str, str]) -> None:
-        """Write multiple config fields, routing each to the correct file."""
+    def write_fields(
+        self,
+        updates: dict[str, str],
+        *,
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        """Route config fields to their files; a checked write must use one file."""
         for key, value in updates.items():
             self._reject_unknown(key)
             Frontmatter.validate_value(value)
+
+        if check is not None and not (
+            updates.keys() <= EPHEMERAL_KEYS or updates.keys() <= DURABLE_KEYS
+        ):
+            msg = "A checked config write must target one file."
+            raise ValueError(msg)
 
         routes = ((self._durable, DURABLE_KEYS), (self._ephemeral, EPHEMERAL_KEYS))
         for store, keys in routes:
             subset = {k: v for k, v in updates.items() if k in keys}
             if subset:
-                store.write_fields(subset)
+                store.write_fields(subset, check=check)
 
     @staticmethod
     def _reject_unknown(key: str) -> None:

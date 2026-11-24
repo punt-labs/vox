@@ -69,16 +69,12 @@ class _Store:
     def read(self) -> VoxConfig:
         return self._cfg
 
-    def write_field(
+    def write_fields(
         self,
-        key: str,
-        value: str,
+        updates: dict[str, str],
         *,
         check: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
-        self.written[key] = value
-
-    def write_fields(self, updates: dict[str, str]) -> None:
         self.written.update(updates)
 
 

@@ -82,7 +82,7 @@ class PanelSettings:
     ) -> None:
         """Persist *field* and update the held state as one atomic step."""
         with self._lock:
-            self._store.write_field(field, value)
+            self._store.write_fields({field: value})
             self._state = update(self._state, value)
             self._notice = PanelNotice.silent()
 
@@ -92,7 +92,7 @@ class PanelSettings:
             if self._state is not shown:
                 return ControlPush.CORRECT
             target = VoiceTarget(shown.provider or "", shown.model)
-            self._store.write_field("voice", voice, check=target.require_current)
+            self._store.write_fields({"voice": voice}, check=target.require_current)
             self._state = shown.with_voice(voice)
             self._notice = PanelNotice.silent()
         return ControlPush.REFRESH
@@ -242,7 +242,10 @@ class PanelSettings:
                 before.model,
             ):
                 return ControlPush.CORRECT
-            self._store.write_fields({"model": model, "voice": voice_default})
+            expected = VoiceTarget(pre_fetch_provider, before.model)
+            self._store.write_fields(
+                {"model": model, "voice": voice_default}, check=expected.require_current
+            )
             self._state = self._state.with_provider(
                 pre_fetch_provider,
                 roster=roster,
