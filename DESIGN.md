@@ -1249,7 +1249,7 @@ A dedicated config file at `~/.punt-labs/vox/keys.env` (same path on macOS and L
 
 **Write path:** `vox daemon install` calls [`KeysEnvWriter.write()`](src/punt_vox/service/keys_env.py) to atomically merge allowed shell values into the file. The file write runs as the installing user, without `sudo`. [`PROVIDER_KEY_NAMES`](src/punt_vox/providers/credentials.py) lists the accepted inputs: API keys, selected AWS credential and configuration variables, and `TTS_PROVIDER`. An absent, blank, or rejected shell value leaves any stored value intact.
 
-**Read path:** At startup, [`DaemonConfig.load_keys()`](src/punt_vox/voxd/config.py) fills in allowed, non-empty values from `keys.env` only for variables absent from the daemon's environment. A value already in that environment wins, including when `voxd` is started manually from a shell.
+**Read path:** At startup, [`DaemonConfig.load_keys()`](src/punt_vox/voxd/config.py) fills in allowed, non-empty values from `keys.env` only for variables absent from the daemon's environment. Unlike at install, an existing environment variable blocks the file value even if the variable is empty.
 
 **Provider and model selection:** Credential loading does not choose the provider or model for a request. An explicit per-request override can take precedence over the repo's `vox.md` settings; the environment cannot. `TTS_PROVIDER` is a hint for proposing a ready provider, such as when `vox enable` sets up a fresh repo. Install does not copy `TTS_MODEL` from the shell, and daemon startup does not load it from the file. See [Provider Authority](docs/provider-authority.md) for request resolution and readiness checks.
 
