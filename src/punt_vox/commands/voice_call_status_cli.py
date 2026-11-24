@@ -31,13 +31,11 @@ class CallStatusCli:
     _flags: OutputFlags
     _formatter: OutputFormatter
 
-    def __new__(
-        cls, formatter: OutputFormatter | None = None, flags: OutputFlags | None = None
-    ) -> Self:
-        """Bind the shared CLI output state, or create it for a standalone group."""
+    def __new__(cls, output: tuple[OutputFormatter, OutputFlags] | None) -> Self:
+        """Use the root's output pair, or create a pair for a standalone group."""
         self = super().__new__(cls)
-        self._formatter = formatter if formatter is not None else OutputFormatter()
-        self._flags = flags if flags is not None else OutputFlags(self._formatter)
+        self._formatter = output[0] if output is not None else OutputFormatter()
+        self._flags = output[1] if output is not None else OutputFlags(self._formatter)
         return self
 
     def status(

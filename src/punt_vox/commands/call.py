@@ -31,10 +31,10 @@ class CallCli:
 
     @staticmethod
     def build_app(
-        formatter: OutputFormatter | None = None, flags: OutputFlags | None = None
+        output: tuple[OutputFormatter, OutputFlags] | None = None,
     ) -> typer.Typer:
         """Return the ``vox call`` Typer group with bound methods (no wrappers)."""
         app = VoiceCallCli.build_app()
-        app.command("status")(CallStatusCli(formatter, flags).status)
+        app.command("status")(CallStatusCli(output).status)
         app.command("context")(CallContextCommand.show)
         return app

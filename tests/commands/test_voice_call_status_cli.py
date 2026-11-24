@@ -9,8 +9,11 @@ import pytest
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
+from punt_vox.cli_io import OutputFlags
 from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.commands.call import CallCli
 from punt_vox.daemon_control import DaemonControl
+from punt_vox.output_formatter import OutputFormatter
 
 runner = CliRunner()
 _ENDED = {
@@ -20,6 +23,17 @@ _ENDED = {
     "tool_calls": [{"tool": "start_worker", "arguments": {"repo": "demo"}}],
     "trace": "/tmp/call-trace.jsonl",
 }
+
+
+def test_call_status_uses_the_supplied_output_pair() -> None:
+    formatter = OutputFormatter()
+    flags = OutputFlags(formatter)
+    flags.apply(json_output=True, verbose=False, quiet=False)
+    with patch.object(DaemonControl, "request", return_value=_ENDED):
+        result = runner.invoke(CallCli.build_app((formatter, flags)), ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == _ENDED
 
 
 @pytest.mark.parametrize("global_flag", [True, False])
