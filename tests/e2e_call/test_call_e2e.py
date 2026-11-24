@@ -26,9 +26,11 @@ from .bare_path import BarePath
 from .fake_agent import FakeConvAIAgent
 from .fake_rest import FakeConvAIRest
 from .steps import (
+    ExpectAudioChunks,
     ExpectPong,
     HangUp,
     SendAgentResponse,
+    SendAudio,
     SendInterruption,
     SendPing,
     SendToolCall,
@@ -52,15 +54,19 @@ _TASK = "add greeting.py"
 _TOOL_CALL_STEPS: tuple[Step, ...] = (
     SendPing(1),
     ExpectPong(1),
+    ExpectAudioChunks(1),
     SendUserTranscript("please add a greeting"),
     SendAgentResponse("Starting a worker on that now.", 1),
     SendToolCall("start_worker", "call_1", {"task": _TASK}),
     WaitForToolResult("call_1"),
     HangUp(),
 )
+# Two seconds of agent audio: far more than plays before the cut lands.
+_AGENT_PCM = bytes(16_000 * 2 * 2)
 _INTERRUPTED_STEPS: tuple[Step, ...] = (
     SendUserTranscript("please add a greeting"),
     SendAgentResponse("Starting a worker on that now.", 1),
+    SendAudio(_AGENT_PCM, 1),
     SendInterruption(1),
     HangUp(),
 )
@@ -104,6 +110,7 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "PUNT_TELEMETRY": "off",
         "ELEVENLABS_API_KEY": "test",
         "VOX_CALL_ALLOW_LOOPBACK": "1",
+        "VOX_PCM_OUTPUT": "silent",
     }
 
 
@@ -172,6 +179,10 @@ async def _run_call(
             return agent, rest, result
 
 
+def _daemon_log(env: dict[str, str]) -> str:
+    return (Path(env["HOME"]) / ".punt-labs" / "vox" / "logs" / "vox.log").read_text()
+
+
 def _trace_events(report: str) -> list[str]:
     trace_line = next(
         line for line in report.splitlines() if line.startswith("trace: ")
@@ -191,6 +202,7 @@ def test_scripted_call_reaches_the_tool_result(
 
     assert agent.fault is None
     assert agent.cut_short is None
+    assert agent.audio_chunks > 0
     assert ("POST", "/v1/convai/agents/create") in rest.requests
     override = cast(
         "dict[str, object]", agent.initiation["conversation_config_override"]
@@ -203,9 +215,9 @@ def test_scripted_call_reaches_the_tool_result(
     # the raw detail (the tmux name) goes to the daemon log alone.
     assert tool_result["is_error"] is True
     assert json.loads(str(tool_result["result"])) == {"error": "operation failed"}
-    daemon_log = Path(voxd_env["HOME"]) / ".punt-labs" / "vox" / "logs" / "vox.log"
-    assert "call tool start_worker failed: " in daemon_log.read_text()
-    assert "tmux" in daemon_log.read_text()
+    daemon_log = _daemon_log(voxd_env)
+    assert "call tool start_worker failed: " in daemon_log
+    assert "tmux" in daemon_log
 
     report = result.stdout + result.stderr
     assert "agent: Starting a worker on that now." in report
@@ -234,3 +246,8 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     assert not [line for line in report.splitlines() if line.startswith("error: ")]
     assert "interruption" in _trace_events(report)
     assert agent.tool_results == {}
+    # The daemon opened a stream for the agent's audio and the cut flushed it:
+    # the sink's closing report says so, with the unplayed audio dropped.
+    daemon_log = _daemon_log(voxd_env)
+    assert "PCM flush at" in daemon_log
+    assert "interrupted=True" in daemon_log

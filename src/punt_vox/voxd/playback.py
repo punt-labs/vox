@@ -16,6 +16,7 @@ from typing import Self
 
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
 from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
+from punt_vox.voxd.pcm_silent import SilentOutputStream
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
 
@@ -99,12 +100,16 @@ class PlaybackQueue:
     def __new__(
         cls, output_stream: OutputStreamFactory = sounddevice_output_stream
     ) -> Self:
-        """Create a playback queue that opens PCM streams with *output_stream*."""
+        """Create a playback queue that opens PCM streams with *output_stream*.
+
+        The default is PortAudio, unless the test-only ``VOX_PCM_OUTPUT``
+        switch names the silent device.
+        """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
-        self._output_stream = output_stream
+        self._output_stream = SilentOutputStream.from_env(output_stream)
         return self
 
     # -- Properties ----------------------------------------------------------

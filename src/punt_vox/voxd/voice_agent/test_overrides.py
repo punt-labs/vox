@@ -1,6 +1,6 @@
 """Environment switches that let an end-to-end test stand in for ElevenLabs.
 
-Both switches are test-only and production never sets them. The daemon
+The switches are test-only and production never sets them. The daemon
 reads them once per use, so a test sets them in the daemon's environment:
 
 - ``VOX_CONVAI_BASE_URL`` replaces the REST origin when its host is
@@ -8,6 +8,12 @@ reads them once per use, so a test sets them in the daemon's environment:
   so the variable can never redirect an API key to a third party.
 - ``VOX_CALL_ALLOW_LOOPBACK=1`` trusts plaintext ``ws://`` loopback origins for
   the conversation socket, as the in-process ``allow_loopback`` flag does.
+- ``VOX_PCM_OUTPUT=silent`` plays the agent's voice through
+  :class:`~punt_vox.voxd.pcm_silent.SilentOutputStream` instead of PortAudio,
+  so a host with no sound card still plays, cuts and plays out agent audio.
+  The playback queue reads it through
+  :meth:`~punt_vox.voxd.pcm_silent.SilentOutputStream.from_env`, because the
+  device is chosen there, not in the voice agent.
 """
 
 from __future__ import annotations

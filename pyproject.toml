@@ -421,6 +421,7 @@ adapters = [
     "punt_vox.voxd.output_discard",
     "punt_vox.voxd.path_status",
     "punt_vox.voxd.pcm_output",
+    "punt_vox.voxd.pcm_silent",
     "punt_vox.voxd.pcm_stream",
     "punt_vox.voxd.port_file",
     "punt_vox.voxd.record_store",
