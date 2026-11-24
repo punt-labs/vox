@@ -3,64 +3,23 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from decimal import Decimal
 from typing import final
 
-_UNITS = {
-    "$": ("dollar", "dollars"),
-    "€": ("euro", "euros"),
-    "£": ("pound", "pounds"),
-    "¥": ("yen", "yen"),
-    "₹": ("rupee", "rupees"),
-    "₩": ("won", "won"),
-    "₽": ("ruble", "rubles"),
-}
+from punt_vox._currency_grammar import SCALES, UNITS, CurrencyGrammar
+
 _SIGNS = {"-": "minus ", "\u2212": "minus ", "+": "plus ", "": ""}
-_SCALES = {
-    "k": "thousand",
-    "m": "million",
-    "b": "billion",
-    "thousand": "thousand",
-    "million": "million",
-    "billion": "billion",
-    "trillion": "trillion",
-}
-_SCALE_PATTERN = "|".join(_SCALES)
-_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+"
-_AMOUNT = (
-    r"(?P<{p}sign_before>[-+\u2212])?"
-    rf"(?P<{{p}}symbol>[{''.join(_UNITS)}])"
-    r"(?({p}sign_before)|(?P<{p}sign_after>[-+\u2212])?)"
-    rf"(?P<{{p}}amount>{_NUMBER})"
-)
-_CODE_AMOUNT = re.compile(_AMOUNT.replace("{p}", ""))
-_LETTER = r"[^\W\d_]"
+_MINOR_UNITS = {"$": ("cent", "cents"), "€": ("cent", "cents"), "£": ("penny", "pence")}
 
 
 @final
 class CurrencySpeech:
-    """Use the same amount grammar in prose and inline code."""
+    """Render parsed amounts as money in prose and literally in code."""
 
     @staticmethod
     def prose_pattern(text: str) -> re.Pattern[str]:
-        """Build the prose grammar with any combining marks present in *text*."""
-        marks: set[str] = (
-            {char for char in text if unicodedata.category(char).startswith("M")}
-            if not text.isascii()
-            else set()
-        )
-        word = (
-            rf"{_LETTER}(?:{_LETTER}|[{re.escape(''.join(sorted(marks)))}])*"
-            if marks
-            else rf"{_LETTER}+"
-        )
-        return re.compile(
-            rf"{_CODE_AMOUNT.pattern}(?P<word>{word})?"
-            rf"(?:[-\u2013]{_AMOUNT.replace('{p}', 'end_')}(?P<end_word>{word})?"
-            rf"|\u2013(?P<bare_end>{_NUMBER})(?P<bare_scale>(?i:{_SCALE_PATTERN}))?)?"
-            rf"(?P<rates>(?:/{word})*)"
-        )
+        """Recognize prose amounts before stripping punctuation."""
+        return CurrencyGrammar.prose_pattern(text)
 
     @classmethod
     def speak_prose(cls, core: str) -> str:
@@ -76,26 +35,44 @@ class CurrencySpeech:
     @classmethod
     def speak_code(cls, token: str) -> str:
         """Spell code currency signs literally within a token."""
-        return _CODE_AMOUNT.sub(cls._speak_code_sign, token)
+        return CurrencyGrammar.CODE_AMOUNT.sub(cls._speak_code_sign, token)
 
     @classmethod
     def _speak_amount(cls, match: re.Match[str], prefix: str = "") -> str:
         symbol, amount = match[prefix + "symbol"], match[prefix + "amount"]
         sign = match[prefix + "sign_before"] or match[prefix + "sign_after"] or ""
         word = match[prefix + "word"] or ""
-        scale = _SCALES.get(word.lower(), "")
+        scale = SCALES.get(word.lower(), "")
         suffix = "" if scale else word
-        singular, plural = _UNITS[symbol]
-        span = "" if prefix else cls._speak_bare_end(match, scale)
-        unit = singular if not (scale or span) and cls._is_one(amount) else plural
-        number = _SIGNS[sign] + cls._spoken_number(amount)
-        return " ".join(filter(None, (number, scale, span, unit, suffix)))
+        span = cls._speak_bare_end(match)
+        if scale or span:
+            parts = (cls._spoken_number(amount), scale, span, UNITS[symbol][1])
+            money = " ".join(filter(None, parts))
+        else:
+            money = cls._speak_unscaled(symbol, amount)
+        return " ".join(filter(None, (_SIGNS[sign] + money, suffix)))
 
     @classmethod
-    def _speak_bare_end(cls, match: re.Match[str], start_scale: str) -> str:
+    def _speak_unscaled(cls, symbol: str, amount: str) -> str:
+        units = UNITS[symbol]
+        whole, _, fraction = amount.partition(".")
+        if symbol not in _MINOR_UNITS or not 1 <= len(fraction) <= 2:
+            return f"{cls._spoken_number(amount)} {units[not cls._is_one(amount)]}"
+        major = Decimal(whole.replace(",", "") or "0")
+        minor = int(fraction.ljust(2, "0"))
+        if not minor:
+            return f"{whole or '0'} {units[major != 1]}"
+        minor_unit = _MINOR_UNITS[symbol][minor != 1]
+        if not major:
+            qualifier = "euro " if symbol == "€" else ""
+            return f"{minor} {qualifier}{minor_unit}"
+        return f"{whole} {units[major != 1]} and {minor} {minor_unit}"
+
+    @classmethod
+    def _speak_bare_end(cls, match: re.Match[str]) -> str:
         if not (end := match["bare_end"]):
             return ""
-        end_scale = _SCALES.get((match["bare_scale"] or "").lower(), start_scale)
+        end_scale = SCALES.get((match["bare_scale"] or match["word"] or "").lower(), "")
         return " ".join(filter(None, ("to", cls._spoken_number(end), end_scale)))
 
     @staticmethod
@@ -110,7 +87,7 @@ class CurrencySpeech:
     def _speak_code_sign(match: re.Match[str]) -> str:
         symbol, amount = match.group("symbol", "amount")
         before, after = match.group("sign_before", "sign_after")
-        unit, _ = _UNITS[symbol]
+        unit, _ = UNITS[symbol]
         left = " " if match.string[match.start() - 1 : match.start()].isalnum() else ""
         right = " " if match.string[match.end() : match.end() + 1].isalnum() else ""
         return (
