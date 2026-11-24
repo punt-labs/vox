@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, ClassVar, NotRequired, Self, TypedDict
 
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -33,6 +33,12 @@ if TYPE_CHECKING:
 __all__ = ["ProgramCommandHandler"]
 
 logger = logging.getLogger(__name__)
+
+
+class _ProgramReply(TypedDict):
+    type: str
+    applied: NotRequired[bool]
+    message: NotRequired[str]
 
 
 class ProgramCommandHandler(ABC):
@@ -56,7 +62,7 @@ class ProgramCommandHandler(ABC):
         :meth:`WireReply.reject_or_fault` handles other expected failures.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
-        payload: dict[str, object] = {"type": self._WIRE_TYPE}
+        payload: _ProgramReply = {"type": self._WIRE_TYPE}
         try:
             outcome = self._run(msg)
         except (ValueError, LookupError, OSError) as exc:
@@ -64,8 +70,9 @@ class ProgramCommandHandler(ABC):
             return
         if outcome is not None:
             logger.info("%s skipped: reason=not_applied", self._WIRE_TYPE)
-            payload.update(applied=outcome.applied, message=outcome.message)
-        await reply.send(payload)
+            payload["applied"] = outcome.applied
+            payload["message"] = outcome.message
+        await reply.send(dict(payload))
 
     @abstractmethod
     def _run(self, msg: dict[str, object], /) -> CommandOutcome | None:
