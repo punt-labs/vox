@@ -482,6 +482,8 @@ application = [
     "punt_vox.voxd.programs.album_binder",
     "punt_vox.voxd.programs.command_handler",
     "punt_vox.voxd.programs.control_channel",
+    "punt_vox.voxd.programs.control_queue",
+    "punt_vox.voxd.programs.step_admission",
     "punt_vox.voxd.programs.fill_reconciler",
     "punt_vox.voxd.programs.fill_recorder",
     "punt_vox.voxd.programs.filler",
@@ -490,7 +492,6 @@ application = [
     "punt_vox.voxd.programs.library_handlers",
     "punt_vox.voxd.programs.list_handler",
     "punt_vox.voxd.programs.loop",
-    "punt_vox.voxd.programs.next_handler",
     "punt_vox.voxd.programs.on_handler",
     "punt_vox.voxd.programs.playlist_music",
     "punt_vox.voxd.programs.select_handler",
@@ -498,7 +499,7 @@ application = [
     "punt_vox.voxd.programs.service",
     "punt_vox.voxd.programs.status_handler",
     "punt_vox.voxd.programs.stop_handler",
-    "punt_vox.voxd.programs.transport_handlers",
+    "punt_vox.voxd.programs.transport_handler",
 ]
 domain = [
     "punt_vox._audio",

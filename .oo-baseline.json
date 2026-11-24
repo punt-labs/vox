@@ -4892,8 +4892,21 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 0.56,
     "max_complexity": 3.0,
-    "avg_complexity": 1.56,
-    "module_size": 109.0,
+    "avg_complexity": 1.5,
+    "module_size": 107.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/programs/control_queue.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.33,
+    "module_size": 36.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -5277,19 +5290,6 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
-  "src/punt_vox/voxd/programs/next_handler.py": {
-    "method_ratio": 1.0,
-    "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
-    "max_complexity": 1.0,
-    "avg_complexity": 1.0,
-    "module_size": 10.0,
-    "classes_per_module": 1.0,
-    "class_to_func_ratio": 1.0,
-    "init_violations": 0.0,
-    "public_attr_violations": 0.0,
-    "future_annotations": 1.0
-  },
   "src/punt_vox/voxd/programs/on_handler.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -5589,6 +5589,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/programs/step_admission.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.67,
+    "module_size": 29.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/programs/stop_handler.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -5667,14 +5680,14 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
-  "src/punt_vox/voxd/programs/transport_handlers.py": {
+  "src/punt_vox/voxd/programs/transport_handler.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.0,
+    "avg_params": 1.67,
     "max_complexity": 2.0,
     "avg_complexity": 1.67,
-    "module_size": 24.0,
-    "classes_per_module": 3.0,
+    "module_size": 33.0,
+    "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
@@ -5699,7 +5712,7 @@
     "avg_params": 0.6,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
-    "module_size": 69.0,
+    "module_size": 61.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

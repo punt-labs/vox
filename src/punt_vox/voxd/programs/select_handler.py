@@ -23,7 +23,7 @@ class SelectHandler(ProgramCommandHandler):
     """Handle ``program_select``: replay by id (direct) or by a tag query."""
 
     __slots__ = ()
-    _WIRE_TYPE = "program_select"
+    _wire_type = "program_select"
 
     def _run(self, msg: dict[str, object], /) -> None:
         """Dispatch by request shape: a specific album, the bare play, or a radio.
