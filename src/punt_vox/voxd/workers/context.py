@@ -11,6 +11,7 @@ from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.wire_reply import WireReply
+from punt_vox.voxd.workers.allowlist_handlers import AllowlistHandlers
 from punt_vox.voxd.workers.handlers import WorkerHandlers
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
@@ -53,6 +54,7 @@ class WorkerContext:
         events = ProgressEvents()
         return {
             **WorkerHandlers(actor).handlers(store, events),
+            **AllowlistHandlers(policy).handlers(),
             **CallHandlers(
                 actor, policy, playback, progress=events, hold_music=hold_music
             ).handlers(),
@@ -61,7 +63,12 @@ class WorkerContext:
     @staticmethod
     def _degraded(store: HookContextStore) -> dict[str, MessageHandler]:
         unavailable = dict.fromkeys(
-            (*WorkerHandlers.ROUTES, *CallHandlers.ROUTES, "worker_hook_admission"),
+            (
+                *WorkerHandlers.ROUTES,
+                *AllowlistHandlers.ROUTES,
+                *CallHandlers.ROUTES,
+                "worker_hook_admission",
+            ),
             WorkerContext._unavailable,
         )
         return {**HookContextHandlers(store).handlers(), **unavailable}

@@ -139,3 +139,70 @@ def test_transport_forwards_the_selected_profiles_progress() -> None:
             "detail": "ready"
         }
     progress.assert_called_once_with("identity")
+
+
+def _git_toplevel(toplevel: Path) -> Mock:
+    return Mock(stdout=f"{toplevel}\n")
+
+
+def test_allow_stores_the_resolved_top_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow("alias") == (str(repo.resolve()),)
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    assert policy.repos() == (str(repo.resolve()),)
+
+
+def test_allow_refuses_a_subdirectory_and_a_missing_path(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    child = repo / "child"
+    child.mkdir(parents=True)
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(ValueError, match="not a git repository top level"),
+    ):
+        policy.allow(str(child))
+    with pytest.raises(ValueError, match="not a directory"):
+        policy.allow(str(tmp_path / "missing"))
+    assert policy.repos() == ()
+
+
+def test_allow_refuses_a_directory_outside_git(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            side_effect=subprocess.CalledProcessError(128, ["git"]),
+        ),
+        pytest.raises(ValueError, match="not a git repository top level"),
+    ):
+        policy.allow(str(plain))
+    assert policy.repos() == ()
+
+
+def test_disallow_removes_by_resolved_path_even_when_gone(tmp_path: Path) -> None:
+    config = ConfigStore(tmp_path / "config")
+    gone = tmp_path / "gone"
+    kept = tmp_path / "kept"
+    config.write_field("worker_repos", repr([str(gone), str(kept)]))
+    policy = WorkerRepoPolicy(config)
+    assert policy.disallow(str(tmp_path / "x" / ".." / "gone")) == (str(kept),)
+    assert policy.repos() == (str(kept),)
+    with pytest.raises(ValueError, match="not allowlisted"):
+        policy.disallow(str(gone))

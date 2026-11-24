@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -102,3 +102,59 @@ def test_worker_cli_reports_daemon_refusal() -> None:
         result = CliRunner().invoke(app, ["worker", "list"])
     assert result.exit_code == 1
     assert "not allowlisted" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "operation"),
+    [
+        (["worker", "allow", "repo"], "allow"),
+        (["worker", "disallow", "repo"], "disallow"),
+    ],
+)
+def test_allow_and_disallow_send_the_resolved_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], operation: str
+) -> None:
+    """The CLI resolves the path; the daemon validates and writes the allowlist."""
+    monkeypatch.chdir(tmp_path)
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=[str(tmp_path / "repo")],
+    ) as request:
+        result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    request.assert_awaited_once_with(operation, project=str(tmp_path / "repo"))
+    assert result.output == f"{tmp_path / 'repo'}\n"
+
+
+def test_repos_lists_one_path_per_line_or_a_json_array() -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        return_value=["/a", "/b"],
+    ) as request:
+        text = CliRunner().invoke(app, ["worker", "repos"])
+        as_json = CliRunner().invoke(app, ["worker", "repos", "--json"])
+    assert text.exit_code == 0, text.output
+    assert text.output == "/a\n/b\n"
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.output) == ["/a", "/b"]
+    assert request.await_args_list == [call("repos"), call("repos")]
+
+
+def test_allow_refusal_is_one_line_on_stderr() -> None:
+    with patch(
+        "punt_vox.worker_client.WorkerClient.request",
+        new_callable=AsyncMock,
+        side_effect=VoxdProtocolError("not a git repository top level: /x"),
+    ):
+        result = CliRunner().invoke(app, ["worker", "allow", "/x"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "vox: worker allow: not a git repository top level: /x\n"
+
+
+def test_worker_help_names_the_allowlist_commands() -> None:
+    output = CliRunner().invoke(app, ["worker", "--help"]).output
+    for command in ("allow", "disallow", "repos"):
+        assert command in output

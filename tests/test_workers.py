@@ -19,6 +19,7 @@ from punt_vox.config import ConfigStore
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.workers.actor import WorkerActor
+from punt_vox.voxd.workers.allowlist_handlers import AllowlistHandlers
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerLaunch
@@ -319,3 +320,34 @@ def test_record_rejects_invalid_identity(tmp_path: Path) -> None:
     (tmp_path / f"{uuid4()}.json").write_text("[]")
     with pytest.raises(ValueError, match="Invalid worker record"):
         records.load()
+
+
+@pytest.mark.asyncio
+async def test_call_side_allow_repos_disallow_roundtrip(tmp_path: Path) -> None:
+    """The daemon owns the allowlist: allow, list and disallow are worker RPCs."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = ConfigStore(tmp_path / "config")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(config)).handlers()
+    ws = AsyncMock(spec=WebSocket)
+
+    async def rpc(operation: str, **fields: object) -> dict[str, object]:
+        await handlers[f"worker_{operation}"](
+            {"type": f"worker_{operation}", "id": "rpc", **fields}, ws
+        )
+        return ws.send_json.call_args.args[0]
+
+    assert await rpc("repos") == {"type": "worker_result", "id": "rpc", "result": []}
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=MagicMock(stdout=f"{repo.resolve()}\n"),
+    ):
+        allowed = await rpc("allow", project=str(repo))
+    assert allowed["result"] == [str(repo.resolve())]
+    assert config.read_field("worker_repos") == repr([str(repo.resolve())])
+    assert (await rpc("repos"))["result"] == [str(repo.resolve())]
+    refused = await rpc("allow", project=str(tmp_path / "missing"))
+    assert refused["type"] == "error"
+    assert "not a directory" in str(refused["message"])
+    assert (await rpc("disallow", project=str(repo)))["result"] == []
+    assert config.read_field("worker_repos") == "[]"
