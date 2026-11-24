@@ -10,7 +10,6 @@ import pytest
 from punt_vox.voxd.music_player.command_ports import ProgramSeam
 from punt_vox.voxd.music_player.music_event_receiver import MusicEventReceiver
 from punt_vox.voxd.music_player.presenter_ports import ScenePresenter
-from punt_vox.voxd.programs.guard import GuardViolationError
 
 _PRIVATE = "SYNTHETIC-PRIVATE-ALBUM-34C1"
 
@@ -100,11 +99,13 @@ def test_idle_transport_is_not_a_fault(
 ) -> None:
     caplog.set_level(logging.INFO)
     transport = getattr(service, command)
-    transport.side_effect = GuardViolationError(_PRIVATE)
-    MusicEventReceiver(service, presenter).receive(f"music.{command}", {})
+    transport.return_value = False
+    MusicEventReceiver(service, presenter).receive(
+        f"music.{command}", {"extra": _PRIVATE}
+    )
     transport.assert_called_once_with()
     presenter.present_transport_failure.assert_not_called()
-    assert "music operation skipped: reason=guard_rejected" in caplog.text
+    assert f"received music.{command}; applying" in caplog.text
     assert all(record.levelno < logging.WARNING for record in caplog.records)
     assert _PRIVATE not in caplog.text
 

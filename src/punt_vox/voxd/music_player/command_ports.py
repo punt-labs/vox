@@ -40,12 +40,12 @@ class PlayerCommands(Protocol):
         """User transport prev: step the replay cursor back (Prev)."""
         ...
 
-    def pause(self) -> None:
-        """Suspend the active source in place (Pause)."""
+    def pause(self) -> bool:
+        """Suspend the active source in place, or return False when off."""
         ...
 
-    def resume(self) -> None:
-        """Continue a suspended source (Resume)."""
+    def resume(self) -> bool:
+        """Continue a suspended source, or return False when off."""
         ...
 
 

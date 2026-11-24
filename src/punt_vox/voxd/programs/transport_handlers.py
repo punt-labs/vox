@@ -8,11 +8,14 @@ each new capability has a non-UI caller alongside the in-scene transport buttons
 
 from __future__ import annotations
 
-from typing import final
+from typing import Final, final
 
+from punt_vox.types_programs.control import CommandOutcome
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 
 __all__ = ["PauseHandler", "PrevHandler", "ResumeHandler"]
+
+_NOTHING_PLAYING: Final = CommandOutcome.rejected("Nothing playing.")
 
 
 @final
@@ -34,9 +37,9 @@ class PauseHandler(ProgramCommandHandler):
     __slots__ = ()
     _WIRE_TYPE = "program_pause"
 
-    def _run(self, _msg: dict[str, object], /) -> None:
+    def _run(self, _msg: dict[str, object], /) -> CommandOutcome | None:
         """Suspend the active source (no fields to parse)."""
-        self._service.pause()
+        return None if self._service.pause() else _NOTHING_PLAYING
 
 
 @final
@@ -46,6 +49,6 @@ class ResumeHandler(ProgramCommandHandler):
     __slots__ = ()
     _WIRE_TYPE = "program_resume"
 
-    def _run(self, _msg: dict[str, object], /) -> None:
+    def _run(self, _msg: dict[str, object], /) -> CommandOutcome | None:
         """Continue the suspended source (no fields to parse)."""
-        self._service.resume()
+        return None if self._service.resume() else _NOTHING_PLAYING

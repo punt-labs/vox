@@ -22,12 +22,12 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Self
 
-from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.voxd.programs.service import ProgramService
 
 __all__ = ["ProgramCommandHandler"]
@@ -58,18 +58,18 @@ class ProgramCommandHandler(ABC):
         reply = WireReply(websocket, str(msg.get("id", "")))
         payload: dict[str, object] = {"type": self._WIRE_TYPE}
         try:
-            self._run(msg)
-        except GuardViolationError as exc:
-            logger.info("%s skipped: reason=guard_rejected", self._WIRE_TYPE)
-            payload.update(applied=False, message=str(exc))
+            outcome = self._run(msg)
         except (ValueError, LookupError, OSError) as exc:
             await reply.reject_or_fault(exc)
             return
+        if outcome is not None:
+            logger.info("%s skipped: reason=not_applied", self._WIRE_TYPE)
+            payload.update(applied=outcome.applied, message=outcome.message)
         await reply.send(payload)
 
     @abstractmethod
-    def _run(self, msg: dict[str, object], /) -> None:
-        """Parse ``msg`` and issue the one serialized command to the service."""
+    def _run(self, msg: dict[str, object], /) -> CommandOutcome | None:
+        """Issue the command, returning a synchronous refusal if not applied."""
 
     @staticmethod
     def _opt_str(msg: dict[str, object], key: str) -> str | None:

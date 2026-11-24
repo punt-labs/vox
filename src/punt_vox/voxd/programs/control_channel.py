@@ -94,14 +94,11 @@ class ControlChannel:
         """Return the active source this channel is the sole writer to."""
         return self._source
 
-    def require_active(self) -> None:
-        """Reject synchronous transport for an initial or stopped Program.
-
-        Raises:
-            GuardViolationError: If the playback mode is off.
-        """
-        if isinstance(self._source, Program) and self._source.mode is Mode.OFF:
-            GuardViolationError.reject("Nothing playing.")
+    @property
+    def is_active(self) -> bool:
+        """Whether the current Program or replay Selection is active."""
+        source = self._source
+        return not isinstance(source, Program) or source.mode is not Mode.OFF
 
     def retarget(self, source: PlaybackSource) -> None:
         """Swap which source the sole writer animates (a switch to program/replay).

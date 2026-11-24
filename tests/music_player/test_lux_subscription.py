@@ -87,11 +87,13 @@ class _FakeCommands:
     def prev(self) -> None:
         self.prevs += 1
 
-    def pause(self) -> None:
+    def pause(self) -> bool:
         self.pauses += 1
+        return True
 
-    def resume(self) -> None:
+    def resume(self) -> bool:
         self.resumes += 1
+        return True
 
 
 @final
@@ -736,10 +738,10 @@ async def test_on_event_surfaces_a_playback_refusal_to_the_scene(
         def prev(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     opener = _FakeOpener()
@@ -774,10 +776,10 @@ async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
         def prev(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     opener = _FakeOpener()
@@ -819,10 +821,10 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
         def prev(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     sub = LuxSubscription(

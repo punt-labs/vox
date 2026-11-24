@@ -48,7 +48,7 @@ from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
     from punt_vox.voxd.programs.active_context import ActiveSource
@@ -356,25 +356,21 @@ class ProgramService:
         """
         self._channel.post(StepBack())
 
-    def pause(self) -> None:
-        """Suspend the active source in place (Z ``Pause``).
+    def pause(self) -> bool:
+        """Suspend the active source in place, or return False when off."""
+        return self._apply_transport(self._suspension.pause)
 
-        Raises:
-            GuardViolationError: If the current playback mode is off.
-        """
-        self._channel.require_active()
-        self._suspension.pause()
+    def resume(self) -> bool:
+        """Continue a suspended source, or return False when off."""
+        return self._apply_transport(self._suspension.resume)
+
+    def _apply_transport(self, action: Callable[[], None]) -> bool:
+        """Apply and publish a transport action only while the source is active."""
+        if not self._channel.is_active:
+            return False
+        action()
         self._changes.emit()
-
-    def resume(self) -> None:
-        """Continue a suspended source (Z ``Resume``).
-
-        Raises:
-            GuardViolationError: If the current playback mode is off.
-        """
-        self._channel.require_active()
-        self._suspension.resume()
-        self._changes.emit()
+        return True
 
     @contextmanager
     def hold_music_for_call(self) -> Generator[None]:
