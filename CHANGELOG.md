@@ -139,6 +139,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Amounts with an attached scale (such as `$1.5million`) and ranges without a
   currency sign on the second endpoint (such as `£.50–1.25`) keep decimal
   wording. Decimal commas and inline code are unchanged. (PL-1473)
+- Speak euro amounts such as `€1,50` and `1,50€` as euros and cents. Commas
+  with three-digit groups still mark thousands, and other currencies and
+  inline code are unchanged. (PL-1535)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
