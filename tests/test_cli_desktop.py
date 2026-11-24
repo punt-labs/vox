@@ -584,6 +584,8 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert config_path.readlink() == real
         installed = json.loads(real.read_text(encoding="utf-8"))
         assert installed["mcpServers"]["vox"]["args"] == [
+            "--directory",
+            str(Path.home()),
             "--from",
             "punt-vox",
             "vox",
