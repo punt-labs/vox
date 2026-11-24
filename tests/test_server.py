@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from punt_vox.types_provider import ProviderStatusPayload
 
 import punt_vox.server
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
@@ -353,7 +354,7 @@ class TestWriteConfigFields:
         read_count = 0
         write_count = 0
         orig_read = Path.read_text
-        orig_write = Path.write_text
+        orig_replace = AtomicFile.replace
 
         def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
             nonlocal read_count
@@ -361,14 +362,14 @@ class TestWriteConfigFields:
                 read_count += 1
             return orig_read(self, *args, **kwargs)
 
-        def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
+        def counting_replace(self: AtomicFile, text: str) -> None:
             nonlocal write_count
-            if self == local_md:
+            if self.path == local_md:
                 write_count += 1
-            return orig_write(self, *args, **kwargs)
+            orig_replace(self, text)
 
         monkeypatch.setattr(Path, "read_text", counting_read)
-        monkeypatch.setattr(Path, "write_text", counting_write)
+        monkeypatch.setattr(AtomicFile, "replace", counting_replace)
         # All ephemeral keys -> single file write to vox.local.md
         ConfigStore(_patch_config).write_fields({"vibe": "a", "vibe_tags": "[b]"})
         assert read_count == 1

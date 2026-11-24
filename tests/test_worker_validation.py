@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import logging
+import os
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -11,6 +15,7 @@ import pytest
 from test_workers import TrivialProfile
 
 from punt_vox.config import ConfigStore
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.command import WorkerCommand
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
@@ -139,3 +144,385 @@ def test_transport_forwards_the_selected_profiles_progress() -> None:
             "detail": "ready"
         }
     progress.assert_called_once_with("identity")
+
+
+def _git_toplevel(toplevel: Path) -> Mock:
+    return Mock(stdout=f"{toplevel}\n")
+
+
+def test_allow_stores_the_resolved_top_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow("~/alias") == (str(repo.resolve()),)
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    assert policy.repos() == (str(repo.resolve()),)
+
+
+def test_allow_refuses_a_subdirectory_and_a_missing_path(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    child = repo / "child"
+    child.mkdir(parents=True)
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(ValueError, match="not a git repository top level"),
+    ):
+        policy.allow(str(child))
+    with pytest.raises(ValueError, match="not a directory"):
+        policy.allow(str(tmp_path / "missing"))
+    assert policy.repos() == ()
+
+
+def test_allow_refuses_a_directory_outside_git(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            side_effect=subprocess.CalledProcessError(128, ["git"]),
+        ),
+        pytest.raises(ValueError, match="not a git repository top level"),
+    ):
+        policy.allow(str(plain))
+    assert policy.repos() == ()
+
+
+def test_disallow_removes_by_resolved_path_even_when_gone(tmp_path: Path) -> None:
+    config = ConfigStore(tmp_path / "config")
+    gone = tmp_path / "gone"
+    kept = tmp_path / "kept"
+    config.write_field("worker_repos", repr([str(gone), str(kept)]))
+    policy = WorkerRepoPolicy(config)
+    assert policy.disallow(RepoSpellings(str(tmp_path / "x" / ".." / "gone"))) == (
+        str(kept),
+    )
+    assert policy.repos() == (str(kept),)
+    with pytest.raises(ValueError, match="not allowlisted"):
+        policy.disallow(RepoSpellings(str(gone)))
+
+
+@pytest.mark.parametrize(
+    ("entry", "reason"),
+    [
+        ("   ", "blank"),
+        ("", "blank"),
+        ("relative/repo", "not absolute"),
+        ("/", "the filesystem root"),
+        ("/../", "the filesystem root"),
+    ],
+)
+def test_bad_allowlist_entries_are_rejected_by_name(
+    tmp_path: Path, entry: str, reason: str
+) -> None:
+    """A blank, relative or root entry never becomes a repository."""
+    config = ConfigStore(tmp_path / "config")
+    config.write_field("worker_repos", repr([entry]))
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
+        policy.repos()
+    with pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"):
+        policy.resolve(str(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("entry", "reason"),
+    [("   ", "blank"), ("relative/repo", "not absolute"), ("/", "the filesystem root")],
+)
+def test_allow_refuses_bad_entries_before_git(
+    tmp_path: Path, entry: str, reason: str
+) -> None:
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run") as git,
+        pytest.raises(ValueError, match=f"worker_repos entry {reason}: {entry!r}"),
+    ):
+        policy.allow(entry)
+    git.assert_not_called()
+    assert policy.repos() == ()
+
+
+@pytest.mark.parametrize("entry", ["relative/repo", "/"])
+def test_disallow_refuses_only_what_is_not_stored(tmp_path: Path, entry: str) -> None:
+    """Disallow validates nothing but blankness: an unstored entry is the refusal."""
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with pytest.raises(ValueError, match=f"not allowlisted: {entry}"):
+        policy.disallow(RepoSpellings(entry))
+    assert policy.repos() == ()
+
+
+def test_allow_round_trips_a_path_with_an_apostrophe(tmp_path: Path) -> None:
+    """repr() would switch to double quotes, which the frontmatter refuses."""
+    repo = tmp_path / "Jim's repo"
+    repo.mkdir()
+    config = ConfigStore(tmp_path / "config")
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    stored = config.read_field("worker_repos")
+    assert stored is not None
+    assert '"' not in stored
+    assert WorkerRepoPolicy(config).repos() == (str(repo.resolve()),)
+    assert policy.disallow(RepoSpellings(str(repo))) == ()
+
+
+def test_allow_refuses_a_path_with_a_double_quote_by_name(tmp_path: Path) -> None:
+    repo = tmp_path / 'say "hi"'
+    repo.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run") as git,
+        pytest.raises(
+            ValueError, match=f"worker_repos entry has a double quote: {str(repo)!r}"
+        ),
+    ):
+        policy.allow(str(repo))
+    git.assert_not_called()
+    assert policy.repos() == ()
+
+
+_FENCED = '---\nprovider: "elevenlabs"\nvoice: "fin"\nlog_level: "debug"\n---\n'
+
+
+def _global_config(tmp_path: Path) -> tuple[ConfigStore, Path]:
+    config = ConfigStore(tmp_path / "config")
+    (tmp_path / "config").mkdir()
+    return config, tmp_path / "config" / "vox.md"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode-000 file")
+def test_an_unreadable_allowlist_file_raises_instead_of_reading_as_empty(
+    tmp_path: Path,
+) -> None:
+    """H2: a policy file that will not open is a fault, never an empty policy."""
+    config, path = _global_config(tmp_path)
+    path.write_text(_FENCED + "", encoding="utf-8")
+    config.write_field("worker_repos", repr([str(tmp_path)]))
+    path.chmod(0)
+    policy = WorkerRepoPolicy(config)
+    try:
+        with pytest.raises(PermissionError):
+            policy.repos()
+        with pytest.raises(PermissionError):
+            policy.disallow(RepoSpellings(str(tmp_path)))
+        with (
+            patch(
+                "punt_vox.voxd.workers.policy.subprocess.run",
+                return_value=_git_toplevel(tmp_path.resolve()),
+            ),
+            pytest.raises(PermissionError),
+        ):
+            policy.allow(str(tmp_path))
+    finally:
+        path.chmod(0o600)
+
+
+def test_a_non_utf8_allowlist_file_raises_instead_of_reading_as_empty(
+    tmp_path: Path,
+) -> None:
+    config, path = _global_config(tmp_path)
+    path.write_bytes(b"---\nworker_repos: \"['/repo']\"\n\xff\n---\n")
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(UnicodeDecodeError):
+        policy.repos()
+    with pytest.raises(UnicodeDecodeError):
+        policy.disallow(RepoSpellings("/repo"))
+
+
+def test_allow_refuses_a_file_without_a_closing_fence_and_leaves_it_intact(
+    tmp_path: Path,
+) -> None:
+    """H3: never rebuild vox.md from worker_repos alone, losing every other field."""
+    config, path = _global_config(tmp_path)
+    broken = '---\nprovider: "elevenlabs"\nvoice: "fin"\nlog_level: "debug"\n'
+    path.write_bytes(broken.encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(OSError, match="no closing ---") as refused,
+    ):
+        policy.allow(str(repo))
+    assert refused.value.filename == str(path)
+    assert path.read_bytes() == broken.encode()
+
+
+def test_allow_edits_in_place_and_keeps_the_other_fields(tmp_path: Path) -> None:
+    config, path = _global_config(tmp_path)
+    path.write_text(_FENCED, encoding="utf-8")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        policy.allow(str(repo))
+    assert config.read_field("voice") == "fin"
+    assert config.read_field("provider") == "elevenlabs"
+    assert config.read_field("worker_repos") == f"['{repo.resolve()}']"
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (FileNotFoundError(2, "No such file", "git"), "git is not installed"),
+        (subprocess.TimeoutExpired(["git"], 5), "git timed out"),
+        (
+            subprocess.CalledProcessError(128, ["git"], stderr="fatal: not a git repo"),
+            "not a git repository top level",
+        ),
+    ],
+)
+def test_git_failures_are_told_apart_and_stderr_is_logged(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    failure: Exception,
+    message: str,
+) -> None:
+    """M6: a missing git binary, a hang and a real non-repo are different."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    with (
+        patch("punt_vox.voxd.workers.policy.subprocess.run", side_effect=failure),
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.policy"),
+        pytest.raises(ValueError, match=message),
+    ):
+        policy.allow(str(repo))
+    if isinstance(failure, subprocess.CalledProcessError):
+        assert any("fatal: not a git repo" in r.getMessage() for r in caplog.records)
+
+
+def test_allow_edits_an_unfenced_file_in_place_when_it_holds_the_field(
+    tmp_path: Path,
+) -> None:
+    """No fence at all is not a fault: the field is edited where it sits."""
+    config, path = _global_config(tmp_path)
+    prose = "prose with no fence above or below\n"
+    path.write_bytes(('worker_repos: "[]"\n' + prose).encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with patch(
+        "punt_vox.voxd.workers.policy.subprocess.run",
+        return_value=_git_toplevel(repo.resolve()),
+    ):
+        assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    assert path.read_text() == f"worker_repos: \"['{repo.resolve()}']\"\n" + prose
+
+
+def test_allow_refuses_to_rebuild_an_unfenced_file_that_lacks_the_field(
+    tmp_path: Path,
+) -> None:
+    """A checked write never rebuilds vox.md around one field."""
+    config, path = _global_config(tmp_path)
+    prose = "# notes\n\nprose with no fence and no field\n"
+    path.write_bytes(prose.encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(OSError, match="no closing ---"),
+    ):
+        policy.allow(str(repo))
+    assert path.read_bytes() == prose.encode()
+    assert policy.repos() == ()
+
+
+def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None:
+    """An allow that lands between our read and write waits; nothing is lost."""
+    config = ConfigStore(tmp_path / "config")
+    config.write_field("worker_repos", "['/a']")
+    policy = WorkerRepoPolicy(config)
+    repo_a, repo_b = tmp_path / "a", tmp_path / "b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    started: list[threading.Thread] = []
+    done = threading.Event()
+    real_eval = ast.literal_eval
+
+    def rival() -> None:
+        WorkerRepoPolicy(config).allow(str(repo_b))
+        done.set()
+
+    def eval_then_race(raw: str) -> object:
+        # Only the first read starts the rival; its own read passes through.
+        if not started:
+            started.append(threading.Thread(target=rival))
+            started[0].start()
+            done.wait(2)
+        return real_eval(raw)
+
+    def git_toplevel(argv: list[str], **_kwargs: object) -> Mock:
+        # ``patch`` swaps ``run`` on the one shared ``subprocess`` module, so
+        # the rival must not patch it too: its exit would interleave with
+        # this one and leave a Mock behind for every later test. One patch
+        # answers both threads by the path git is asked about.
+        return _git_toplevel(Path(argv[2]).resolve())
+
+    with (
+        patch("punt_vox.voxd.workers.allowlist.ast.literal_eval", eval_then_race),
+        patch("punt_vox.voxd.workers.policy.subprocess.run", side_effect=git_toplevel),
+    ):
+        policy.allow(str(repo_a))
+    started[0].join(10)
+    assert policy.repos() == tuple(
+        sorted(("/a", str(repo_a.resolve()), str(repo_b.resolve())))
+    )
+
+
+def test_disallow_removes_a_stored_relative_entry_and_keeps_the_rest(
+    tmp_path: Path,
+) -> None:
+    """A hand-edited entry that does not validate is still removable by its text.
+
+    Left in place it would block every strict read; disallow is the one
+    lenient door out.
+    """
+    config = ConfigStore(tmp_path / "config")
+    kept = tmp_path / "kept"
+    config.write_field("worker_repos", repr(["relative/repo", str(kept)]))
+    policy = WorkerRepoPolicy(config)
+    with pytest.raises(ValueError, match="not absolute"):
+        policy.repos()
+    assert policy.disallow(RepoSpellings("relative/repo")) == (str(kept),)
+    assert policy.repos() == (str(kept),)
+
+
+def test_disallow_matches_a_stored_entry_by_resolved_path(tmp_path: Path) -> None:
+    """A stored entry with a symlink or dot segment matches its resolved spelling."""
+    config = ConfigStore(tmp_path / "config")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    config.write_field("worker_repos", repr([str(alias), "   ", str(tmp_path / "x")]))
+    policy = WorkerRepoPolicy(config)
+    assert policy.disallow(RepoSpellings(str(repo))) == ("   ", str(tmp_path / "x"))
+    with pytest.raises(ValueError, match="not allowlisted"):
+        policy.disallow(RepoSpellings(str(repo)))
