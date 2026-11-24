@@ -79,7 +79,11 @@ class _Peer:
         self.results.append(tool_call_id + result)
 
 
-def _call(peer: _Peer, audio: CallInput | None = None) -> VoiceAgentCall:
+def _call(
+    peer: _Peer,
+    audio: CallInput | None = None,
+    speaker: AgentSpeaker | None = None,  # None: a speaker over a fake playback.
+) -> VoiceAgentCall:
     """Build a call on ``peer``; ``audio`` None sends no caller audio at all."""
 
     @asynccontextmanager
@@ -93,7 +97,7 @@ def _call(peer: _Peer, audio: CallInput | None = None) -> VoiceAgentCall:
     return VoiceAgentCall(
         BossTools(workers, workers),
         audio if audio is not None else _Silent(),
-        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        speaker or AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
         trace=cast("EventTrace", None),
         opener=cast("Opener", opener),
         progress=ProgressEvents(),
@@ -307,3 +311,28 @@ async def test_a_silent_microphone_fails_the_live_call_naming_the_remedies(
     assert "terminal" in error
     assert call.outcome().error == error
     assert "Voice call failed" not in caplog.text  # an expected failure, not a bug
+
+
+async def test_a_silence_failure_still_closes_the_speaker_and_departs() -> None:
+    class _OpenLine(_Peer):
+        async def receive(self) -> object:
+            await asyncio.sleep(3600)
+            raise EOFError
+
+    speaker = AsyncMock(spec=AgentSpeaker)
+    departures: list[dict[str, int]] = []
+
+    async def depart(reported: dict[str, int]) -> None:
+        departures.append(reported)
+
+    call = _call(
+        _OpenLine([]),
+        MicInput(cast("MicAudioSource", _DeadMicSource())),
+        speaker=speaker,
+    )
+    async with asyncio.timeout(10):
+        await call.run(_dial, depart=depart)
+    assert call.status()["state"] == "failed"
+    speaker.close.assert_awaited_once_with()
+    speaker.finish.assert_not_awaited()
+    assert departures == [{}]
