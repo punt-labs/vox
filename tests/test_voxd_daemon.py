@@ -13,6 +13,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+import httpx
+import uvicorn
+
+from punt_vox.client import VoxClient
 from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import DaemonConfig
@@ -23,6 +27,7 @@ from punt_vox.voxd.port_file import PortFile
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
 from punt_vox.voxd.synthesis import SynthesisPipeline
+from punt_vox.voxd.system_handlers import HealthHandler
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,7 +115,9 @@ def _daemon(tmp_path: Path, lux: _CountingLux | None = None) -> VoxDaemon:
         tmp_path / "programs", _BlockingProducer(), tmp_path / "mpv.sock"
     )
     health = DaemonHealth(playback, lambda: 0, 0)
-    router = WebSocketRouter(handlers=programs.handlers(), auth_token=None)
+    handlers = programs.handlers()
+    handlers["health"] = HealthHandler(health=health)
+    router = WebSocketRouter(handlers=handlers, auth_token=None)
     return VoxDaemon(
         config=config,
         playback=playback,
@@ -144,6 +151,28 @@ async def _wait_for_mode(daemon: VoxDaemon, mode: Mode) -> bool:
             return True
         await asyncio.sleep(0)
     return False
+
+
+async def test_port_zero_reports_the_bound_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    port_file = tmp_path / "run" / "serve.port"
+    reports: list[object] = []
+
+    async def query_health(_server: uvicorn.Server) -> None:
+        port = int(port_file.read_text())
+        async with httpx.AsyncClient(trust_env=False) as http:
+            response = await http.get(f"http://127.0.0.1:{port}/health")
+            response.raise_for_status()
+        async with VoxClient(host="127.0.0.1", port=port) as client:
+            health = await client.health()
+        reports.extend([port, response.json()["port"], health.port])
+
+    monkeypatch.setattr(uvicorn.Server, "main_loop", query_health)
+    await _daemon(tmp_path).run("127.0.0.1", 0)
+
+    bound_port, http_port, websocket_port = reports
+    assert (http_port, websocket_port) == (bound_port, bound_port)
 
 
 async def test_lifespan_starts_tasks_and_applies_a_command(

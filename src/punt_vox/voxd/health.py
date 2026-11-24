@@ -103,3 +103,7 @@ class DaemonHealth:
     def set_daemon_version(self, val: str) -> None:
         """Override the cached daemon version. For test use."""
         self._daemon_version = val
+
+    def set_bound_port(self, port: int) -> None:
+        """Record the port assigned to the listening socket."""
+        self._port = port
