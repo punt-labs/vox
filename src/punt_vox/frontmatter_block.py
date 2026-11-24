@@ -109,6 +109,12 @@ class FrontmatterBlock:
         header, _ = self._parts
         return self._parse(header, self._field_re(name)).get(name)
 
+    @property
+    def fenced(self) -> bool:
+        """Return whether the text opens with a fence pair this can edit inside."""
+        _, tail = self._parts
+        return bool(tail)
+
     def accepts(self, keys: Iterable[str]) -> bool:
         """Return whether every key in *keys* has somewhere to go in this block.
 
@@ -117,8 +123,8 @@ class FrontmatterBlock:
         frontmatter this can edit, and the caller rebuilds it whole rather
         than appending fields below prose where no reader would find them.
         """
-        header, tail = self._parts
-        return bool(tail) or all(self._field_re(key).search(header) for key in keys)
+        header, _ = self._parts
+        return self.fenced or all(self._field_re(key).search(header) for key in keys)
 
     def with_fields(self, updates: dict[str, str]) -> Self:
         """Return a block with *updates* applied, each replaced or inserted.

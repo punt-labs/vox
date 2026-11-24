@@ -399,3 +399,24 @@ def test_git_failures_are_told_apart_and_stderr_is_logged(
         policy.allow(str(repo))
     if isinstance(failure, subprocess.CalledProcessError):
         assert any("fatal: not a git repo" in r.getMessage() for r in caplog.records)
+
+
+def test_allow_refuses_an_unfenced_file_that_already_holds_the_field(
+    tmp_path: Path,
+) -> None:
+    """A present key is no licence to edit a file with no closing fence."""
+    config, path = _global_config(tmp_path)
+    unfenced = 'worker_repos: "[]"\nprose with no fence above or below\n'
+    path.write_bytes(unfenced.encode())
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    policy = WorkerRepoPolicy(config)
+    with (
+        patch(
+            "punt_vox.voxd.workers.policy.subprocess.run",
+            return_value=_git_toplevel(repo.resolve()),
+        ),
+        pytest.raises(ValueError, match="no closing ---"),
+    ):
+        policy.allow(str(repo))
+    assert path.read_bytes() == unfenced.encode()

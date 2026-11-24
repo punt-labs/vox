@@ -104,7 +104,7 @@ class Frontmatter:
         # no lock file yet, no write can have overlapped that read.
         if not self._lock().path.exists():
             check(self._fields(block))
-            self._require_accepts(block, updates)
+            self._require_fenced(block)
 
     def _lock(self) -> SiblingLock:
         """Share a local-state lock across every spelling of the config path."""
@@ -129,7 +129,7 @@ class Frontmatter:
         held = self._read_block()
         if check is not None:
             check(self._fields(held))
-            self._require_accepts(held, updates)
+            self._require_fenced(held)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         written = self._updated_block(held, updates)
         self._path.write_text(written.text, encoding="utf-8", newline="")
@@ -141,13 +141,16 @@ class Frontmatter:
         """Return *block*'s fields, or ``{}`` when there is no block."""
         return {} if block is None else block.fields()
 
-    def _require_accepts(
+    def _require_fenced(
         self,
         block: FrontmatterBlock | None,  # None: no file.
-        updates: dict[str, str],
     ) -> None:
-        """Refuse a checked write into a block that cannot take *updates*."""
-        if block is not None and not block.accepts(updates):
+        """Refuse a checked write into a file with no closing fence.
+
+        A key already present is no licence: without a closing fence the
+        file is not frontmatter, whatever it happens to hold.
+        """
+        if block is not None and not block.fenced:
             msg = f"Malformed config (no closing ---): {self._path}"
             raise ValueError(msg)
 
