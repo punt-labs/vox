@@ -8,7 +8,7 @@ PortAudio itself resolves to CoreAudio or ALSA underneath. PortAudio's C
 library is a separate runtime dependency from the Python package (Homebrew's
 ``portaudio`` on macOS, ``libportaudio2`` on most Linux distributions) --
 the same shape as ``pydub``'s ffmpeg dependency, which this project already
-accepts. Both methods import it on demand, so a host without it fails only
+accepts. Every method imports it on demand, so a host without it fails only
 when a call opens the microphone.
 """
 
@@ -34,10 +34,54 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class InputDevice:
-    """The input device PortAudio opens by default, as it reports itself."""
+    """The input device PortAudio opens by default, as it reports itself.
+
+    The device names itself in every refusal: a stream PortAudio would not
+    open or start on it raises one :class:`OSError` carrying its name, the
+    error the launcher releases the call ID on.
+    """
 
     name: str
     default_samplerate_hz: float
+
+    def started(self, stream: RawInputStream) -> InputStreamHandle:
+        """Start a stream opened on this device; one that will not start is closed.
+
+        Raises:
+            OSError: When PortAudio will not start the stream.
+        """
+        from sounddevice import PortAudioError
+
+        try:
+            return stream.__enter__()
+        except PortAudioError as exc:
+            self._close_unstarted(stream)
+            raise self.refused(exc) from exc
+
+    def refused(self, exc: Exception) -> OSError:
+        """Name this device as the one PortAudio refused, with a remedy."""
+        return OSError(
+            f"cannot open input device {self.name}: {exc}. Close another application "
+            "holding the microphone, or choose a device with an input channel"
+        )
+
+    def _close_unstarted(self, stream: RawInputStream) -> None:
+        """Release a stream that would not start; a close that fails is logged.
+
+        The start failure is the error the caller must see. A second
+        PortAudio error, from the close, would replace it, so that one is a
+        warning only, and it names the device whose stream stayed open.
+        """
+        from sounddevice import PortAudioError
+
+        try:
+            stream.close()
+        except PortAudioError as exc:
+            logger.warning(
+                "Input stream on %s not closed after a start failure (%s)",
+                self.name,
+                LogText.failure(exc),
+            )
 
 
 @final
@@ -96,39 +140,5 @@ class PortAudio:
                 callback=callback,
             )
         except PortAudioError as exc:
-            raise PortAudio._refused(device, exc) from exc
-        try:
-            return stream.__enter__()
-        except PortAudioError as exc:
-            PortAudio._close_unstarted(device, stream)
-            raise PortAudio._refused(device, exc) from exc
-
-    @staticmethod
-    def _close_unstarted(device: InputDevice, stream: RawInputStream) -> None:
-        """Release a stream that would not start; a close that fails is logged.
-
-        The start failure is the error the caller must see: it names the
-        device and is the OSError the launcher releases the call ID on. A
-        second PortAudio error, from the close, would replace it, so that
-        one is a warning only, and it names the device whose stream stayed
-        open.
-        """
-        from sounddevice import PortAudioError
-
-        try:
-            stream.close()
-        except PortAudioError as exc:
-            logger.warning(
-                "Input stream on %s not closed after a start failure (%s)",
-                device.name,
-                LogText.failure(exc),
-            )
-
-    @staticmethod
-    def _refused(device: InputDevice, exc: Exception) -> OSError:
-        """Name the device PortAudio would not open or start, with a remedy."""
-        return OSError(
-            f"cannot open input device {device.name}: {exc}. Close another "
-            "application holding the microphone, or choose a device with "
-            "an input channel"
-        )
+            raise device.refused(exc) from exc
+        return device.started(stream)
