@@ -232,6 +232,24 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
+
+    With --from and --json, stdout is JSON Lines: one JSON object per successful
+    segment, in input order. Blank segments are skipped. If the daemon rejects a
+    segment or the connection fails during processing, Vox writes a final
+    {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
+    are skipped. An invalid segments file produces one error object and exits 2.
+
+    With a segments file named in.json, save stdout before running jq:
+
+    status=0
+
+    vox say --from in.json --json >out.jsonl ||
+
+    status=$?
+
+    jq -c . out.jsonl
+
+    echo "Vox exit status: $status" >&2
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     key_resolver = ApiKeyResolver(
