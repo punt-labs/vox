@@ -1343,7 +1343,9 @@ class TestVoiceCommand:
         result = CliRunner().invoke(app, ["voice", "nobody"])
 
         assert result.exit_code == 1, result.output
-        assert "Error: nobody (available: matilda, roger)" in result.output
+        assert "Error: Unknown voice 'nobody'. Available: ['matilda', 'roger']" in (
+            result.output
+        )
         assert config.read_text() == original
         mock_client_cls.return_value.voices.assert_called_once_with(
             provider="elevenlabs"
@@ -1413,7 +1415,7 @@ class TestVoiceCommand:
         else:
             assert result.exit_code == 1, result.output
             assert json.loads(result.output) == {
-                "error": f"{voice_id} (available: alloy)"
+                "error": f"Unknown voice {voice_id!r}. Available: ['alloy']"
             }
             assert config.read_text() == original
 
