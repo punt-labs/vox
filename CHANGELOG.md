@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `vox say` and `vox rec new` share how they prepare synthesis settings and
+  text segments. Command behavior is unchanged.
+
 - `vox music get` reads album metadata off the daemon event loop so slow disks
   do not stall other requests. (PL-1539)
 

@@ -149,13 +149,8 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
     monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
-    # session_spec.py owns SessionSpec.for_repo(), the one config-lookup
-    # path vox say/vox rec new/vox call all share -- ``vox say``'s
-    # __main__._fill_from_state and vox rec new's cli_rec._fill_from_state
-    # both route through it now, so neither module imports find_config_dir
-    # directly any more; only session_spec's own "from X import Y" binding
-    # (captured at import time, same reason __main__'s needs its own entry
-    # above) needs patching.
+    # SessionSpec.for_repo() is the config-lookup path shared by vox say,
+    # vox rec new, and vox call. Patch the binding in session_spec itself.
     monkeypatch.setattr("punt_vox.session_spec.find_config_dir", _resolve)
     return config_dir
 

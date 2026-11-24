@@ -19,10 +19,11 @@ from punt_vox.cli_daemon import DaemonCli
 from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_group import VoxGroup
-from punt_vox.cli_io import OutputFlags, TextInput
+from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.cli_status import StatusCli
+from punt_vox.cli_synthesis import CliSynthesis
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
@@ -31,12 +32,7 @@ from punt_vox.config import ConfigStore, SpeakMode
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
-)
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
@@ -67,44 +63,7 @@ app.add_typer(cache_app, name="cache")
 
 _formatter = OutputFormatter()
 _flags = OutputFlags(_formatter)
-_text_input = TextInput(_formatter)
-
-
-def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
-    """Validate a spec at the CLI boundary, returning it for chaining.
-
-    Translates ``ValueError`` from :meth:`SynthesisSpec.validate` into
-    ``typer.BadParameter`` so the CLI displays a user-friendly message. The
-    caller builds the :class:`SynthesisSpec` (the bundle already names every
-    field), so this stays a one-argument boundary check rather than re-listing
-    a dozen parameters.
-    """
-    try:
-        spec.validate()
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    return spec
-
-
-def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
-    """Fill unset synthesis fields from repo state through SessionSpec.
-
-    An unconfigured provider or incompatible provider/model pair exits with code 1.
-    """
-    try:
-        return SessionSpec.for_repo().fill(spec)
-    except ProviderNotConfiguredError as exc:
-        # SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
-        # message by default -- the wrong verb for this CLI path (mirrors
-        # commands/model.py, commands/voice.py, and commands/call_spec.py's
-        # identical rebuild).
-        message = str(ProviderNotConfiguredError.for_cli())
-        _formatter.error(message, f"Error: {message}")
-        raise typer.Exit(code=1) from exc
-    except ModelNotAvailableError as exc:
-        message = str(exc)
-        _formatter.error(message, f"Error: {message}")
-        raise typer.Exit(code=1) from exc
+_synthesis = CliSynthesis(_formatter)
 
 
 # ---------------------------------------------------------------------------
@@ -333,22 +292,19 @@ def say(  # pyright: ignore[reportUnusedFunction]
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     ).resolve()
 
-    segments = _text_input.resolve(text, from_file)
-    spec = _fill_from_state(
-        _validated_spec(
-            SynthesisSpec(
-                voice=voice,
-                language=language,
-                rate=rate,
-                provider=provider,
-                model=model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost or None,
-                api_key=resolved_api_key,
-            )
-        )
+    segments, spec = _synthesis.prepare(
+        text,
+        from_file,
+        voice=voice,
+        language=language,
+        rate=rate,
+        provider=provider,
+        model=model,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        api_key=resolved_api_key,
     )
 
     _speak_segments(segments, spec, once or None)
