@@ -1389,13 +1389,18 @@ class TestVibeCommand:
         (["notify", "normal", "--json"], "vox.md"),
         (["--json", "speak", "n"], "vox.md"),
         (["--json", "vibe", "whispering"], "vox.local.md"),
+        (["provider", "elevenlabs", "--json"], "vox.md"),
     ],
 )
 def test_config_edit_invalid_utf8_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], filename: str
 ) -> None:
     monkeypatch.setattr("punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
     monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+    client = MagicMock()
+    client.voices.return_value = ["demo"]
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     config = tmp_path / filename
     config.write_bytes(b"\xff\n")
 

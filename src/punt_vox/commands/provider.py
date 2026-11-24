@@ -13,6 +13,7 @@ from typing import Self, final
 from punt_vox.cascade import Cascade, RosterError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.server_switches import PROVIDER_NAMES
+from punt_vox.types_errors import ConfigValueError
 
 
 @final
@@ -67,12 +68,9 @@ class ProviderCommand:
         }
         try:
             ctx.store.write_fields(updates)
-        except ValueError as exc:
+        except ConfigValueError as exc:
             return CommandResult.failure(str(exc))
-        return CommandResult(
-            text=f"Provider: {name}",
-            json_data={**updates},
-        )
+        return CommandResult(text=f"Provider: {name}", json_data=updates)
 
 
 provider: ProviderCommand = ProviderCommand()
