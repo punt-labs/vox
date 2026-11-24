@@ -1543,7 +1543,7 @@ class TestDoctorCommand:
         # Create Music dir so the Music-directory doctor check passes.
         (tmp_path / "Music").mkdir(exist_ok=True)
         # Create output dir so the output-directory doctor check passes.
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
@@ -1566,8 +1566,8 @@ class TestDoctorCommand:
                 return_value=config_path,
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
@@ -1576,7 +1576,7 @@ class TestDoctorCommand:
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1708,7 +1708,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1727,15 +1727,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1796,7 +1796,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1815,15 +1815,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
@@ -1870,7 +1870,7 @@ class TestDoctorCommand:
 
         # Create Music and output dirs so doctor checks pass.
         (tmp_path / "Music").mkdir(exist_ok=True)
-        (tmp_path / "audio").mkdir(exist_ok=True)
+        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         _doc = "punt_vox.doctor"
         _mpv = "punt_vox.doctor_mpv"
@@ -1889,15 +1889,15 @@ class TestDoctorCommand:
                 return_value=tmp_path / "nope.json",
             ),
             patch(
-                f"{_doc}.default_output_dir",
-                return_value=tmp_path / "audio",
+                "punt_vox.doctor_output.default_output_dir",
+                return_value=tmp_path / "Music" / "vox",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
             patch(
-                "punt_vox.dirs._resolve_music_dir",
+                "punt_vox.doctor_output._resolve_music_dir",
                 return_value=tmp_path / "Music",
             ),
         ):
