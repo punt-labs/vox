@@ -1,5 +1,7 @@
 """Tests for the provider/model roster target and wire request."""
 
+from __future__ import annotations
+
 import pytest
 
 from punt_vox.voice_target import VoiceTarget
