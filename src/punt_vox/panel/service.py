@@ -79,7 +79,7 @@ class VoxPanelService:
         self = super().__new__(cls)
         self._client = client
         self._store = store
-        self._settings = PanelSettings(client, store, logger)
+        self._settings = PanelSettings(client, store)
         self._push = PanelPush()
         self._voice_preview = VoicePreview(client, store, logger)
         return self

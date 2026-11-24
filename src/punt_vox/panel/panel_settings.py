@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
@@ -12,11 +13,12 @@ from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.state import PanelState
 
 if TYPE_CHECKING:
-    import logging
     from collections.abc import Callable
 
     from punt_vox.panel.panel_scene import PanelScene
     from punt_vox.panel.ports import SettingsStore, VoiceRoster
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["PanelSettings"]
 
@@ -27,20 +29,16 @@ class PanelSettings:
 
     _client: VoiceRoster
     _store: SettingsStore
-    _logger: logging.Logger
     _lock: threading.Lock
     _state: PanelState
     _notice: PanelNotice
-    __slots__ = ("_client", "_lock", "_logger", "_notice", "_state", "_store")
+    __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
 
-    def __new__(
-        cls, client: VoiceRoster, store: SettingsStore, logger: logging.Logger
-    ) -> Self:
+    def __new__(cls, client: VoiceRoster, store: SettingsStore) -> Self:
         """Create empty settings for a session."""
         self = super().__new__(cls)
         self._client = client
         self._store = store
-        self._logger = logger
         self._lock = threading.Lock()
         self._state = PanelState.empty()
         self._notice = PanelNotice.silent()
@@ -97,7 +95,7 @@ class PanelSettings:
         """
         result = Cascade.fetch_roster(self._client, provider)
         if isinstance(result, RosterError):
-            self._logger.warning(
+            logger.warning(
                 "vox-panel: roster fetch failed during %s (provider=%r): %s",
                 context,
                 provider,
@@ -161,7 +159,7 @@ class PanelSettings:
             # provider we saw before the fetch is not the one we see now,
             # give up rather than overwrite that newer state.
             if self._state.provider != pre_fetch_provider:
-                self._logger.info(
+                logger.info(
                     "vox-panel: provider changed to %r mid-fetch; "
                     "aborting our %r commit",
                     self._state.provider,
@@ -221,9 +219,7 @@ class PanelSettings:
             # Skip rather than fetch a cascaded voice roster from a
             # provider the session no longer declares. The notice is left
             # as it stands -- this call has nothing of its own to report.
-            self._logger.info(
-                "vox-panel: model click ignored; no provider selected yet"
-            )
+            logger.info("vox-panel: model click ignored; no provider selected yet")
             return ControlPush.CORRECT
         roster = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
         if roster is None:
@@ -236,7 +232,7 @@ class PanelSettings:
             # from the wrong provider on top of that newer state.
             current_provider = self._state.provider
             if current_provider != pre_fetch_provider:
-                self._logger.info(
+                logger.info(
                     "vox-panel: provider changed to %r mid-fetch; "
                     "aborting our model %r commit",
                     current_provider,

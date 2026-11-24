@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, final
 
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
@@ -13,6 +14,8 @@ from punt_vox.panel.state import PanelState
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 @final
@@ -23,9 +26,30 @@ class _Roster:
 
 
 class TestPanelSettings:
+    def test_roster_failure_logs_under_settings_module(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class _UnavailableRoster:
+            def voices(self, provider: str) -> list[str]:
+                raise VoxdConnectionError(f"no roster for {provider}")
+
+        store = ConfigStore(tmp_path)
+        settings = PanelSettings(_UnavailableRoster(), store)
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.panel.panel_settings"):
+            assert settings.commit_provider("openai") is ControlPush.CORRECT
+
+        assert any(
+            record.name == "punt_vox.panel.panel_settings"
+            and "roster fetch failed during provider-switch" in record.message
+            for record in caplog.records
+        )
+        assert settings.scene().notice == PanelNotice.voxd_unavailable()
+        assert store.read_field("provider") is None
+
     def test_provider_cascades_model_and_voice(self, tmp_path: Path) -> None:
         store = ConfigStore(tmp_path)
-        settings = PanelSettings(_Roster(), store, logging.getLogger(__name__))
+        settings = PanelSettings(_Roster(), store)
 
         assert settings.commit_provider("openai") is ControlPush.REFRESH
 
@@ -39,7 +63,7 @@ class TestPanelSettings:
         self, tmp_path: Path
     ) -> None:
         store = ConfigStore(tmp_path)
-        settings = PanelSettings(_Roster(), store, logging.getLogger(__name__))
+        settings = PanelSettings(_Roster(), store)
         settings.replace(
             PanelState.empty().with_provider(
                 "openai", roster=("alloy", "nova"), model="tts-1", voice="nova"
@@ -70,7 +94,7 @@ class TestPanelSettings:
                 return ["benno"]
 
         store = ConfigStore(tmp_path)
-        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
+        settings = PanelSettings(_RacingRoster(), store)
         settings.replace(
             PanelState.empty().with_provider(
                 "elevenlabs", roster=("benno",), model=None, voice="benno"
@@ -99,7 +123,7 @@ class TestPanelSettings:
         full reinstall snaps it back.
         """
         store = ConfigStore(tmp_path)
-        settings = PanelSettings(_Roster(), store, logging.getLogger(__name__))
+        settings = PanelSettings(_Roster(), store)
         changed = settings.commit_model("tts-1")
         assert changed is ControlPush.CORRECT
         assert store.read_field("model") is None
@@ -120,7 +144,7 @@ class TestPanelSettings:
                 return ["matilda"]
 
         store = ConfigStore(tmp_path)
-        settings = PanelSettings(_RacingRoster(), store, logging.getLogger(__name__))
+        settings = PanelSettings(_RacingRoster(), store)
         settings.replace(
             PanelState.empty().with_provider(
                 "elevenlabs", roster=("matilda",), model=None, voice="matilda"
