@@ -47,23 +47,28 @@ class LiveCheck:
     registry); it is injected so tests substitute stub providers rather than
     patching SDKs.  Probes run concurrently on a dedicated thread pool, each
     bounded by *deadline_s*, so one slow provider cannot stall the whole report
-    and a hung one cannot starve the daemon's shared executor.
+    and a hung one cannot starve the daemon's shared executor.  They run under
+    *env_lock*, the lock synthesis holds while a caller's own API key is in the
+    process environment, so a probe checks the daemon's key, never a caller's.
     """
 
-    __slots__ = ("_build", "_deadline_s", "_pool")
+    __slots__ = ("_build", "_deadline_s", "_env_lock", "_pool")
     _build: Callable[[str], TTSProvider]
     _deadline_s: float
+    _env_lock: asyncio.Lock
     _pool: ThreadPoolExecutor
 
     def __new__(
         cls,
         build: Callable[[str], TTSProvider] | None = None,
         deadline_s: float = _DEFAULT_DEADLINE_S,
+        env_lock: asyncio.Lock | None = None,
     ) -> Self:
         """Create a live check that builds providers with *build*."""
         self = super().__new__(cls)
         self._build = build if build is not None else get_provider
         self._deadline_s = deadline_s
+        self._env_lock = env_lock if env_lock is not None else asyncio.Lock()
         self._pool = ThreadPoolExecutor(_WORKERS, thread_name_prefix="live-check")
         return self
 
@@ -71,7 +76,8 @@ class LiveCheck:
         self, rows: Sequence[ProviderReadiness]
     ) -> tuple[ProviderReadiness, ...]:
         """Return *rows* in order, each ready one confirmed by a live check."""
-        return tuple(await asyncio.gather(*(self.confirm(row) for row in rows)))
+        async with self._env_lock:
+            return tuple(await asyncio.gather(*(self.confirm(row) for row in rows)))
 
     async def confirm(self, row: ProviderReadiness) -> ProviderReadiness:
         """Return *row*, or a ``check_failed`` row if its live check fails.

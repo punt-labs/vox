@@ -36,6 +36,8 @@ from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
+    import asyncio
+
     from starlette.websockets import WebSocket
 
     from punt_vox.types_provider import ProviderReadiness
@@ -64,13 +66,21 @@ class ProviderStatusHandler:
         cls,
         credentials: ProviderCredentials | None = None,
         live_check: LiveCheck | None = None,
+        *,
+        env_lock: asyncio.Lock | None = None,
     ) -> Self:
-        """Create a provider status handler."""
+        """Create a provider status handler.
+
+        *env_lock* is synthesis's API-key lock, handed to the default
+        :class:`LiveCheck` so its probes never see a caller's injected key.
+        """
         self = super().__new__(cls)
         self._credentials = (
             credentials if credentials is not None else ProviderCredentials()
         )
-        self._live_check = live_check if live_check is not None else LiveCheck()
+        self._live_check = (
+            live_check if live_check is not None else LiveCheck(env_lock=env_lock)
+        )
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:

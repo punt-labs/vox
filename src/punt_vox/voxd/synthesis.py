@@ -67,6 +67,11 @@ class SynthesisPipeline:
         self._playback_mutex = playback_mutex
         return self
 
+    @property
+    def env_lock(self) -> asyncio.Lock:
+        """Return the lock held while a caller's API key is in the environment."""
+        return self._env_lock
+
     # -- Static helpers ----------------------------------------------------
 
     @staticmethod

@@ -138,3 +138,24 @@ class TestLiveCheck:
         check = LiveCheck(build=_builder({"openai": record_thread}))
         asyncio.run(check.confirm_all((_ready("openai"),)))
         assert names[0].startswith("live-check")
+
+    def test_probes_wait_for_a_callers_key_to_leave_the_environment(self) -> None:
+        # Synthesis holds this lock while a caller's own key is in os.environ;
+        # a probe built then would check the caller's key, not the daemon's.
+        probed: list[str] = []
+
+        def record() -> list[HealthCheck]:
+            probed.append("openai")
+            return _accepted()
+
+        async def scenario() -> None:
+            env_lock = asyncio.Lock()
+            check = LiveCheck(build=_builder({"openai": record}), env_lock=env_lock)
+            async with env_lock:
+                task = asyncio.create_task(check.confirm_all((_ready("openai"),)))
+                await asyncio.sleep(0.05)
+                assert probed == []
+            assert (await task)[0].ready
+            assert probed == ["openai"]
+
+        asyncio.run(scenario())
