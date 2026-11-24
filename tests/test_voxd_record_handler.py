@@ -335,16 +335,29 @@ class TestRecordHandler:
 
         assert sent[-1] == {"type": "error", "id": "r1", "message": str(rejection)}
 
-    def test_empty_text_is_an_error(self, tmp_path: Path) -> None:
-        src = tmp_path / "src.mp3"
-        src.write_bytes(b"\x00")
+    @pytest.mark.parametrize(
+        "text", ["", "  ", "\t\n"], ids=["empty", "spaces", "tab-nl"]
+    )
+    def test_blank_text_is_an_error(self, tmp_path: Path, text: str) -> None:
+        """Whitespace-only text is rejected before the ack like "", so no
+        provider call is made and nothing lands in the store."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock(
+            side_effect=RuntimeError("provider rejected blank text")
+        )
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
         ws, sent = _capturing_ws()
 
-        msg: dict[str, object] = {"type": "record", "id": "r1", "text": ""}
-        asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": text,
+            "provider": "elevenlabs",
+        }
+        asyncio.run(handler(msg, ws))
 
-        assert sent[-1]["type"] == "error"
-        assert "empty text" in str(sent[-1]["message"])
+        assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
+        synth.synthesize_to_file.assert_not_called()
 
     def test_non_string_voice_is_a_clean_error(self, tmp_path: Path) -> None:
         """A non-string typed field yields an error frame before the ack; the
