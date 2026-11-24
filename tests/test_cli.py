@@ -50,6 +50,39 @@ _CLI_DAEMON = "punt_vox.cli_daemon"
 _CLI_DESKTOP = "punt_vox.cli_desktop"
 
 
+@pytest.mark.parametrize("command", [("say",), ("rec", "new")])
+@pytest.mark.parametrize("rich", ["0", "1"])
+def test_batch_json_lines_help_preserves_shell_example(
+    command: tuple[str, ...], rich: str
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "punt_vox", *command, "--help"],
+        env={
+            **os.environ,
+            "TYPER_USE_RICH": rich,
+            "TERMINAL_WIDTH": "55",
+            "COLUMNS": "55",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "\b" not in result.stdout
+    stdout = click.unstyle(result.stdout)
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    assert "status=0" in lines, result.stdout
+    start = lines.index("status=0")
+    assert lines[start : start + 5] == [
+        "status=0",
+        f"vox {' '.join(command)} --from in.json --json >out.jsonl ||",
+        "status=$?",
+        "jq -c . out.jsonl",
+        'echo "Vox exit status: $status" >&2',
+    ]
+
+
 @pytest.mark.parametrize(
     "args",
     [
