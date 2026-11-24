@@ -100,8 +100,8 @@ class AwsCredentials:
         return tuple(sorted(self._stored.keys() - written))
 
     def _pair_kept(self, merged: Mapping[str, str], written: set[str]) -> bool:
-        """Return whether *merged* keeps the stored pair, or writes none at all."""
+        """Return whether *merged* keeps the stored pair, or writes no whole one."""
         stored_pair = self._stored.keys() & _AWS_PAIR
         if not stored_pair:
-            return not written & _AWS_PAIR
+            return not written >= _AWS_PAIR
         return all(self._stored[k] == merged.get(k) for k in stored_pair)

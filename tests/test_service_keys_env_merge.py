@@ -104,6 +104,13 @@ def test_a_new_pair_drops_a_stored_token_with_no_pair(rotate: bool) -> None:
     assert merge.removed == ("AWS_SESSION_TOKEN",)
 
 
+def test_half_a_new_pair_keeps_a_stored_token_with_no_pair() -> None:
+    stored = {"AWS_SESSION_TOKEN": "token"}
+    merge = KeysEnvMerge(stored, {"AWS_ACCESS_KEY_ID": "ASIASHELL"})
+    assert merge.merged == stored | {"AWS_ACCESS_KEY_ID": "ASIASHELL"}
+    assert merge.removed == ()
+
+
 def test_a_new_set_keeps_a_matching_stored_token() -> None:
     merge = KeysEnvMerge({"AWS_SESSION_TOKEN": "token"}, _TEMPORARY_SET)
     assert merge.merged == _TEMPORARY_SET
