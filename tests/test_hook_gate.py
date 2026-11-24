@@ -734,6 +734,7 @@ class TestPanelSpawn:
             "multiline",
             "outside",
             "traversal",
+            "nested",
             "missing",
         ],
     )
@@ -755,6 +756,8 @@ class TestPanelSpawn:
         env["CLI_LOG_DIR"] = str(log_dir)
         outside = tmp_path / "outside" / "vox-state" / "logs"
         env["OUTSIDE_LOG_DIR"] = str(outside)
+        nested = log_dir.parent / "extra" / "logs"
+        env["NESTED_LOG_DIR"] = str(nested)
         if lookup != "missing":
             vox = bin_dir / "vox"
             action = {
@@ -765,6 +768,7 @@ class TestPanelSpawn:
                 "multiline": 'printf "%s\\n%s\\n" "$CLI_LOG_DIR" "$CLI_LOG_DIR"',
                 "outside": 'printf "%s\\n" "$OUTSIDE_LOG_DIR"',
                 "traversal": 'printf "%s\\n" "$HOME/../outside/vox-state/logs"',
+                "nested": 'printf "%s\\n" "$NESTED_LOG_DIR"',
             }[lookup]
             vox.write_text(
                 f'#!/bin/bash\n[[ "$*" == "hook _log-dir" ]] || exit 1\n{action}\n',
@@ -785,6 +789,7 @@ class TestPanelSpawn:
             assert "not found on PATH" in legacy.read_text(encoding="utf-8")
             assert not log_dir.exists()
             assert not outside.exists()
+            assert not nested.exists()
             assert not (repo / "relative").exists()
 
     def test_panel_log_avoids_the_world_writable_temp_dir(self, tmp_path: Path) -> None:

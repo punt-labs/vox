@@ -253,7 +253,7 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   # predictable per-session filename cannot be pre-empted by a symlink planted
   # at that path. Creating the directory 0700 matches paths.log_dir().
   if ! PANEL_LOG_DIR=$(vox hook _log-dir </dev/null 2>/dev/null) ||
-    [[ "$PANEL_LOG_DIR" != "${HOME%/}/"*/*/logs || "$PANEL_LOG_DIR" == *$'\n'* ||
+    [[ ! "$PANEL_LOG_DIR" =~ ^"${HOME%/}/"[^/]+/[^/]+/logs$ || "$PANEL_LOG_DIR" == *$'\n'* ||
        "$PANEL_LOG_DIR" == *//* || "$PANEL_LOG_DIR" == */./* || "$PANEL_LOG_DIR" == */../* ]]; then
     PANEL_LOG_DIR="$HOME/.punt-labs/vox/logs"
   fi
