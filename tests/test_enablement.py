@@ -73,9 +73,12 @@ def _assert_biconditional(repo: Path) -> None:
 
 
 def test_enable_reaches_enabled(tmp_path: Path) -> None:
-    RepoEnablement.for_repo(tmp_path).enable()
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
     assert _marker_present(tmp_path)
     assert _import_count(tmp_path) == 1
+    host_rules = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+    assert enablement.import_line in host_rules
 
 
 _LOCAL_IGNORE = ".punt-labs/vox/vox.local.md"
@@ -326,6 +329,16 @@ def test_purge_preserves_user_prose(tmp_path: Path) -> None:
     enablement.enable()
     enablement.purge()
     assert host.read_text(encoding="utf-8") == "# Rules\n\nKeep me.\n"
+
+
+def test_purge_absent_repo_keeps_existing_gitignore(tmp_path: Path) -> None:
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_bytes(b"dist/\n")
+
+    RepoEnablement.for_repo(tmp_path).purge()
+
+    assert not _dir_present(tmp_path)
+    assert gitignore.read_bytes() == b"dist/\n"
 
 
 # ---------------------------------------------------------------------------
