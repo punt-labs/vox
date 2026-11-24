@@ -53,21 +53,35 @@ class FakeCallbackFlags:
 class FakeInputStream:
     """Records construction kwargs; :meth:`feed` drives the registered callback."""
 
-    __slots__ = ("_callback", "_closed", "_kwargs")
+    __slots__ = ("_callback", "_closed", "_kwargs", "_start_error")
     _callback: object
     _kwargs: dict[str, object]
     _closed: bool
+    _start_error: Exception | None  # None: the stream starts; else raised on entry.
 
     def __new__(cls, **kwargs: object) -> Self:
         self = super().__new__(cls)
         self._kwargs = kwargs
         self._callback = kwargs["callback"]
         self._closed = False
+        self._start_error = None
+        return self
+
+    @classmethod
+    def unstartable(cls, error: Exception, **kwargs: object) -> Self:
+        """A stream PortAudio constructs but cannot start, as sounddevice behaves.
+
+        ``sounddevice`` opens the native stream in the constructor and starts
+        it on entry; this fake raises ``error`` from ``__enter__`` so a test
+        can prove the adapter converts and closes it.
+        """
+        self = cls(**kwargs)
+        self._start_error = error
         return self
 
     @property
     def closed(self) -> bool:
-        """Return whether ``__exit__`` has run -- the device was released."""
+        """Return whether the stream was closed -- the device was released."""
         return self._closed
 
     @property
@@ -83,9 +97,16 @@ class FakeInputStream:
         callback(pcm, len(pcm) // 2, None, flags)
 
     def __enter__(self) -> Self:
+        """Start the stream; the adapter enters it, as ``sounddevice`` requires."""
+        if self._start_error is not None:
+            raise self._start_error
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the device, started or not; idempotent like the real one."""
         self._closed = True
 
 

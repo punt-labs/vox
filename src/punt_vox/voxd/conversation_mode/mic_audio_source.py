@@ -32,15 +32,13 @@ _CHUNK_S = 0.02
 
 @runtime_checkable
 class InputStreamHandle(Protocol):
-    """The context-manager surface a capture needs from a stream."""
-
-    def __enter__(self) -> Self: ...
+    """A started stream: leaving it stops the capture and releases the device."""
 
     def __exit__(self, *exc_info: object) -> None: ...
 
 
 class CaptureBackend(Protocol):
-    """Names the default input device and opens a raw stream on it."""
+    """Names the default input device and opens a started raw stream on it."""
 
     def device(self) -> InputDevice: ...
 

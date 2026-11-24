@@ -49,7 +49,7 @@ class MicCapture:
     def __new__(
         cls, stream: InputStreamHandle, queue: BlockQueue, chunk_s: float
     ) -> Self:
-        """Hold an entered ``stream`` whose callback feeds ``queue``."""
+        """Hold a started ``stream`` whose callback feeds ``queue``."""
         self = super().__new__(cls)
         self._stream, self._queue, self._chunk_s = stream, queue, chunk_s
         return self
@@ -58,7 +58,10 @@ class MicCapture:
     def open(
         cls, backend: CaptureBackend, *, sample_rate_hz: int, chunk_s: float
     ) -> Self:
-        """Query the default device and start a stream on it, or raise.
+        """Query the default device and open a started stream on it, or raise.
+
+        The backend owns opening and starting the stream, so a device that
+        refuses either step is one :class:`OSError` and nothing is held.
 
         Raises:
             OSError: When the backend has no default input device, or the
@@ -85,7 +88,7 @@ class MicCapture:
         stream = backend.open(
             samplerate=float(sample_rate_hz), blocksize=block_frames, callback=_callback
         )
-        return cls(stream.__enter__(), queue, chunk_s)
+        return cls(stream, queue, chunk_s)
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
         """Yield one :class:`AudioChunk` per delivered block, until closed.

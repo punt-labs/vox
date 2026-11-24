@@ -599,6 +599,41 @@ class TestMicrophoneBeforeDial:
         assert len(connector.connections) == 1
         assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
 
+    async def test_a_microphone_that_cannot_start_gives_the_call_id_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stream that opens but will not start is a refused microphone too.
+
+        sounddevice raises PortAudioError from start, not OSError; the
+        adapter converts it, so the launcher releases the trace the same way
+        and a retry with the same call ID reaches the connector.
+        """
+        attempts: list[FakeInputStream] = []
+
+        def start_fails_once(**kwargs: object) -> FakeInputStream:
+            if attempts:
+                stream = FakeInputStream(**kwargs)
+            else:
+                error = FakePortAudioError("Error starting stream: Device unavailable")
+                stream = FakeInputStream.unstartable(error, **kwargs)
+            attempts.append(stream)
+            return stream
+
+        fake_sounddevice(monkeypatch, FakeBackend(open_stream=start_fails_once))
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        call_id = uuid4()
+        request: dict[str, object] = {"type": "call_start", "echo_control": "headset"}
+        with pytest.raises(OSError, match="cannot open input device Fake Microphone"):
+            await launcher.launch(call_id, request)
+        assert attempts[0].closed
+        assert list(tmp_path.iterdir()) == []  # the reservation was undone
+        active = await launcher.launch(call_id, request)
+        await active.wait_connected(5)
+        await active.cancel()
+        assert len(connector.connections) == 1
+        assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
+
     async def test_the_microphone_is_open_before_the_agent_answers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

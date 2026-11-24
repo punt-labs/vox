@@ -60,16 +60,24 @@ class PortAudio:
     def open(
         *, samplerate: float, blocksize: int, callback: RawInputCallback
     ) -> InputStreamHandle:
-        """Open a raw mono int16 stream on the default input device.
+        """Open and start a raw mono int16 stream on the default input device.
+
+        ``sounddevice`` opens the native stream in the constructor and starts
+        it on entry, and either step can fail with its own
+        :class:`~sounddevice.PortAudioError`. Both are one refusal here: the
+        caller sees the same device-naming :class:`OSError`, and a stream
+        that opened but would not start is closed before it is raised, so
+        no device handle outlives the failure.
 
         Raises:
             OSError: When PortAudio refuses the stream: the device is busy,
-                has no input channels, or rejects the sample rate.
+                has no input channels, rejects the sample rate, or will not
+                start.
         """
         from sounddevice import PortAudioError, RawInputStream
 
         try:
-            return RawInputStream(
+            stream = RawInputStream(
                 samplerate=samplerate,
                 blocksize=blocksize,
                 channels=1,
@@ -77,10 +85,19 @@ class PortAudio:
                 callback=callback,
             )
         except PortAudioError as exc:
-            device = PortAudio.device().name
-            msg = (
-                f"cannot open input device {device}: {exc}. Close another "
-                "application holding the microphone, or choose a device with "
-                "an input channel"
-            )
-            raise OSError(msg) from exc
+            raise PortAudio._refused(exc) from exc
+        try:
+            return stream.__enter__()
+        except PortAudioError as exc:
+            stream.close()
+            raise PortAudio._refused(exc) from exc
+
+    @staticmethod
+    def _refused(exc: Exception) -> OSError:
+        """Name the device PortAudio would not open or start, with a remedy."""
+        device = PortAudio.device().name
+        return OSError(
+            f"cannot open input device {device}: {exc}. Close another "
+            "application holding the microphone, or choose a device with "
+            "an input channel"
+        )

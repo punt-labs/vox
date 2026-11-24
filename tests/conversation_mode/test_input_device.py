@@ -116,3 +116,37 @@ def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy
     assert "Invalid number of channels" in message
     assert "another application" in message
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
+
+
+def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sounddevice opens in the constructor and starts in __enter__.
+
+    A start failure is a PortAudioError, not an OSError; left unconverted it
+    would reach the launcher as neither a refused device nor a known RPC
+    error, with the device handle still open.
+    """
+    created: list[FakeInputStream] = []
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        error = _FakePortAudioError("Error starting stream: Device unavailable [-9985]")
+        stream = FakeInputStream.unstartable(error, **kwargs)
+        created.append(stream)
+        return stream
+
+    _install(
+        monkeypatch,
+        RawInputStream=construct,
+        query_devices=_device_info("USB Audio", 48000.0),
+    )
+
+    def callback(*_args: object) -> None:
+        pass
+
+    with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
+        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+    assert "Device unavailable" in str(failure.value)
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    (stream,) = created
+    assert stream.closed
