@@ -375,3 +375,46 @@ def test_failed_launch_discards_its_worktree_in_the_background(
     assert done.last_report["worktree_discarded"] is True
     assert "discard_pending" not in done.last_report
     worktrees.discard.assert_called_once()
+
+
+def test_later_stop_retries_a_skipped_discard(tmp_path: Path) -> None:
+    """DiscardRetryOnStop (Z): a clean stop re-queues the discard and runs it."""
+    provider = _StopRefusingProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    registry = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    skipped = registry.list()[0]
+    assert skipped.last_report["discard_skipped"] == "provider stop failed"
+    worktrees.discard.assert_not_called()
+    with patch.object(_StopRefusingProvider, "stop", FakeWorkerProvider.stop):
+        retried = registry.stop(skipped.id)
+    assert retried.state == "stopped"
+    assert not any(k.startswith("discard_") for k in retried.last_report)
+    assert retried.last_report["worktree_discarded"] is True
+    worktrees.discard.assert_called_once_with(
+        Path(skipped.project), Path(skipped.worktree), skipped.id
+    )
+
+
+def test_later_stop_retries_a_failed_discard(tmp_path: Path) -> None:
+    """DiscardRetryOnStop (Z): a transient discard error is retried on stop."""
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    busy = DiscardError()
+    busy.attempt("rmtree", lambda: _raise(OSError("busy")))
+    worktrees.discard.side_effect = busy
+    registry = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    _settled(registry)
+    failed = registry.list()[0]
+    assert failed.last_report["discard_error"] == "rmtree: OSError: busy"
+    worktrees.discard.side_effect = None
+    retried = registry.stop(failed.id)
+    assert retried.state == "stopped"
+    assert not any(k.startswith("discard_") for k in retried.last_report)
+    assert retried.last_report["worktree_discarded"] is True
+    assert worktrees.discard.call_count == 2

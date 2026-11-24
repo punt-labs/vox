@@ -21,11 +21,16 @@ class WorkerDiscard:
     The discard itself runs git and removes directories, so it is queued for
     the cleanup thread rather than run under the actor lock. A launch whose
     provider could not be stopped is not terminal: its pane may still be
-    live, so no discard is queued and ``discard_skipped`` says why.
+    live, so no discard is queued and ``discard_skipped`` says why. A skipped
+    or failed discard is owed again on the next stop that leaves the worker
+    stopped; only ``worktree_discarded`` settles it.
     """
 
     MARKERS: ClassVar[ReportMarkers] = ReportMarkers(
         "discard_pending", "discard_skipped", "discard_error", "worktree_discarded"
+    )
+    _UNSETTLED: ClassVar[ReportMarkers] = ReportMarkers(
+        "discard_skipped", "discard_error"
     )
     __slots__ = ()
 
@@ -43,6 +48,13 @@ class WorkerDiscard:
                 record, {"discard_skipped": "provider stop failed"}
             )
         return cls.MARKERS.replace(record, {"discard_pending": True})
+
+    @classmethod
+    def retry(cls, record: WorkerRecord) -> WorkerRecord:
+        """Queue a skipped or failed discard again once the worker is stopped."""
+        if record.state == "stopped" and cls._UNSETTLED.present(record):
+            return cls.MARKERS.replace(record, {"discard_pending": True})
+        return record
 
     @classmethod
     def run(cls, record: WorkerRecord, policy: WorkerRepoPolicy) -> WorkerRecord:

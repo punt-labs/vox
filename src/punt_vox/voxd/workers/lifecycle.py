@@ -118,14 +118,22 @@ class WorkerLifecycle:
         return WorkerDiscard.mark(cleaned)
 
     def terminate(self, record: WorkerRecord) -> WorkerRecord:
-        """Stop the provider without performing harness cleanup."""
+        """Stop the provider without performing harness cleanup.
+
+        A discard the rollback skipped or that failed is queued again once
+        the stop leaves the worker stopped.
+        """
         if record.last_report.get("pane_stop_pending") is True:
             self._providers[record.provider].stop(record.session)
             report = dict(record.last_report)
             del report["pane_stop_pending"]
             record = replace(record, last_report=report)
-        if record.state in ("stopped", "exited"):
-            return record
+        if record.state not in ("stopped", "exited"):
+            record = self._stop(record)
+        return WorkerDiscard.retry(record)
+
+    def _stop(self, record: WorkerRecord) -> WorkerRecord:
+        """Stop a live or starting worker and checkpoint its terminal phase."""
         dead = (
             "launch_error" not in record.last_report
             and self.probe(record, self._providers[record.provider])
