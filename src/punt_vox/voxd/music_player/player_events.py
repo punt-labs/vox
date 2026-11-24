@@ -102,9 +102,9 @@ class Next:
 class Pause:
     """Transport pause -- ``music.pause`` projected onto the suspend transition."""
 
-    def apply(self, service: PlayerCommands) -> None:
+    def apply(self, service: PlayerCommands) -> bool:
         """Suspend the active source in place (Z ``Pause``)."""
-        service.pause()
+        return service.pause()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused pause (names no album; double dispatch)."""
@@ -116,9 +116,9 @@ class Pause:
 class Resume:
     """Transport resume -- ``music.resume`` projected onto the resume transition."""
 
-    def apply(self, service: PlayerCommands) -> None:
+    def apply(self, service: PlayerCommands) -> bool:
         """Continue the suspended source (Z ``Resume``)."""
-        service.resume()
+        return service.resume()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Re-push the scene after a refused resume (names no album; dispatch)."""

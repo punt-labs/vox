@@ -140,12 +140,9 @@ class SelectionRequest:
 class CommandOutcome:
     """Whether the daemon applied a command, and a line describing the result.
 
-    The live protocol acks at *enqueue* with a bare reply (no ``applied`` flag),
-    so a command always parses to ``applied=True`` with an empty ``message``; the
-    rejected ``applied=False`` path is caught-and-logged in the daemon's async
-    apply and not yet sent. The flag and forward-looking parse are kept so
-    surfacing rejection later stays a daemon-side change, not a client-contract
-    change.
+    Queued commands receive a bare acknowledgement at enqueue, before the
+    single writer applies them. A synchronous no-op reports
+    ``applied=False`` and a reason in the command reply.
     """
 
     applied: bool
@@ -158,7 +155,7 @@ class CommandOutcome:
 
     @classmethod
     def rejected(cls, message: str) -> Self:
-        """Return a rejected outcome (forward-looking; unused by the live daemon)."""
+        """Return a rejected outcome carrying ``message``."""
         return cls(applied=False, message=message)
 
     def display(self, applied_default: str) -> str:
