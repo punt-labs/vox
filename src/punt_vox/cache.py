@@ -53,12 +53,16 @@ class CacheKey:
     similarity: float | None = None
     style: float | None = None
     speaker_boost: bool | None = None
+    vibe_tags: str | None = None
 
     @property
     def filename(self) -> str:
         """On-disk filename: 32-char MD5 hex + .mp3."""
+        fields = asdict(self)
+        if self.vibe_tags is None:
+            del fields["vibe_tags"]
         payload = json.dumps(
-            {"version": 3, **asdict(self)}, sort_keys=True, separators=(",", ":")
+            {"version": 3, **fields}, sort_keys=True, separators=(",", ":")
         ).encode()
         digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
         return f"{digest}.mp3"

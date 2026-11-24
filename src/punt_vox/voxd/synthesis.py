@@ -102,11 +102,14 @@ class SynthesisPipeline:
         return False
 
     @staticmethod
-    def _prepare_audio_request(text: str, spec: SynthesisSpec) -> AudioRequest:
+    def prepare_audio_request(text: str, spec: SynthesisSpec) -> AudioRequest:
         """Normalize and validate text before preparing a provider request."""
+        body, vibe_tags = SynthesisPipeline._normalize_for_synthesis(text, spec)
+        if not body:
+            raise EmptyNormalizedTextError("empty text after normalization")
         provider_id = spec.provider or ""
         return AudioRequest(
-            text=SynthesisPipeline.normalized_text(text, spec),
+            text=body,
             voice=spec.voice,
             language=spec.language,
             rate=spec.rate,
@@ -115,37 +118,19 @@ class SynthesisPipeline:
             style=spec.style,
             speaker_boost=spec.speaker_boost,
             provider=AudioProviderId.__members__.get(provider_id),
+            vibe_tags=vibe_tags,
         )
 
     @staticmethod
-    def apply_vibe_for_synthesis(
-        raw_text: str,
-        vibe_tags: str | None,
-        provider_name: str,
-        model: str | None,
-    ) -> str:
-        """Normalize raw input and apply vibe tags according to model capability."""
+    def _normalize_for_synthesis(
+        raw_text: str, spec: SynthesisSpec
+    ) -> tuple[str, str | None]:
         expressive = SynthesisPipeline.model_supports_expressive_tags(
-            provider_name, model
+            spec.provider or "", spec.model
         )
         body = SpeechText.for_synthesis(raw_text, expressive=expressive)
-        if expressive and vibe_tags:
-            return SynthesisPipeline._prefix_vibe(body, vibe_tags)
-        return body
-
-    @staticmethod
-    def _prefix_vibe(body: str, vibe_tags: str) -> str:
-        return " ".join(filter(None, (vibe_tags.strip(), body))) if body else ""
-
-    @staticmethod
-    def normalized_text(text: str, spec: SynthesisSpec) -> str:
-        """Return the normalized text, rejecting input that leaves none."""
-        normalized = SynthesisPipeline.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, spec.provider or "", spec.model
-        )
-        if not normalized:
-            raise EmptyNormalizedTextError("empty text after normalization")
-        return normalized
+        vibe_tags = spec.vibe_tags.strip() if expressive and spec.vibe_tags else ""
+        return body, vibe_tags or None
 
     # -- Instance methods --------------------------------------------------
 
@@ -160,10 +145,12 @@ class SynthesisPipeline:
         credentials bypass lookup and store for billing isolation.
         """
         provider_name = spec.provider or ""
-        request = self._prepare_audio_request(text, spec)
+        request = self.prepare_audio_request(text, spec)
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
-        lookup = SynthesisCache.for_request(request.text, spec, len(text))
+        lookup = SynthesisCache.for_request(
+            request.text, spec, len(text), vibe_tags=request.vibe_tags
+        )
         if (cached := await lookup.outcome()) is not None:
             with usage.span("daemon", provider_name, text=text, cached=True):
                 return cached
@@ -218,7 +205,7 @@ class SynthesisPipeline:
 
         start = time.monotonic()
         try:
-            request = self._prepare_audio_request(text, spec)
+            request = self.prepare_audio_request(text, spec)
             with usage.span("daemon", provider_name, text=text, cached=False):
                 invocation = DirectPlayInvocation(
                     provider_name,

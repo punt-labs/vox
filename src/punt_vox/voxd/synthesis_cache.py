@@ -31,7 +31,14 @@ class SynthesisCache:
         return self
 
     @classmethod
-    def for_request(cls, normalized: str, spec: SynthesisSpec, chars_in: int) -> Self:
+    def for_request(
+        cls,
+        normalized: str,
+        spec: SynthesisSpec,
+        chars_in: int,
+        *,
+        vibe_tags: str | None = None,
+    ) -> Self:
         """Build the anonymous identity from all audio-affecting settings."""
         key = CacheKey(
             normalized,
@@ -44,6 +51,7 @@ class SynthesisCache:
             similarity=spec.similarity,
             style=spec.style,
             speaker_boost=spec.speaker_boost,
+            vibe_tags=vibe_tags,
         )
         return cls(key, spec, chars_in)
 

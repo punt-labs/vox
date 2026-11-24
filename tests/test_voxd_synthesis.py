@@ -25,6 +25,82 @@ from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "limit", "tags", "vibe_prefix", "inline_prefix"),
+    [
+        ("eleven_v3", 5_000, "[whispers]", "[whispers] ", "[sighs] "),
+        ("eleven_v3", 5_000, None, "", "[sighs] "),
+        ("eleven_multilingual_v2", 10_000, "[whispers]", "", ""),
+    ],
+    ids=["v3-session", "v3-inline", "non-expressive"],
+)
+async def test_session_vibe_at_elevenlabs_chunk_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+    model: str,
+    limit: int,
+    tags: str | None,
+    vibe_prefix: str,
+    inline_prefix: str,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+    sentence = "The last train is waiting."
+    body = " ".join([sentence] * 410)
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(
+            f"[sighs] {body}",
+            SynthesisSpec(provider="elevenlabs", model=model, vibe_tags=tags),
+        )
+    outcome.path.unlink()
+    chunks: list[str] = [
+        call.kwargs["text"]
+        for call in mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    ]
+    assert len(chunks) > 1
+    assert all(0 < len(chunk) <= limit for chunk in chunks)
+    if vibe_prefix:
+        assert [chunk.startswith(vibe_prefix) for chunk in chunks] == [True] * len(
+            chunks
+        )
+    assert " ".join(chunk.removeprefix(vibe_prefix) for chunk in chunks) == (
+        inline_prefix + body
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_reuse_literal_or_legacy_audio(
+    tmp_path: Path, mock_elevenlabs_client: MagicMock
+) -> None:
+    pipeline = _make_pipeline()
+    spec = SynthesisSpec(provider="elevenlabs", model="eleven_v3")
+    with (
+        patch("punt_vox.cache.CACHE_DIR", tmp_path),
+        patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-elevenlabs"}),
+        patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ),
+    ):
+        old_take = await pipeline.synthesize_to_file("[whispers] Come closer.", spec)
+        assert not old_take.cached
+        old_take.path.unlink()
+        vibed_spec = replace(spec, vibe_tags=" [whispers] ")
+        new_take = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert not new_take.cached
+        new_take.path.unlink()
+        repeat = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert repeat.cached
+        repeat.path.unlink()
+    calls = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert [call.kwargs["text"] for call in calls] == ["[whispers] Come closer."] * 2
+
+
 @pytest.mark.parametrize(
     "changed",
     [
@@ -1239,9 +1315,14 @@ class TestModelSupportsExpressiveTags:
 
 
 class TestApplyVibeForSynthesis:
-    """apply_vibe_for_synthesis gates vibe-tag handling on capability."""
+    """Normalization gates vibe-tag handling on model capability."""
 
-    _apply = staticmethod(SynthesisPipeline.apply_vibe_for_synthesis)
+    @staticmethod
+    def _apply(raw: str, tags: str | None, provider: str, model: str | None) -> str:
+        body, vibe_tags = SynthesisPipeline._normalize_for_synthesis(
+            raw, SynthesisSpec(provider=provider, model=model, vibe_tags=tags)
+        )
+        return f"{vibe_tags} {body}" if vibe_tags and body else body
 
     def test_v3_preserves_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)

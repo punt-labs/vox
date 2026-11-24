@@ -227,7 +227,7 @@ class SynthesizeHandler(MessageHandler):
 
         async def reply_to_duplicate() -> None:
             try:
-                SynthesisPipeline.normalized_text(req.text, req.spec)
+                SynthesisPipeline.prepare_audio_request(req.text, req.spec)
             except EmptyNormalizedTextError as exc:
                 await req.fail(exc)
                 return

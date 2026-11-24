@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
+  Inline cues stay where they were written. (PL-1577)
+
 - Selecting Continuous notifications in the Lux Vox panel switches Mic Mode
   to Voice, matching `vox notify continuous`. (PL-1574)
 

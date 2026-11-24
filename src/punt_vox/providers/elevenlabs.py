@@ -12,6 +12,7 @@ from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
 from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
+from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -134,9 +135,10 @@ class ElevenLabsProvider(TTSProvider):
         """Synthesize text to an MP3 file using ElevenLabs."""
         # Strip expressive tags for models that don't interpret them,
         # so the TTS engine doesn't speak "[serious]" as a literal word.
-        text = request.text
         if not self.supports_expressive_tags:
-            text = strip_vibe_tags(text)
+            request = replace(
+                request, text=strip_vibe_tags(request.text), vibe_tags=None
+            )
 
         display_voice, voice_id = self._voices.resolve(
             request.voice or self.default_voice
@@ -150,24 +152,12 @@ class ElevenLabsProvider(TTSProvider):
                 rate,
             )
 
-        char_limit = self._char_limit
-
-        if len(text) > char_limit:
-            chunked_synthesize(
-                text=text,
-                char_limit=char_limit,
-                synthesize_chunk=lambda chunk, path: self._single_synthesize(
-                    replace(request, text=chunk), path, voice_id
-                ),
-                output_path=output_path,
-            )
-        else:
-            self._single_synthesize(replace(request, text=text), output_path, voice_id)
+        self._synthesize_text(request, output_path, voice_id)
 
         logger.info("Wrote %s", output_path)
         return SynthesisResult(
             path=output_path,
-            text=text,
+            text=request.text,
             provider=AudioProviderId.elevenlabs,
             voice=display_voice,
             language=request.language,
@@ -215,17 +205,40 @@ class ElevenLabsProvider(TTSProvider):
 
     # -- Private helpers --------------------------------------------------
 
+    def _synthesize_text(
+        self, request: SynthesisRequest, output_path: Path, voice_id: str
+    ) -> None:
+        tags = (request.vibe_tags or "").strip()
+        prefix = f"{tags} " if tags else ""
+        body_limit = self._char_limit - len(prefix)
+        if body_limit <= 0:
+            msg = (
+                "ElevenLabs vibe cue leaves no room for speech "
+                f"within {self._char_limit} characters"
+            )
+            raise ProviderConfigError(msg)
+
+        def synthesize_chunk(chunk: str, path: Path) -> None:
+            self._single_synthesize(
+                replace(request, text=prefix + chunk), path, voice_id
+            )
+
+        if len(request.text) <= body_limit:
+            synthesize_chunk(request.text, output_path)
+        else:
+            chunked_synthesize(request.text, body_limit, synthesize_chunk, output_path)
+
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]
         """Build VoiceSettings from request fields, or None for defaults."""
-        kwargs: dict[str, Any] = {}
-        if request.stability is not None:
-            kwargs["stability"] = request.stability
-        if request.similarity is not None:
-            kwargs["similarity_boost"] = request.similarity
-        if request.style is not None:
-            kwargs["style"] = request.style
-        if request.speaker_boost is not None:
-            kwargs["use_speaker_boost"] = request.speaker_boost
+        settings = {
+            "stability": request.stability,
+            "similarity_boost": request.similarity,
+            "style": request.style,
+            "use_speaker_boost": request.speaker_boost,
+        }
+        kwargs: dict[str, Any] = {
+            key: value for key, value in settings.items() if value is not None
+        }
 
         if not kwargs:
             return None
