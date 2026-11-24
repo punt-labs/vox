@@ -17,6 +17,7 @@ from punt_vox.voxd import recording_handlers
 from punt_vox.voxd.fetch_digest import FetchDigest
 from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.ws_session import WebSocketSession
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -162,7 +163,9 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
 ) -> None:
     (tmp_path / "r.mp3").write_bytes(b"data")
     started, resume, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    watcher_finished = asyncio.Event()
     original_measure = FetchDigest.measure
+    original_watch = WebSocketSession._watch_fetch
 
     async def measure(digest: FetchDigest, path: Path) -> object:
         started.set()
@@ -173,7 +176,12 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
         await websocket.send_json({"type": "next", "id": msg["id"]})
         finished.set()
 
+    async def watch(session: WebSocketSession, fetch: asyncio.Task[None]) -> None:
+        await original_watch(session, fetch)
+        watcher_finished.set()
+
     monkeypatch.setattr(FetchDigest, "measure", measure)
+    monkeypatch.setattr(WebSocketSession, "_watch_fetch", watch)
     router.handlers["next"] = next_request
     peer = _FetchPeer(router)
     try:
@@ -183,7 +191,9 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
             peer.send("next", "after")
             if broken_receive:
                 peer.disconnect(RuntimeError("broken receive"))
-            await asyncio.sleep(0)
+                await watcher_finished.wait()
+            else:
+                await asyncio.sleep(0)
             resume.set()
             await finished.wait()
     finally:
