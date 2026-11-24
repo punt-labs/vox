@@ -23,6 +23,7 @@ from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.polly import PollyProvider, VoiceConfig
 from punt_vox.providers.say import SayProvider, SayVoiceConfig
 from punt_vox.voxd.record_store import RecordStore
+from punt_vox.voxd.workers.contracts import HarnessProfile
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -39,6 +40,14 @@ def recording_socket() -> tuple[WebSocket, list[dict[str, object]]]:
             sent.append(payload)
 
     return cast("WebSocket", _WS()), sent
+
+
+@pytest.fixture
+def harness_profile() -> MagicMock:
+    """Mock a HarnessProfile with the integer input limit the protocol promises."""
+    profile = MagicMock(spec=HarnessProfile)
+    profile.input_limit = 1000
+    return profile
 
 
 @pytest.fixture
