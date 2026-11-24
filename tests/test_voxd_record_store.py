@@ -8,6 +8,7 @@ empty, or NUL-bearing -- can cause a write outside the daemon-owned root.
 from __future__ import annotations
 
 import errno
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,7 @@ class TestContainment:
 
 
 class TestEnumerateAndRemove:
-    """entries() lists immediate in-root files; remove() unlinks one by bare name."""
+    """Scan immediate recording files and remove one by bare name."""
 
     def test_entries_skips_dirs_and_symlinks(
         self, store: RecordStore, tmp_path: Path
@@ -124,7 +125,7 @@ class TestEnumerateAndRemove:
         (store.root / "real.mp3").write_bytes(b"12345")
         (store.root / "sub").mkdir()  # a directory is not a recording
         (store.root / "link.mp3").symlink_to(tmp_path / "elsewhere.mp3")
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"real.mp3"}
 
     def test_entries_does_not_follow_symlink_to_real_file(
@@ -134,7 +135,7 @@ class TestEnumerateAndRemove:
 
         The weaker sibling test uses a broken symlink, which a follow-based
         ``is_file()`` would also skip -- so it cannot tell a follow from a
-        non-follow. Here the target is a genuine regular file: if ``entries()``
+        non-follow. Here the target is a genuine regular file: if ``entry_batches()``
         followed the link (``is_file()`` semantics) it would list ``link.mp3`` as
         a plain recording. Because it classifies from ``lstat`` (whose mode is
         ``S_ISLNK``, not ``S_ISREG``), the link is excluded and its target is
@@ -146,21 +147,21 @@ class TestEnumerateAndRemove:
         (store.root / "real.mp3").write_bytes(b"12345")
         (store.root / "link.mp3").symlink_to(target)
 
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
 
         assert names == {"real.mp3"}  # link.mp3 not followed, not listed
 
     def test_entries_reports_byte_counts(self, store: RecordStore) -> None:
         store.root.mkdir(parents=True)
         (store.root / "a.mp3").write_bytes(b"1234")
-        [entry] = store.entries()
+        [entry] = chain.from_iterable(store.entry_batches())
         assert entry.name == "a.mp3"
         assert entry.byte_count == 4
 
     def test_entries_skips_a_child_whose_stat_fails(
         self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A child unlinked between iterdir and lstat (TOCTOU) is skipped, not fatal.
+        """A child unlinked between scandir and lstat (TOCTOU) is skipped, not fatal.
 
         A listing is best-effort under concurrent mutation: one entry whose lstat
         raises OSError drops out and the enumeration continues for the rest.
@@ -176,13 +177,13 @@ class TestEnumerateAndRemove:
             return real_lstat(self)
 
         monkeypatch.setattr(Path, "lstat", flaky_lstat)
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"good.mp3"}  # the racing entry skipped, listing survives
 
     def test_entries_skips_names_a_ref_would_reject(self, store: RecordStore) -> None:
         """A planted file whose name BareName refuses is not listed.
 
-        entries() must surface only names resolve_ref/remove would accept, so
+        entry_batches() must surface only names resolve_ref/remove would accept, so
         list and operate stay consistent -- a backslash- or non-printable-bearing
         name that ``rec get``/``rec remove`` reject can never appear in ``rec
         list``. A normal recording alongside it still lists.
@@ -191,7 +192,7 @@ class TestEnumerateAndRemove:
         (store.root / "good.mp3").write_bytes(b"12345")
         (store.root / "bad\\name.mp3").write_bytes(b"planted")  # backslash: rejected
         (store.root / "tab\tname.mp3").write_bytes(b"planted")  # non-printable
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"good.mp3"}
 
     def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
@@ -278,7 +279,12 @@ class TestEnumerateAndRemove:
 
         monkeypatch.setattr(Path, "stat", denied)
         with pytest.raises(PermissionError, match="permission denied"):
-            store.entries()
+            next(store.entry_batches())
+
+    def test_batches_are_empty_when_the_root_is_missing(
+        self, store: RecordStore
+    ) -> None:
+        assert not list(store.entry_batches())
 
     def test_remove_access_fault_propagates_not_not_found(
         self, store: RecordStore, monkeypatch: pytest.MonkeyPatch

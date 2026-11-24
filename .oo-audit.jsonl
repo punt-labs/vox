@@ -2647,3 +2647,6 @@
 {"ts":"2026-11-24T05:42:50Z","commit":"ff877a1","source":null,"files_scored":506,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/voxd/rec_list_handler.py":{"avg_params":[1.57,1.2],"avg_complexity":[2.57,2.4],"module_size":[82.0,54.0]}},"removed":[]}
 {"ts":"2026-11-24T05:51:00Z","commit":"a0db4f4","source":null,"files_scored":506,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{},"removed":[]}
 {"ts":"2026-11-24T05:51:26Z","commit":"a0db4f4","source":null,"files_scored":506,"files_improved":1,"files_regressed":0,"verdict":"pass","deltas":{"src/punt_vox/voxd/ws_session.py":{"module_size":[97.0,94.0]}},"removed":[]}
+{"ts":"2026-11-24T05:52:40Z","commit":"b88ec8f","source":null,"files_scored":506,"files_improved":0,"files_regressed":1,"verdict":"fail","deltas":{},"removed":[]}
+{"ts":"2026-11-24T05:52:54Z","commit":"b88ec8f","source":null,"files_scored":506,"files_improved":0,"files_regressed":1,"verdict":"relaxed","reason":"Deleting the test-only zero-argument entries wrapper increases the mean parameter count while retaining the bounded scan.","deltas":{"src/punt_vox/voxd/record_store.py":{"avg_params":[1.14,1.23]}},"removed":[]}
+{"ts":"2026-11-24T05:52:56Z","commit":"b88ec8f","source":null,"files_scored":506,"files_improved":0,"files_regressed":0,"verdict":"pass","deltas":{},"removed":[]}

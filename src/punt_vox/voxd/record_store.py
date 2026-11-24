@@ -23,7 +23,6 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from itertools import batched
-from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
@@ -130,23 +129,11 @@ class RecordStore:
         moved = self._move(source, dest)
         return moved if moved is not None else self._copy(source, dest)
 
-    def entries(self) -> tuple[RecordingEntry, ...]:
-        """Return the store's immediate recordings (name + bytes), sorted by name.
-
-        Lists only the files directly in the ``0700`` root -- no recursion and no
-        following a symlink out of it -- so the enumeration cannot leak a path the
-        client could never have named. A missing root is an empty store; a root
-        that exists but cannot be read raises, so an access fault is never masked
-        as an empty listing (``RecListHandler`` turns the ``OSError`` into a fault).
-
-        Raises:
-            OSError: If the store exists but cannot be enumerated or inspected.
-        """
-        found = (entry for batch in self.entry_batches() for entry in batch)
-        return tuple(sorted(found, key=attrgetter("name")))
-
     def entry_batches(self) -> Iterator[list[RecordingEntry]]:
-        """Yield the entries from each bounded batch of directory children."""
+        """Yield bounded batches of immediate, non-symlink recording files.
+
+        A missing root is empty. An inaccessible root raises OSError.
+        """
         if not PathStatus.of(self._root).is_directory:
             return
         # Build the shared bare-name validator once; every child is judged by the
@@ -172,7 +159,7 @@ class RecordStore:
         and never fails on a concurrent delete.
 
         A name *validator* would refuse (a backslash-, separator-, or
-        non-printable-bearing planted file) is skipped too, so ``entries`` surfaces
+        non-printable-bearing planted file) is skipped too, so the scan surfaces
         only names ``resolve_ref``/``remove`` would accept -- list and operate stay
         consistent, never showing an id that ``rec get``/``rec remove`` then reject.
         ``None`` means "skip this entry", not a give-up on producing a value
