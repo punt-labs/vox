@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selecting a TTS provider. Invalid JSON errors name the file and location.
   (PL-1541)
 
+- Partial album export confirmations in Claude Code show the number of skipped
+  tracks instead of listing every filename. Export details still include the
+  filenames. (PL-1540)
+
 - `vox rec list` lists large recording stores without exceeding WebSocket frame
   limits or blocking other daemon requests while it scans the directory.
 
