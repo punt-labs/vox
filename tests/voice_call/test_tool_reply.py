@@ -35,6 +35,14 @@ def test_from_wire_reads_the_error_once_from_the_runner_text() -> None:
     assert ok == ToolReply.ok('{"workers": []}')
 
 
-def test_from_wire_refuses_an_error_that_is_not_text() -> None:
-    with pytest.raises(ValueError, match="not text"):
-        ToolReply.from_wire('{"error": 3}', is_error=True)
+@pytest.mark.parametrize("wire", ["{}", "[]", '{"error": 3}', "null", "not json"])
+def test_from_wire_refuses_every_malformed_error_reply_with_one_value_error(
+    wire: str,
+) -> None:
+    """Valid JSON of the wrong shape and invalid JSON fail the same way.
+
+    The caller contains ValueError alone; a KeyError from a missing key or a
+    TypeError from a list would escape it and end the call.
+    """
+    with pytest.raises(ValueError, match=r"not an error object|Expecting value"):
+        ToolReply.from_wire(wire, is_error=True)

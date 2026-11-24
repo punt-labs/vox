@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.contracts import SessionOptions
@@ -30,8 +32,6 @@ from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
-
-    import pytest
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
     from punt_vox.voxd.playback import PlaybackQueue
@@ -307,10 +307,18 @@ async def test_each_tool_call_is_logged_with_its_outcome(
     assert call.outcome().tool_calls == 3
 
 
+@pytest.mark.parametrize(
+    ("wire", "failure"),
+    [("not json", "JSONDecodeError"), ("{}", "ValueError"), ("[]", "ValueError")],
+)
 async def test_an_unreadable_tool_error_reply_does_not_end_the_call(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, wire: str, failure: str
 ) -> None:
-    """A runner error the wire cannot parse is answered, not raised into the group."""
+    """A runner error the wire cannot parse is answered, not raised into the group.
+
+    Valid JSON of the wrong shape counts: a missing key or a list must not
+    raise a KeyError or TypeError past the one ValueError the call contains.
+    """
 
     class _BrokenTools:
         replayed = 0
@@ -319,7 +327,7 @@ async def test_an_unreadable_tool_error_reply_does_not_end_the_call(
             self, name: str, arguments: dict[str, object]
         ) -> tuple[str, bool]:
             del name, arguments
-            return "not json", True
+            return wire, True
 
     peer = _Peer([ClientToolCall("t1", "list_workers", {}, expects_response=True)])
     call = _call(peer)
@@ -334,7 +342,7 @@ async def test_an_unreadable_tool_error_reply_does_not_end_the_call(
     ]
     lines = [r.message for r in caplog.records if r.message.startswith("Call tool")]
     assert lines == [
-        "Call tool list_workers: unreadable error reply (JSONDecodeError)",
+        f"Call tool list_workers: unreadable error reply ({failure})",
         "Call tool list_workers: error tool reply was unreadable",
     ]
 

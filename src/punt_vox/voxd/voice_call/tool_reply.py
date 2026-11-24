@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, cast
 
 __all__ = ["ToolReply"]
 
@@ -40,10 +40,14 @@ class ToolReply:
         """
         if not is_error:
             return cls(result, None)
-        error = json.loads(result)["error"]
-        if not isinstance(error, str):
-            raise ValueError(f"tool error is not text: {error!r}")
-        return cls(result, error)
+        decoded: object = json.loads(result)  # Wire boundary: any JSON value.
+        # Any shape but {"error": <text>} is one ValueError, so the caller has
+        # a single failure to contain; a KeyError or TypeError would escape it.
+        if isinstance(decoded, dict):
+            error = cast("dict[str, object]", decoded).get("error")
+            if isinstance(error, str):
+                return cls(result, error)
+        raise ValueError("tool error reply is not an error object")
 
     @property
     def is_error(self) -> bool:
