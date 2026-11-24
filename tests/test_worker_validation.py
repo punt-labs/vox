@@ -467,11 +467,7 @@ def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None
     real_eval = ast.literal_eval
 
     def rival() -> None:
-        with patch(
-            "punt_vox.voxd.workers.policy.subprocess.run",
-            return_value=_git_toplevel(repo_b.resolve()),
-        ):
-            WorkerRepoPolicy(config).allow(str(repo_b))
+        WorkerRepoPolicy(config).allow(str(repo_b))
         done.set()
 
     def eval_then_race(raw: str) -> object:
@@ -482,12 +478,16 @@ def test_allow_holds_the_file_lock_across_read_and_write(tmp_path: Path) -> None
             done.wait(2)
         return real_eval(raw)
 
+    def git_toplevel(argv: list[str], **_kwargs: object) -> Mock:
+        # ``patch`` swaps ``run`` on the one shared ``subprocess`` module, so
+        # the rival must not patch it too: its exit would interleave with
+        # this one and leave a Mock behind for every later test. One patch
+        # answers both threads by the path git is asked about.
+        return _git_toplevel(Path(argv[2]).resolve())
+
     with (
         patch("punt_vox.voxd.workers.allowlist.ast.literal_eval", eval_then_race),
-        patch(
-            "punt_vox.voxd.workers.policy.subprocess.run",
-            return_value=_git_toplevel(repo_a.resolve()),
-        ),
+        patch("punt_vox.voxd.workers.policy.subprocess.run", side_effect=git_toplevel),
     ):
         policy.allow(str(repo_a))
     started[0].join(10)
