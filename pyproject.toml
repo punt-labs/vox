@@ -418,6 +418,7 @@ adapters = [
     "punt_vox.voxd.pcm_stream",
     "punt_vox.voxd.port_file",
     "punt_vox.voxd.record_store",
+    "punt_vox.voxd.record_target",
     "punt_vox.voxd.synthesis_cache",
     "punt_vox.voxd.voice_agent",
     "punt_vox.voxd.voice_agent.*",
