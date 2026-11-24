@@ -13,7 +13,7 @@ from punt_vox.voice_roster import RosterError, VoiceRoster
 
 def test_voice_selection_matches_advertised_names_case_insensitively() -> None:
     client = Mock(spec=RosterClient)
-    client.voices.return_value = ["matilda"]
+    client.voices.side_effect = [["matilda"], ["matilda"]]
 
     assert VoiceRoster.selection_error(client, "elevenlabs", "Matilda") is None
     assert (
@@ -34,7 +34,7 @@ def test_voice_selection_accepts_raw_id_without_fetching_roster() -> None:
 
 def test_fetch_rejects_non_string_roster_entries() -> None:
     client = Mock(spec=RosterClient)
-    client.voices.return_value = [None]
+    client.voices.side_effect = [[None]]
 
     assert VoiceRoster.fetch(client, "elevenlabs") == RosterError(
         "voxd returned an invalid voice roster."

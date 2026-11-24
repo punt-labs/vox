@@ -1443,7 +1443,7 @@ class TestVoxClientVoices:
     async def test_voices_waits_longer_than_provider_enumeration(self) -> None:
         client = VoxClient(port=8421, token="tok")
         with patch.object(VoxdTransport, "send_and_recv") as send:
-            send.return_value = {"voices": ["fred"]}
+            send.side_effect = [{"voices": ["fred"]}]
 
             assert await client.voices("say") == ["fred"]
 
