@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox daemon status --json` and `vox doctor` report the actual listening port
   when `voxd --port 0` lets the operating system choose a port.
 
+- `vox voice` and `mic:voice` reject unknown voice names without changing the
+  saved voice. Raw ElevenLabs voice IDs still work. (PL-1551)
+
 - `vox --json rec` reports operational errors, including an unavailable daemon,
   as JSON on stdout, matching `vox --json music`. (PL-1538)
 

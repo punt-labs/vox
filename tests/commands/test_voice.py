@@ -31,7 +31,7 @@ def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
     if not vox_md.exists():
         vox_md.write_text('---\nprovider: "elevenlabs"\n---\n')
     client = MagicMock()
-    client.voices.return_value = voices if voices is not None else []
+    client.voices.return_value = voices if voices is not None else ["matilda"]
     return Ctx(store=ConfigStore(tmp_path), client=client)
 
 
@@ -61,7 +61,7 @@ class TestList:
         result = await voice(ctx, None, provider="polly")
         assert result.error is False
         # The stub client received the caller-supplied provider unchanged.
-        ctx.client.voices.assert_called_once_with("polly")  # type: ignore[attr-defined]
+        ctx.client.voices.assert_called_once_with(provider="polly")  # type: ignore[attr-defined]
         assert result.json_data is not None
         assert result.json_data.get("provider") == "polly"
 
@@ -223,7 +223,8 @@ class TestSet:
         raised ConfigValueError across the CommandResult boundary. The command
         must catch it and return an error result.
         """
-        result = await voice(_ctx(tmp_path), 'matilda"; injected: "bad')
+        malformed = 'matilda"; injected: "bad'
+        result = await voice(_ctx(tmp_path, voices=[malformed]), malformed)
         assert result.error is True
         assert result.exit_code == 1
         assert "Error" in result.text or "quote" in result.text.lower()

@@ -296,20 +296,18 @@ def test_voice_set_writes_the_same_field(
 ) -> None:
     """``matilda`` on both surfaces writes ``voice: matilda`` to the config."""
     session = _FakeSession(provider="elevenlabs")
-    client = MagicMock()
-    client.voices.return_value = []
+    store = ConfigStore(tmp_path)
+    store.write_field("provider", "elevenlabs")
+    client = _stub_client(["matilda"])
     voice_tool = VoiceTool(
         _session_provider(session), lambda: tmp_path, _client_factory(client)
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch("matilda")))
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
-    (tmp_path / "vox.md").unlink(missing_ok=True)
-    # Setting a voice with no provider configured refuses (F1); seed
-    # provider so the CLI side hits the write, not the refusal -- the
-    # tool side reads its provider from the in-memory _FakeSession above.
-    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
+    store.write_field("voice", "")
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "matilda", "--json"])
     assert result.exit_code == 0
@@ -326,19 +324,20 @@ def test_voice_set_strips_leading_at_on_both_surfaces(
     """The ``@`` normalization is the shared SynthesisSpec.normalize_voice
     choke-point -- both surfaces write the sigil-stripped name."""
     session = _FakeSession(provider="elevenlabs")
+    store = ConfigStore(tmp_path)
+    store.write_field("provider", "elevenlabs")
+    client = _stub_client(["sarah"])
     voice_tool = VoiceTool(
         _session_provider(session),
         lambda: tmp_path,
-        _client_factory(MagicMock()),
+        _client_factory(client),
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch("@sarah")))
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
-    (tmp_path / "vox.md").unlink(missing_ok=True)
-    # Same F1 seed as the sibling parity test above; the CLI reads state
-    # from vox.md and the F1 refusal would fire on the write path.
-    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
+    store.write_field("voice", "")
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "@sarah", "--json"])
     assert result.exit_code == 0

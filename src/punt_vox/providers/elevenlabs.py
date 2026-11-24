@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -17,6 +16,7 @@ from punt_vox.types import (
     HealthCheck,
     SynthesisRequest,
     SynthesisResult,
+    SynthesisSpec,
     TTSProvider,
 )
 
@@ -47,9 +47,6 @@ _MODEL_CHAR_LIMITS: dict[str, int] = {
     "eleven_monolingual_v1": 10_000,
 }
 _DEFAULT_CHAR_LIMIT = 10_000
-
-# ElevenLabs voice IDs are 20-char alphanumeric strings.
-_VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
 
 # Voice cache TTL in seconds -- re-fetched so newly added voices
 # appear without a daemon restart.
@@ -174,7 +171,7 @@ class ElevenLabsProvider(TTSProvider):
         logger.info("Wrote %s", output_path)
         display_voice = (
             resolved_voice
-            if _VOICE_ID_RE.match(resolved_voice)
+            if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(resolved_voice)
             else resolved_voice.lower()
         )
         return SynthesisResult(
@@ -193,7 +190,7 @@ class ElevenLabsProvider(TTSProvider):
         multilingual (70+ languages with eleven_v3).
         """
         self._resolve_voice_id(name)
-        if _VOICE_ID_RE.match(name):
+        if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name):
             return name
         return name.lower()
 
@@ -263,7 +260,7 @@ class ElevenLabsProvider(TTSProvider):
     def _resolve_voice_id(self, name: str) -> str:
         """Resolve a voice name or ID to a voice_id string."""
         # Accept raw voice_id (20 alphanumeric chars) directly.
-        if _VOICE_ID_RE.match(name):
+        if SynthesisSpec.ELEVENLABS_VOICE_ID.fullmatch(name):
             return name
 
         return self._voices.resolve(name)
