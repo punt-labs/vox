@@ -280,6 +280,30 @@ class TestWrite:
             Frontmatter(path).write_fields({"voice": "fin"}, check=refuse)
         assert sorted(tmp_path.rglob("*")) == before
 
+    def test_refused_malformed_write_leaves_nothing_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        path.parent.mkdir(parents=True)
+        path.write_text('---\nprovider: "polly"\n')
+        before = sorted(tmp_path.rglob("*"))
+
+        with pytest.raises(ValueError, match="no closing ---"):
+            Frontmatter(path).write_fields({"voice": "fin"}, check=lambda _: None)
+        assert sorted(tmp_path.rglob("*")) == before
+
+    def test_existing_lock_defers_the_check_to_the_lock(self, tmp_path: Path) -> None:
+        # A lock file means a writer may be mid-rewrite, so an unlocked read
+        # could see a torn file; only the check under the lock may run.
+        path = tmp_path / ".punt-labs" / "vox" / "vox.md"
+        lock = tmp_path / ".punt-labs" / "local" / "vox" / "vox.md.lock"
+        lock.parent.mkdir(parents=True)
+        lock.touch()
+        seen: list[dict[str, str]] = []
+
+        Frontmatter(path).write_fields({"voice": "fin"}, check=seen.append)
+        assert seen == [{}]
+
     def test_write_field_round_trips(self, tmp_path: Path) -> None:
         fm = Frontmatter(tmp_path / "vox.md")
         fm.write_field("voice", "fin")

@@ -76,16 +76,26 @@ class Frontmatter:
     ) -> None:
         """Write multiple key-value pairs in a single read-write cycle.
 
-        A check runs against the current block before the lock is taken, so a
-        refused write leaves nothing on disk, and again under the write lock.
-        Checked writes never rebuild a malformed block from just the updates.
+        A check runs against the current block under the write lock, and
+        checked writes never rebuild a malformed block from just the updates.
+        Until the lock file exists, the check also runs before the lock is
+        taken, so a refused write leaves nothing on disk.
         """
         for value in updates.values():
             FrontmatterBlock.validate_value(value)
         if check is not None:
-            check(self._fields(self._read_block()))
+            self._refuse_early(updates, check)
         with self._lock().held():
             self._write_fields(updates, check)
+
+    def _refuse_early(self, updates: dict[str, str], check: FieldCheck) -> None:
+        """Run a refusal before the lock file exists, so it leaves nothing."""
+        block = self._read_block()
+        # Every write holds the lock and its file is never removed, so with
+        # no lock file yet, no write can have overlapped that read.
+        if not self._lock().path.exists():
+            check(self._fields(block))
+            self._require_accepts(block, updates)
 
     def _lock(self) -> SiblingLock:
         """Share a local-state lock across every spelling of the config path."""
@@ -110,27 +120,37 @@ class Frontmatter:
         held = self._read_block()
         if check is not None:
             check(self._fields(held))
+            self._require_accepts(held, updates)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        if held is None:
-            written = FrontmatterBlock.rendered(updates)
-        else:
-            written = self._updated_block(held, updates, repair=check is None)
+        written = self._updated_block(held, updates)
         self._path.write_text(written.text, encoding="utf-8", newline="")
-        self._log_write(updates)
+        if held is not None:  # Creating the file is not logged as an update.
+            self._log_write(updates)
 
     @staticmethod
     def _fields(block: FrontmatterBlock | None) -> dict[str, str]:  # None: no file.
         """Return *block*'s fields, or ``{}`` when there is no block."""
         return {} if block is None else block.fields()
 
-    def _updated_block(
-        self, block: FrontmatterBlock, updates: dict[str, str], *, repair: bool
-    ) -> FrontmatterBlock:
-        if block.accepts(updates):
-            return block.with_fields(updates)
-        if not repair:
+    def _require_accepts(
+        self,
+        block: FrontmatterBlock | None,  # None: no file.
+        updates: dict[str, str],
+    ) -> None:
+        """Refuse a checked write into a block that cannot take *updates*."""
+        if block is not None and not block.accepts(updates):
             msg = f"Malformed config (no closing ---): {self._path}"
             raise ValueError(msg)
+
+    def _updated_block(
+        self,
+        block: FrontmatterBlock | None,  # None: no file.
+        updates: dict[str, str],
+    ) -> FrontmatterBlock:
+        if block is None:
+            return FrontmatterBlock.rendered(updates)
+        if block.accepts(updates):
+            return block.with_fields(updates)
         logger.warning("Malformed config (no closing ---): %s", self._path)
         return FrontmatterBlock.rendered(updates)
 
