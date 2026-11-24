@@ -2,7 +2,7 @@
 
 No real audio hardware, no ``sounddevice`` C extension calls -- every test
 drives :class:`MicAudioSource` through
-:func:`conversation_mode._mic_fakes.fake_input_stream_factory`. Two-step
+:class:`conversation_mode._mic_fakes.FakeBackend`. Two-step
 timing pattern used throughout: schedule the generator's first ``__anext__``
 as a task, ``await asyncio.sleep(0)`` once to let it run synchronously up to
 its first suspension point (``await queue.get()``), then feed the fake
@@ -20,17 +20,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from conversation_mode._mic_fakes import (
-    FAKE_DEVICE,
-    FakeInputStream,
-    fake_device_query,
-    fake_input_stream_factory,
-)
+from conversation_mode._mic_fakes import FAKE_DEVICE, FakeBackend, FakeInputStream
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
-from punt_vox.voxd.conversation_mode.mic_audio_source import (
-    InputDevice,
-    MicAudioSource,
-)
+from punt_vox.voxd.conversation_mode.input_device import InputDevice, PortAudio
+from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,10 +42,7 @@ def _source(
     chunk_s: float = 0.02,
 ) -> MicAudioSource:
     return MicAudioSource(
-        sample_rate_hz=sample_rate_hz,
-        chunk_s=chunk_s,
-        input_stream_factory=fake_input_stream_factory(created),
-        input_device_query=fake_device_query,
+        FakeBackend(created), sample_rate_hz=sample_rate_hz, chunk_s=chunk_s
     )
 
 
@@ -168,13 +158,9 @@ def _device_info(name: str, default_samplerate: float) -> Callable[[str], Device
     return query_devices
 
 
-def test_device_reports_what_the_query_returns() -> None:
-    source = MicAudioSource(
-        input_stream_factory=fake_input_stream_factory([]),
-        input_device_query=fake_device_query,
-    )
-    assert source.device() == FAKE_DEVICE
-    assert source.device() == InputDevice("Fake Microphone", 48_000.0)
+def test_the_fake_backend_reports_the_fake_device() -> None:
+    assert FakeBackend().device() == FAKE_DEVICE
+    assert FakeBackend().device() == InputDevice("Fake Microphone", 48_000.0)
 
 
 async def test_opening_the_stream_logs_the_device_name_and_rates(
@@ -203,7 +189,7 @@ def test_default_device_query_reads_portaudio(monkeypatch: pytest.MonkeyPatch) -
             query_devices=_device_info("MacBook Air Microphone", 48000.0),
         ),
     )
-    assert MicAudioSource().device() == InputDevice("MacBook Air Microphone", 48000.0)
+    assert PortAudio().device() == InputDevice("MacBook Air Microphone", 48000.0)
 
 
 def test_default_device_query_without_a_device_is_an_oserror(
@@ -218,16 +204,14 @@ def test_default_device_query_without_a_device_is_an_oserror(
         SimpleNamespace(PortAudioError=_FakePortAudioError, query_devices=no_device),
     )
     with pytest.raises(OSError, match="no default input device"):
-        MicAudioSource().device()
+        PortAudio().device()
 
 
 async def test_a_device_open_failure_propagates_out_of_chunks() -> None:
-    def factory(**_kwargs: object) -> FakeInputStream:
+    def refuse(**_kwargs: object) -> FakeInputStream:
         raise OSError("no default input device available")
 
-    source = MicAudioSource(
-        input_stream_factory=factory, input_device_query=fake_device_query
-    )
+    source = MicAudioSource(FakeBackend(open_stream=refuse))
     with pytest.raises(OSError, match="no default input device available"):
         await anext(source.chunks())
 
@@ -240,12 +224,12 @@ async def test_default_source_opens_and_closes_a_portaudio_stream(
         sys.modules,
         "sounddevice",
         SimpleNamespace(
-            RawInputStream=fake_input_stream_factory(created),
+            RawInputStream=FakeBackend(created).open,
             PortAudioError=_FakePortAudioError,
             query_devices=_device_info("Built-in", 44100.0),
         ),
     )
-    gen = MicAudioSource().chunks()
+    gen = MicAudioSource(PortAudio()).chunks()
     next_chunk = asyncio.create_task(anext(gen))
     await _advance_to_first_await()
     (stream,) = created

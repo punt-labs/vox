@@ -53,7 +53,7 @@ class WorkerContext:
         events = ProgressEvents()
         return {
             **WorkerHandlers(actor).handlers(store, events),
-            **CallHandlers(
+            **CallHandlers.compose(
                 actor, policy, playback, progress=events, hold_music=hold_music
             ).handlers(),
         }
