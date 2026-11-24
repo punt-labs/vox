@@ -283,25 +283,50 @@ class TestSerializedRefreshTimeout:
         held-vs-displayed miss the whole change exists to close, reached
         through the one door that outlives its caller.
         """
-        monkeypatch.setattr(track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", 0)
         real_refresh = TrackCountCache._refresh
+        wait_for = asyncio.wait_for
+        loop = asyncio.get_running_loop()
+        worker_started = asyncio.Event()
+        release_worker = threading.Event()
+        repainted = asyncio.Event()
 
-        def _slow_refresh(
+        async def _expire_after_worker_starts(
+            task: asyncio.Future[None], *, timeout: float
+        ) -> None:
+            # Cancellation before the executor starts could prevent the read entirely.
+            await worker_started.wait()
+            await wait_for(task, timeout=timeout)
+
+        def _blocked_refresh(
             self: TrackCountCache, albums: tuple[Album, ...], generation: int
         ) -> None:
-            time.sleep(0.2)  # outlives the deadline above
+            loop.call_soon_threadsafe(worker_started.set)
+            release_worker.wait()
             real_refresh(self, albums, generation)
 
-        monkeypatch.setattr(TrackCountCache, "_refresh", _slow_refresh)
+        monkeypatch.setattr(TrackCountCache, "_refresh", _blocked_refresh)
         album = album_of("aa11bb", name="Slow", tracks=0, on_disk=7)
         repaints: list[int] = []
-        cache = TrackCountCache(lambda: repaints.append(cache.get(album.id)))
 
-        await asyncio.wait_for(cache.serialized_refresh((album,)), timeout=1.0)
-        assert cache.get(album.id) == 0  # gave up; still stale
-        assert repaints == []
+        def _repaint() -> None:
+            repaints.append(cache.get(album.id))
+            repainted.set()
 
-        await asyncio.sleep(0.4)  # the abandoned read finishes and commits
+        cache = TrackCountCache(_repaint)
+
+        async with asyncio.timeout(5):
+            try:
+                with monkeypatch.context() as deadline_patch:
+                    deadline_patch.setattr(
+                        asyncio, "wait_for", _expire_after_worker_starts
+                    )
+                    await cache.serialized_refresh((album,))
+                assert cache.get(album.id) == 0  # gave up; still stale
+                assert repaints == []
+            finally:
+                release_worker.set()
+            await repainted.wait()
 
         assert cache.get(album.id) == 7
         assert repaints == [7], "the late write must ask for a repaint"
