@@ -639,6 +639,38 @@ class TestMicrophoneBeforeDial:
         assert len(connector.connections) == 1
         assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
 
+    async def test_a_device_table_that_cannot_be_re_read_gives_the_call_id_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A refresh PortAudio refuses is a refused microphone too.
+
+        sounddevice raises PortAudioError from the re-read, which the
+        launcher does not release the trace on; the backend converts it to
+        the OSError it does, so a retry with the same call ID reaches the
+        connector once the library initializes again.
+        """
+        fake_sounddevice(monkeypatch)
+        sounddevice = sys.modules["sounddevice"]
+        failures = [FakePortAudioError("Error initializing: Host API not found")]
+
+        def initialize() -> None:
+            if failures:
+                raise failures.pop()
+
+        monkeypatch.setattr(sounddevice, "_initialize", initialize)
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        call_id = uuid4()
+        request: dict[str, object] = {"type": "call_start", "echo_control": "headset"}
+        with pytest.raises(OSError, match="cannot re-read the audio device table"):
+            await launcher.launch(call_id, request)
+        assert list(tmp_path.iterdir()) == []  # the reservation was undone
+        active = await launcher.launch(call_id, request)
+        await active.wait_connected(5)
+        await active.cancel()
+        assert len(connector.connections) == 1
+        assert active.status()["trace"] == str(tmp_path / f"call-{call_id.hex}.jsonl")
+
     async def test_a_device_reported_without_a_rate_gives_the_call_id_back(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

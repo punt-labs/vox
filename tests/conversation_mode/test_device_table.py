@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from conversation_mode._fake_sounddevice import FakeSoundDevice
+from conversation_mode._fake_sounddevice import FakePortAudioError, FakeSoundDevice
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 
 if TYPE_CHECKING:
@@ -64,6 +64,33 @@ def test_refresh_reports_a_device_it_cannot_describe_and_still_re_reads(
         "(UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: "
         "invalid start byte), default input #0, default output #1"
     )
+
+
+def test_refresh_terminates_portaudio_only_while_it_is_initialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant: refresh never terminates an uninitialized PortAudio.
+
+    A failed initialize leaves the library terminated. A refresh that
+    terminated it again would fail there, every time, until the daemon
+    restarted; the next refresh initializes directly instead and the table
+    is read again.
+    """
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    fake.fail_next_initialize("Error initializing: Host API not found")
+    table = DeviceTable()
+    assert table.initialized
+    with pytest.raises(FakePortAudioError, match="Host API not found"):
+        table.refresh()
+    assert not table.initialized
+    assert (fake.terminated, fake.initialized) == (1, 0)
+    fake.connect("Headset")
+    assert table.refresh() is True
+    assert table.initialized
+    assert (fake.terminated, fake.initialized) == (1, 1)
+    assert fake.query_devices("output")["name"] == "Headset"
 
 
 def test_refresh_is_a_no_op_before_sounddevice_is_imported(

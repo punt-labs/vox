@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Literal, Self, final, overload
 
 from conversation_mode._mic_fakes import FakeCallbackFlags
 
-__all__ = ["FakeDeviceStream", "FakeSoundDevice"]
+__all__ = ["FakeDeviceStream", "FakePortAudioError", "FakeSoundDevice"]
 
 if TYPE_CHECKING:
     import pytest
@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 type Kind = Literal["input", "output"]
 
 
-class _FakePortAudioError(Exception):
-    pass
+class FakePortAudioError(Exception):
+    """Stand-in for :class:`sounddevice.PortAudioError`."""
 
 
 @final
@@ -105,7 +105,15 @@ class FakeDeviceStream:
 class FakeSoundDevice:
     """The fake module's state: system defaults, the enumerated table, streams."""
 
-    __slots__ = ("_initialized", "_streams", "_system", "_table", "_terminated")
+    __slots__ = (
+        "_initialize_errors",
+        "_initialized",
+        "_streams",
+        "_system",
+        "_table",
+        "_terminated",
+    )
+    _initialize_errors: list[Exception]
     _initialized: int
     _streams: list[FakeDeviceStream]
     _system: dict[Kind, str]
@@ -118,6 +126,7 @@ class FakeSoundDevice:
         self._system = {"input": input_name, "output": output_name}
         self._table = dict(self._system)
         self._streams = []
+        self._initialize_errors = []
         self._initialized = 1
         self._terminated = 0
         return self
@@ -125,7 +134,7 @@ class FakeSoundDevice:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> Self:
         """Put the fake in ``sys.modules`` as ``sounddevice``."""
         module = SimpleNamespace(
-            PortAudioError=_FakePortAudioError,
+            PortAudioError=FakePortAudioError,
             RawInputStream=self.raw_input_stream,
             RawOutputStream=self.raw_output_stream,
             query_devices=self.query_devices,
@@ -141,6 +150,10 @@ class FakeSoundDevice:
 
     def set_system_default(self, kind: Kind, name: str) -> None:
         self._system[kind] = name
+
+    def fail_next_initialize(self, message: str) -> None:
+        """The next ``Pa_Initialize`` fails with *message*, leaving it terminated."""
+        self._initialize_errors.append(FakePortAudioError(message))
 
     @property
     def streams(self) -> list[FakeDeviceStream]:
@@ -181,14 +194,23 @@ class FakeSoundDevice:
         return self._open("output", **kwargs)
 
     def terminate(self) -> None:
-        """``Pa_Terminate``: closes every open stream, invalidating it."""
+        """``Pa_Terminate``: closes every open stream, invalidating it.
+
+        Terminating a library that is not initialized is PortAudio's
+        ``paNotInitialized`` error, which is what a refresh would hit forever
+        if it terminated again after a failed initialize.
+        """
+        if self._initialized == 0:
+            raise FakePortAudioError("Error terminating: PortAudio not initialized")
         for stream in self._streams:
             stream.kill()
         self._terminated += 1
         self._initialized -= 1
 
     def initialize(self) -> None:
-        """``Pa_Initialize``: enumerate the system's devices afresh."""
+        """``Pa_Initialize``: enumerate the system's devices afresh, or fail."""
+        if self._initialize_errors:
+            raise self._initialize_errors.pop(0)
         self._table = dict(self._system)
         self._initialized += 1
 

@@ -35,16 +35,23 @@ logger = logging.getLogger(__name__)
 class DeviceTable:
     """The process-wide PortAudio device table and the streams open on it."""
 
-    __slots__ = ("_lock", "_open_streams")
+    __slots__ = ("_initialized", "_lock", "_open_streams")
+    _initialized: bool
     _lock: threading.Lock
     _open_streams: int
     _shared: ClassVar[DeviceTable | None] = None  # None: not asked for yet.
 
     def __new__(cls) -> Self:
-        """Create a table with no stream open on it."""
+        """Create a table with no stream open on it and PortAudio initialized.
+
+        ``import sounddevice`` initializes PortAudio, and :meth:`refresh`
+        does nothing before that import, so the library is initialized
+        whenever the flag is first consulted.
+        """
         self = super().__new__(cls)
         self._lock = threading.Lock()
         self._open_streams = 0
+        self._initialized = True
         return self
 
     @classmethod
@@ -59,6 +66,11 @@ class DeviceTable:
         """How many streams are open on the current table."""
         return self._open_streams
 
+    @property
+    def initialized(self) -> bool:
+        """Whether PortAudio is initialized; a failed initialize leaves it not."""
+        return self._initialized
+
     def refresh(self) -> bool:
         """Re-read the device table from the system; return whether it was.
 
@@ -66,6 +78,11 @@ class DeviceTable:
         the import that follows will enumerate the devices as they are now,
         so there is no stale table to replace -- or when a stream is open,
         because terminating PortAudio would close it.
+
+        PortAudio is terminated only while it is initialized. An initialize
+        that fails leaves the library terminated, and a refresh that then
+        terminated it again would fail at that step, every time, until the
+        daemon restarted; instead the next refresh initializes directly.
 
         Raises:
             sounddevice.PortAudioError: When PortAudio refuses to terminate
@@ -85,8 +102,11 @@ class DeviceTable:
             # Pa_Terminate and Pa_Initialize and are declared in the stub.
             from sounddevice import _initialize, _terminate
 
-            _terminate()
+            if self._initialized:
+                _terminate()
+                self._initialized = False
             _initialize()
+            self._initialized = True
             logger.info(
                 "PortAudio device table re-read from the system: %s", self._summary()
             )

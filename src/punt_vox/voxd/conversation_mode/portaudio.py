@@ -53,11 +53,22 @@ class PortAudio:
     def devices(self) -> DevicePair:
         """Re-read the device table and report the current default devices.
 
+        A refresh PortAudio refuses is the same refusal as a device it will
+        not open: the caller releases the call ID on an :class:`OSError`,
+        so the library's own error is converted here rather than escaping
+        as one.
+
         Raises:
-            OSError: When PortAudio has no default input or output device,
-                or reports one it cannot describe (:meth:`device`).
+            OSError: When PortAudio refuses to re-read its device table, has
+                no default input or output device, or reports one it cannot
+                describe (:meth:`device`).
         """
-        self._table.refresh()
+        from sounddevice import PortAudioError
+
+        try:
+            self._table.refresh()
+        except PortAudioError as exc:
+            raise OSError(f"cannot re-read the audio device table: {exc}") from exc
         return DevicePair(self.device(), self.output_device())
 
     @staticmethod

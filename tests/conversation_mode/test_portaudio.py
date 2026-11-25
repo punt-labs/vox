@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from conversation_mode._fake_sounddevice import FakeSoundDevice
+from conversation_mode._fake_sounddevice import FakePortAudioError, FakeSoundDevice
 from conversation_mode._mic_fakes import FakeInputStream
 from punt_vox.voxd.conversation_mode.device_pair import DevicePair
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
@@ -305,6 +305,40 @@ def test_devices_re_reads_the_table_and_reports_both_defaults(
     )
     assert fake.terminated == 1
     assert fake.initialized == 1
+
+
+def test_a_refresh_portaudio_refuses_is_an_oserror_and_the_next_call_opens_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One failed initialize must not cost every later call until a restart.
+
+    The launcher releases the call ID on an OSError only, so the library's
+    error is converted; and the next call re-reads the table and opens its
+    stream on the same process-wide table, with no daemon restart.
+    """
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    fake.fail_next_initialize("Error initializing: Host API not found")
+    table = DeviceTable()
+    backend = PortAudio(table)
+    with pytest.raises(
+        OSError, match="cannot re-read the audio device table"
+    ) as failure:
+        backend.devices()
+    assert "Host API not found" in str(failure.value)
+    assert isinstance(failure.value.__cause__, FakePortAudioError)
+    fake.connect("Headset")
+    devices = backend.devices()
+    assert devices.input == InputDevice("Headset", 48_000.0)
+    held = backend.open(
+        devices.input, samplerate=16000.0, blocksize=320, callback=_ignore
+    )
+    (stream,) = fake.streams
+    assert stream.device_name == "Headset"
+    assert table.open_streams == 1
+    held.__exit__(None, None, None)
+    assert (fake.terminated, fake.initialized) == (1, 1)
 
 
 def test_devices_keeps_the_table_while_a_stream_is_open(
