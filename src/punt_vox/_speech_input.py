@@ -128,12 +128,20 @@ class SpeechInput:
             cursor = word.end
         return "".join(parts) + line[cursor:]
 
+    @staticmethod
+    def _quote_end(line: str, *, vibed: bool, label: bool) -> int:
+        if label:
+            return 0
+        quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
+        return quote.end() if quote else 0
+
     @classmethod
     def _word_matches(cls, line: str, *, vibed: bool, label: bool) -> list[_Word]:
-        quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
         pattern = _VIBED_WORD_RE if vibed else _WORD_RE
         words: list[_Word] = []
-        for word in pattern.finditer(line, quote.end() if quote else 0):
+        for word in pattern.finditer(
+            line, cls._quote_end(line, vibed=vibed, label=label)
+        ):
             if vibed and word["tag"] is not None:
                 continue
             if words and cls._extends_amount(words[-1].value, word[0]):
