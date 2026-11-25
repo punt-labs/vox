@@ -615,6 +615,27 @@ class TestDeviceFailures:
         assert caplog.text.count("PCM playback started") == 1
         await sink.close()
 
+    async def test_a_closed_loop_during_the_first_block_is_not_a_device_fault(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """At shutdown the loop may be gone while the device still pulls.
+
+        The started log and the played-out signal are posted to the loop
+        from the device thread; with the loop closed they are dropped, and
+        the callback neither raises nor logs a device failure.
+        """
+        caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 10))
+        sink.finish()
+        gone = asyncio.new_event_loop()
+        gone.close()
+        sink._loop = gone  # pyright: ignore[reportPrivateUsage]
+        device.opened.pull(2)
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+        sink._loop = asyncio.get_running_loop()  # pyright: ignore[reportPrivateUsage]
+        await sink.close()
+
     async def test_failed_close_still_reports(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
