@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak spaced currency scales such as `$1 million` as “1 million dollars.”
+
 - The first setting written from a Git repo's subdirectory now goes to the
   repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
 

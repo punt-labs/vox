@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import final
 
-from punt_vox._currency_grammar import CurrencyGrammar
+from punt_vox._currency_prose import ProseCurrency
 from punt_vox._link_labels import VIBE_TAG_RE, LinkLabels, LinkSpan
 from punt_vox._speech_markdown import CodeSpan, SpeechMarkdown
 from punt_vox._speech_punctuation import SpeechPunctuation
@@ -40,7 +40,7 @@ class InlineCode:
             lambda body, in_path: SpeechPunctuation.spell_code_currency(
                 body, in_path=in_path
             ).replace("](", "] ("),
-            lambda start, end: CurrencyGrammar.prefix_suffix_amounts(
+            lambda start, end: ProseCurrency.canonicalize(
                 labels.prose(text, start, end), tag=tag
             ),
         )
