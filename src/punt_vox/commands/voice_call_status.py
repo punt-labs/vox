@@ -76,9 +76,14 @@ class CallStatusView:
 
     @property
     def ended_by(self) -> str:
-        """Return who ended the call (agent, peer or caller); empty until it ended."""
+        """Return who ended the call (agent, peer or caller) once it has ended.
+
+        The daemon records the agent's end_call before the provider closes
+        the conversation, so a live call can already name the agent; the
+        view says nothing until the state is ended.
+        """
         who = self._status.get("ended_by")
-        return who if isinstance(who, str) else ""
+        return who if self.state == "ended" and isinstance(who, str) else ""
 
     def line(self) -> str:
         """Return the live line: state, who ended the call, tool calls, last turn."""

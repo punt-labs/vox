@@ -303,6 +303,23 @@ def test_status_names_who_ended_the_call(who: str) -> None:
     )
 
 
+def test_a_live_call_does_not_name_who_will_end_it() -> None:
+    """The agent's end_call is recorded while the call is live; the view waits.
+
+    Between the acknowledgement and the provider's close the status carries
+    ended_by with the state still live, and the person sees only the live
+    state until the call has actually ended.
+    """
+    live = CallStatusView({**_LIVE, "ended_by": "agent"})
+    assert live.ended_by == ""
+    assert live.line() == "call live | 0 tool calls"
+    assert not [line for line in live.report() if line.startswith("ended by")]
+    ended = CallStatusView({**_LIVE, "state": "ended", "ended_by": "agent"})
+    assert ended.ended_by == "agent"
+    assert ended.line() == "call ended by agent | 0 tool calls"
+    assert "ended by agent" in ended.report()
+
+
 def test_a_failed_call_names_nobody_as_who_ended_it() -> None:
     view = CallStatusView(
         {**_ENDED, "state": "failed", "ended_by": None, "error": "boom"}
