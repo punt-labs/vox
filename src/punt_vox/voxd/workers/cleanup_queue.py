@@ -97,19 +97,41 @@ class WorkerCleanupQueue:
     def _run(
         self, worker_id: str, job: Future[None], operation: Callable[[], None]
     ) -> None:
-        """Run one job, settle its future, then rerun or release the worker.
+        """Run one job, release or detach its rerun, settle, then rerun.
 
-        The job's future is settled before any rerun starts, so a reply
-        waiting on it never depends on a second lane coming up.
+        The worker is released before the future resolves, so a caller whose
+        wait ends and who submits again at once gets a fresh lane, not a
+        parked rerun. A rerun starts only after the future is settled, so a
+        waiting reply never depends on a second lane coming up.
         """
+        failure = self._attempt(worker_id, operation)
+        rerun = self._detach(worker_id)
+        self._settle(job, failure)
+        if rerun is not None:
+            with self._lock:
+                self._start(worker_id, rerun)
+
+    @staticmethod
+    def _attempt(
+        worker_id: str, operation: Callable[[], None]
+    ) -> Exception | None:  # PY-TS-14: None is the job's success.
+        """Run the operation; log and return its failure instead of raising."""
         try:
             operation()
         except Exception as exc:
             logger.exception("Worker %s cleanup job failed", worker_id)
-            self._settle(job, exc)
-        else:
-            self._settle(job, None)
-        self._next(worker_id)
+            return exc
+        return None
+
+    def _detach(
+        self, worker_id: str
+    ) -> Callable[[], None] | None:  # PY-TS-14: None releases the worker.
+        """Take the worker's parked rerun, or release the worker; under the lock."""
+        with self._lock:
+            rerun = self._rerun.pop(worker_id, None)
+            if rerun is None:
+                self._release(worker_id)
+            return rerun
 
     @staticmethod
     def _settle(
@@ -121,15 +143,6 @@ class WorkerCleanupQueue:
             job.set_result(None)
         else:
             job.set_exception(failure)
-
-    def _next(self, worker_id: str) -> None:
-        """Rerun a request declined during the job, or release the worker."""
-        with self._lock:
-            rerun = self._rerun.pop(worker_id, None)
-            if rerun is None:
-                self._release(worker_id)
-            else:
-                self._start(worker_id, rerun)
 
     def _release(self, worker_id: str) -> None:
         """Forget the worker's lane; the lock is held."""

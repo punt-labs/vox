@@ -147,3 +147,30 @@ def test_a_lane_that_cannot_start_on_submit_fails_the_job_and_releases(
     assert queue.is_idle()
     [record] = caplog.records
     assert "w-2" in record.getMessage()
+
+
+def test_a_job_releases_its_worker_before_its_future_resolves() -> None:
+    """A caller whose wait ends may submit again at once and get a fresh lane.
+
+    If the future resolved first, that submit would find the worker still
+    active and park as a rerun, returning no job, and a stop that waited on
+    the first job would return with the second's cleanup still owed.
+    """
+    queue = WorkerCleanupQueue()
+    releasing, go = Event(), Event()
+    original = WorkerCleanupQueue._release
+
+    def slow_release(self: WorkerCleanupQueue, worker_id: str) -> None:
+        releasing.set()
+        assert go.wait(2)
+        original(self, worker_id)
+
+    with patch.object(WorkerCleanupQueue, "_release", slow_release):
+        job = queue.submit("w-3", lambda: None)
+        assert job is not None
+        assert releasing.wait(1)
+        settled_before_release = job.done()
+        go.set()
+        job.result(timeout=1)
+    assert queue.is_idle()
+    assert not settled_before_release
