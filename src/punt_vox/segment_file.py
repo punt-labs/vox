@@ -29,7 +29,7 @@ class SegmentFile:
         Every element is validated before any is returned, so one bad element
         rejects the whole file.
         """
-        texts = [item.text() for item in SegmentArray(self._path).items()]
+        texts = (item.text() for item in SegmentArray(self._path).items())
         if segments := list(filter(str.strip, texts)):
             return segments
         raise typer.BadParameter("--from file has no text to speak.")

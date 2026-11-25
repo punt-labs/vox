@@ -34,7 +34,7 @@ class SegmentArray:
         self._path = path
         return self
 
-    def items(self) -> list[SegmentItem]:
+    def items(self) -> starmap[SegmentItem]:
         """Read the UTF-8 JSON array, translating bad input into usage errors."""
         try:
             raw = json.loads(OptionFile(self._path, "--from").text())
@@ -43,7 +43,7 @@ class SegmentArray:
             raise typer.BadParameter(f"{self._path}: invalid JSON: {detail}") from exc
         if not isinstance(raw, list):
             raise typer.BadParameter("--from file must contain a JSON array.")
-        return list(starmap(SegmentItem, enumerate(cast("list[object]", raw))))
+        return starmap(SegmentItem, enumerate(cast("list[object]", raw)))
 
 
 @final
