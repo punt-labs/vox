@@ -63,20 +63,23 @@ class DaemonServer:
         # Route fire-and-forget task exceptions to vox.log -- with no stderr
         # handler, the loop's default printer would otherwise write to nowhere.
         CrashLogger(logger).install_loop_handler(asyncio.get_running_loop())
+        self._warn_if_exposed()
         server = self._server
-        if server.config.host not in ("127.0.0.1", "::1", "localhost"):
-            logger.warning(
-                "Binding to %s -- voxd is accessible from the network. "
-                "Ensure VOXD_TOKEN is set on all clients.",
-                server.config.host,
-            )
         server.startup = self._startup_and_publish  # type: ignore[method-assign]
         with self._stop_signals_end_normally():
             await server.serve()
 
-    @staticmethod
+    def _warn_if_exposed(self) -> None:
+        host = self._server.config.host
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            logger.warning(
+                "Binding to %s -- voxd is accessible from the network. "
+                "Ensure VOXD_TOKEN is set on all clients.",
+                host,
+            )
+
     @contextmanager
-    def _stop_signals_end_normally() -> Generator[None]:
+    def _stop_signals_end_normally(self) -> Generator[None]:
         """Make a stop signal end the process by a normal exit, not by itself.
 
         uvicorn shuts down on SIGINT or SIGTERM, restores the handlers it
@@ -84,10 +87,20 @@ class DaemonServer:
         the sender asked. With the default handlers in place that kills
         the process after the shutdown already ran, and Python's own exit
         (atexit hooks, the coverage save under the coverage runner) never
-        happens. Ignoring the re-raised signal lets the shutdown that
-        already completed stand and the process exit with status 0.
+        happens.
+
+        The handler installed here is uvicorn's own stop handler, so a
+        signal that lands before uvicorn installs its handler, or after it
+        restores this one, is still recorded and still stops the server;
+        the re-raise after the shutdown is absorbed the same way, and the
+        process exits 0. It is a Python handler, never ``SIG_IGN``: an
+        ignored signal is inherited across ``exec``, so a child spawned
+        meanwhile could not be stopped by SIGTERM, while a caught one
+        resets to the default in the child.
         """
-        previous = {sig: signal.signal(sig, signal.SIG_IGN) for sig in _STOP_SIGNALS}
+        previous = {
+            sig: signal.signal(sig, self._server.handle_exit) for sig in _STOP_SIGNALS
+        }
         try:
             yield
         finally:
