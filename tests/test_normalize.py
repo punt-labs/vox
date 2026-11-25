@@ -608,6 +608,10 @@ class TestSymbolStripping:
         ("$5 < 10", "5 dollars less than 10"),
         ("5€ < 10", "5 euros less than 10"),
         ("$1 million < x", "1 million dollars less than x"),
+        (
+            "x < $1 million/year < y",
+            "x less than 1 million dollars per year less than y",
+        ),
         ("a == $1 million", "a equal to 1 million dollars"),
         ("0x10 < 0x20", "0 x 10 less than 0 x 20"),
     ],

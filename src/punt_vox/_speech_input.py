@@ -154,7 +154,7 @@ class SpeechInput:
 
     @classmethod
     def _extends_amount(cls, amount: str, word: str) -> bool:
-        scale = word.strip(_WRAPPERS).lower()
+        scale = word.strip(_WRAPPERS).split("/", 1)[0].lower()
         return (
             len(scale) > 1 and scale in SCALES and cls._is_currency(f"{amount} {word}")
         )
@@ -193,7 +193,7 @@ class SpeechInput:
 
     @classmethod
     def _anchored_operands(cls, operands: list[str]) -> bool:
-        # A bare angle chain needs a numeric anchor and no prose-like operands.
+        # Bare angles need a numeric anchor and no prose-like operands in the chain.
         has_number = False
         for operand in operands:
             if not cls._is_operand(operand):
