@@ -429,7 +429,7 @@ def test_an_ip_bind_is_checked_without_any_lookup(
 
 
 # ---------------------------------------------------------------------------
-# PL-1497: health through the published port, before any attribution
+# health through the published port, before any attribution
 # ---------------------------------------------------------------------------
 
 

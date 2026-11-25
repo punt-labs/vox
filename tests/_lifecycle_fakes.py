@@ -218,6 +218,9 @@ class FakeWorld:
     query_error: Exception | None = None
     # the cause the last gated health request failed with
     health_error: str = "connection refused"
+    # when set, only the published-port request fails, with this cause; the
+    # attributed request that follows answers as the world says
+    published_health_error: str = ""
     # a hung health request: each one blocks this long (cut to the budget it
     # is handed), then fails with ``health_error``; 0: health answers at once
     health_blocks_s: float = 0.0
@@ -457,6 +460,9 @@ class FakeProbe:
             self._miss = NotAskedError.nothing_listens()
             return None
         world.tokens_to_port.append(8421)
+        if world.published_health_error:
+            self._miss = RuntimeError(world.published_health_error)
+            return None
         return self._answer(within_s)
 
     def health(

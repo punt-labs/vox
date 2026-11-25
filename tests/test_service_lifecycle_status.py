@@ -74,7 +74,7 @@ def test_status_a_listener_check_that_fails_is_unknown() -> None:
     )
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
-    assert reading.reason == "connect timed out"
+    assert reading.reason.startswith("connect timed out; voxd was not asked first")
 
 
 def test_status_slow_probes_cannot_push_status_past_its_deadline() -> None:
@@ -136,7 +136,7 @@ def test_status_sends_no_token_to_a_voxd_that_left_before_it_was_asked() -> None
 
 
 # ---------------------------------------------------------------------------
-# PL-1497: voxd is asked first, through the port serve.port publishes, before
+# voxd is asked first, through the port serve.port publishes, before
 # lsof/fuser attribute the port. A slow lsof cannot hide a voxd that answers.
 # ---------------------------------------------------------------------------
 
@@ -215,3 +215,41 @@ def test_status_hung_published_health_leaves_time_for_attribution() -> None:
     assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
     assert world.tokens_to_port == [8421]
     assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_published_miss_then_attribution_is_running() -> None:
+    """A fast request that fails is not the reading: lsof finds the holder."""
+    world = FakeWorld(port_file=8421, published_health_error="connection reset")
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_unknown_names_the_health_miss_and_the_probe_that_failed() -> None:
+    """Both steps failed within the deadline: the reason names each one."""
+    world = FakeWorld(
+        port_file=8421,
+        published_health_error="connection reset",
+        probe_error="cannot run lsof: timed out after 0.5 seconds",
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "cannot run lsof: timed out after 0.5 seconds; "
+        "voxd was asked first and gave no answer: connection reset"
+    )
+
+
+def test_status_unknown_names_why_voxd_was_not_asked_first() -> None:
+    """With no serve.port the fast path sent nothing; the reason says so."""
+    world = FakeWorld(probe_error="cannot run lsof: timed out after 2 seconds")
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "cannot run lsof: timed out after 2 seconds; voxd was not asked first: "
+        "serve.port publishes no port; no token sent unattributed"
+    )

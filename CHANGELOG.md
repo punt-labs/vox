@@ -64,7 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   published in `serve.port`, with a reserved share of its deadline that the
   `lsof`/`fuser` attribution probes cannot consume. On a loaded Mac, where
   `lsof` walks every open file, a voxd that answers is now reported running
-  instead of `unknown (cannot run lsof: ... timed out)`. The token still
+  instead of `unknown (cannot run lsof: ... timed out)`. When both steps
+  fail within the deadline, the `unknown` reason names the probe that
+  failed and what the health request before it came to. The token still
   goes out only when this user's own `serve.port` names the service port,
   the bind is loopback and the port accepts a connection. (PL-1497)
 

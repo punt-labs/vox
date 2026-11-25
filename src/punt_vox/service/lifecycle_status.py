@@ -11,10 +11,10 @@ the port voxd itself published: when this user's own ``serve.port`` names the
 service port, the bind is loopback and the port accepts a connection, one
 health request goes out with a reserved share of the deadline
 (``HEALTH_RESERVE_S``) that the attribution probes cannot consume. An answer
-is ``running`` whatever ``lsof`` would have said later (PL-1497: on a loaded
-Mac ``lsof`` walks every open file and spent the whole deadline). With no
-answer, attribution runs within what is left and decides as before. The
-token never goes out through any other door; the gate is stated in
+is ``running`` whatever ``lsof`` would have said later: on a loaded Mac
+``lsof`` walks every open file and can spend the whole deadline by itself.
+With no answer, attribution runs within what is left and decides as before.
+The token never goes out through any other door; the gate is stated in
 :mod:`punt_vox.service.daemon_probe`. What the probe sees decides the state:
 
 - a voxd answered health, through the published port or as a visible
@@ -27,7 +27,9 @@ token never goes out through any other door; the gate is stated in
 - no voxd and no listener: ``not_running``, naming any voxd on the port
   ``serve.port`` names, as ``stop`` does;
 - a port, process or unit vox cannot inspect, or a deadline spent on vox's
-  own probes before voxd could be asked: ``unknown``.
+  own probes before voxd could be asked: ``unknown``, naming the probe that
+  failed and what the health request before it came to, so the reading
+  says which step spent the time.
 """
 
 from __future__ import annotations
@@ -76,16 +78,20 @@ class StatusCheck:
         try:
             return self._read()
         except (PortProbeError, BackendCommandError) as exc:
-            return DaemonStatus.unknown(str(exc))
+            return DaemonStatus.unknown(self._spent_on(exc))
 
     def _read(self) -> DaemonStatus:
         """Ask the published port first; then classify the port by its holders."""
-        probe = self._probe
-        health = probe.published_health(
+        health = self._probe.published_health(
             min(self.HEALTH_RESERVE_S, self._deadline.remaining())
         )
         if health is not None:
             return DaemonStatus.running(health)
+        return self._attribute()
+
+    def _attribute(self) -> DaemonStatus:
+        """Classify the port by who holds it, and who answers."""
+        probe = self._probe
         holders = probe.voxd_processes()
         if holders:
             return self._ask(holders)
@@ -123,3 +129,17 @@ class StatusCheck:
         if isinstance(why, NotAskedError):
             return DaemonStatus.unknown(str(why))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))
+
+    def _spent_on(self, exc: Exception) -> str:
+        """Name the probe that failed and what the health request before it did.
+
+        A probe fails only after the published-port request has run, so the
+        reading never blames ``lsof`` alone for a deadline the health step
+        may have spent first.
+        """
+        first = self._probe.health_miss()
+        if first is None:
+            return str(exc)
+        if isinstance(first, NotAskedError):
+            return f"{exc}; voxd was not asked first: {first}"
+        return f"{exc}; voxd was asked first and gave no answer: {first}"

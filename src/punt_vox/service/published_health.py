@@ -1,7 +1,7 @@
 """Ask voxd for health through the port it published, before any attribution.
 
 ``vox daemon status`` cannot wait for ``lsof`` on a loaded Mac, where it walks
-every open file (PL-1497). This request goes out first, under a gate made of
+every open file. This request goes out first, under a gate made of
 what voxd itself publishes and what vox can check without ``lsof``: this
 user's own ``serve.port`` names the service port, the target host is
 loopback, and the port accepts a plain connection. A gate that does not open

@@ -14,7 +14,7 @@ Two doors send the token, and each has its own gate:
 - :meth:`DaemonProbe.health` sends it to a voxd ``lsof``/``fuser`` attributed
   to the port, re-attributed immediately before the request.
 - :meth:`DaemonProbe.published_health` sends it before any attribution, so a
-  slow ``lsof`` cannot hide a voxd that answers (PL-1497). Its gate
+  slow ``lsof`` cannot hide a voxd that answers. Its gate
   (:class:`~punt_vox.service.published_health.PublishedHealth`) is the file
   voxd itself publishes: ``serve.port`` must name the service port, be owned
   by the calling user (the run directory is mode 0700, so another user
