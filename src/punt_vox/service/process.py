@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self
 
 from punt_vox.paths import run_dir as _user_run_dir
-from punt_vox.service.backend import ListenAddress, PortProbeError
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.listen_address import ListenAddress
 from punt_vox.service.process_identity import ProcessIdentity
 from punt_vox.service.stale_port_file import StalePortFile
 from punt_vox.service.termination import Termination

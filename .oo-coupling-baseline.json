@@ -1653,10 +1653,10 @@
   },
   "src/punt_vox/service/backend.py": {
     "efferent_coupling": 0.0,
-    "public_names": 12.0,
+    "public_names": 11.0,
     "circular_imports": 0.0,
     "max_lcom": 1.0,
-    "avg_lcom": 0.5
+    "avg_lcom": 1.0
   },
   "src/punt_vox/service/clock.py": {
     "efferent_coupling": 1.0,
@@ -1826,6 +1826,13 @@
     "max_lcom": 0.639,
     "avg_lcom": 0.639
   },
+  "src/punt_vox/service/listen_address.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/service/not_asked.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
@@ -1841,7 +1848,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/service/process.py": {
-    "efferent_coupling": 7.0,
+    "efferent_coupling": 8.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.931,
