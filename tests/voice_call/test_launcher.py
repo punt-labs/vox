@@ -803,13 +803,17 @@ class TestCancelBeforeFirstStep:
     async def test_a_cancel_after_the_body_ran_closes_the_input_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When run() ran, its own cleanup owns the close; the callback adds none."""
-        exits: list[int] = []
+        """When run() ran, its own cleanup owns the close; the callback adds none.
 
-        def count_exit(_stream: FakeInputStream, *_exc_info: object) -> None:
-            exits.append(1)
+        The one close path is the counted stream's strict teardown, which
+        calls the native stream's ``close`` with errors not ignored.
+        """
+        closes: list[bool] = []
 
-        monkeypatch.setattr(FakeInputStream, "__exit__", count_exit)
+        def count_close(_stream: FakeInputStream, ignore_errors: bool = True) -> None:
+            closes.append(ignore_errors)
+
+        monkeypatch.setattr(FakeInputStream, "close", count_close)
         fake_sounddevice(monkeypatch)
         launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
         active = await launcher.launch(
@@ -817,7 +821,7 @@ class TestCancelBeforeFirstStep:
         )
         await asyncio.sleep(0)  # the task takes its first step
         await active.cancel()
-        assert exits == [1]
+        assert closes == [False]
 
     async def test_the_trace_stream_is_closed_when_the_input_close_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -837,10 +841,12 @@ class TestCancelBeforeFirstStep:
 
         monkeypatch.setattr(CallTrace, "reserve", record)
 
-        def vanish(_stream: FakeInputStream, *_exc_info: object) -> None:
-            raise OSError("Error closing stream: Device unavailable")
+        def vanish(_stream: FakeInputStream, ignore_errors: bool = True) -> None:
+            # As sounddevice: the error surfaces only to a caller that asks.
+            if not ignore_errors:
+                raise FakePortAudioError("Error closing stream: Device unavailable")
 
-        monkeypatch.setattr(FakeInputStream, "__exit__", vanish)
+        monkeypatch.setattr(FakeInputStream, "close", vanish)
         fake_sounddevice(monkeypatch)
         launcher = _launcher(tmp_path, connector=_Connector(), opener=_Opener())
         active = await launcher.launch(
