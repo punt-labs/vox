@@ -42,6 +42,14 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
+    def lookup_spent(cls) -> Self:
+        """Return the miss for a read of the installed bind that spent the budget."""
+        return cls(
+            "reading the installed bind spent the health budget before voxd "
+            "could be asked; no token sent unattributed"
+        )
+
+    @classmethod
     def unpublished(cls) -> Self:
         """Return the miss for no ``serve.port`` at all."""
         return cls("serve.port publishes no port; no token sent unattributed")

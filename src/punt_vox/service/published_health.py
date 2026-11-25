@@ -41,19 +41,20 @@ class PublishedHealth:
     __slots__ = ("_bound", "_listening", "_miss", "_port_file", "_target")
 
     _port_file: Path
-    _target: HealthTarget
-    _listening: Callable[[Deadline], bool]
+    _target: Callable[[], HealthTarget]
+    _listening: Callable[[HealthTarget, Deadline], bool]
     _bound: Deadline
     _miss: Exception | None
 
     def __new__(
         cls,
         port_file: Path,
-        target: HealthTarget,
-        listening: Callable[[Deadline], bool],
+        target: Callable[[], HealthTarget],
+        listening: Callable[[HealthTarget, Deadline], bool],
         bound: Deadline,
     ) -> Self:
-        """Create the request: *listening* checks the port within a deadline."""
+        """Create the request: *target* is resolved, and *listening* checked,
+        inside *bound*."""
         self = super().__new__(cls)
         self._port_file = port_file
         self._target = target
@@ -69,34 +70,43 @@ class PublishedHealth:
 
     def ask(self) -> HealthStatus | None:
         """Return voxd's health, or ``None`` with :attr:`miss` set."""
-        unasked = self._gate()
+        unasked = self._file_gate()
         if unasked is not None:
             self._miss = unasked
             return None
-        request = HealthRequest(self._target, self._bound)
+        # Resolved inside the bound: a slow read of the installed bind spends
+        # from the share, so the connect and the request cannot run past it.
+        target = self._target()
+        unasked = self._target_gate(target)
+        if unasked is not None:
+            self._miss = unasked
+            return None
+        request = HealthRequest(target, self._bound)
         health = request.send()
         self._miss = request.miss
         return health
 
-    def _gate(self) -> NotAskedError | None:
-        """Return why the published port may not be asked; ``None`` to ask."""
+    def _file_gate(self) -> NotAskedError | None:
+        """Return why ``serve.port`` closes the gate; ``None`` when it opens."""
         try:
-            unasked = PublishedPort.at(self._port_file).unasked(DEFAULT_PORT)
+            return PublishedPort.at(self._port_file).unasked(DEFAULT_PORT)
         except PortProbeError as exc:
             # A serve.port vox cannot read closes this door only: attribution
             # still runs, and a voxd lsof finds is still asked.
             return NotAskedError.unreadable(str(exc))
-        if unasked is not None:
-            return unasked
-        host = self._target.host
-        if not ipaddress.ip_address(host).is_loopback:
-            return NotAskedError.not_loopback(host)
-        return self._listener_gate()
 
-    def _listener_gate(self) -> NotAskedError | None:
+    def _target_gate(self, target: HealthTarget) -> NotAskedError | None:
+        """Return why *target* may not be asked; ``None`` to ask."""
+        if self._bound.remaining() < HealthRequest.MIN_S:
+            return NotAskedError.lookup_spent()
+        if not ipaddress.ip_address(target.host).is_loopback:
+            return NotAskedError.not_loopback(target.host)
+        return self._listener_gate(target)
+
+    def _listener_gate(self, target: HealthTarget) -> NotAskedError | None:
         """Return why the listener check closed the gate; ``None`` to ask."""
         try:
-            listening = self._listening(self._bound)
+            listening = self._listening(target, self._bound)
         except PortProbeError as exc:
             # A connect vox cannot complete is no reason to abandon the
             # reading: attribution still runs, and may still ask.

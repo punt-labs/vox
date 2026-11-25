@@ -6,7 +6,9 @@ over the process manager's ``serve.port`` and the probe's listener check.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,6 +17,7 @@ from _lifecycle_fakes import FakeClock, probe_over
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.health import HealthTarget
 from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.published_port import PublishedPort
 from punt_vox.types_health import HealthStatus
@@ -193,3 +196,52 @@ def test_published_health_no_reply_is_none_and_kept(
     probe = probe_over(_published(monkeypatch, PublishedPort(8421)), target)
     assert probe.published_health(1.5) is None
     assert probe.health_miss() is rejected
+
+
+def _slow_target(
+    clock: FakeClock, lookup_s: float
+) -> tuple[MagicMock, Callable[[], HealthTarget]]:
+    """Return a target whose lookup (the installed bind) takes *lookup_s*."""
+    target = MagicMock(host="127.0.0.1", port=8421)
+    target.client.return_value.health.return_value = HealthStatus(status="ok")
+
+    def resolve() -> HealthTarget:
+        clock.advance(lookup_s)
+        return cast("HealthTarget", target)
+
+    return target, resolve
+
+
+def test_the_target_lookup_spends_from_the_health_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow read of the installed bind leaves the request only the rest."""
+    _listening(monkeypatch)
+    clock = FakeClock()
+    target, resolve = _slow_target(clock, 0.25)
+    probe = DaemonProbe(
+        _published(monkeypatch, PublishedPort(8421)), resolve, Poll(clock)
+    )
+    probe.published_health(1.5)
+    target.client.return_value.health.assert_called_once_with(
+        timeout=pytest.approx(1.25)
+    )
+
+
+def test_a_target_lookup_that_spends_the_share_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole call finishes within the share: no request, the step named."""
+    connect = _listening(monkeypatch)
+    clock = FakeClock()
+    target, resolve = _slow_target(clock, 1.4)
+    probe = DaemonProbe(
+        _published(monkeypatch, PublishedPort(8421)), resolve, Poll(clock)
+    )
+    assert probe.published_health(1.5) is None
+    assert clock.monotonic() <= 1.5
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, NotAskedError)
+    assert "installed bind" in str(miss)

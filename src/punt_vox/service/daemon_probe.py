@@ -164,9 +164,12 @@ class DaemonProbe:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        target = self._target()
+        return self._listening_at(self._target(), self._deadline)
+
+    def _listening_at(self, target: HealthTarget, deadline: Deadline) -> bool:
+        """Connect once to *target* within *deadline*; see :meth:`port_listening`."""
         address = (target.host, target.port)
-        timeout = self._deadline.cap(
+        timeout = deadline.cap(
             self._CONNECT_TIMEOUT_S, f"cannot connect to {address[0]}:{address[1]}"
         )
         try:
@@ -182,12 +185,13 @@ class DaemonProbe:
         """Return voxd's health through the port it published, else ``None``.
 
         The gate is :class:`PublishedHealth`'s, stated in the module docstring
-        above. The connect check and the request both spend from *within_s*.
+        above. The bound starts here: reading the installed bind, the connect
+        check and the request all spend from *within_s*.
         """
         request = PublishedHealth(
             self._process_mgr.port_file,
-            self._target(),
-            lambda bound: self.within(bound).port_listening(),
+            self._target,
+            self._listening_at,
             Deadline(self._poll.now, within_s),
         )
         health = request.ask()

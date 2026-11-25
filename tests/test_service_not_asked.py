@@ -24,6 +24,13 @@ SENT_NOTHING = "no token sent"
             ),
         ),
         (
+            NotAskedError.lookup_spent(),
+            (
+                "reading the installed bind spent the health budget before voxd "
+                "could be asked; no token sent unattributed"
+            ),
+        ),
+        (
             NotAskedError.unpublished(),
             "serve.port publishes no port; no token sent unattributed",
         ),
