@@ -51,7 +51,11 @@ def test_mic_check_passes_but_shows_dropped_audio_when_callbacks_overflowed() ->
     assert "3 overflows, audio dropped" in result.message
 
 
-def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero() -> None:
+def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On macOS, silence from an opened device is the missing privacy grant."""
+    monkeypatch.setattr(sys, "platform", "darwin")
     with patch.object(DaemonControl, "request", return_value=_reply(0)):
         result = MicCaptureCheck().run()
 
@@ -62,6 +66,20 @@ def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero() -> None
     assert "Privacy & Security" in result.message
     assert "Microphone" in result.message
     assert "terminal" in result.message
+
+
+def test_mic_check_names_the_audio_server_for_silence_off_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off macOS there is no privacy grant; the advice names the audio server."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    with patch.object(DaemonControl, "request", return_value=_reply(0)):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert "the daemon captured silence" in result.message
+    assert "audio server's permissions for voxd's user" in result.message
+    assert "Privacy & Security" not in result.message
 
 
 def test_mic_check_warns_without_grant_advice_when_no_audio_arrived() -> None:

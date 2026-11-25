@@ -9,6 +9,7 @@ turns the reply into a line.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import PurePath
 from typing import Self, cast, final
 
@@ -23,10 +24,14 @@ from punt_vox.types_mic import MicProbeReport
 
 __all__ = ["MicCaptureCheck", "WorkerReposCheck"]
 
-_MIC_FIX = (
-    "grant the daemon's process the microphone in System Settings, "
-    "Privacy & Security, Microphone, or run voxd from a terminal that holds "
-    "the grant"
+_MAC_SILENCE_FIX = (
+    "the daemon hears silence; grant the daemon's process the microphone in "
+    "System Settings, Privacy & Security, Microphone, or run voxd from a "
+    "terminal that holds the grant"
+)
+_SILENCE_FIX = (
+    "the daemon captured silence: check the device and the audio server's "
+    "permissions for voxd's user"
 )
 
 
@@ -103,7 +108,12 @@ class MicCaptureCheck:
             return self._warn(f"{heard} — the device delivered no audio in one second")
         if report.signal:
             return CheckResult.of(OK, f"Microphone (voxd): {heard}", required=False)
-        return self._warn(f"{heard} — the daemon hears silence; {_MIC_FIX}")
+        return self._warn(f"{heard} — {self._silence_fix()}")
+
+    @staticmethod
+    def _silence_fix() -> str:
+        """Return the silence advice for this host: the grant exists on macOS only."""
+        return _MAC_SILENCE_FIX if sys.platform == "darwin" else _SILENCE_FIX
 
     @staticmethod
     def _warn(reason: str) -> CheckResult:
