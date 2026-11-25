@@ -148,9 +148,15 @@ class PublishedPort:
         """
         if self._refusal is not None:
             raise self._refusal
+        if self._port is None:
+            raise NotAskedError.unparseable()
         if self._port != service_port:
-            raise NotAskedError.other_port(self._port or 0)
-        pid = self._pid or 0
+            raise NotAskedError.other_port(self._port)
+        if self._pid is None:
+            # Never 0: os.kill(0, 0) signals the caller's own process group
+            # and succeeds, which would open the gate with no publisher at all.
+            raise NotAskedError.no_pid()
+        pid = self._pid
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

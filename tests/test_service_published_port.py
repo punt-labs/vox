@@ -44,6 +44,17 @@ def test_own_files_naming_the_service_port_and_a_live_pid_open_the_gate(
     assert published.publisher(8421) == os.getpid()
 
 
+def test_a_reading_without_a_pid_never_opens_the_gate() -> None:
+    """os.kill(0, 0) signals the caller's own group and succeeds: no pid, no ask."""
+    with pytest.raises(NotAskedError, match=r"serve\.pid publishes no pid"):
+        PublishedPort(8421).publisher(8421)
+
+
+def test_a_reading_without_a_port_never_opens_the_gate() -> None:
+    with pytest.raises(NotAskedError, match=r"serve\.port does not name a port"):
+        PublishedPort(None, os.getpid()).publisher(8421)
+
+
 def test_absent_port_file_publishes_nothing(tmp_path: Path) -> None:
     published = PublishedPort.at(tmp_path / "serve.port")
     assert published.port is None
@@ -122,11 +133,12 @@ def test_another_users_pid_file_keeps_the_gate_closed(
 ) -> None:
     path = _publish(tmp_path)
     mine = os.getuid()
+    pid_inode = (tmp_path / "serve.pid").stat().st_ino
     real_fstat = os.fstat
 
     def foreign_pid_file(fd: int) -> os.stat_result:
         st = real_fstat(fd)
-        if st.st_size == len(str(os.getpid())):  # serve.pid, not "8421"
+        if st.st_ino == pid_inode:
             return os.stat_result((*st[:4], mine + 1, *st[5:]))
         return st
 
