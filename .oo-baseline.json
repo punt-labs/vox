@@ -4669,10 +4669,10 @@
   "src/punt_vox/voxd/mic_probe.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.67,
+    "avg_params": 1.83,
     "max_complexity": 3.0,
-    "avg_complexity": 1.83,
-    "module_size": 83.0,
+    "avg_complexity": 2.0,
+    "module_size": 90.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

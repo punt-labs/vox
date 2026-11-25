@@ -19,12 +19,15 @@ from collections.abc import Buffer, Callable
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_mic import MicProbeReport
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from sounddevice import CallbackFlags
     from starlette.websockets import WebSocket
+
+    from punt_vox.voxd.conversation_mode.mic_audio_source import CaptureBackend
 
 __all__ = ["MicProbeError", "MicProbeHandler", "SoundDeviceCapture"]
 
@@ -42,26 +45,35 @@ class MicProbeError(RuntimeError):
 
 @final
 class SoundDeviceCapture:
-    """The real capture: record from the default input device via PortAudio.
+    """The real capture: one second from the current default input device.
 
-    Imports ``sounddevice`` inside the call, not at module scope: it is the
-    optional ``call`` extra, and every ``voxd`` start imports this module.
+    The device comes from the call's capture backend, not from a bare
+    ``query_devices``: the backend re-reads PortAudio's device table first,
+    so the probe sees the microphone connected after voxd started, and its
+    stream is counted on that table, so a call's refresh cannot terminate
+    PortAudio under the probe. ``sounddevice`` is imported inside the call:
+    it is the optional ``call`` extra, and every voxd start imports this module.
     """
 
-    __slots__ = ()
+    __slots__ = ("_backend",)
+    _backend: CaptureBackend
 
-    def __new__(cls) -> Self:
-        """Create the capture; it holds no device until called."""
-        return super().__new__(cls)
+    def __new__(cls, backend: CaptureBackend | None = None) -> Self:  # None: PortAudio
+        """Capture through *backend*; voxd's shared PortAudio table by default."""
+        self = super().__new__(cls)
+        self._backend = PortAudio() if backend is None else backend
+        return self
 
     def __call__(self, seconds: float) -> MicProbeReport:
         """Record *seconds* from the default input device and summarise it.
 
         Raises:
-            MicProbeError: If the extra is absent or PortAudio refuses the device.
+            MicProbeError: If the extra is absent, the backend has no default
+                input device or cannot describe it, or the device refuses
+                the stream.
         """
         try:
-            import sounddevice
+            from sounddevice import sleep
         except (ImportError, OSError) as exc:
             msg = (
                 "microphone capture needs the `call` extra and PortAudio: "
@@ -76,19 +88,23 @@ class SoundDeviceCapture:
         ) -> None:
             blocks.append(bytes(indata))
 
+        # A device name sounddevice cannot decode is a ValueError subclass,
+        # not an OSError; both leave the probe with no device to open.
         try:
-            device = sounddevice.query_devices(kind="input")
-            with sounddevice.RawInputStream(
+            device = self._backend.devices().input
+            stream = self._backend.open(
+                device,
                 samplerate=float(_SAMPLE_RATE_HZ),
                 blocksize=0,
-                channels=1,
-                dtype="int16",
                 callback=_callback,
-            ):
-                sounddevice.sleep(round(seconds * 1000))
-        except sounddevice.PortAudioError as exc:
+            )
+        except (OSError, UnicodeDecodeError) as exc:
             raise MicProbeError(str(exc)) from exc
-        return self._summarise(device["name"], b"".join(blocks))
+        try:
+            sleep(round(seconds * 1000))
+        finally:
+            stream.__exit__(None, None, None)
+        return self._summarise(device.name, b"".join(blocks))
 
     @staticmethod
     def _summarise(device: str, raw: bytes) -> MicProbeReport:
