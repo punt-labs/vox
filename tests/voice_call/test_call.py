@@ -253,14 +253,16 @@ _END_CALL_ACK = {
 }
 
 
-@pytest.mark.parametrize("close_code", [1000, 1001])
+@pytest.mark.parametrize("close_code", [1000, 1001, 1011])
 async def test_the_agent_ending_the_call_is_credited_to_the_agent(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, close_code: int
 ) -> None:
-    """The agent's end_call, then the peer's close of any code, is a clean end.
+    """C12 in docs/voice-call.tex: the agent's end_call, then any close, is its end.
 
-    The daemon pumps caller audio every 20 ms, so a send can fail on the
-    closed socket before the listener has read the acknowledgement; the
+    1000 and 1001 reach the call as a normal end of the conversation; 1011 as
+    a transport fault, which the acknowledgement turns into the agent's
+    hang-up. The daemon pumps caller audio every 20 ms, so a send can fail on
+    the closed socket before the listener has read the acknowledgement; the
     listener still drains it, and the call ends by the agent, not the peer.
     """
 
@@ -296,7 +298,9 @@ async def test_the_agent_ending_the_call_is_credited_to_the_agent(
     messages = [r.message for r in caplog.records]
     (ended,) = [m for m in messages if m.startswith("Call ended:")]
     assert ended.startswith("Call ended: ended by agent, 0 tool calls, duration ")
-    assert "agent_end_call" in Path(str(final["trace"])).read_text()
+    trace = Path(str(final["trace"])).read_text()
+    assert "agent_end_call" in trace
+    assert ("agent_end_close" in trace) == (close_code == 1011)
 
 
 async def test_an_end_call_the_agent_did_not_run_is_not_its_hang_up(

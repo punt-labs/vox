@@ -123,14 +123,16 @@ class VoiceAgentCall:
             async with self._progress.subscribe() as queue:
                 await self._converse(dial, queue, covered)
         except* EOFError:
-            hung_up = self._hang_up(CallEnd.PEER)
+            self._hang_up(CallEnd.PEER)
+            hung_up = True
         except* ConvAIError as faults:
             # After the agent's end_call the provider closes the conversation;
             # that close is the agent hanging up, whatever close code it uses.
             if self._ended_by is CallEnd.AGENT:
                 details = [str(fault) for fault in faults.exceptions]
                 self._trace.record("note", "agent_end_close", {"faults": details})
-                hung_up = self._hang_up(CallEnd.AGENT)
+                self._hang_up(CallEnd.AGENT)
+                hung_up = True
             else:
                 self.mark_failed(self._failure_text(faults.exceptions[0]))
         except* Exception as failures:
@@ -142,12 +144,11 @@ class VoiceAgentCall:
         finally:
             await self._settle(depart, hung_up=hung_up)
 
-    def _hang_up(self, ended_by: CallEnd) -> bool:
-        """Record a remote end, keeping the agent's end_call as who ended it."""
+    def _hang_up(self, ended_by: CallEnd) -> None:
+        """End the call without failing; the agent's end_call stays who ended it."""
         self._state = "ended"
         if self._ended_by is None:
             self._ended_by = ended_by
-        return True
 
     @staticmethod
     def _failure_text(failure: Exception) -> str:
@@ -161,7 +162,7 @@ class VoiceAgentCall:
     ) -> None:
         """End the call: release the speaker, then depart, then play out a hang-up."""
         if self._state in {"connecting", "live"}:
-            self._state, self._ended_by = "ended", CallEnd.CALLER
+            self._hang_up(CallEnd.CALLER)
         self._connected.set()
         try:
             if not hung_up:
@@ -196,8 +197,8 @@ class VoiceAgentCall:
         await self._connected.wait()
 
     def mark_failed(self, error: str) -> None:
-        """Keep the terminal failure reason in subsequent call status replies."""
-        self._state, self._error = "failed", error
+        """Keep the failure for status replies; a failure is nobody's hang-up."""
+        self._state, self._error, self._ended_by = "failed", error, None
 
     def mark_ended(self) -> None:
         """End a call whose task was cancelled before :meth:`run` ever began.
