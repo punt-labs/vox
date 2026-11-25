@@ -1645,11 +1645,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/service/attributed_health.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 5.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.167,
-    "avg_lcom": 0.167
+    "max_lcom": 0.2,
+    "avg_lcom": 0.2
   },
   "src/punt_vox/service/backend.py": {
     "efferent_coupling": 0.0,
@@ -1669,8 +1669,8 @@
     "efferent_coupling": 10.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.692,
-    "avg_lcom": 0.692
+    "max_lcom": 0.676,
+    "avg_lcom": 0.676
   },
   "src/punt_vox/service/daemon_process.py": {
     "efferent_coupling": 3.0,

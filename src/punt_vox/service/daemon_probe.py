@@ -12,7 +12,8 @@ it is never read as "nothing there".
 Two doors send the token, and each has its own gate:
 
 - :meth:`DaemonProbe.health` sends it to a voxd ``lsof``/``fuser`` attributed
-  to the port, re-attributed immediately before the request.
+  to the port, re-attributed immediately before the request and shown to
+  hold the listener itself (``fuser`` lists connected clients too).
 - :meth:`DaemonProbe.published_health` sends it before any attribution, so a
   slow ``lsof`` cannot hide a voxd that answers. Its gate
   (:class:`~punt_vox.service.published_health.PublishedHealth`) is what voxd
@@ -211,15 +212,21 @@ class DaemonProbe:
         is the documented answer for "no health reply"; :meth:`health_miss`
         says why.
         """
-        request = AttributedHealth(
-            holders,
-            self.voxd_processes,
-            self._target,
-            Deadline(self._poll.now, within_s),
-        )
+        request = AttributedHealth(holders, self, Deadline(self._poll.now, within_s))
         health = request.ask()
         self._miss = request.miss
         return health
+
+    def holds_port(self, pid: int, bound: Deadline) -> bool:
+        """Return True when *pid* itself holds the service port's listener.
+
+        One bounded per-pid check (:meth:`ProcessManager.holds_port`), cut to
+        *bound* so a request's budget covers it.
+
+        Raises:
+            PortProbeError: If the check cannot be made.
+        """
+        return self._process_mgr.within(bound).holds_port(pid, DEFAULT_PORT)
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""

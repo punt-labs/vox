@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from _lifecycle_fakes import FakeClock, holding_voxd, probe_over
 
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.not_asked import NotAskedError
@@ -83,3 +84,35 @@ def test_a_rescan_that_spends_the_budget_sends_no_token(scan_s: float) -> None:
     miss = probe.health_miss()
     assert isinstance(miss, NotAskedError)
     assert "no token sent" in str(miss)
+
+
+def test_a_holder_without_the_listener_is_not_asked() -> None:
+    """Linux ``fuser`` lists connected clients too: a draining voxd whose
+    listener is closed, or a client, is a pid on the port but not its holder."""
+    mgr, held = holding_voxd()
+    mgr.within.return_value.holds_port.return_value = False
+    target = MagicMock()
+    probe = probe_over(mgr, target)
+    assert probe.health(frozenset({held}), 5.0) is None
+    target.client.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, NotAskedError)
+    assert str(miss) == (
+        "voxd pid 42 has a socket on port 8421 but holds no listener there; "
+        "no token sent"
+    )
+    mgr.within.return_value.holds_port.assert_called_once_with(42, 8421)
+
+
+def test_a_holder_check_that_cannot_be_made_is_not_asked() -> None:
+    mgr, held = holding_voxd()
+    mgr.within.return_value.holds_port.side_effect = PortProbeError(
+        "cannot read /proc/42/fd: Permission denied"
+    )
+    target = MagicMock()
+    probe = probe_over(mgr, target)
+    assert probe.health(frozenset({held}), 5.0) is None
+    target.client.assert_not_called()
+    assert "cannot tell whether the publisher holds port 8421" in str(
+        probe.health_miss()
+    )

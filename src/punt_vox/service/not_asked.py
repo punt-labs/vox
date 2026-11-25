@@ -118,6 +118,14 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
+    def not_listening(cls, pid: int) -> Self:
+        """Return the miss for a voxd on the port that holds no listener there."""
+        return cls(
+            f"voxd pid {pid} has a socket on port {DEFAULT_PORT} but holds no "
+            "listener there; no token sent"
+        )
+
+    @classmethod
     def publisher_without_port(cls, pid: int) -> Self:
         """Return the miss for a live publisher that no longer holds the port."""
         return cls(

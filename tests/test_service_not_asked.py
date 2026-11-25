@@ -83,6 +83,13 @@ SENT_NOTHING = "no token sent"
             ),
         ),
         (
+            NotAskedError.not_listening(42),
+            (
+                "voxd pid 42 has a socket on port 8421 but holds no listener "
+                "there; no token sent"
+            ),
+        ),
+        (
             NotAskedError.publisher_without_port(84805),
             (
                 "voxd pid 84805 that published serve.port no longer holds port "
