@@ -41,6 +41,9 @@ class PublishedPort:
     __slots__ = ("_pid", "_port", "_refusal")
 
     PID_FILE: ClassVar[str] = "serve.pid"
+    # pid_t is a signed 32-bit int on every platform voxd runs on; a larger
+    # number is not a pid, and os.kill would raise OverflowError on it.
+    PID_MAX: ClassVar[int] = 2**31 - 1
 
     _port: int | None  # None: no port file, or one that does not name a port
     _pid: int | None  # None: no pid file, or one that does not name a pid
@@ -88,7 +91,7 @@ class PublishedPort:
         if read is None:
             return cls(port, refusal=NotAskedError.no_pid())
         text, uid = read
-        if not text.isdecimal() or int(text) <= 0:
+        if not text.isdecimal() or not 0 < int(text) <= cls.PID_MAX:
             return cls(port, refusal=NotAskedError.pid_unparseable())
         return cls(port, int(text), refusal=cls._foreign(pid_file.name, uid))
 

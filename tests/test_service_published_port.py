@@ -84,8 +84,11 @@ def test_no_pid_file_keeps_the_gate_closed(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("text", ["", "abc", "0", "-5"])
+@pytest.mark.parametrize(
+    "text", ["", "abc", "0", "-5", "99999999999999999999", str(2**31)]
+)
 def test_an_unparseable_pid_file_says_so(tmp_path: Path, text: str) -> None:
+    """Digits past pid_t would make os.kill raise OverflowError: not a pid."""
     assert _why(_publish(tmp_path, pid=text)) == (
         "serve.pid does not name a pid; no token sent unattributed"
     )

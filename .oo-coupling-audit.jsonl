@@ -1004,3 +1004,4 @@
 {"ts":"2026-11-25T18:49:21Z","commit":"591c5241","source":"PL-1497","files_scored":606,"files_improved":1,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{"src/punt_vox/service/published_health.py":{"max_lcom":[0.4,0.333],"avg_lcom":[0.4,0.333]}}}
 {"ts":"2026-11-25T18:49:28Z","commit":"591c5241","source":"PL-1497","files_scored":1,"files_improved":0,"files_regressed":0,"verdict":"rebaseline-files","reason":"PublishedPort now holds port, pid and the refusal; port and pid properties each read one field, which is the reading's shape (LCOM 0 to 0.4 on a three-field value)","deltas":{},"improved":{}}
 {"ts":"2026-11-25T18:49:31Z","commit":"591c5241","source":"PL-1497","files_scored":606,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-11-25T19:12:03Z","commit":"5af9a39f","source":"PL-1497","files_scored":606,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
