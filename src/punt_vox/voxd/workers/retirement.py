@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
 from punt_vox.voxd.workers.git_failure import GitFailure
-from punt_vox.voxd.workers.settlement import WorkerSettlement
+from punt_vox.voxd.workers.settlement import SettledDebts, WorkerSettlement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,6 +152,19 @@ class WorkerRetirement:
         """
         while self._settlement.owed(record):
             settled = self._settlement.settle(record)
-            record = self._inventory.update(record.id, settled.fold)
+            record = self._checkpoint(record.id, settled)
             if not settled.left_owing(record):
                 return
+
+    def _checkpoint(self, worker_id: str, settled: SettledDebts) -> WorkerRecord:
+        """Fold the settled markers onto the newest record and save it.
+
+        A save that fails still updates memory: the discard the job ran is
+        irreversible, so the in-memory record must carry its outcome even
+        when the disk does not.
+        """
+        try:
+            return self._inventory.update(worker_id, settled.fold)
+        except (OSError, ValueError):
+            self._inventory.remember(settled.fold(self._inventory.get(worker_id)))
+            raise

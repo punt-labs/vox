@@ -101,10 +101,7 @@ class WorkerRegistry:
         harness: str = "claude",
     ) -> WorkerRecord:
         """Validate all inputs before making any worktree or launching a process."""
-        if not task.strip():
-            raise ValueError("Worker task must not be empty")
-        if provider not in self._providers or harness not in self._profiles:
-            raise ValueError("Unknown worker provider or harness")
+        self._validate(task, provider, harness)
         repo = self._policy.resolve(project)
         worker_id = str(uuid4())
         worktree = self._inventory.worktree(worker_id)
@@ -142,6 +139,13 @@ class WorkerRegistry:
         self._retirement.schedule(observed.id)
         return observed
 
+    def _validate(self, task: str, provider: str, harness: str) -> None:
+        """Refuse an empty task or a provider or harness the catalogs lack."""
+        if not task.strip():
+            raise ValueError("Worker task must not be empty")
+        if provider not in self._providers or harness not in self._profiles:
+            raise ValueError("Unknown worker provider or harness")
+
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
         """Record the failure now; the worktree discard runs off the lock."""
         record = self._lifecycle.rollback(record, error)
@@ -149,7 +153,11 @@ class WorkerRegistry:
             self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
             self._inventory.remember(record)
-            logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
+            logger.warning(
+                "Worker %s rollback checkpoint not saved (%s)",
+                record.id,
+                type(exc).__name__,
+            )
         self._retirement.schedule(record.id)
 
     def list(self) -> list[WorkerRecord]:

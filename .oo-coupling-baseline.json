@@ -3783,15 +3783,15 @@
     "efferent_coupling": 10.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.125,
-    "avg_lcom": 0.125
+    "max_lcom": 0.199,
+    "avg_lcom": 0.199
   },
   "src/punt_vox/voxd/workers/retirement.py": {
     "efferent_coupling": 3.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.4,
-    "avg_lcom": 0.4
+    "max_lcom": 0.455,
+    "avg_lcom": 0.455
   },
   "src/punt_vox/voxd/workers/settlement.py": {
     "efferent_coupling": 2.0,

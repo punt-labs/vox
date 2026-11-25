@@ -79,16 +79,23 @@ def test_failed_start_preserves_original_error_and_cleans_trust(tmp_path: Path) 
     assert "stop_error" not in retried.last_report
 
 
-def test_rollback_checkpoint_failure_cannot_mask_launch_error(tmp_path: Path) -> None:
+def test_rollback_checkpoint_failure_cannot_mask_launch_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     provider = FakeWorkerProvider()
     provider.fail = True
     registry = _registry(tmp_path, provider)
     with (
         patch.object(WorkerRecords, "save", side_effect=[None, OSError("disk failed")]),
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.registry"),
         pytest.raises(OSError, match="launch failed"),
     ):
         registry.start("edit", str(tmp_path), provider="fake", harness="test")
-    assert registry.list()[0].state == "stopped"
+    record = registry.list()[0]
+    assert record.state == "stopped"
+    [warning] = [r for r in caplog.records if "rollback checkpoint" in r.getMessage()]
+    assert record.id in warning.getMessage()
+    assert "OSError" in warning.getMessage()
 
 
 def test_terminal_stop_retries_only_failed_cleanup(tmp_path: Path) -> None:

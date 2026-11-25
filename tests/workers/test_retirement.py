@@ -377,3 +377,36 @@ async def test_another_workers_discard_does_not_delay_a_stop(tmp_path: Path) -> 
     assert reply["state"] == "stopped"
     assert "cleanup_pending" not in reply["last_report"]
     _settled(registry)
+
+
+def test_unsaved_settlement_outcome_still_reaches_memory(tmp_path: Path) -> None:
+    """A save that fails after the discard still updates the in-memory record.
+
+    The discard is irreversible; a record that still says discard_pending
+    after it ran would queue the discard again on the next stop.
+    """
+    launched = _registry(tmp_path, FakeWorkerProvider()).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    record = replace(launched, state="stopped", last_report={"discard_pending": True})
+    inventory = Mock(spec=WorkerInventory)
+    inventory.get.return_value = record
+    inventory.update.side_effect = OSError("disk full")
+
+    def discarded(current: WorkerRecord) -> WorkerRecord:
+        return replace(
+            current, last_report={**current.last_report, "worktree_discarded": True}
+        )
+
+    policy = Mock(spec=WorkerRepoPolicy)
+    policy.discard_recorded.side_effect = discarded
+    retirement = WorkerRetirement(
+        WorkerSettlement({"test": TrivialProfile()}, policy), inventory
+    )
+    job = retirement.schedule(record.id)
+    assert job is not None
+    job.result(timeout=1)
+    inventory.remember.assert_called_once()
+    remembered = inventory.remember.call_args.args[0]
+    assert remembered.last_report["worktree_discarded"] is True
+    assert "discard_pending" not in remembered.last_report
