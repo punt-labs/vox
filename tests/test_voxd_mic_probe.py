@@ -176,40 +176,62 @@ def test_capture_reserves_the_stream_on_the_device_table_for_its_duration(
     )
 
 
-@pytest.mark.parametrize(
-    "error",
-    [
-        OSError("cannot open input device Fake Microphone: busy"),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
-    ],
-)
-def test_backend_refusals_become_mic_probe_errors(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
+def test_a_backend_refusal_becomes_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A device the backend refuses or cannot describe is a probe error."""
+    """A device the backend refuses is a probe error carrying its text."""
 
     class _Refusing(_RecordingBackend):
         def open_default_input(self, **_kwargs: object) -> NoReturn:
-            raise error
+            raise OSError("cannot open input device Fake Microphone: busy")
 
     _install_sleep(monkeypatch, lambda _msec: None)
-    with pytest.raises(MicProbeError, match=str(error)):
+    with pytest.raises(MicProbeError, match="Fake Microphone: busy"):
         SoundDeviceCapture(_Refusing([]))(0.01)
+
+
+def _undecodable_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a sounddevice whose default input has a name it cannot decode."""
+
+    def query_devices(
+        kind: str | None = None,  # None: the whole table, for the refresh's summary
+    ) -> DeviceInfo | list[DeviceInfo]:
+        if kind == "input":
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return [] if kind is None else {"name": "Speakers", "default_samplerate": 1.0}
+
+    def ignore(*_args: object) -> None:
+        pass
+
+    module = SimpleNamespace(
+        PortAudioError=FakePortAudioError,
+        query_devices=query_devices,
+        sleep=ignore,
+        _terminate=ignore,
+        _initialize=ignore,
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", module)
+
+
+def test_an_undecodable_device_name_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real backend, a name sounddevice cannot decode is a probe error."""
+    _undecodable_default_input(monkeypatch)
+    table = DeviceTable()
+    with pytest.raises(MicProbeError, match="invalid start byte"):
+        SoundDeviceCapture(PortAudio(table))(0.01)
+    assert table.open_streams == 0
 
 
 @pytest.mark.asyncio
 async def test_decode_error_in_the_default_capture_is_an_error_frame(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The handler's default capture turns a decode error into an error frame."""
-
-    class _Undescribable(_RecordingBackend):
-        def open_default_input(self, **_kwargs: object) -> NoReturn:
-            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-
-    _install_sleep(monkeypatch, lambda _msec: None)
+    """Through the real backend, a decode error is an error frame, not a teardown."""
+    _undecodable_default_input(monkeypatch)
     ws = _CollectingWs()
-    await MicProbeHandler(capture=SoundDeviceCapture(_Undescribable([])))(
+    await MicProbeHandler(capture=SoundDeviceCapture(PortAudio(DeviceTable())))(
         {"type": "mic_probe", "id": "m3"}, cast("WebSocket", ws)
     )
 

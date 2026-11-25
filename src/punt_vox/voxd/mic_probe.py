@@ -16,21 +16,19 @@ import array
 import asyncio
 import logging
 from collections.abc import Buffer, Callable
-from typing import TYPE_CHECKING, Protocol, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_mic import MicProbeReport
 from punt_vox.voxd.conversation_mode.portaudio import PortAudio
+from punt_vox.voxd.conversation_mode.probe_backend import ProbeBackend
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
-    from sounddevice import CallbackFlags, RawInputCallback
+    from sounddevice import CallbackFlags
     from starlette.websockets import WebSocket
 
-    from punt_vox.voxd.conversation_mode.input_device import InputDevice
-    from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
-
-__all__ = ["MicProbeError", "MicProbeHandler", "ProbeBackend", "SoundDeviceCapture"]
+__all__ = ["MicProbeError", "MicProbeHandler", "SoundDeviceCapture"]
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +40,6 @@ type MicCapture = Callable[[float], MicProbeReport]
 
 class MicProbeError(RuntimeError):
     """The default input device could not be opened or read."""
-
-
-class ProbeBackend(Protocol):
-    """Opens the current default input device as a started raw mono stream.
-
-    The pair returned names the device the stream captures from; the backend
-    selects and opens it as one step so the two cannot disagree.
-    """
-
-    def open_default_input(
-        self, *, samplerate: float, blocksize: int, callback: RawInputCallback
-    ) -> tuple[InputDevice, InputStreamHandle]:
-        """Return the default input device and a started stream on it, or raise."""
-        ...
 
 
 @final
@@ -106,13 +90,13 @@ class SoundDeviceCapture:
         ) -> None:
             blocks.append(bytes(indata))
 
-        # A device name sounddevice cannot decode is a ValueError subclass,
-        # not an OSError; both leave the probe with no device to open.
+        # The backend answers every refusal -- no default input, a name it
+        # cannot decode, a device that will not open -- as one OSError.
         try:
             device, stream = self._backend.open_default_input(
                 samplerate=float(_SAMPLE_RATE_HZ), blocksize=0, callback=_callback
             )
-        except (OSError, UnicodeDecodeError) as exc:
+        except OSError as exc:
             raise MicProbeError(str(exc)) from exc
         # The close is the last PortAudio call; a failure there is the device's
         # error too, and must reach the doctor as one rather than as a dropped
