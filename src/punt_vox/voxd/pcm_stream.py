@@ -268,19 +268,24 @@ class PcmStreamSink:
                 releasing = await DeviceCall.run(
                     self._release_device, stream, drain=drain
                 )
-                error = releasing.error()
-                if releasing.cancelled:
-                    if error is not None:
-                        logger.error(
-                            "releasing the PCM device during a cancelled close",
-                            exc_info=error,
-                        )
-                    raise asyncio.CancelledError
-                if error is not None:
-                    raise error
+                self._raise_release_outcome(releasing)
         finally:
             report = self._report(interrupted=ending == "interrupted")
         return report
+
+    @staticmethod
+    def _raise_release_outcome(releasing: DeviceCall[None]) -> None:
+        """Re-raise a cancelled close or a failed release, logging the one lost."""
+        error = releasing.error()
+        if releasing.cancelled:
+            if error is not None:
+                logger.error(
+                    "releasing the PCM device during a cancelled close",
+                    exc_info=error,
+                )
+            raise asyncio.CancelledError
+        if error is not None:
+            raise error
 
     def _report(self, *, interrupted: bool) -> StreamReport:
         """Build and log the closing report, at WARNING if playback degraded."""
@@ -359,7 +364,8 @@ class PcmStreamSink:
         """Device thread: the stream went inactive; flag it unless it was expected.
 
         A stream voxd closed, or one whose audio already played out, ended
-        normally. At daemon shutdown the loop may already be closed.
+        normally. At daemon shutdown the loop may already be closed while
+        the device still runs; that is the normal end, not a fault.
         """
         if self._phase == "closed" or self._drained:
             return
@@ -386,16 +392,28 @@ class PcmStreamSink:
         out[len(block) : wanted] = bytes(wanted - len(block))
         if status:
             self._device_flags += 1
-        started = self._played > 0 or bool(block)
+        if block and not self._played:
+            # The first block with audio in it: playback is now audible, so
+            # a barge-in from here on cuts a reply the person has heard.
+            with contextlib.suppress(RuntimeError):  # a closed loop at shutdown
+                self._loop.call_soon_threadsafe(
+                    logger.info,
+                    "PCM playback started at %.0f ms",
+                    self._since_open_ms(),
+                )
         self._played += len(block)
-        if len(block) == wanted or self._drained:
-            return
+        if len(block) < wanted and not self._drained:
+            self._short_block()
+
+    def _short_block(self) -> None:
+        """Account for a block the buffer could not fill: starved, or played out."""
         phase = self._phase
         if phase == "streaming":
-            # Starved mid-response: the network fell behind real time.
-            if started:
+            # Starved mid-response: the network fell behind real time. A
+            # short block before any audio played is the response arriving.
+            if self._played:
                 self._underflows += 1
-            return
-        if phase == "finished":
+        elif phase == "finished":
             self._drained = True
-            self._loop.call_soon_threadsafe(self._done.set)
+            with contextlib.suppress(RuntimeError):  # a closed loop at shutdown
+                self._loop.call_soon_threadsafe(self._done.set)

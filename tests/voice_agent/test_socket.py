@@ -36,3 +36,69 @@ async def test_remote_close_reports_code_but_not_vendor_reason() -> None:
             with pytest.raises(ConvAIError, match="close code 1011") as failure:
                 await Socket.receive(socket)
             assert "private" not in str(failure.value)
+
+
+async def test_loopback_env_var_trusts_plaintext_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def accept(socket: ServerConnection) -> None:
+        await socket.close()
+
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
+    async with serve(accept, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        socket = await Socket.open(f"ws://127.0.0.1:{port}")
+        await socket.close()
+
+
+async def test_loopback_is_untrusted_without_the_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VOX_CALL_ALLOW_LOOPBACK", raising=False)
+    with pytest.raises(ConvAIError, match="Untrusted"):
+        await Socket.open("ws://127.0.0.1:1")
+
+
+async def test_loopback_env_var_trusts_the_ipv6_loopback_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
+    # Trusted, so the failure is the handshake (nothing listens), not the origin.
+    with pytest.raises(ConvAIError, match="handshake failed"):
+        await Socket.open("ws://[::1]:1")
+
+
+async def test_loopback_by_name_is_never_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
+    with pytest.raises(ConvAIError, match="Untrusted"):
+        await Socket.open("ws://localhost:1")
+
+
+@pytest.mark.parametrize("value", ["true", "yes", "on", "2", ""])
+async def test_a_loopback_env_var_value_other_than_0_or_1_fails_by_name(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A misspelt switch names itself instead of silently refusing loopback."""
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", value)
+    with pytest.raises(ValueError, match="VOX_CALL_ALLOW_LOOPBACK"):
+        await Socket.open("ws://127.0.0.1:1")
+
+
+async def test_loopback_env_var_0_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "0")
+    with pytest.raises(ConvAIError, match="Untrusted"):
+        await Socket.open("ws://127.0.0.1:1")
+
+
+async def test_loopback_env_var_warns_once_when_it_takes_effect(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("VOX_CALL_ALLOW_LOOPBACK", "1")
+    with (
+        caplog.at_level("WARNING", logger="punt_vox.voxd.voice_agent.call_overrides"),
+        pytest.raises(ConvAIError, match="handshake failed"),
+    ):
+        await Socket.open("ws://127.0.0.1:1")
+    assert "VOX_CALL_ALLOW_LOOPBACK" in caplog.text

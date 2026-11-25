@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Point agent guidance, rules, and docs at the punt noun-verb CLI
+  (`punt repo audit`, `punt repo scan-pii`, `punt release run`); needs the
+  punt-kit CLI cutover. (PL-1519)
+
 - Reuse the ElevenLabs voice catalog across syntheses with the same API key,
   so repeat voice-name lookups do not add a network request. (PL-1561)
 
@@ -309,6 +313,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is evicted from the speech cache. (PL-1191)
 
 ### Added
+
+- A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
+  real `voxd` subprocess places one scripted `vox call --script` call against
+  a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,
+  with no microphone, credentials or network. Three test-only daemon switches
+  make it possible: `VOX_CONVAI_BASE_URL` (exactly `http://127.0.0.1:<port>`
+  or `http://[::1]:<port>`, any other value fails the call by name, and the
+  daemon sends the placeholder key `test-override` instead of its real one),
+  `VOX_CALL_ALLOW_LOOPBACK=1` (plaintext `ws://` to those two loopback IPs)
+  and `VOX_PCM_OUTPUT=silent` (agent audio plays through a silent device, so
+  a host with no sound card still plays, cuts and plays out agent audio).
 
 - `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
   edit and list the repositories workers may start in, through the daemon;
