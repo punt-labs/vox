@@ -48,6 +48,22 @@ def test_pcm_output_any_other_value_fails_by_name_and_value(
     assert repr(value) in str(failure.value)
 
 
+def test_an_explicit_device_over_the_switch_is_logged_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Both set: the caller's device wins, the log says so, and no warning
+    claims that agent audio is not played, because it is."""
+    monkeypatch.setenv("VOX_PCM_OUTPUT", "silent")
+    with caplog.at_level("DEBUG", logger=_LOGGER):
+        assert CallOverrides.check(sounddevice_output_stream) is (
+            sounddevice_output_stream
+        )
+    kept = [r for r in caplog.records if "keeping it" in r.getMessage()]
+    assert len(kept) == 1
+    assert "VOX_PCM_OUTPUT" in kept[0].getMessage()
+    assert "agent audio is not played" not in caplog.text
+
+
 def test_registration_path_is_the_default_without_the_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

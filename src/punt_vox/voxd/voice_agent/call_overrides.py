@@ -85,10 +85,14 @@ class CallOverrides:
         """
         cls.rest("", "")
         cls.allow_loopback()
-        if explicit is not None:
-            cls.pcm_output(explicit)
-            return explicit
-        return cls.pcm_output(sounddevice_output_stream)
+        if explicit is None:
+            return cls.pcm_output(sounddevice_output_stream)
+        if cls._pcm_switch():
+            logger.debug(
+                "%s is set but the playback queue was given a device; keeping it",
+                PCM_OUTPUT_ENV,
+            )
+        return explicit
 
     @classmethod
     def rest(cls, default: str, api_key: str) -> tuple[str, str]:
@@ -163,18 +167,23 @@ class CallOverrides:
             )
         return value == "1"
 
-    @staticmethod
-    def pcm_output(default: OutputStreamFactory) -> OutputStreamFactory:
+    @classmethod
+    def pcm_output(cls, default: OutputStreamFactory) -> OutputStreamFactory:
         """Return the output device the environment names, else *default*.
 
         Unset or empty is *default*; ``silent`` is the silent device, with one
         warning; anything else raises :class:`ValueError` naming the variable.
         """
-        value = os.environ.get(PCM_OUTPUT_ENV, "")
-        if value == "":
+        if not cls._pcm_switch():
             return default
-        if value != "silent":
-            msg = f"{PCM_OUTPUT_ENV} must be unset or silent, not {value!r}"
-            raise ValueError(msg)
         logger.warning("%s=silent: agent audio is not played", PCM_OUTPUT_ENV)
         return SilentOutputStream
+
+    @staticmethod
+    def _pcm_switch() -> str:
+        """Return the validated output switch: empty (unset) or ``silent``."""
+        value = os.environ.get(PCM_OUTPUT_ENV, "")
+        if value not in ("", "silent"):
+            msg = f"{PCM_OUTPUT_ENV} must be unset or silent, not {value!r}"
+            raise ValueError(msg)
+        return value
