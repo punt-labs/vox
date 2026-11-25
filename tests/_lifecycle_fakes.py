@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
+from unittest.mock import MagicMock
 
 from punt_vox.service.backend import (
     KILL_GRACE_FLOOR_S,
@@ -26,11 +28,14 @@ from punt_vox.service.backend import (
     PrivilegeDeniedError,
 )
 from punt_vox.service.clock import Poll
+from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import NotAskedError
+from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
+from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.termination import Termination
 from punt_vox.types_health import HealthStatus
@@ -195,6 +200,9 @@ class FakeWorld:
     foreign_listener: bool = False
     off_port: frozenset[int] = frozenset()
     token_written: bool = True
+    # voxd refuses every token-bearing request with ``health_error`` (a
+    # rejected token, a reset): the request was sent and got no answer
+    rejects: bool = False
     probe_error: str = ""
     # scripted manager responses
     stop_error: Exception | None = None
@@ -210,6 +218,9 @@ class FakeWorld:
     port_file: int | None = None
     # serve.port holds unparseable content (a crash leftover); port_file unused
     port_file_stale: bool = False
+    # serve.pid as the run directory holds it; None: it names the port's
+    # holder, as a voxd that bound and published does (no holder: no file)
+    pid_file: int | None = None
     # called with the pid each time a process is signalled
     on_signal: Callable[[int], None] | None = None
     # acts once, just before the probe clears serve.port
@@ -218,6 +229,9 @@ class FakeWorld:
     query_error: Exception | None = None
     # the cause the last gated health request failed with
     health_error: str = "connection refused"
+    # when set, only the published-port request fails, with this cause; the
+    # attributed request that follows answers as the world says
+    published_health_error: str = ""
     # a hung health request: each one blocks this long (cut to the budget it
     # is handed), then fails with ``health_error``; 0: health answers at once
     health_blocks_s: float = 0.0
@@ -245,6 +259,8 @@ class FakeWorld:
     alive_at_start: list[int] = field(default_factory=list)
     signalled: list[int] = field(default_factory=list)
     tokens_to: list[frozenset[int]] = field(default_factory=list)
+    # the ports an unattributed, published-port health request went to
+    tokens_to_port: list[int] = field(default_factory=list)
 
     def spawn(
         self,
@@ -442,6 +458,56 @@ class FakeProbe:
         self._fail("port_listening")
         return self._world.foreign_listener or self._world.holder() is not None
 
+    def published_health(self, within_s: float) -> HealthStatus | None:
+        """The real probe's gate: our serve.port names 8421 and a listener answers."""
+        world = self._world
+        self._fail("published_health")  # an unreadable unit: the bind cannot be read
+        if world.port_file_stale:
+            self._miss = NotAskedError.unparseable()
+            return None
+        if world.port_file is None:
+            self._miss = NotAskedError.unpublished()
+            return None
+        if world.port_file != 8421:
+            self._miss = NotAskedError.other_port(world.port_file)
+            return None
+        unasked = self._publisher_unasked()
+        if unasked is not None:
+            self._miss = unasked
+            return None
+        # A TCP connect is not slowed by lsof's load (``probe_blocks_s``
+        # models fuser/lsof/ps), so the listener is read without blocking.
+        self._fail("port_listening")
+        if not (world.foreign_listener or world.holder() is not None):
+            self._miss = NotAskedError.nothing_listens()
+            return None
+        if within_s < HealthRequest.MIN_S:
+            self._miss = NotAskedError.budget_spent()
+            return None
+        world.tokens_to_port.append(8421)
+        if world.published_health_error:
+            self._miss = RuntimeError(world.published_health_error)
+            return None
+        return self._answer(within_s)
+
+    def _publisher_unasked(self) -> NotAskedError | None:
+        """The real gate on serve.pid: a live voxd of this user, else why not."""
+        world = self._world
+        holder = world.holder()
+        pid = (
+            world.pid_file
+            if world.pid_file is not None
+            else (holder.pid if holder is not None else None)
+        )
+        if pid is None:
+            return NotAskedError.no_pid()
+        proc = world.procs.get(pid)
+        if proc is None or not proc.alive:
+            return NotAskedError.publisher_gone(pid)
+        if not proc.on_port:
+            return NotAskedError.publisher_without_port(pid)
+        return None
+
     def health(
         self, holders: frozenset[ProcessHandle], within_s: float
     ) -> HealthStatus | None:
@@ -451,20 +517,39 @@ class FakeProbe:
         hook, self._world.before_token = self._world.before_token, None
         if hook is not None:
             hook()
+        # The real request re-attributes the port (a second fuser/lsof run,
+        # bounded by the reading's deadline) and spends from its own budget.
+        bound = Deadline(self._world_now, within_s)
+        self._block("fuser")
         current = frozenset(
             FakeHandle(p) for p in self._world.procs.values() if p.on_port
         )
         if not holders <= current:
             self._miss = NotAskedError.left_port(h.pid for h in holders - current)
             return None
+        if bound.remaining() < HealthRequest.MIN_S:
+            self._miss = NotAskedError.budget_spent()
+            return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
+        return self._answer(bound.remaining())
+
+    def _world_now(self) -> float:
+        """The world's clock reading; 0.0 for a world no lifecycle has timed."""
+        clock = self._world.clock
+        return clock.monotonic() if clock is not None else 0.0
+
+    def _answer(self, within_s: float) -> HealthStatus | None:
+        """What the voxd on the port answers to a token-bearing request."""
         if self._world.health_blocks_s:
             assert self._world.clock is not None
             self._world.clock.advance(min(self._world.health_blocks_s, within_s))
             self._miss = RuntimeError(self._world.health_error)
             return None
         holder = self._world.holder()
-        if holder is None or not self._world.token_written:
+        if not self._world.token_written:
+            self._miss = DaemonNotUpError.missing(Path("/run/serve.token"))
+            return None
+        if holder is None or self._world.rejects:
             self._miss = RuntimeError(self._world.health_error)
             return None
         return HealthStatus(
@@ -477,9 +562,12 @@ class FakeProbe:
     def wait_up(self, deadline_s: float) -> HealthStatus | None:
         """The real probe's wait, on the world's fake clock."""
         assert self._world.clock is not None
-        return Poll(self._world.clock).first(
-            lambda left: self.health(self.voxd_processes(), left), deadline_s
-        )
+        return Poll(self._world.clock).first(self._ask_with, deadline_s)
+
+    def _ask_with(self, left: float) -> HealthStatus | None:
+        if left < HealthRequest.MIN_S:
+            return None
+        return self.health(self.voxd_processes(), left)
 
 
 @final
@@ -611,6 +699,23 @@ def assert_p5_no_signal(world: FakeWorld, *forbidden: int) -> None:
     assert not set(world.signalled) & set(forbidden)
 
 
+def probe_over(
+    mgr: MagicMock, target: HealthTarget | MagicMock | None = None
+) -> DaemonProbe:
+    """Return the real probe over a mocked process manager, on a fake clock."""
+    pinned = target or HealthTarget("")
+    return DaemonProbe(mgr, lambda: pinned, Poll(FakeClock()))
+
+
+def holding_voxd() -> tuple[MagicMock, MagicMock]:
+    """Return a process manager whose port 8421 holder is one voxd handle."""
+    mgr = MagicMock()
+    held = MagicMock(pid=42)
+    mgr.find_pid_on_port.return_value = [42]
+    mgr.open_voxd.return_value = held
+    return mgr, held
+
+
 def lifecycle(world: FakeWorld, clock: FakeClock | None = None) -> DaemonLifecycle:
     """Return a lifecycle over *world*, polling on a fake clock."""
     world.clock = clock if clock is not None else FakeClock()
@@ -637,5 +742,7 @@ __all__ = [
     "assert_p5_no_signal",
     "denied",
     "failed",
+    "holding_voxd",
     "lifecycle",
+    "probe_over",
 ]

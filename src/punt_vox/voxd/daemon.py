@@ -156,17 +156,23 @@ class VoxDaemon:
         try:
             yield
         finally:
-            await asyncio.to_thread(self._worker_lifetime.close)
-            # Reverse start order: scene, playback, supervisor, then the writer.
-            await producers.stop_all()
-            service.shutdown()
-            await consumer.stop_all()
+            # First, before anything slow. uvicorn closed the listening socket
+            # and drained connections before this ran, so the run files have
+            # already been advertising a voxd without its port; during that
+            # time the status reading's holder check is what keeps the token
+            # from going out. Unpublishing here, not after the worker and
+            # player teardown, stops the files from advertising it any longer.
             # Shutdown is the boundary: whatever the cleanup raises is logged
             # with its traceback, never swallowed, and never stops the exit.
             try:
                 self._port_file.remove()
             except Exception:
                 logger.exception("Could not clean up serve.port at shutdown")
+            await asyncio.to_thread(self._worker_lifetime.close)
+            # Reverse start order: scene, playback, supervisor, then the writer.
+            await producers.stop_all()
+            service.shutdown()
+            await consumer.stop_all()
             logger.info("voxd stopped")
 
     @staticmethod

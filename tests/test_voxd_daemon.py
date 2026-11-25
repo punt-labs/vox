@@ -280,6 +280,28 @@ async def test_lifespan_cancels_tasks_on_exit(tmp_path: Path) -> None:
     assert len(asyncio.all_tasks()) <= before + 1
 
 
+async def test_lifespan_unpublishes_before_the_slow_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """serve.port and serve.pid go first: the socket is already closed, so a
+    lingering publisher must not stay advertised through the worker and
+    player teardown."""
+    order: list[str] = []
+
+    def record_unpublish(self: PortFile) -> None:
+        order.append("unpublish")
+
+    monkeypatch.setattr(PortFile, "remove", record_unpublish)
+    daemon = _daemon(tmp_path)
+    daemon._worker_lifetime.callback(  # pyright: ignore[reportPrivateUsage]
+        order.append, "workers"
+    )
+    app = daemon.build_app()
+    async with daemon._lifespan(app):  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0)
+    assert order == ["unpublish", "workers"]
+
+
 async def test_lifespan_logs_a_port_file_cleanup_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

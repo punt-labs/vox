@@ -167,6 +167,18 @@ class LifecycleProbe(Protocol):
         """Return True when anything accepts a TCP connection on the port."""
         ...
 
+    def published_health(self, within_s: float) -> HealthStatus | None:
+        """Return voxd's health through the port it published, else ``None``.
+
+        Sent before the port is attributed, and only when this user's own
+        ``serve.port`` names the service port and its ``serve.pid`` a live
+        voxd of this user that still holds the listener, the target is
+        loopback, and something accepts a connection there. Takes at most
+        *within_s* seconds. ``None`` is the documented answer for "not asked" and "no
+        reply"; :meth:`health_miss` says why.
+        """
+        ...
+
     def health(
         self, holders: frozenset[ProcessHandle], within_s: float
     ) -> HealthStatus | None:

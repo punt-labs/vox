@@ -8,30 +8,44 @@ signalled.
 The probe fails closed: when ``fuser``, ``lsof`` or ``ps`` cannot run, or a
 connection fails for any reason but a refusal, ``PortProbeError`` propagates;
 it is never read as "nothing there".
+
+Two doors send the token, and each has its own gate:
+
+- :meth:`DaemonProbe.health` sends it to a voxd ``lsof``/``fuser`` attributed
+  to the port, re-attributed immediately before the request and shown to
+  hold the listener itself (``fuser`` lists connected clients too).
+- :meth:`DaemonProbe.published_health` sends it before any attribution, so a
+  slow ``lsof`` cannot hide a voxd that answers. Its gate
+  (:class:`~punt_vox.service.published_health.PublishedHealth`) is what voxd
+  itself publishes: ``serve.port`` must name the service port and
+  ``serve.pid`` a pid that is alive, this user's and running voxd, both
+  files owned by the calling user, the target host must be loopback, and
+  the port must accept a connection. The token goes out through no other
+  door, and not when any part of that gate fails.
 """
 
 from __future__ import annotations
 
 import socket
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.service.attributed_health import AttributedHealth
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import (
-    DaemonNotUpError,
-    HealthTarget,
-    NotAskedError,
-)
+from punt_vox.service.health import HealthTarget
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
+from punt_vox.service.published_health import PublishedHealth
+from punt_vox.service.service_cgroup import ServiceCgroup
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from punt_vox.service.backend import ProcessHandle, ServiceBackend
+    from punt_vox.service.process_identity import ProcessIdentity
     from punt_vox.types_health import HealthStatus
 
 __all__ = ["DaemonProbe"]
@@ -44,11 +58,10 @@ class DaemonProbe:
     __slots__ = ("_deadline", "_miss", "_poll", "_process_mgr", "_target")
 
     _CONNECT_TIMEOUT_S: ClassVar[float] = 0.5
-    _PROC: ClassVar[Path] = Path("/proc")
-    # systemd puts every process the system unit vox installs in this cgroup
-    # (or a child of it). A user-scope voxd.service lives under user.slice
-    # and is not the installed service.
-    _SERVICE_CGROUP: ClassVar[str] = "/system.slice/voxd.service"
+    # The holder check's own slice of a request's bound. It never reaches
+    # into the request's floor, so a slow per-pid lsof cannot stop the
+    # request from going out.
+    HOLDER_CHECK_S: ClassVar[float] = 0.5
 
     _process_mgr: ProcessManager
     _target: Callable[[], HealthTarget]
@@ -133,25 +146,7 @@ class DaemonProbe:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        cgroup = self._PROC / str(pid) / "cgroup"
-        try:
-            text = cgroup.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return False
-        except OSError as exc:
-            msg = f"cannot read {cgroup}: {exc}"
-            raise PortProbeError(msg) from exc
-        return any(self._in_service(line) for line in text.splitlines())
-
-    @classmethod
-    def _in_service(cls, line: str) -> bool:
-        """Return True when one ``/proc/<pid>/cgroup`` line names the unit.
-
-        The path is the field after the last ``:`` (cgroup v1 lines carry a
-        controller list before it).
-        """
-        path = line.rsplit(":", 1)[-1].strip()
-        return path == cls._SERVICE_CGROUP or path.startswith(cls._SERVICE_CGROUP + "/")
+        return ServiceCgroup.counts(pid)
 
     def clear_port_file(self) -> PortFileCleanup:
         """Remove a stale ``serve.port`` that names the service port.
@@ -176,9 +171,12 @@ class DaemonProbe:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        target = self._target()
+        return self._listening_at(self._target(), self._deadline)
+
+    def _listening_at(self, target: HealthTarget, deadline: Deadline) -> bool:
+        """Connect once to *target* within *deadline*; see :meth:`port_listening`."""
         address = (target.host, target.port)
-        timeout = self._deadline.cap(
+        timeout = deadline.cap(
             self._CONNECT_TIMEOUT_S, f"cannot connect to {address[0]}:{address[1]}"
         )
         try:
@@ -190,56 +188,82 @@ class DaemonProbe:
             msg = f"cannot connect to {address[0]}:{address[1]}: {exc}"
             raise PortProbeError(msg) from exc
 
+    def published_health(self, within_s: float) -> HealthStatus | None:
+        """Return voxd's health through the port it published, else ``None``.
+
+        The gate is :class:`PublishedHealth`'s, stated in the module docstring
+        above. The bound starts here: reading the installed bind, the connect
+        check and the request all spend from *within_s*.
+        """
+        request = PublishedHealth(
+            self,
+            self._target,
+            self._listening_at,
+            Deadline(self._poll.now, within_s),
+        )
+        health = request.ask()
+        self._miss = request.miss
+        return health
+
     def health(
         self, holders: frozenset[ProcessHandle], within_s: float
     ) -> HealthStatus | None:
         """Return voxd's health; send the token only to a visible voxd.
 
-        With no visible voxd holding the port, no connection is made. The
-        request, connect included, is cut off after *within_s* seconds, so a
-        hung voxd cannot hold a wait past its deadline. The bound starts
-        here: re-attributing the port before the token goes out spends from
-        it, and the request gets only what is left. ``None`` is the documented
-        answer for "no health reply"; :meth:`health_miss` says why.
+        The gate is :class:`AttributedHealth`'s: with no visible voxd holding
+        the port, no connection is made, and the holders are attributed again
+        immediately before the token goes out. The request, connect included,
+        is cut off after *within_s* seconds, so a hung voxd cannot hold a wait
+        past its deadline; the re-check spends from that bound first. ``None``
+        is the documented answer for "no health reply"; :meth:`health_miss`
+        says why.
         """
-        if not holders:
-            self._miss = DaemonNotUpError(
-                f"no visible voxd process holds port {DEFAULT_PORT}"
-            )
-            return None
-        bound = Deadline(self._poll.now, within_s)
-        target = self._target()
-        unasked = self._unasked(holders, bound)
-        if unasked is not None:
-            self._miss = unasked
-            return None
-        try:
-            return target.client().health(timeout=bound.remaining())
-        except (
-            DaemonNotUpError,
-            VoxdConnectionError,
-            VoxdProtocolError,
-            OSError,
-        ) as exc:
-            self._miss = exc
-            return None
+        request = AttributedHealth(holders, self, Deadline(self._poll.now, within_s))
+        health = request.ask()
+        self._miss = request.miss
+        return health
 
-    def _unasked(
-        self, holders: frozenset[ProcessHandle], bound: Deadline
-    ) -> NotAskedError | None:
-        """Attribute the port again, immediately before the token goes out.
+    @property
+    def port_file(self) -> Path:
+        """Return the path of ``serve.port``, the hint voxd publishes."""
+        return self._process_mgr.port_file
 
-        Returns why no request may be sent -- a holder seen at attribution no
-        longer holds the port, as the same pinned process, or the re-check
-        spent *bound* -- or ``None`` when voxd may be asked. Narrows the window
-        in which another process could take the port between attribution and
-        the token-bearing connect.
+    def identity_within(self, pid: int, bound: Deadline) -> ProcessIdentity | None:
+        """Return *pid*'s identity from a ``ps`` cut to *bound*; ``None`` once gone.
+
+        Raises:
+            PortProbeError: If ``ps`` could not run in time.
         """
-        if left := holders - self.voxd_processes():
-            return NotAskedError.left_port(h.pid for h in left)
-        if bound.remaining() > 0:
-            return None
-        return NotAskedError.budget_spent()
+        return self._process_mgr.within(bound).identity(pid)
+
+    def owner_uid_within(self, pid: int, bound: Deadline) -> int | None:
+        """Return the real uid *pid* runs as, from a ``ps`` cut to *bound*.
+
+        ``None`` once the process is gone.
+
+        Raises:
+            PortProbeError: If ``ps`` could not run in time.
+        """
+        return self._process_mgr.within(bound).owner_uid(pid)
+
+    def holds_port(self, pid: int, host: str, bound: Deadline) -> bool:
+        """Return True when *pid* itself holds the listener a request to *host* reaches.
+
+        One per-pid check (:meth:`ProcessManager.holds_port`) on its own
+        slice of *bound*: at most ``HOLDER_CHECK_S``, and never the part a
+        request needs (``HealthRequest.MIN_S``), so the request keeps its
+        floor however slow the check is. With no slice left the check is not
+        made.
+
+        Raises:
+            PortProbeError: If the check cannot be made, or has no time.
+        """
+        slice_s = min(self.HOLDER_CHECK_S, bound.remaining() - HealthRequest.MIN_S)
+        if slice_s <= 0:
+            msg = "no time left for the holder check before the request floor"
+            raise PortProbeError(msg)
+        check = Deadline(self._poll.now, slice_s)
+        return self._process_mgr.within(check).holds_port(pid, host, DEFAULT_PORT)
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""
@@ -248,8 +272,14 @@ class DaemonProbe:
     def wait_up(self, deadline_s: float) -> HealthStatus | None:
         """Poll gated health until voxd answers; ``None`` if it never does.
 
-        Each request is bounded by what is left of *deadline_s*.
+        Each request is bounded by what is left of *deadline_s*. The last
+        sliver, below a request's floor, is not spent on a request that could
+        only time out: the last real miss stays as :meth:`health_miss`.
         """
-        return self._poll.first(
-            lambda left: self.health(self.voxd_processes(), left), deadline_s
-        )
+        return self._poll.first(self._ask_with, deadline_s)
+
+    def _ask_with(self, left: float) -> HealthStatus | None:
+        """One poll step: ask the visible voxd when *left* is worth a request."""
+        if left < HealthRequest.MIN_S:
+            return None
+        return self.health(self.voxd_processes(), left)

@@ -16,8 +16,8 @@ from _lifecycle_fakes import (
 
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_status import DaemonState
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
-from punt_vox.service.lifecycle_status import StatusCheck
 
 
 def test_status_a_voxd_that_answers_is_running() -> None:
@@ -31,7 +31,7 @@ def test_status_a_voxd_that_answers_is_running() -> None:
 
 
 def test_status_visible_voxd_no_reply_is_unresponsive() -> None:
-    world = FakeWorld(token_written=False, health_error="auth rejected (4401)")
+    world = FakeWorld(rejects=True, health_error="auth rejected (4401)")
     world.run_unit(100)
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNRESPONSIVE
@@ -74,18 +74,25 @@ def test_status_a_listener_check_that_fails_is_unknown() -> None:
     )
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
-    assert reading.reason == "connect timed out"
+    assert reading.reason.startswith("connect timed out; voxd was not asked first")
 
 
 def test_status_slow_probes_cannot_push_status_past_its_deadline() -> None:
-    """Port and process probes and the health request share one bound."""
+    """Port and process probes and the health request share one bound.
+
+    Two 3 s probes do not fit in 5 s: the re-attribution before the token
+    goes out is cut off, and the reading is ``unknown`` naming it, never
+    ``unresponsive`` -- voxd was not asked.
+    """
     world = FakeWorld(probe_blocks_s=3.0, health_blocks_s=60.0)
     world.health_error = "no answer from voxd within the time left"
     world.run_unit(100)
     clock = FakeClock()
     reading = lifecycle(world, clock).status()
     assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
-    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason.startswith("cannot run fuser: timed out after 2s")
+    assert world.tokens_to == []
 
 
 def test_status_deadline_spent_on_probes_is_unknown_and_sends_no_token() -> None:
@@ -118,7 +125,7 @@ def test_status_with_the_minimum_health_budget_left_still_asks_voxd() -> None:
     world.run_unit(100)
     clock = FakeClock()
     world.before_holders = lambda: clock.advance(
-        DaemonLifecycle.STATUS_DEADLINE_S - StatusCheck.MIN_HEALTH_S
+        DaemonLifecycle.STATUS_DEADLINE_S - HealthRequest.MIN_S
     )
     reading = lifecycle(world, clock).status()
     assert reading.state is DaemonState.RUNNING
@@ -133,3 +140,239 @@ def test_status_sends_no_token_to_a_voxd_that_left_before_it_was_asked() -> None
     assert world.tokens_to == []
     assert reading.state is DaemonState.UNKNOWN
     assert "left port 8421" in reading.reason
+
+
+# ---------------------------------------------------------------------------
+# voxd is asked first, through the port serve.port publishes, before
+# lsof/fuser attribute the port. A slow lsof cannot hide a voxd that answers.
+# ---------------------------------------------------------------------------
+
+
+def test_status_asks_the_published_port_before_lsof_runs() -> None:
+    """A voxd that answers health is running, even when lsof times out."""
+    world = FakeWorld(
+        port_file=8421, probe_error="cannot run lsof: timed out after 1.81 seconds"
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert reading.health is not None
+    assert reading.health.pid == 100
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [], "no attributed request was needed"
+
+
+def test_status_sends_no_published_token_without_serve_port() -> None:
+    """With no serve.port, the fast path sends nothing; attribution decides."""
+    world = FakeWorld()
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == []
+    assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_sends_no_published_token_when_serve_port_names_another_port() -> None:
+    world = FakeWorld(port_file=9000)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == []
+
+
+def test_status_sends_no_published_token_to_an_empty_port() -> None:
+    """A stale serve.port naming 8421 with nothing listening sends no token."""
+    world = FakeWorld(port_file=8421)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.NOT_RUNNING
+    assert world.tokens_to_port == []
+
+
+def test_status_published_port_no_answer_falls_back_to_attribution() -> None:
+    """A rejected fast request is not the reading: lsof still names the holder."""
+    world = FakeWorld(port_file=8421, rejects=True, health_error="auth rejected (4401)")
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.pids == (100,)
+    assert world.tokens_to_port == [8421]
+
+
+def test_status_hung_published_health_leaves_time_for_attribution() -> None:
+    """A hung voxd spends only the reserve; attribution and the second ask fit."""
+    world = FakeWorld(
+        port_file=8421, health_blocks_s=60.0, health_error="no answer in time"
+    )
+    world.run_unit(100)
+    clock = FakeClock()
+    reading = lifecycle(world, clock).status()
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_published_miss_then_attribution_is_running() -> None:
+    """A fast request that fails is not the reading: lsof finds the holder."""
+    world = FakeWorld(port_file=8421, published_health_error="connection reset")
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_unknown_names_the_health_miss_and_the_probe_that_failed() -> None:
+    """Both steps failed within the deadline: the reason names each one."""
+    world = FakeWorld(
+        port_file=8421,
+        published_health_error="connection reset",
+        probe_error="cannot run lsof: timed out after 0.5 seconds",
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "cannot run lsof: timed out after 0.5 seconds; "
+        "voxd was asked first and gave no answer: connection reset"
+    )
+
+
+def test_status_unknown_names_why_voxd_was_not_asked_first() -> None:
+    """With no serve.port the fast path sent nothing; the reason says so."""
+    world = FakeWorld(probe_error="cannot run lsof: timed out after 2 seconds")
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "cannot run lsof: timed out after 2 seconds; voxd was not asked first: "
+        "serve.port publishes no port; no token sent unattributed"
+    )
+
+
+def test_status_a_slow_second_lsof_is_unknown_naming_it_never_unresponsive() -> None:
+    """The re-attribution leaves less than a request's floor: no token, unknown."""
+    world = FakeWorld(
+        port_file=8421, published_health_error="connection reset", probe_blocks_s=2.3
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert "re-checking port 8421 spent the health budget" in reading.reason
+    assert "voxd was asked first and gave no answer: connection reset" in reading.reason
+    assert world.tokens_to == []
+
+
+def test_status_deadline_spent_after_a_hung_first_ask_names_both() -> None:
+    """A hung published request, then lsof spends the rest: the reason says so."""
+    world = FakeWorld(
+        port_file=8421,
+        health_blocks_s=60.0,
+        health_error="no answer in time",
+        probe_blocks_s=3.2,
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason.startswith("the status deadline was spent probing port 8421")
+    assert (
+        "voxd was asked first and gave no answer: no answer in time" in reading.reason
+    )
+    assert world.tokens_to == []
+
+
+def test_status_unattributed_listener_names_the_sent_request() -> None:
+    """The token did go to the published port: the reading must not deny it."""
+    world = FakeWorld(
+        port_file=8421,
+        pid_file=100,
+        foreign_listener=True,
+        published_health_error="connection reset",
+    )
+    proc = world.run_unit(100)
+    world.before_holders = proc.exit  # gone between the request and lsof
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "the token went to the published port and got no answer: connection reset"
+    )
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == []
+
+
+def test_status_unattributed_listener_that_was_not_asked_says_so() -> None:
+    """With the published door closed, no token went out at all."""
+    world = FakeWorld(foreign_listener=True)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "vox sent it no token; voxd was not asked first: serve.port publishes "
+        "no port; no token sent unattributed"
+    )
+
+
+def test_status_stale_port_file_with_a_foreign_listener_sends_no_token() -> None:
+    """A crash's serve.port names 8421; its serve.pid names a pid that is gone;
+    another user's process accepts connections on the port. Nothing is sent,
+    and the reading names the dead publisher."""
+    world = FakeWorld(port_file=8421, pid_file=100, foreign_listener=True)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert world.tokens_to_port == []
+    assert world.tokens_to == []
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "vox sent it no token; voxd was not asked first: voxd pid 100 that "
+        "published serve.port is gone; no token sent unattributed"
+    )
+
+
+def test_status_live_publisher_is_asked_through_its_files() -> None:
+    world = FakeWorld(port_file=8421, pid_file=100)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == [8421]
+
+
+def test_status_live_publisher_without_the_port_is_not_asked() -> None:
+    """The shutdown window: voxd's socket is closed, its process lingers, and
+    something else may bind the port; nothing is sent."""
+    world = FakeWorld(port_file=8421, pid_file=100, foreign_listener=True)
+    world.spawn(100, on_port=False)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert world.tokens_to_port == []
+    assert "no longer holds port 8421" in reading.reason
+
+
+def test_status_without_a_token_file_is_unresponsive_naming_the_file() -> None:
+    """No serve.token: the published door says voxd was not asked, but a visible
+    holder is never read as unknown for want of its token -- it holds the
+    port and did not answer, with the file as the cause."""
+    world = FakeWorld(port_file=8421, token_written=False)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.pids == (100,)
+    assert reading.reason == (
+        "voxd pid 100 holds the port but did not answer health: /run/serve.token "
+        "is absent: voxd has not published its token; no token sent"
+    )
+    assert world.tokens_to_port == [8421]
+
+
+def test_status_unknown_before_any_ask_names_only_the_probe() -> None:
+    """The published door failed before any request (an unreadable unit bind):
+    there is no first ask to name, so the reading is the failure alone."""
+    world = FakeWorld(
+        port_file=8421,
+        probe_failures={"published_health": PortProbeError("cannot read the unit")},
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == "cannot read the unit"
+    assert world.tokens_to_port == []

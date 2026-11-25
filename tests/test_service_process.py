@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
@@ -237,6 +238,401 @@ def test_find_pid_on_port_fuser_missing_raises_naming_psmisc(
     """A missing fuser raises naming the tool and the package that ships it."""
     with pytest.raises(PortProbeError, match=r"fuser: not found \(install psmisc\)"):
         ProcessManager().find_pid_on_port(8421)
+
+
+# ---------------------------------------------------------------------------
+# holds_port -- one process, never a walk of every open file; fails closed
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_asks_lsof_about_one_pid(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "p123\nf5\ntIPv4\nn127.0.0.1:8421\n")
+    assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is True
+    argv = mock_run.call_args.args[0]
+    assert argv[:1] == ["lsof"]
+    assert argv[argv.index("-p") + 1] == "123"
+    assert "-a" in argv
+    assert "-Fnt" in argv
+    assert "-iTCP:8421" in argv
+    assert "-sTCP:LISTEN" in argv
+
+
+@pytest.mark.parametrize(
+    ("family", "name", "host", "held"),
+    [
+        pytest.param("IPv4", "127.0.0.1:8421", "127.0.0.1", True, id="exact-v4"),
+        pytest.param("IPv4", "127.0.0.1:8421", "::1", False, id="v4-listener-v6-host"),
+        pytest.param("IPv6", "[::1]:8421", "::1", True, id="exact-v6"),
+        pytest.param(
+            "IPv6", "[::1]:8421", "127.0.0.1", False, id="v6-listener-v4-host"
+        ),
+        pytest.param("IPv4", "*:8421", "127.0.0.1", True, id="v4-wildcard-serves-v4"),
+        pytest.param("IPv6", "*:8421", "::1", True, id="v6-wildcard-serves-v6"),
+        pytest.param("IPv6", "*:8421", "127.0.0.1", False, id="v6-wildcard-not-v4"),
+        pytest.param("IPv4", "*:8421", "::1", False, id="v4-wildcard-not-v6"),
+        pytest.param(
+            "IPv6", "[::ffff:127.0.0.1]:8421", "127.0.0.1", True, id="v4-mapped"
+        ),
+        pytest.param("IPv4", "127.0.0.2:8421", "127.0.0.1", False, id="other-loopback"),
+    ],
+)
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_matches_the_listeners_address(
+    mock_run: MagicMock,
+    _mock_sys: MagicMock,
+    family: str,
+    name: str,
+    host: str,
+    held: bool,
+) -> None:
+    """A listener on the port at another address, or a wildcard of the other
+    family (uvicorn sets IPV6_V6ONLY, so [::] does not serve 127.0.0.1), is
+    not the one the token reaches."""
+    mock_run.return_value = _ran(0, f"p123\nf5\nt{family}\nn{name}\n")
+    assert ProcessManager().holds_port(123, host, 8421) is held
+    assert "-Fnt" in mock_run.call_args.args[0]
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_silent_exit_1_is_not_held(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is False
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_lsof_failure_raises(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(1, stderr="lsof: no process ID found: 123")
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123 on port 8421"):
+        ProcessManager().holds_port(123, "127.0.0.1", 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_is_cut_to_the_deadline(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "p123\ntIPv4\nn127.0.0.1:8421\n")
+    clock = FakeClock()
+    ProcessManager().within(Deadline(clock.monotonic, 0.75)).holds_port(
+        123, "127.0.0.1", 8421
+    )
+    assert mock_run.call_args.kwargs["timeout"] == pytest.approx(0.75)
+
+
+def _row(local: str, inode: str) -> str:
+    """Return one LISTEN row of /proc/net/tcp or tcp6 at *local* (HEXIP:HEXPORT)."""
+    return (
+        f"   0: {local} 00000000:0000 0A 00000000:00000000 00:00000000 "
+        f"00000000  1000        0 {inode} 1 0000000000000000 100 0 0 10 0"
+    )
+
+
+_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
+
+
+def _proc_tree(
+    root: Path,
+    pid: int,
+    inode: str,
+    *,
+    port_hex: str = "20E5",
+    local: str = "0100007F",
+    table: str = "tcp",
+) -> None:
+    """Lay out /proc/net/<table> with one LISTEN row at *local* and *pid*'s fds."""
+    (root / "net").mkdir()
+    (root / "net" / table).write_text(
+        f"{_HEADER}\n{_row(f'{local}:{port_hex}', inode)}\n"
+    )
+    fd_dir = root / str(pid) / "fd"
+    fd_dir.mkdir(parents=True)
+    (fd_dir / "0").symlink_to("/dev/null")
+    (fd_dir / "5").symlink_to(f"socket:[{inode}]")
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_matches_the_listen_inode(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is True
+    assert ProcessManager().holds_port(123, "127.0.0.1", 9000) is False
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        pytest.param("   0: 0100007F:20E5 00000000:0000 0A", "short", id="short-row"),
+        pytest.param(
+            "   0: 0100007F:ZZZZ 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000  1000        0 777 1 0000000000000000 100 0 0 10 0",
+            "non-hex",
+            id="non-hex-port",
+        ),
+        pytest.param(
+            "   0: 0100007F 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000  1000        0 777 1 0000000000000000 100 0 0 10 0",
+            "no colon",
+            id="address-without-port",
+        ),
+    ],
+)
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_malformed_table_row_raises(
+    _mock_sys: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row: str,
+    why: str,
+) -> None:
+    """A row the parser cannot read is a failed probe, never a traceback."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp").write_text(f"header\n{row}\n")
+    with pytest.raises(PortProbeError, match=r"cannot parse .*net/tcp") as caught:
+        ProcessManager().holds_port(123, "127.0.0.1", 8421)
+    assert row.strip()[:24] in str(caught.value)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_non_ascii_table_raises(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp").write_bytes(b"header\n\xff\xfe\n")
+    with pytest.raises(PortProbeError, match=r"cannot read .*net/tcp"):
+        ProcessManager().holds_port(123, "127.0.0.1", 8421)
+
+
+@pytest.mark.parametrize(
+    ("table", "local", "host", "held"),
+    [
+        pytest.param("tcp", "0100007F", "127.0.0.1", True, id="exact-v4"),
+        pytest.param("tcp", "0100007F", "::1", False, id="v4-listener-v6-host"),
+        pytest.param("tcp", "00000000", "127.0.0.1", True, id="wildcard-v4"),
+        pytest.param("tcp", "0200007F", "127.0.0.1", False, id="other-loopback"),
+        pytest.param(
+            "tcp6", "00000000000000000000000001000000", "::1", True, id="exact-v6"
+        ),
+        pytest.param(
+            "tcp6",
+            "00000000000000000000000001000000",
+            "127.0.0.1",
+            False,
+            id="v6-listener-v4-host",
+        ),
+        pytest.param(
+            "tcp6",
+            "0000000000000000FFFF00000100007F",
+            "127.0.0.1",
+            True,
+            id="v4-mapped",
+        ),
+        pytest.param(
+            "tcp6", "00000000000000000000000000000000", "::1", True, id="wildcard-v6"
+        ),
+        pytest.param(
+            "tcp6",
+            "00000000000000000000000000000000",
+            "127.0.0.1",
+            False,
+            id="v6-wildcard-does-not-serve-v4",
+        ),
+        pytest.param("tcp", "00000000", "::1", False, id="v4-wildcard-not-v6"),
+    ],
+)
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_matches_the_listeners_address(
+    _mock_sys: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    table: str,
+    local: str,
+    host: str,
+    held: bool,
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777", local=local, table=table)
+    assert ProcessManager().holds_port(123, host, 8421) is held
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_an_fd_closed_mid_scan_is_skipped(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An fd the process closes between the listing and the readlink is not a
+    failed probe: the remaining fds still decide."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "123" / "fd" / "3").symlink_to("/dev/null")
+    real_readlink = Path.readlink
+
+    def closed_mid_scan(self: Path) -> Path:
+        if self.name == "3":
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_readlink(self)
+
+    monkeypatch.setattr(Path, "readlink", closed_mid_scan)
+    assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is True
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_scoped_ipv6_target_is_held(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``::1%1`` from the installed bind: no OSError, the tcp6 row is matched."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(
+        tmp_path, 123, "777", local="00000000000000000000000001000000", table="tcp6"
+    )
+    assert ProcessManager().holds_port(123, "::1%1", 8421) is True
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_scoped_ipv6_target_is_held(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "p123\nf5\ntIPv6\nn[::1]:8421\n")
+    assert ProcessManager().holds_port(123, "::1%1", 8421) is True
+
+
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
+def test_holds_port_with_an_unformable_host_is_a_failed_probe(
+    system: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gates catch PortProbeError only: a host that is not an IP literal
+    must close the door as a failed probe, never escape as a bare error."""
+    monkeypatch.setattr("punt_vox.service.process.platform.system", lambda: system)
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    with pytest.raises(PortProbeError, match="cannot form the listener address"):
+        ProcessManager().holds_port(123, "localhost", 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_another_process_socket_is_not_held(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "124" / "fd").mkdir(parents=True)
+    (tmp_path / "124" / "fd" / "5").symlink_to("socket:[778]")
+    assert ProcessManager().holds_port(124, "127.0.0.1", 8421) is False
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_unreadable_fd_dir_raises(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another user's /proc/<pid>/fd is unreadable: never read as "not held"."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    with pytest.raises(PortProbeError, match="cannot read"):
+        ProcessManager().holds_port(999, "127.0.0.1", 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_after_the_deadline_never_reads(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    clock = FakeClock()
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    clock.advance(1.5)
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123 on port 8421"):
+        bounded.holds_port(123, "127.0.0.1", 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_stops_between_fds_when_the_deadline_passes(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process with many fds: the scan checks the deadline per fd, not once."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    for fd in range(6, 12):
+        (tmp_path / "123" / "fd" / str(fd)).symlink_to("/dev/null")
+    clock = FakeClock()
+    real_link = ProcessManager._link  # pyright: ignore[reportPrivateUsage]
+
+    def slow_link(entry: Path) -> str:
+        clock.advance(0.4)  # each readlink costs 0.4 s on a loaded box
+        return real_link(entry)
+
+    monkeypatch.setattr(ProcessManager, "_link", staticmethod(slow_link))
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    with pytest.raises(PortProbeError, match="holder check ran out of time"):
+        bounded.holds_port(123, "127.0.0.1", 8421)
+    assert clock.monotonic() < 2.0  # stopped early, not after all eight fds
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_stops_between_tables_when_the_deadline_passes(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp6").write_text(f"{_HEADER}\n")
+    clock = FakeClock()
+    real_read_text = Path.read_text
+
+    def slow_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.parent.name == "net":
+            clock.advance(0.7)  # each table read costs 0.7 s
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", slow_read_text)
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    with pytest.raises(PortProbeError, match="holder check ran out of time"):
+        bounded.holds_port(123, "127.0.0.1", 8421)
+
+
+# ---------------------------------------------------------------------------
+# owner_uid -- the process's real uid, from ps; fails closed
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_reads_the_real_uid(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, "  1001\n")
+    assert ProcessManager().owner_uid(123) == 1001
+    argv = mock_run.call_args.args[0]
+    assert argv[:2] == ["ps", "-p"]
+    assert "uid=" in argv
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_gone_pid_is_none(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().owner_uid(123) is None
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_ps_failure_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(2, stderr="ps: illegal option")
+    with pytest.raises(PortProbeError, match="ps exited 2"):
+        ProcessManager().owner_uid(123)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_unparseable_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, "not a uid\n")
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123"):
+        ProcessManager().owner_uid(123)
 
 
 # ---------------------------------------------------------------------------

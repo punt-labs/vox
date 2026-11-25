@@ -18,6 +18,7 @@ import pytest
 from _lifecycle_fakes import FakeClock
 
 from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.health import HealthTarget
@@ -258,3 +259,20 @@ def test_verify_names_a_launchd_that_answered_then_hung(
         "then launchctl list com.punt-labs.voxd stopped answering before the 5s "
         "wait ended"
     ) in str(info.value)
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "::1", "::1%1", ""])
+def test_preflight_accepts_a_bind_health_can_poll(bind: str) -> None:
+    HealthVerifier.preflight({"VOXD_BIND": bind})
+
+
+def test_preflight_refuses_a_scoped_non_loopback_bind_before_anything_is_written() -> (
+    None
+):
+    """fe80::1%2 is refused at status time (the listener tables carry no zone);
+    install must refuse it here, with the same reason, not after the unit runs."""
+    with pytest.raises(PortProbeError) as refused:
+        HealthVerifier.preflight({"VOXD_BIND": "fe80::1%2"})
+    assert "fe80::1%2 carries zone 2 on a non-loopback address" in str(refused.value)
+    assert "set VOXD_BIND to a loopback or unscoped IP address" in str(refused.value)
+    assert "run `vox daemon install`" in str(refused.value)

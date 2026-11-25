@@ -14,7 +14,10 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.paths import log_dir as _paths_log_dir
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_probe import DaemonProbe
+from punt_vox.service.listen_address import ListenAddress
+from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.voxd_bind import VoxdBind
 
 if TYPE_CHECKING:
@@ -81,10 +84,20 @@ class HealthVerifier:
         """Refuse, before install writes anything, a unit health cannot poll.
 
         The unit carries ``VOXD_BIND`` from *environ* verbatim, and health
-        polls only an IP address; a name raises ``PortProbeError`` here rather
+        polls only an IP address whose listener the status reading can
+        attribute; a name, or a scoped non-loopback address such as
+        ``fe80::1%2`` (the listener tables carry no zone), raises
+        ``PortProbeError`` here, with the reason status would give, rather
         than after keys, directories, and the unit are written.
+
+        Raises:
+            PortProbeError: If health could not poll, or attribute, the bind.
         """
-        VoxdBind.from_environ(environ)
+        host = VoxdBind.from_environ(environ).poll_host()
+        try:
+            ListenAddress(host, DEFAULT_PORT)
+        except ValueError as exc:
+            raise PortProbeError(str(exc)) from exc
 
     def verify(self) -> HealthStatus:
         """Wait for the unit to be active and voxd to answer; return its health.

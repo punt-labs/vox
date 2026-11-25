@@ -28,6 +28,48 @@ def test_shutdown_removes_its_own_port_file(tmp_path: Path) -> None:
     assert not (tmp_path / "serve.port").exists()
 
 
+def test_write_publishes_this_process_as_the_publisher(tmp_path: Path) -> None:
+    """serve.pid names the process that wrote serve.port, private like it."""
+    PortFile(tmp_path).write(8421)
+    pid_file = tmp_path / "serve.pid"
+    assert pid_file.read_text() == str(os.getpid())
+    assert pid_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_write_publishes_the_pid_before_the_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader that sees this daemon's port never pairs it with an older pid."""
+    real_replace = Path.replace
+    landed: list[str] = []
+
+    def record(self: Path, target: Path) -> Path:
+        landed.append(target.name)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", record)
+    PortFile(tmp_path).write(8421)
+    assert landed == ["serve.pid", "serve.port"]
+
+
+def test_shutdown_removes_its_own_pid_file(tmp_path: Path) -> None:
+    a = PortFile(tmp_path)
+    a.write(8421)
+    a.remove()
+    assert not (tmp_path / "serve.pid").exists()
+
+
+def test_shutdown_leaves_a_newer_daemons_pid_file(tmp_path: Path) -> None:
+    """Both daemons are this process here; the identity, not the text, decides."""
+    a, b = PortFile(tmp_path), PortFile(tmp_path)
+    a.write(8421)
+    b.write(8421)
+    a.remove()
+    assert (tmp_path / "serve.pid").read_text() == str(os.getpid())
+    b.remove()
+    assert not (tmp_path / "serve.pid").exists()
+
+
 def test_shutdown_leaves_a_newer_daemons_port_file_on_the_same_port(
     tmp_path: Path,
 ) -> None:
@@ -67,11 +109,12 @@ def test_a_daemon_that_never_wrote_removes_nothing(tmp_path: Path) -> None:
 
 
 def _temporaries(run_dir: Path) -> list[str]:
-    """Return the half-published ``.serve.port.<pid>`` files left behind."""
+    """Return the half-published ``.serve.{port,pid}.<pid>`` files left behind."""
     return [
         p.name
         for p in run_dir.iterdir()
-        if p.name.startswith(".serve.port.") and not p.name.endswith(".lock")
+        if p.name.startswith((".serve.port.", ".serve.pid."))
+        and not p.name.endswith(".lock")
     ]
 
 
@@ -113,6 +156,63 @@ def test_a_failed_rename_leaves_no_temporary_file_and_raises(
         PortFile(tmp_path).write(8421)
     assert _temporaries(tmp_path) == []
     assert not (tmp_path / "serve.port").exists()
+
+
+def test_a_failed_port_publish_unpublishes_the_pid_it_just_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """serve.pid lands first; if serve.port then fails, the pair must not be
+    the old port with the new pid, so the pid file goes too."""
+    old = PortFile(tmp_path)
+    old.write(8421)
+    old_pid_text = (tmp_path / "serve.pid").read_text()
+    real_replace = Path.replace
+
+    def refuse_the_port(self: Path, target: Path) -> Path:
+        if target.name == "serve.port":
+            raise OSError(errno.EXDEV, "cross-device rename")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", refuse_the_port)
+    with pytest.raises(OSError, match="cross-device"):
+        PortFile(tmp_path).write(8421)
+    assert not (tmp_path / "serve.pid").exists()
+    assert (tmp_path / "serve.port").read_text() == "8421"  # the old daemon's
+    assert old_pid_text == str(os.getpid())
+    assert _temporaries(tmp_path) == []
+
+
+def test_a_failed_cleanup_after_a_failed_port_publish_keeps_the_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The port rename fails and then the pid unlink fails too: the caller
+    sees the publish error, the unlink failure is logged, and the daemon no
+    longer counts the pid file as its own."""
+    real_replace = Path.replace
+    real_unlink = Path.unlink
+
+    def refuse_the_port(self: Path, target: Path) -> Path:
+        if target.name == "serve.port":
+            raise OSError(errno.EXDEV, "cross-device rename")
+        return real_replace(self, target)
+
+    def refuse_the_pid_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "serve.pid":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "replace", refuse_the_port)
+    monkeypatch.setattr(Path, "unlink", refuse_the_pid_unlink)
+    port_file = PortFile(tmp_path)
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.port_file"),
+        pytest.raises(OSError, match="cross-device"),
+    ):
+        port_file.write(8421)
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert "serve.pid" in warning.getMessage()
+    assert "Permission denied" in warning.getMessage()
+    assert port_file._mine_pid is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_removal_paused_after_its_check_never_deletes_a_newer_daemons_file(

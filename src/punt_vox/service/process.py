@@ -14,6 +14,7 @@ from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import DaemonProcess
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.listen_address import ListenAddress
 from punt_vox.service.process_identity import ProcessIdentity
 from punt_vox.service.stale_port_file import StalePortFile
 from punt_vox.service.termination import Termination
@@ -36,6 +37,9 @@ class ProcessManager:
 
     # SIGTERM grace plus the SIGKILL wait for an install/uninstall kill.
     _KILL_BUDGET_S: ClassVar[float] = 7.0
+    _PROC: ClassVar[Path] = Path("/proc")
+    # /proc/net/tcp: the state column reads 0A for a LISTEN socket.
+    _LISTEN: ClassVar[str] = "0A"
 
     _deadline: Deadline
     _note: str  # "" unless the last kill left serve.port behind
@@ -66,6 +70,11 @@ class ProcessManager:
     def _run_dir() -> Path:
         return _user_run_dir()
 
+    @property
+    def port_file(self) -> Path:
+        """Return the path of ``serve.port``, the port hint voxd publishes."""
+        return self._run_dir() / "serve.port"
+
     def read_port_file(self) -> int | None:
         """Read the daemon port from ``serve.port``.
 
@@ -78,7 +87,7 @@ class ProcessManager:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        return StalePortFile.read_hint(self._run_dir() / "serve.port")
+        return StalePortFile.read_hint(self.port_file)
 
     def discard_port_file(self, port: int) -> PortFileCleanup:
         """Remove ``serve.port`` when it names *port* or does not parse.
@@ -90,7 +99,7 @@ class ProcessManager:
         Raises:
             PortProbeError: If the port file cannot be locked, read, or removed safely.
         """
-        return StalePortFile.read(self._run_dir() / "serve.port").discard(port)
+        return StalePortFile.read(self.port_file).discard(port)
 
     def find_pid_on_port(self, port: int) -> list[int]:
         """Return all PIDs with connections to *port*.
@@ -127,6 +136,161 @@ class ProcessManager:
         # isdecimal (not isdigit) is the strict subset int() always accepts:
         # it rejects superscripts like "²" that isdigit would pass.
         return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
+
+    def holds_port(self, pid: int, host: str, port: int) -> bool:
+        """Return True when *pid* itself holds the listener on *host*:*port*.
+
+        Asked of one process, so it never walks every open file the way the
+        port-wide ``lsof`` does: on macOS ``lsof -a -p <pid>`` is limited to
+        that process; on Linux the LISTEN rows for the address in
+        ``/proc/net/tcp`` and ``tcp6`` are matched against the socket inodes
+        in ``/proc/<pid>/fd``. The listener must serve *host*
+        (:class:`ListenAddress`): one on the port at another address is not
+        it. Cut to this manager's deadline. Fails closed: a check that cannot
+        be made raises ``PortProbeError``.
+
+        Raises:
+            PortProbeError: If the process or the port table cannot be inspected.
+        """
+        try:
+            address = ListenAddress(host, port)
+        except ValueError as exc:
+            # The gates catch PortProbeError only: an address that cannot be
+            # formed must close the door, never escape as a bare error.
+            msg = f"cannot form the listener address for {host}:{port}: {exc}"
+            raise PortProbeError(msg) from exc
+        if platform.system() == "Darwin":
+            return self._lsof_holds_port(pid, address)
+        self._deadline.cap(
+            _SUBPROCESS_TIMEOUT_SECONDS, f"cannot inspect pid {pid} on port {port}"
+        )
+        return self._proc_holds_port(pid, address)
+
+    def _lsof_holds_port(self, pid: int, address: ListenAddress) -> bool:
+        """``lsof`` limited to *pid*: True when it lists a listener at *address*.
+
+        ``-Fnt`` prints a ``t<family>`` and an ``n<name>`` line per socket, so
+        the local address and the address family are matched, not only the
+        port.
+        """
+        port = address.port
+        cmd = [
+            "lsof", "-w", "-nP", "-Fnt", "-a", "-p", str(pid),
+            f"-iTCP:{port}", "-sTCP:LISTEN",
+        ]  # fmt: skip
+        result = self._probe(cmd)
+        if self._found_nothing(result):
+            return False
+        if result.returncode != 0:
+            msg = (
+                f"cannot inspect pid {pid} on port {port}: lsof exited "
+                f"{result.returncode}: {result.stderr.strip()}"
+            )
+            raise PortProbeError(msg)
+        family = ""
+        for line in result.stdout.splitlines():
+            if line[:1] == "t":
+                family = line[1:]
+            elif line[:1] == "n" and address.lsof_matches(family, line[1:]):
+                return True
+        return False
+
+    def _proc_holds_port(self, pid: int, address: ListenAddress) -> bool:
+        """Match *pid*'s socket inodes against the LISTEN sockets at *address*.
+
+        The deadline is checked per fd: a process with thousands of open
+        files cannot carry the scan past it.
+        """
+        listening = self._listening_sockets(address)
+        fd_dir = self._PROC / str(pid) / "fd"
+        links: set[str] = set()
+        try:
+            for entry in fd_dir.iterdir():
+                self._tick()
+                links.add(self._link(entry))
+        except OSError as exc:
+            msg = f"cannot read {fd_dir}: {exc}"
+            raise PortProbeError(msg) from exc
+        return not listening.isdisjoint(links)
+
+    def _tick(self) -> None:
+        """Raise ``PortProbeError`` once the deadline has passed mid-scan."""
+        self._deadline.cap(_SUBPROCESS_TIMEOUT_SECONDS, "holder check ran out of time")
+
+    @staticmethod
+    def _link(entry: Path) -> str:
+        """Return what the fd symlink *entry* points at; ``""`` once it is closed."""
+        try:
+            return str(entry.readlink())
+        except FileNotFoundError:
+            return ""
+
+    def _listening_sockets(self, address: ListenAddress) -> frozenset[str]:
+        """Return the ``socket:[inode]`` links of every LISTEN socket at *address*.
+
+        The deadline is checked before each table is read.
+        """
+        found: set[str] = set()
+        for table in ("tcp", "tcp6"):
+            self._tick()
+            path = self._PROC / "net" / table
+            try:
+                rows = path.read_text(encoding="ascii").splitlines()[1:]
+            except FileNotFoundError:
+                continue  # no IPv6 on this host
+            except (OSError, UnicodeDecodeError) as exc:
+                msg = f"cannot read {path}: {exc}"
+                raise PortProbeError(msg) from exc
+            forms = address.proc_forms(table)
+            found.update(self._listen_link(path, row, forms) for row in rows)
+        found.discard("")
+        return frozenset(found)
+
+    @classmethod
+    def _listen_link(cls, path: Path, row: str, forms: frozenset[str]) -> str:
+        """Return one *row* of *path*'s socket link if it listens at one of *forms*.
+
+        Raises:
+            PortProbeError: If the row is not in the kernel's table format.
+        """
+        fields = row.split()
+        # local_address is HEXIP:HEXPORT; st is the state; inode is the 10th field.
+        try:
+            listens = fields[3] == cls._LISTEN
+            local = fields[1]
+            ip_hex, port_hex = local.rsplit(":", 1)
+            well_formed = int(ip_hex, 16) >= 0 and int(port_hex, 16) >= 0
+            inode = fields[9]
+        except (IndexError, ValueError) as exc:
+            msg = f"cannot parse {path} row {row.strip()[:24]!r}: {exc}"
+            raise PortProbeError(msg) from exc
+        if not (well_formed and listens) or local not in forms:
+            return ""
+        return f"socket:[{inode}]"
+
+    def owner_uid(self, pid: int) -> int | None:
+        """Return the real uid *pid* runs as, from ``ps``; ``None`` once it is gone.
+
+        Ownership is proven by uid, never by a signal: ``os.kill(pid, 0)``
+        succeeds for root on any process. Cut to this manager's deadline.
+
+        Raises:
+            PortProbeError: If ``ps`` cannot run, fails, or prints no uid.
+        """
+        result = self._probe(["ps", "-p", str(pid), "-o", "uid="])
+        if self._found_nothing(result):
+            return None
+        if result.returncode != 0:
+            msg = (
+                f"cannot inspect pid {pid}: ps exited {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
+            raise PortProbeError(msg)
+        text = result.stdout.strip()
+        if not text.isdecimal():
+            msg = f"cannot inspect pid {pid}: ps printed no uid ({text!r})"
+            raise PortProbeError(msg)
+        return int(text)
 
     def identity(self, pid: int) -> ProcessIdentity | None:
         """Return *pid*'s start time and command line; ``None`` once it is gone.
@@ -226,7 +390,7 @@ class ProcessManager:
         manager respawning it while the old one dies -- keeps its own.
         """
         self._note = ""
-        stale = StalePortFile.read(self._run_dir() / "serve.port")
+        stale = StalePortFile.read(self.port_file)
         port = stale.port if stale.port is not None else DEFAULT_PORT
         pid = self._stale_voxd(port)
         if pid is None:

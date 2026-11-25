@@ -60,6 +60,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox daemon status` asks voxd for health first, through the port voxd
+  published in `serve.port`, with a reserved share of its deadline that the
+  `lsof`/`fuser` attribution probes cannot consume. On a loaded Mac, where
+  `lsof` walks every open file, a voxd that answers is now reported running
+  instead of `unknown (cannot run lsof: ... timed out)`. When both steps
+  fail within the deadline, the `unknown` reason names the probe that
+  failed and what the health request before it came to. voxd now publishes
+  `serve.pid` beside `serve.port`, and the token goes out through that door
+  only when this user's own `serve.port` names the service port, its
+  `serve.pid` names a process that is alive, this user's, running voxd and
+  itself holding the listener, the bind is loopback and the port accepts a
+  connection: a port file left by a crash, or by a voxd whose socket is
+  already closed while it shuts down, cannot send the token to whatever
+  binds the port next. voxd unpublishes both files first thing on
+  shutdown, before its workers and players are torn down. (PL-1497)
+
 - A vox call now uses the system's current default microphone and output
   device, not the ones voxd saw when it started. Headphones connected after
   the daemon came up are used for both legs without a restart; the daemon
