@@ -445,3 +445,29 @@ def test_a_teardown_error_through_the_real_adapter_is_a_mic_probe_error(
 
     assert backend.created[-1].closed
     assert table.open_streams == 0
+
+
+def test_capture_starts_the_stream_on_the_default_at_index_zero_and_is_fed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real sequence: default input at index 0, opened, started, delivering.
+
+    A stream that is opened but never started, or bound to a device other
+    than the one captured from, would report no samples; this is the guard.
+    """
+    table = DeviceTable()
+    backend = fake_sounddevice(monkeypatch)
+
+    def deliver(_msec: int) -> None:
+        stream = backend.created[-1]
+        assert stream.started, "the stream must be started before the wait"
+        assert stream.kwargs["device"] == 0
+        stream.feed(b"\x20\x00\x10\x00")
+
+    monkeypatch.setattr(sys.modules["sounddevice"], "sleep", deliver, raising=False)
+    report = SoundDeviceCapture(PortAudio(table))(1.0)
+
+    assert report.device == FAKE_DEVICE.name
+    assert (report.samples, report.peak) == (2, 32)
+    assert backend.created[-1].stopped
+    assert backend.created[-1].closed

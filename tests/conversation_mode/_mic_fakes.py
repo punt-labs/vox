@@ -63,12 +63,14 @@ class FakeInputStream:
         "_closed",
         "_kwargs",
         "_start_error",
+        "_started",
         "_stop_error",
         "_stopped",
     )
     _callback: object
     _kwargs: dict[str, object]
     _closed: bool
+    _started: bool
     _stopped: bool
     _start_error: Exception | None  # None: the stream starts; else raised on entry.
     _stop_error: Exception | None  # None: stop succeeds; else raised when not ignored.
@@ -80,7 +82,7 @@ class FakeInputStream:
         self = super().__new__(cls)
         self._kwargs = kwargs
         self._callback = kwargs["callback"]
-        self._closed = self._stopped = False
+        self._closed = self._started = self._stopped = False
         self._start_error = self._stop_error = self._close_error = None
         return self
 
@@ -120,6 +122,11 @@ class FakeInputStream:
         return self._closed
 
     @property
+    def started(self) -> bool:
+        """Return whether the stream was entered -- PortAudio told to start it."""
+        return self._started
+
+    @property
     def stopped(self) -> bool:
         """Return whether the stream was stopped before it was closed."""
         return self._stopped
@@ -140,6 +147,7 @@ class FakeInputStream:
         """Start the stream; the adapter enters it, as ``sounddevice`` requires."""
         if self._start_error is not None:
             raise self._start_error
+        self._started = True
         return self
 
     def __exit__(self, *exc_info: object) -> None:
