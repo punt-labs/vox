@@ -14,7 +14,9 @@ import pytest
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 from conversation_mode._mic_fakes import (
     FAKE_DEVICE,
+    FakeBackend,
     FakeCallbackFlags,
+    FakeInputStream,
     FakePortAudioError,
     fake_sounddevice,
 )
@@ -420,3 +422,26 @@ async def test_an_import_that_fails_to_initialize_portaudio_is_an_error_frame(
     assert frame["id"] == "m6"
     assert "no host API" in str(frame["message"])
     assert "punt-vox[call]" not in str(frame["message"])
+
+
+def test_a_teardown_error_through_the_real_adapter_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sounddevice hides teardown errors by default; the adapter asks for them."""
+    table = DeviceTable()
+
+    def failing(**kwargs: object) -> FakeInputStream:
+        return FakeInputStream.failing_teardown(
+            kwargs, close_error=FakePortAudioError("Error closing stream: device gone")
+        )
+
+    def no_wait(_msec: int) -> None:
+        pass
+
+    backend = fake_sounddevice(monkeypatch, FakeBackend(open_stream=failing))
+    monkeypatch.setattr(sys.modules["sounddevice"], "sleep", no_wait, raising=False)
+    with pytest.raises(MicProbeError, match="device gone"):
+        SoundDeviceCapture(PortAudio(table))(0.01)
+
+    assert backend.created[-1].closed
+    assert table.open_streams == 0

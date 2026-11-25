@@ -662,3 +662,74 @@ def test_the_reported_default_carries_its_index(
 
     _install(monkeypatch, query_devices=query_devices)
     assert PortAudio().device() == InputDevice("Built-in", 44100.0, index=2)
+
+
+@pytest.mark.parametrize(
+    ("stop_error", "close_error", "expected"),
+    [
+        (_FakePortAudioError("Error stopping stream"), None, "Error stopping stream"),
+        (None, _FakePortAudioError("Error closing stream"), "Error closing stream"),
+        (
+            _FakePortAudioError("Error stopping stream"),
+            _FakePortAudioError("Error closing stream"),
+            "Error stopping stream",
+        ),
+    ],
+)
+def test_leaving_a_stream_surfaces_a_teardown_error_and_still_releases(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_error: Exception | None,
+    close_error: Exception | None,
+    expected: str,
+) -> None:
+    """Teardown is strict: stop, then close whatever stop did, first error kept."""
+    created: list[FakeInputStream] = []
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(
+            stream := FakeInputStream.failing_teardown(
+                kwargs, stop_error=stop_error, close_error=close_error
+            )
+        )
+        return stream
+
+    _install(
+        monkeypatch,
+        query_devices=_device_info("USB Audio", 48000.0),
+        RawInputStream=raw_input_stream,
+    )
+    table = DeviceTable()
+    handle = PortAudio(table).open(
+        USB, samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+
+    with pytest.raises(OSError, match=expected):
+        handle.__exit__(None, None, None)
+
+    assert created[0].stopped
+    assert created[0].closed
+    assert table.open_streams == 0
+
+
+def test_leaving_a_stream_twice_releases_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: list[FakeInputStream] = []
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(
+        monkeypatch,
+        query_devices=_device_info("USB Audio", 48000.0),
+        RawInputStream=raw_input_stream,
+    )
+    table = DeviceTable()
+    handle = PortAudio(table).open(
+        USB, samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+    handle.__exit__(None, None, None)
+    handle.__exit__(None, None, None)
+
+    assert created[0].stopped
+    assert created[0].closed
+    assert table.open_streams == 0

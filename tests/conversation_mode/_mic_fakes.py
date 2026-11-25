@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     import pytest
     from sounddevice import DeviceInfo
@@ -57,18 +57,49 @@ class FakeCallbackFlags:
 class FakeInputStream:
     """Records construction kwargs; :meth:`feed` drives the registered callback."""
 
-    __slots__ = ("_callback", "_closed", "_kwargs", "_start_error")
+    __slots__ = (
+        "_callback",
+        "_close_error",
+        "_closed",
+        "_kwargs",
+        "_start_error",
+        "_stop_error",
+        "_stopped",
+    )
     _callback: object
     _kwargs: dict[str, object]
     _closed: bool
+    _stopped: bool
     _start_error: Exception | None  # None: the stream starts; else raised on entry.
+    _stop_error: Exception | None  # None: stop succeeds; else raised when not ignored.
+    _close_error: (
+        Exception | None
+    )  # None: close succeeds; else raised when not ignored.
 
     def __new__(cls, **kwargs: object) -> Self:
         self = super().__new__(cls)
         self._kwargs = kwargs
         self._callback = kwargs["callback"]
-        self._closed = False
-        self._start_error = None
+        self._closed = self._stopped = False
+        self._start_error = self._stop_error = self._close_error = None
+        return self
+
+    @classmethod
+    def failing_teardown(
+        cls,
+        kwargs: Mapping[str, object],
+        *,
+        stop_error: Exception | None = None,  # None: stop succeeds.
+        close_error: Exception | None = None,  # None: close succeeds.
+    ) -> Self:
+        """A stream, built from *kwargs*, whose stop or close fails as PortAudio's can.
+
+        ``sounddevice`` suppresses these by default (``ignore_errors=True``),
+        so the errors surface only to a caller that asks to see them.
+        """
+        self = cls(**kwargs)
+        self._stop_error = stop_error
+        self._close_error = close_error
         return self
 
     @classmethod
@@ -89,6 +120,11 @@ class FakeInputStream:
         return self._closed
 
     @property
+    def stopped(self) -> bool:
+        """Return whether the stream was stopped before it was closed."""
+        return self._stopped
+
+    @property
     def kwargs(self) -> dict[str, object]:
         """Return the keyword arguments the factory was constructed with."""
         return dict(self._kwargs)
@@ -107,11 +143,21 @@ class FakeInputStream:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        """Leave as sounddevice does: stop then close, both errors ignored."""
+        self.stop()
         self.close()
 
-    def close(self) -> None:
+    def stop(self, ignore_errors: bool = True) -> None:
+        """Stop the capture; a configured failure surfaces only when asked for."""
+        self._stopped = True
+        if self._stop_error is not None and not ignore_errors:
+            raise self._stop_error
+
+    def close(self, ignore_errors: bool = True) -> None:
         """Release the device, started or not; idempotent like the real one."""
         self._closed = True
+        if self._close_error is not None and not ignore_errors:
+            raise self._close_error
 
 
 @final

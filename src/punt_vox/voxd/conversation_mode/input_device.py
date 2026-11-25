@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     # for the type checkers; the stub-free runtime module has no such attribute.
     from sounddevice import RawInputCallback, RawInputStream
 
-    from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
+    from punt_vox.voxd.conversation_mode.mic_audio_source import NativeInputStream
 
 __all__ = ["InputDevice"]
 
@@ -83,7 +83,7 @@ class InputDevice:
 
     def opened(
         self, *, samplerate: float, blocksize: int, callback: RawInputCallback
-    ) -> InputStreamHandle:
+    ) -> NativeInputStream:
         """Create and start a raw mono int16 stream on this device, or refuse.
 
         A device with an index is opened by that index, so the stream is
@@ -141,7 +141,7 @@ class InputDevice:
             self._close_unstarted(stream)
             raise self.refused(f"device {self._index} is now {now}")
 
-    def started(self, stream: RawInputStream) -> InputStreamHandle:
+    def started(self, stream: RawInputStream) -> NativeInputStream:
         """Start a stream opened on this device; one that will not start is closed.
 
         Raises:
@@ -154,6 +154,31 @@ class InputDevice:
         except PortAudioError as exc:
             self._close_unstarted(stream)
             raise self.refused(exc) from exc
+
+    def released(self, stream: NativeInputStream) -> None:
+        """Stop and close *stream* strictly: the first teardown error is raised.
+
+        ``sounddevice`` would hide both errors; here the stop's error does
+        not skip the close, and whichever failed first names this device.
+
+        Raises:
+            OSError: When PortAudio refuses to stop or to close the stream.
+        """
+        from sounddevice import PortAudioError
+
+        first: PortAudioError | None = None  # None: the stop succeeded.
+        try:
+            stream.stop(ignore_errors=False)
+        except PortAudioError as exc:
+            first = exc
+        try:
+            stream.close(ignore_errors=False)
+        except PortAudioError as exc:
+            first = first if first is not None else exc
+        if first is not None:
+            raise OSError(
+                f"cannot release input device {self._name}: {first}"
+            ) from first
 
     def refused(self, cause: Exception | str) -> OSError:
         """Name this device as the one PortAudio refused, with a remedy."""

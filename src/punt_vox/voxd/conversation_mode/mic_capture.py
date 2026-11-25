@@ -108,5 +108,13 @@ class MicCapture:
             yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
 
     def close(self) -> None:
-        """Release the device; idempotent for a stream already closed."""
-        self._stream.__exit__(None, None, None)
+        """Release the device; idempotent for a stream already closed.
+
+        A device that refuses its teardown -- unplugged mid-call -- is gone
+        either way; the refusal is logged, not raised into the call's own
+        cleanup.
+        """
+        try:
+            self._stream.__exit__(None, None, None)
+        except OSError as exc:
+            logger.warning("mic capture: %s", exc)

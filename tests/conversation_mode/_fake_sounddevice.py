@@ -84,7 +84,8 @@ class FakeDeviceStream:
     def start(self) -> None:
         self._started = True
 
-    def stop(self) -> None:
+    def stop(self, ignore_errors: bool = True) -> None:
+        del ignore_errors  # this fake's stop never fails
         self._started = False
 
     def abort(self) -> None:
@@ -95,9 +96,11 @@ class FakeDeviceStream:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        self.stop()
         self.close()
 
-    def close(self) -> None:
+    def close(self, ignore_errors: bool = True) -> None:
+        del ignore_errors  # this fake's close never fails
         self._closed = True
 
 

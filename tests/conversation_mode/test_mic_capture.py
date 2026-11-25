@@ -10,6 +10,7 @@ import pytest
 
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 from conversation_mode._mic_fakes import FakeBackend, FakeInputStream
+from punt_vox.voxd.conversation_mode.block_queue import BlockQueue
 from punt_vox.voxd.conversation_mode.device_pair import DevicePair
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_capture import MicCapture
@@ -199,3 +200,21 @@ async def test_a_call_opened_after_a_headset_connects_captures_from_the_headset(
     assert stream.device_name == "J's AirPods #1"
     (line,) = [r.message for r in caplog.records if "input device" in r.message]
     assert line.startswith("Call input device: J's AirPods #1")
+
+
+def test_close_logs_a_device_that_refuses_its_teardown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The device is gone either way; the call's cleanup goes on."""
+
+    class _Refusing:
+        def __exit__(self, *exc_info: object) -> None:
+            raise OSError("cannot release input device Fake Microphone: unplugged")
+
+    capture = MicCapture(_Refusing(), BlockQueue(1), chunk_s=0.1)
+    with caplog.at_level(
+        logging.WARNING, logger="punt_vox.voxd.conversation_mode.mic_capture"
+    ):
+        capture.close()
+
+    assert "unplugged" in caplog.text

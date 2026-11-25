@@ -39,6 +39,17 @@ class InputStreamHandle(Protocol):
     def __exit__(self, *exc_info: object) -> None: ...
 
 
+class NativeInputStream(InputStreamHandle, Protocol):
+    """The library's own started stream, whose teardown can be asked to fail loudly.
+
+    ``sounddevice`` stops and closes with errors ignored by default; the
+    adapter that counts the stream on the device table asks for them.
+    """
+
+    def stop(self, *, ignore_errors: bool = True) -> None: ...
+    def close(self, *, ignore_errors: bool = True) -> None: ...
+
+
 class CaptureBackend(Protocol):
     """Names the current default devices and opens a started raw input stream.
 

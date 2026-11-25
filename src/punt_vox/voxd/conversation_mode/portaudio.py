@@ -237,4 +237,4 @@ class PortAudio:
         except BaseException:
             reservation.release()
             raise
-        return device, CountedStream(stream, reservation)
+        return device, CountedStream(device, stream, reservation)
