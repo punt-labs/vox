@@ -286,8 +286,12 @@ def test_status_deadline_spent_after_a_hung_first_ask_names_both() -> None:
 def test_status_unattributed_listener_names_the_sent_request() -> None:
     """The token did go to the published port: the reading must not deny it."""
     world = FakeWorld(
-        port_file=8421, foreign_listener=True, published_health_error="connection reset"
+        port_file=8421,
+        pid_file=100,
+        foreign_listener=True,
+        published_health_error="connection reset",
     )
+    world.spawn(100, on_port=False)  # a live voxd that published, off the port
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
     assert reading.reason == (
@@ -308,3 +312,27 @@ def test_status_unattributed_listener_that_was_not_asked_says_so() -> None:
         "vox sent it no token; voxd was not asked first: serve.port publishes "
         "no port; no token sent unattributed"
     )
+
+
+def test_status_stale_port_file_with_a_foreign_listener_sends_no_token() -> None:
+    """A crash's serve.port names 8421; its serve.pid names a pid that is gone;
+    another user's process accepts connections on the port. Nothing is sent,
+    and the reading names the dead publisher."""
+    world = FakeWorld(port_file=8421, pid_file=100, foreign_listener=True)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert world.tokens_to_port == []
+    assert world.tokens_to == []
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "vox sent it no token; voxd was not asked first: voxd pid 100 that "
+        "published serve.port is gone; no token sent unattributed"
+    )
+
+
+def test_status_live_publisher_is_asked_through_its_files() -> None:
+    world = FakeWorld(port_file=8421, pid_file=100)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == [8421]

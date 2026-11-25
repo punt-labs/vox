@@ -68,17 +68,54 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
-    def not_owned(cls, uid: int) -> Self:
-        """Return the miss for a ``serve.port`` another user owns."""
+    def not_owned(cls, name: str, uid: int) -> Self:
+        """Return the miss for a run file *name* another user owns."""
         return cls(
-            f"serve.port belongs to uid {uid}, not this user; "
+            f"{name} belongs to uid {uid}, not this user; no token sent unattributed"
+        )
+
+    @classmethod
+    def uncheckable(cls, why: str) -> Self:
+        """Return the miss for a check the gate needed and could not complete.
+
+        A run file vox could not read or stat, or a ``ps`` it could not run:
+        *why* carries the failure's own text.
+        """
+        return cls(f"{why}; no token sent unattributed")
+
+    @classmethod
+    def no_pid(cls) -> Self:
+        """Return the miss for no ``serve.pid`` beside ``serve.port``."""
+        return cls("serve.pid publishes no pid; no token sent unattributed")
+
+    @classmethod
+    def pid_unparseable(cls) -> Self:
+        """Return the miss for a ``serve.pid`` that does not name a pid."""
+        return cls("serve.pid does not name a pid; no token sent unattributed")
+
+    @classmethod
+    def publisher_gone(cls, pid: int) -> Self:
+        """Return the miss for a published pid that is no longer alive."""
+        return cls(
+            f"voxd pid {pid} that published serve.port is gone; "
             "no token sent unattributed"
         )
 
     @classmethod
-    def unreadable(cls, why: str) -> Self:
-        """Return the miss for a ``serve.port`` vox could not read or stat."""
-        return cls(f"{why}; no token sent unattributed")
+    def publisher_foreign(cls, pid: int) -> Self:
+        """Return the miss for a published pid that is another user's process."""
+        return cls(
+            f"pid {pid} named in serve.pid is another user's process; "
+            "no token sent unattributed"
+        )
+
+    @classmethod
+    def not_voxd(cls, pid: int, command: str) -> Self:
+        """Return the miss for a published pid whose command is not voxd."""
+        return cls(
+            f"pid {pid} named in serve.pid is not voxd (command: {command}); "
+            "no token sent unattributed"
+        )
 
     @classmethod
     def not_loopback(cls, host: str) -> Self:

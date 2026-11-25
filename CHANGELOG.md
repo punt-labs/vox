@@ -66,9 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lsof` walks every open file, a voxd that answers is now reported running
   instead of `unknown (cannot run lsof: ... timed out)`. When both steps
   fail within the deadline, the `unknown` reason names the probe that
-  failed and what the health request before it came to. The token still
-  goes out only when this user's own `serve.port` names the service port,
-  the bind is loopback and the port accepts a connection. (PL-1497)
+  failed and what the health request before it came to. voxd now publishes
+  `serve.pid` beside `serve.port`, and the token goes out through that door
+  only when this user's own `serve.port` names the service port, its
+  `serve.pid` names a process that is alive, this user's and running voxd,
+  the bind is loopback and the port accepts a connection: a port file left
+  by a crash cannot send the token to whatever binds the port next. (PL-1497)
 
 - A vox call now uses the system's current default microphone and output
   device, not the ones voxd saw when it started. Headphones connected after

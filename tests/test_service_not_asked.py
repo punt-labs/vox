@@ -46,12 +46,41 @@ SENT_NOTHING = "no token sent"
             ),
         ),
         (
-            NotAskedError.not_owned(501),
-            "serve.port belongs to uid 501, not this user; no token sent unattributed",
+            NotAskedError.not_owned("serve.pid", 501),
+            "serve.pid belongs to uid 501, not this user; no token sent unattributed",
         ),
         (
-            NotAskedError.unreadable("cannot stat /run/serve.port: denied"),
+            NotAskedError.uncheckable("cannot stat /run/serve.port: denied"),
             "cannot stat /run/serve.port: denied; no token sent unattributed",
+        ),
+        (
+            NotAskedError.no_pid(),
+            "serve.pid publishes no pid; no token sent unattributed",
+        ),
+        (
+            NotAskedError.pid_unparseable(),
+            "serve.pid does not name a pid; no token sent unattributed",
+        ),
+        (
+            NotAskedError.publisher_gone(84805),
+            (
+                "voxd pid 84805 that published serve.port is gone; "
+                "no token sent unattributed"
+            ),
+        ),
+        (
+            NotAskedError.publisher_foreign(84805),
+            (
+                "pid 84805 named in serve.pid is another user's process; "
+                "no token sent unattributed"
+            ),
+        ),
+        (
+            NotAskedError.not_voxd(84805, "/usr/bin/nc -l 8421"),
+            (
+                "pid 84805 named in serve.pid is not voxd (command: /usr/bin/nc -l "
+                "8421); no token sent unattributed"
+            ),
         ),
         (
             NotAskedError.not_loopback("192.168.1.5"),

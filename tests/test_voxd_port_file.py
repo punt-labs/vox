@@ -28,6 +28,32 @@ def test_shutdown_removes_its_own_port_file(tmp_path: Path) -> None:
     assert not (tmp_path / "serve.port").exists()
 
 
+def test_write_publishes_this_process_as_the_publisher(tmp_path: Path) -> None:
+    """serve.pid names the process that wrote serve.port, private like it."""
+    PortFile(tmp_path).write(8421)
+    pid_file = tmp_path / "serve.pid"
+    assert pid_file.read_text() == str(os.getpid())
+    assert pid_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_shutdown_removes_its_own_pid_file(tmp_path: Path) -> None:
+    a = PortFile(tmp_path)
+    a.write(8421)
+    a.remove()
+    assert not (tmp_path / "serve.pid").exists()
+
+
+def test_shutdown_leaves_a_newer_daemons_pid_file(tmp_path: Path) -> None:
+    """Both daemons are this process here; the identity, not the text, decides."""
+    a, b = PortFile(tmp_path), PortFile(tmp_path)
+    a.write(8421)
+    b.write(8421)
+    a.remove()
+    assert (tmp_path / "serve.pid").read_text() == str(os.getpid())
+    b.remove()
+    assert not (tmp_path / "serve.pid").exists()
+
+
 def test_shutdown_leaves_a_newer_daemons_port_file_on_the_same_port(
     tmp_path: Path,
 ) -> None:
@@ -67,11 +93,12 @@ def test_a_daemon_that_never_wrote_removes_nothing(tmp_path: Path) -> None:
 
 
 def _temporaries(run_dir: Path) -> list[str]:
-    """Return the half-published ``.serve.port.<pid>`` files left behind."""
+    """Return the half-published ``.serve.{port,pid}.<pid>`` files left behind."""
     return [
         p.name
         for p in run_dir.iterdir()
-        if p.name.startswith(".serve.port.") and not p.name.endswith(".lock")
+        if p.name.startswith((".serve.port.", ".serve.pid."))
+        and not p.name.endswith(".lock")
     ]
 
 

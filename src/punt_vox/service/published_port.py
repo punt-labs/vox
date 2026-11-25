@@ -1,24 +1,26 @@
-"""The port voxd published in ``serve.port``, and whether it is this user's.
+"""What voxd published in its run files: the port, the publisher's pid, and whose.
 
 ``vox daemon status`` may ask voxd for health before ``lsof``/``fuser`` have
-attributed the port, but only through a port voxd itself published: the
-``serve.port`` run file, which voxd writes by atomic rename when it binds.
-This class reads that hint once and says whether it names the service port
-and belongs to the calling user; when it does not, it says which of those
-failed, so the reading never reports a port it did not read.
+attributed the port, but only through what voxd itself published: the
+``serve.port`` and ``serve.pid`` run files, written by atomic rename when it
+binds. This class reads both once and says who may be asked: this user's own
+``serve.port`` naming the service port, and this user's own ``serve.pid``
+naming a process that is still alive and this user's. A port file a crash
+left behind names a pid that is gone, so whatever binds the port next is
+never sent the token. When the gate closes it says which reading closed it.
 
-The port and the owner come from one open descriptor: the bytes read and the
-``fstat`` of the file they were read from. A separate ``stat`` of the path
-could describe a file voxd renamed into place after the read, and then the
-uid trusted would not be the uid of the bytes trusted. The reader never takes
-voxd's lock and never changes the file.
+Each file's text and owner come from one open descriptor: the bytes read and
+the ``fstat`` of the file they were read from. A separate ``stat`` of the
+path could describe a file voxd renamed into place after the read, and then
+the uid trusted would not be the uid of the bytes trusted. The reader never
+takes voxd's lock and never changes a file.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.client_port import PortText
 from punt_vox.service.backend import PortProbeError
@@ -34,50 +36,66 @@ __all__ = ["PublishedPort"]
 
 @final
 class PublishedPort:
-    """One reading of ``serve.port``: the port it names and whose file it is."""
+    """One reading of ``serve.port`` and ``serve.pid``: port, pid, and whose."""
 
-    __slots__ = ("_absent", "_owner", "_port")
+    __slots__ = ("_pid", "_port", "_refusal")
 
-    _absent: bool
-    _port: int | None  # None: no file, or a file that does not name a port
-    _owner: NotAskedError | None  # None: this user's file; else why not established
+    PID_FILE: ClassVar[str] = "serve.pid"
+
+    _port: int | None  # None: no port file, or one that does not name a port
+    _pid: int | None  # None: no pid file, or one that does not name a pid
+    _refusal: NotAskedError | None  # None: both files are this user's
 
     def __new__(
         cls,
         port: int | None,
+        pid: int | None = None,
         *,
-        absent: bool = False,
-        owner: NotAskedError | None = None,
+        refusal: NotAskedError | None = None,
     ) -> Self:
-        """Create a reading: *port* as published; *owner* why the file is not ours."""
+        """Create a reading: *port* and *pid* as published; *refusal* why not ours."""
         self = super().__new__(cls)
         self._port = port
-        self._absent = absent
-        self._owner = owner
+        self._pid = pid
+        self._refusal = refusal
         return self
 
     @classmethod
-    def at(cls, path: Path) -> Self:
-        """Read the hint at *path*; an absent file publishes nothing.
+    def at(cls, port_file: Path) -> Self:
+        """Read ``serve.port`` at *port_file* and ``serve.pid`` beside it.
 
         Raises:
-            PortProbeError: If the file is there but cannot be read or statted.
+            PortProbeError: If a file is there but cannot be read or statted.
         """
-        read = cls._owned_text(path)
+        read = cls._owned_text(port_file)
         if read is None:
-            return cls(None, absent=True)
+            return cls(None, refusal=NotAskedError.unpublished())
         text, uid = read
         try:
             port = PortText.parse(text)
         except ValueError as exc:
-            logger.warning("Ignoring stale %s: %s", path, exc)
-            return cls(None, owner=cls._owner_of(uid))
-        return cls(port, owner=cls._owner_of(uid))
+            logger.warning("Ignoring stale %s: %s", port_file, exc)
+            return cls(None, refusal=NotAskedError.unparseable())
+        refusal = cls._foreign(port_file.name, uid)
+        if refusal is not None:
+            return cls(port, refusal=refusal)
+        return cls._with_pid(port, port_file.with_name(cls.PID_FILE))
+
+    @classmethod
+    def _with_pid(cls, port: int, pid_file: Path) -> Self:
+        """Return the reading for *port* once *pid_file* is read the same way."""
+        read = cls._owned_text(pid_file)
+        if read is None:
+            return cls(port, refusal=NotAskedError.no_pid())
+        text, uid = read
+        if not text.isdecimal() or int(text) <= 0:
+            return cls(port, refusal=NotAskedError.pid_unparseable())
+        return cls(port, int(text), refusal=cls._foreign(pid_file.name, uid))
 
     @staticmethod
-    def _owner_of(uid: int) -> NotAskedError | None:
-        """Return why a file owned by *uid* is not this user's; ``None`` when it is."""
-        return None if uid == os.getuid() else NotAskedError.not_owned(uid)
+    def _foreign(name: str, uid: int) -> NotAskedError | None:
+        """Return why a file *name* owned by *uid* is not this user's; else ``None``."""
+        return None if uid == os.getuid() else NotAskedError.not_owned(name, uid)
 
     @staticmethod
     def _owned_text(path: Path) -> tuple[str, int] | None:
@@ -109,16 +127,31 @@ class PublishedPort:
         """Return the port the file named; ``None`` when none is published."""
         return self._port
 
-    def unasked(self, service_port: int) -> NotAskedError | None:
-        """Return why this reading may not be asked; ``None`` when it may.
+    @property
+    def pid(self) -> int | None:
+        """Return the pid the file named; ``None`` when none is published."""
+        return self._pid
 
-        Only this user's own file naming *service_port* opens the gate; each
-        other reading names its own reason.
+    def publisher(self, service_port: int) -> int:
+        """Return the live pid that published *service_port*, or raise why not.
+
+        Only this user's own files, naming *service_port* and a pid that is
+        alive and this user's, open the gate; each other reading raises the
+        ``NotAskedError`` that names it.
+
+        Raises:
+            NotAskedError: If the files do not name this user's live voxd on
+                *service_port*.
         """
-        if self._absent:
-            return NotAskedError.unpublished()
-        if self._port is None:
-            return NotAskedError.unparseable()
+        if self._refusal is not None:
+            raise self._refusal
         if self._port != service_port:
-            return NotAskedError.other_port(self._port)
-        return self._owner
+            raise NotAskedError.other_port(self._port or 0)
+        pid = self._pid or 0
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            raise NotAskedError.publisher_gone(pid) from None
+        except PermissionError:
+            raise NotAskedError.publisher_foreign(pid) from None
+        return pid

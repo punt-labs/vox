@@ -15,12 +15,12 @@ Two doors send the token, and each has its own gate:
   to the port, re-attributed immediately before the request.
 - :meth:`DaemonProbe.published_health` sends it before any attribution, so a
   slow ``lsof`` cannot hide a voxd that answers. Its gate
-  (:class:`~punt_vox.service.published_health.PublishedHealth`) is the file
-  voxd itself publishes: ``serve.port`` must name the service port, be owned
-  by the calling user (the run directory is mode 0700, so another user
-  cannot plant it), the target host must be loopback, and the port must
-  accept a connection. The token goes out through no other door, and not
-  when any part of that gate fails.
+  (:class:`~punt_vox.service.published_health.PublishedHealth`) is what voxd
+  itself publishes: ``serve.port`` must name the service port and
+  ``serve.pid`` a pid that is alive, this user's and running voxd, both
+  files owned by the calling user, the target host must be loopback, and
+  the port must accept a connection. The token goes out through no other
+  door, and not when any part of that gate fails.
 """
 
 from __future__ import annotations
@@ -189,7 +189,7 @@ class DaemonProbe:
         check and the request all spend from *within_s*.
         """
         request = PublishedHealth(
-            self._process_mgr.port_file,
+            self._process_mgr,
             self._target,
             self._listening_at,
             Deadline(self._poll.now, within_s),

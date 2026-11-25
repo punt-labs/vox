@@ -214,6 +214,9 @@ class FakeWorld:
     port_file: int | None = None
     # serve.port holds unparseable content (a crash leftover); port_file unused
     port_file_stale: bool = False
+    # serve.pid as the run directory holds it; None: it names the port's
+    # holder, as a voxd that bound and published does (no holder: no file)
+    pid_file: int | None = None
     # called with the pid each time a process is signalled
     on_signal: Callable[[int], None] | None = None
     # acts once, just before the probe clears serve.port
@@ -463,6 +466,10 @@ class FakeProbe:
         if world.port_file != 8421:
             self._miss = NotAskedError.other_port(world.port_file)
             return None
+        unasked = self._publisher_unasked()
+        if unasked is not None:
+            self._miss = unasked
+            return None
         # A TCP connect is not slowed by lsof's load (``probe_blocks_s``
         # models fuser/lsof/ps), so the listener is read without blocking.
         self._fail("port_listening")
@@ -477,6 +484,22 @@ class FakeProbe:
             self._miss = RuntimeError(world.published_health_error)
             return None
         return self._answer(within_s)
+
+    def _publisher_unasked(self) -> NotAskedError | None:
+        """The real gate on serve.pid: a live voxd of this user, else why not."""
+        world = self._world
+        holder = world.holder()
+        pid = (
+            world.pid_file
+            if world.pid_file is not None
+            else (holder.pid if holder is not None else None)
+        )
+        if pid is None:
+            return NotAskedError.no_pid()
+        proc = world.procs.get(pid)
+        if proc is None or not proc.alive:
+            return NotAskedError.publisher_gone(pid)
+        return None
 
     def health(
         self, holders: frozenset[ProcessHandle], within_s: float
