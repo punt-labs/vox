@@ -145,7 +145,11 @@ def _visible_voxd(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     held = frozenset({MagicMock(pid=42)})
     monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: held)
-    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+    # The gate also proves the holder has the listener; that check reads
+    # lsof or /proc for the real pid 42, so it is faked like the holders.
+    monkeypatch.setattr(DaemonProbe, "holds_port", lambda self, pid, bound: True)
+    # Above the request floor (HealthRequest.MIN_S): below it no poll step asks.
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.6)
 
 
 def _clients(
@@ -274,7 +278,8 @@ def test_install_fails_when_the_unit_never_runs(
     _setup_fake_env(tmp_path, monkeypatch, bypass_health=False)
     _on(monkeypatch, "macos")
     _fake_backend(monkeypatch, LaunchdBackend, active=False)
-    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+    # Above the request floor (HealthRequest.MIN_S): below it no poll step asks.
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.6)
 
     with pytest.raises(SystemExit, match="not active"):
         ServiceInstaller().install()
@@ -636,7 +641,8 @@ def test_install_health_poll_sends_no_token_without_a_visible_voxd(
     _on(monkeypatch, "macos")
     _fake_backend(monkeypatch, LaunchdBackend)
     monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: frozenset())
-    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.05)
+    # Above the request floor (HealthRequest.MIN_S): below it no poll step asks.
+    monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.6)
     _write_run_token(fake_home, "run-token")
     captured = _clients(monkeypatch, _OK)
 
