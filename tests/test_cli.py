@@ -2317,6 +2317,7 @@ class TestDoctorCommand:
                 "sample_rate_hz": 16_000,
                 "peak": 900,
                 "samples": 16_000,
+                "overflows": 0,
             }
         return ["/Users/me/vox-demo"]
 

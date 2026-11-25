@@ -17,12 +17,13 @@ from punt_vox.doctor_call_daemon import MicCaptureCheck, WorkerReposCheck
 from punt_vox.types_mic import MicProbeReport
 
 
-def _reply(peak: int, samples: int = 16_000) -> dict[str, object]:
+def _reply(peak: int, samples: int = 16_000, overflows: int = 0) -> dict[str, object]:
     return MicProbeReport(
         device="MacBook Pro Microphone",
         sample_rate_hz=16_000,
         peak=peak,
         samples=samples,
+        overflows=overflows,
     ).to_wire()
 
 
@@ -38,6 +39,16 @@ def test_mic_check_passes_when_the_daemon_hears_signal() -> None:
     assert "MacBook Pro Microphone" in result.message
     assert "16000 Hz" in result.message
     assert "peak 812" in result.message
+    assert "overflow" not in result.message
+
+
+def test_mic_check_passes_but_shows_dropped_audio_when_callbacks_overflowed() -> None:
+    """Overflowed callbacks dropped audio; the row says so and still passes."""
+    with patch.object(DaemonControl, "request", return_value=_reply(812, overflows=3)):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "pass"
+    assert "3 overflows, audio dropped" in result.message
 
 
 def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero() -> None:

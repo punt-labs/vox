@@ -14,6 +14,7 @@ import pytest
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 from conversation_mode._mic_fakes import (
     FAKE_DEVICE,
+    FakeCallbackFlags,
     FakePortAudioError,
     fake_sounddevice,
 )
@@ -44,7 +45,7 @@ class _CollectingWs:
 
 def _report(peak: int) -> MicProbeReport:
     return MicProbeReport(
-        device="Fake Mic", sample_rate_hz=16_000, peak=peak, samples=16_000
+        device="Fake Mic", sample_rate_hz=16_000, peak=peak, samples=16_000, overflows=0
     )
 
 
@@ -172,7 +173,7 @@ def test_capture_reserves_the_stream_on_the_device_table_for_its_duration(
     assert table.open_streams == 0
     assert backend.created[-1].closed
     assert report == MicProbeReport(
-        device=FAKE_DEVICE.name, sample_rate_hz=16_000, peak=16, samples=2
+        device=FAKE_DEVICE.name, sample_rate_hz=16_000, peak=16, samples=2, overflows=0
     )
 
 
@@ -252,7 +253,11 @@ async def test_probe_logs_a_silent_or_empty_capture_as_a_warning(
 
     def capture(_seconds: float) -> MicProbeReport:
         return MicProbeReport(
-            device="Fake Mic", sample_rate_hz=16_000, peak=peak, samples=samples
+            device="Fake Mic",
+            sample_rate_hz=16_000,
+            peak=peak,
+            samples=samples,
+            overflows=0,
         )
 
     with caplog.at_level("INFO", logger="punt_vox.voxd.mic_probe"):
@@ -354,3 +359,26 @@ async def test_a_stream_that_will_not_close_crosses_as_an_error_frame(
     assert frame["id"] == "m5"
     assert "device unavailable" in str(frame["message"])
     assert "Fake Microphone" in str(frame["message"])
+
+
+def test_capture_counts_the_callbacks_that_overflowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late callback drops audio; the report carries how many did."""
+
+    class _Overflowing(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            callback = kwargs["callback"]
+            assert callable(callback)
+            callback(b"\x05\x00", 1, None, FakeCallbackFlags(input_overflow=True))
+            callback(b"\x02\x00", 1, None, FakeCallbackFlags())
+            return FAKE_DEVICE, _RecordingStream(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    report = SoundDeviceCapture(_Overflowing([]))(0.01)
+
+    assert report.overflows == 1
+    assert report.samples == 2
+    assert report.peak == 5

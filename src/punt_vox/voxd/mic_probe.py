@@ -84,10 +84,14 @@ class SoundDeviceCapture:
             raise MicProbeError(msg) from exc
 
         blocks: list[bytes] = []
+        overflows = 0
 
         def _callback(
-            indata: Buffer, _frames: int, _time: object, _status: CallbackFlags
+            indata: Buffer, _frames: int, _time: object, status: CallbackFlags
         ) -> None:
+            nonlocal overflows
+            if status.input_overflow:  # this callback ran late; audio was dropped
+                overflows += 1
             blocks.append(bytes(indata))
 
         # The backend answers every refusal -- no default input, a name it
@@ -110,10 +114,10 @@ class SoundDeviceCapture:
                 raise MicProbeError(
                     f"cannot release input device {device.name}: {exc}"
                 ) from exc
-        return self._summarise(device.name, b"".join(blocks))
+        return self._summarise(device.name, b"".join(blocks), overflows)
 
     @staticmethod
-    def _summarise(device: str, raw: bytes) -> MicProbeReport:
+    def _summarise(device: str, raw: bytes, overflows: int) -> MicProbeReport:
         """Reduce the captured 16-bit mono PCM to the report's peak and count."""
         pcm = array.array("h")
         pcm.frombytes(raw)
@@ -122,6 +126,7 @@ class SoundDeviceCapture:
             sample_rate_hz=_SAMPLE_RATE_HZ,
             peak=max((abs(sample) for sample in pcm), default=0),
             samples=len(pcm),
+            overflows=overflows,
         )
 
 
@@ -152,9 +157,10 @@ class MicProbeHandler(MessageHandler):
         level = logging.INFO if report.signal else logging.WARNING
         logger.log(
             level,
-            "mic probe: device=%r peak=%d samples=%d",
+            "mic probe: device=%r peak=%d samples=%d overflows=%d",
             report.device,
             report.peak,
             report.samples,
+            report.overflows,
         )
         await reply.send({"type": "mic_result", "result": report.to_wire()})

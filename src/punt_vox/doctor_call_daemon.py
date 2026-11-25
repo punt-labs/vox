@@ -97,6 +97,8 @@ class MicCaptureCheck:
             f"{report.device}, {report.sample_rate_hz} Hz, peak {report.peak}"
             f" over {report.samples} samples"
         )
+        if report.overflows:
+            heard += f", {report.overflows} overflows, audio dropped"
         if not report.delivered:
             return self._warn(f"{heard} — the device delivered no audio in one second")
         if report.signal:
