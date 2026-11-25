@@ -348,16 +348,17 @@ def test_status_live_publisher_without_the_port_is_not_asked() -> None:
     assert "no longer holds port 8421" in reading.reason
 
 
-def test_status_without_a_token_file_says_voxd_was_not_asked() -> None:
-    """No serve.token: the client is never built, so nothing was asked and the
-    reading must not claim voxd "gave no answer"."""
+def test_status_without_a_token_file_is_unresponsive_naming_the_file() -> None:
+    """No serve.token: the published door says voxd was not asked, but a visible
+    holder is never read as unknown for want of its token -- it holds the
+    port and did not answer, with the file as the cause."""
     world = FakeWorld(port_file=8421, token_written=False)
     world.run_unit(100)
     reading = lifecycle(world).status()
-    assert reading.state is DaemonState.UNKNOWN
-    assert "gave no answer" not in reading.reason
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.pids == (100,)
     assert reading.reason == (
-        "/run/serve.token is absent: voxd has not published its token; no token "
-        "sent; voxd was not asked first: /run/serve.token is absent: voxd has not "
-        "published its token; no token sent"
+        "voxd pid 100 holds the port but did not answer health: /run/serve.token "
+        "is absent: voxd has not published its token; no token sent"
     )
+    assert world.tokens_to_port == [8421]

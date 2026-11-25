@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health import DaemonNotUpError
 from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.not_asked import NotAskedError
 
@@ -127,10 +128,13 @@ class StatusCheck:
 
         A holder that left the port before it was asked was never asked:
         nothing is known about the port now, so that is ``unknown``. Any other
-        miss -- a timeout, a rejected token -- is ``unresponsive``.
+        miss -- a timeout, a rejected token, a ``serve.token`` voxd has not
+        published -- is ``unresponsive``: the process is there and holds the
+        port, so a visible voxd is never read as unknown for want of its
+        token; the cause names the file.
         """
         why = self._probe.health_miss() or "no reply"
-        if isinstance(why, NotAskedError):
+        if isinstance(why, NotAskedError) and not isinstance(why, DaemonNotUpError):
             return DaemonStatus.unknown(self._after_first_ask(str(why)))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))
 
