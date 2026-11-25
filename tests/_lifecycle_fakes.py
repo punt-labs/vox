@@ -451,8 +451,14 @@ class FakeProbe:
     def published_health(self, within_s: float) -> HealthStatus | None:
         """The real probe's gate: our serve.port names 8421 and a listener answers."""
         world = self._world
-        if world.port_file_stale or world.port_file != 8421:
-            self._miss = NotAskedError.unpublished(world.port_file)
+        if world.port_file_stale:
+            self._miss = NotAskedError.unparseable()
+            return None
+        if world.port_file is None:
+            self._miss = NotAskedError.unpublished()
+            return None
+        if world.port_file != 8421:
+            self._miss = NotAskedError.other_port(world.port_file)
             return None
         # A TCP connect is not slowed by lsof's load (``probe_blocks_s``
         # models fuser/lsof/ps), so the listener is read without blocking.

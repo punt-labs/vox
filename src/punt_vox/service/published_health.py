@@ -77,9 +77,9 @@ class PublishedHealth:
 
     def _gate(self) -> NotAskedError | None:
         """Return why the published port may not be asked; ``None`` to ask."""
-        published = PublishedPort.at(self._port_file)
-        if not published.names_own_service(DEFAULT_PORT):
-            return NotAskedError.unpublished(published.port)
+        unasked = PublishedPort.at(self._port_file).unasked(DEFAULT_PORT)
+        if unasked is not None:
+            return unasked
         host = self._target.host
         if not ipaddress.ip_address(host).is_loopback:
             return NotAskedError.not_loopback(host)

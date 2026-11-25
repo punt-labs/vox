@@ -455,13 +455,10 @@ def test_an_ip_bind_is_checked_without_any_lookup(
 # ---------------------------------------------------------------------------
 
 
-def _published(
-    monkeypatch: pytest.MonkeyPatch, port: int | None, *, owned: bool = True
-) -> MagicMock:
-    """Return a process manager whose serve.port reads as *port*, ours or not."""
+def _published(monkeypatch: pytest.MonkeyPatch, reading: PublishedPort) -> MagicMock:
+    """Return a process manager whose serve.port reads as *reading*."""
     mgr = MagicMock()
     mgr.port_file = Path("/nonexistent/serve.port")
-    reading = PublishedPort(port, owned=owned)
 
     def at(path: Path) -> PublishedPort:
         return reading
@@ -488,26 +485,31 @@ def test_published_health_asks_without_any_attribution(
     target = MagicMock(host="127.0.0.1", port=8421)
     status = HealthStatus(status="ok", pid=42)
     target.client.return_value.health.return_value = status
-    mgr = _published(monkeypatch, 8421)
+    mgr = _published(monkeypatch, PublishedPort(8421))
     assert _probe(mgr, target).published_health(1.5) is status
     mgr.find_pid_on_port.assert_not_called()
     mgr.open_voxd.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    ("port", "owned", "why"),
+    ("reading", "why"),
     [
-        (None, False, "publishes no port"),
-        (9000, True, "names port 9000"),
-        (8421, False, "not this user's voxd"),
+        (PublishedPort(None, absent=True), "publishes no port"),
+        (PublishedPort(None), "does not name a port"),
+        (PublishedPort(9000), "names port 9000, not the service port 8421"),
+        (PublishedPort(8421, owner=NotAskedError.not_owned(0)), "belongs to uid 0"),
+        (
+            PublishedPort(8421, owner=NotAskedError.unreadable("cannot stat x")),
+            "cannot stat x",
+        ),
     ],
 )
 def test_published_health_sends_nothing_unless_our_file_names_the_service(
-    monkeypatch: pytest.MonkeyPatch, port: int | None, owned: bool, why: str
+    monkeypatch: pytest.MonkeyPatch, reading: PublishedPort, why: str
 ) -> None:
     connect = _listening(monkeypatch)
     target = MagicMock(host="127.0.0.1", port=8421)
-    probe = _probe(_published(monkeypatch, port, owned=owned), target)
+    probe = _probe(_published(monkeypatch, reading), target)
     assert probe.published_health(1.5) is None
     target.client.assert_not_called()
     connect.assert_not_called()
@@ -520,7 +522,7 @@ def test_published_health_sends_nothing_off_loopback(
 ) -> None:
     connect = _listening(monkeypatch)
     target = MagicMock(host="192.168.1.5", port=8421)
-    probe = _probe(_published(monkeypatch, 8421), target)
+    probe = _probe(_published(monkeypatch, PublishedPort(8421)), target)
     assert probe.published_health(1.5) is None
     target.client.assert_not_called()
     connect.assert_not_called()
@@ -532,7 +534,7 @@ def test_published_health_sends_nothing_to_an_empty_port(
 ) -> None:
     _listening(monkeypatch, accept=False)
     target = MagicMock(host="127.0.0.1", port=8421)
-    probe = _probe(_published(monkeypatch, 8421), target)
+    probe = _probe(_published(monkeypatch, PublishedPort(8421)), target)
     assert probe.published_health(1.5) is None
     target.client.assert_not_called()
     assert "nothing listens" in str(probe.health_miss())
@@ -547,7 +549,7 @@ def test_published_health_connect_failure_is_a_miss_not_an_error(
         "punt_vox.service.daemon_probe.socket.create_connection", connect
     )
     target = MagicMock(host="127.0.0.1", port=8421)
-    probe = _probe(_published(monkeypatch, 8421), target)
+    probe = _probe(_published(monkeypatch, PublishedPort(8421)), target)
     assert probe.published_health(1.5) is None
     target.client.assert_not_called()
     assert "cannot connect" in str(probe.health_miss())
@@ -567,7 +569,9 @@ def test_published_health_request_gets_what_the_connect_left(
     )
     target = MagicMock(host="127.0.0.1", port=8421)
     target.client.return_value.health.return_value = HealthStatus(status="ok")
-    probe = DaemonProbe(_published(monkeypatch, 8421), lambda: target, Poll(clock))
+    probe = DaemonProbe(
+        _published(monkeypatch, PublishedPort(8421)), lambda: target, Poll(clock)
+    )
     probe.published_health(1.5)
     target.client.return_value.health.assert_called_once_with(
         timeout=pytest.approx(1.25)
@@ -587,7 +591,9 @@ def test_published_health_connect_that_leaves_less_than_the_floor_sends_nothing(
         "punt_vox.service.daemon_probe.socket.create_connection", connect
     )
     target = MagicMock(host="127.0.0.1", port=8421)
-    probe = DaemonProbe(_published(monkeypatch, 8421), lambda: target, Poll(clock))
+    probe = DaemonProbe(
+        _published(monkeypatch, PublishedPort(8421)), lambda: target, Poll(clock)
+    )
     assert probe.published_health(1.5) is None
     target.client.assert_not_called()
     assert "spent the health budget" in str(probe.health_miss())
@@ -600,6 +606,6 @@ def test_published_health_no_reply_is_none_and_kept(
     target = MagicMock(host="127.0.0.1", port=8421)
     rejected = VoxdConnectionError("auth rejected (4401)")
     target.client.return_value.health.side_effect = rejected
-    probe = _probe(_published(monkeypatch, 8421), target)
+    probe = _probe(_published(monkeypatch, PublishedPort(8421)), target)
     assert probe.published_health(1.5) is None
     assert probe.health_miss() is rejected

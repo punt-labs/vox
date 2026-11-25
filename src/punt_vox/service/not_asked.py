@@ -42,14 +42,35 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
-    def unpublished(cls, port: int | None) -> Self:
-        """Return the miss for a ``serve.port`` that does not name our service."""
-        if port is None:
-            return cls("serve.port publishes no port; no token sent unattributed")
+    def unpublished(cls) -> Self:
+        """Return the miss for no ``serve.port`` at all."""
+        return cls("serve.port publishes no port; no token sent unattributed")
+
+    @classmethod
+    def unparseable(cls) -> Self:
+        """Return the miss for a ``serve.port`` that does not name a port."""
+        return cls("serve.port does not name a port; no token sent unattributed")
+
+    @classmethod
+    def other_port(cls, port: int) -> Self:
+        """Return the miss for a ``serve.port`` naming a port not the service's."""
         return cls(
-            f"serve.port names port {port}, not this user's voxd on "
-            f"{DEFAULT_PORT}; no token sent unattributed"
+            f"serve.port names port {port}, not the service port {DEFAULT_PORT}; "
+            "no token sent unattributed"
         )
+
+    @classmethod
+    def not_owned(cls, uid: int) -> Self:
+        """Return the miss for a ``serve.port`` another user owns."""
+        return cls(
+            f"serve.port belongs to uid {uid}, not this user; "
+            "no token sent unattributed"
+        )
+
+    @classmethod
+    def unreadable(cls, why: str) -> Self:
+        """Return the miss for a ``serve.port`` vox could not read or stat."""
+        return cls(f"{why}; no token sent unattributed")
 
     @classmethod
     def not_loopback(cls, host: str) -> Self:
