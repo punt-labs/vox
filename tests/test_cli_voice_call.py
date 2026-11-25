@@ -287,6 +287,32 @@ def test_status_prints_the_line_and_transcript() -> None:
     assert "user: Add a greeting to the demo repo." in result.output
 
 
+@pytest.mark.parametrize("who", ["agent", "peer", "caller"])
+def test_status_names_who_ended_the_call(who: str) -> None:
+    """The human view says who ended the call, on the line and in the report."""
+    with _voxd(_Voxd({**_ENDED, "ended_by": who})):
+        result = runner.invoke(CallCli.build_app(), ["status"])
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == (
+        f"call ended by {who} | 1 tool calls | agent: Started a worker on demo."
+    )
+    assert f"ended by {who}" in lines[1:]
+    assert lines.index(f"ended by {who}") > lines.index(
+        "tool: start_worker({'repo': 'demo'}) -> ok"
+    )
+
+
+def test_a_failed_call_names_nobody_as_who_ended_it() -> None:
+    view = CallStatusView(
+        {**_ENDED, "state": "failed", "ended_by": None, "error": "boom"}
+    )
+    assert view.ended_by == ""
+    assert view.line().startswith("call failed | 1 tool calls | ")
+    assert view.report()[-2:] == ["error: boom", "trace: /tmp/call-trace.jsonl"]
+    assert not [line for line in view.report() if line.startswith("ended by")]
+
+
 @pytest.mark.parametrize("state", ["idle", "live"])
 def test_status_displays_a_reply_without_a_call_id(state: str) -> None:
     voxd = _Voxd({"state": state})
