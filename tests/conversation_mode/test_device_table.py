@@ -69,7 +69,7 @@ def test_refresh_reports_a_device_it_cannot_describe_and_still_re_reads(
 def test_refresh_terminates_portaudio_only_while_it_is_initialized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invariant: refresh never terminates an uninitialized PortAudio.
+    """P2 of docs/device-table.tex: terminate only while initialized.
 
     A failed initialize leaves the library terminated. A refresh that
     terminated it again would fail there, every time, until the daemon
@@ -102,6 +102,8 @@ def test_refresh_is_a_no_op_before_sounddevice_is_imported(
 def test_refresh_keeps_the_table_while_a_stream_is_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """P1 of docs/device-table.tex: refresh never terminates PortAudio while a
+    stream is reserved."""
     fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
         monkeypatch
     )
@@ -137,6 +139,7 @@ def test_a_reservation_releases_once() -> None:
 
 
 def test_releasing_more_than_was_reserved_is_a_bug() -> None:
+    """P3 of docs/device-table.tex: reservations balance."""
     with pytest.raises(ValueError, match="no PortAudio stream is reserved"):
         DeviceTable().release()
 

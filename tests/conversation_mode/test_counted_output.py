@@ -156,7 +156,8 @@ def test_a_factory_that_fails_gives_the_reservation_back() -> None:
 def test_the_count_is_raised_before_the_native_stream_is_created(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invariant: refresh never terminates PortAudio while a stream is reserved.
+    """P1 of docs/device-table.tex: refresh never terminates PortAudio while a
+    stream is reserved.
 
     A refresh on another thread that lands while the factory is creating
     the native stream must find the count already raised; otherwise it
