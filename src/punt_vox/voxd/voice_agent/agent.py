@@ -43,12 +43,15 @@ class VoiceAgent:
         *,
         path: Path | None = None,  # None selects the daemon's default config path.
     ) -> Self:
-        """Bind the agent to the per-user daemon config or a separate test path."""
+        """Bind the agent to the per-user daemon config or a separate test path.
+
+        The default path is the control's: a fake endpoint gets its own
+        registration file, so fake and live registrations never meet.
+        """
         self = super().__new__(cls)
         self._control = control
-        self._file = AtomicFile(
-            path if path is not None else config_dir() / "voice-agent.json"
-        )
+        default = control.registration_path(config_dir() / "voice-agent.json")
+        self._file = AtomicFile(path if path is not None else default)
         self._lock = SiblingLock(self._file.path)
         return self
 

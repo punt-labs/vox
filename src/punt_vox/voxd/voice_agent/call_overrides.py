@@ -12,7 +12,10 @@ sets them in the daemon's environment:
   fails the call with a :class:`ValueError` naming the variable, never a
   silent fall back to production. While it is in effect the daemon sends the
   placeholder ``test-override`` as its API key, so a listener on that port
-  never receives a real credential.
+  never receives a real credential, and it keeps the agent registration
+  (the provisioned agent and tool ids) in a sibling file named for the
+  override's port, so a fake call never reads or overwrites the live
+  registration and a live call never finds a fake one.
 - ``VOX_CALL_ALLOW_LOOPBACK=1`` trusts plaintext ``ws://`` loopback origins for
   the conversation socket, as the in-process ``allow_loopback`` flag does.
   ``0`` and unset are off; any other value fails the call with a
@@ -31,11 +34,14 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Final, final
+from typing import TYPE_CHECKING, Final, final
 from urllib.parse import urlsplit
 
 from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_silent import SilentOutputStream
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = [
     "LOOPBACK_HOSTS",
@@ -90,6 +96,20 @@ class CallOverrides:
             BASE_URL_ENV,
         )
         return origin, PLACEHOLDER_KEY
+
+    @classmethod
+    def registration_path(cls, default: Path) -> Path:
+        """Return the agent registration path: *default*, or its override sibling.
+
+        With ``VOX_CONVAI_BASE_URL`` set, the registration provisioned on
+        that loopback origin lives beside *default* in a file named for the
+        origin's port, one per fake endpoint.
+        """
+        override = os.environ.get(BASE_URL_ENV)
+        if override is None:
+            return default
+        port = urlsplit(cls._loopback_origin(override)).port
+        return default.with_name(f"{default.stem}.loopback-{port}{default.suffix}")
 
     @classmethod
     def _loopback_origin(cls, override: str) -> str:

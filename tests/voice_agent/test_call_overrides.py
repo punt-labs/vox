@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from punt_vox.voxd.pcm_output import sounddevice_output_stream
@@ -44,3 +46,29 @@ def test_pcm_output_any_other_value_fails_by_name_and_value(
     with pytest.raises(ValueError, match="VOX_PCM_OUTPUT") as failure:
         CallOverrides.pcm_output(sounddevice_output_stream)
     assert repr(value) in str(failure.value)
+
+
+def test_registration_path_is_the_default_without_the_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VOX_CONVAI_BASE_URL", raising=False)
+    default = Path("/cfg/voice-agent.json")
+    assert CallOverrides.registration_path(default) == default
+
+
+def test_registration_path_is_a_sibling_named_for_the_override_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "http://127.0.0.1:4321")
+    default = Path("/cfg/voice-agent.json")
+    assert CallOverrides.registration_path(default) == Path(
+        "/cfg/voice-agent.loopback-4321.json"
+    )
+
+
+def test_registration_path_rejects_a_malformed_override_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "http://example.com:1")
+    with pytest.raises(ValueError, match="VOX_CONVAI_BASE_URL"):
+        CallOverrides.registration_path(Path("/cfg/voice-agent.json"))

@@ -19,6 +19,8 @@ from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from punt_vox.voxd.voice_agent.contracts import (
         AgentPermissions,
         ClientTool,
@@ -77,6 +79,11 @@ class ConvAIControl:
     def credential_id(self) -> str:
         """Identify the key and endpoint without retaining the key in config."""
         return self._credential_id
+
+    @staticmethod
+    def registration_path(default: Path) -> Path:
+        """Return the registration path: *default*, or its override sibling."""
+        return CallOverrides.registration_path(default)
 
     def __enter__(self) -> Self:
         return self
