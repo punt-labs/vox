@@ -40,18 +40,37 @@ class ListenAddress:
     def __new__(cls, host: str, port: int) -> Self:
         """Create the address for *host* (an IP literal) on *port*.
 
-        A scoped IPv6 literal (``::1%1``, as a Linux bind may carry) keeps
-        its zone for the connection target only; here the zone is dropped,
-        because the kernel's tables and ``lsof``'s names carry address bytes
-        alone.
+        A scoped IPv6 literal keeps its zone for the connection target only;
+        here the zone is dropped, because the kernel's tables and ``lsof``'s
+        names carry address bytes alone. That is sound only for loopback
+        (``::1%1``: one interface by definition). A scoped link-local host
+        such as ``fe80::1%2`` is refused: with the zone gone it would match a
+        listener on another interface (``fe80::1%3``), and on Linux another
+        user could bind the target interface and receive the token.
 
         Raises:
-            ValueError: If *host* is not an IPv4 or IPv6 literal.
+            ValueError: If *host* is not an IPv4 or IPv6 literal, or carries
+                a zone on a non-loopback address.
         """
+        parsed = ipaddress.ip_address(host)
+        if cls._zone_of(parsed) and not parsed.is_loopback:
+            msg = (
+                f"{host} carries zone {cls._zone_of(parsed)} on a non-loopback "
+                "address: the listener tables carry no zone, so it cannot be "
+                "told from the same address on another interface"
+            )
+            raise ValueError(msg)
         self = super().__new__(cls)
-        self._host = ipaddress.ip_address(ipaddress.ip_address(host).packed)
+        self._host = ipaddress.ip_address(parsed.packed)
         self._port = port
         return self
+
+    @staticmethod
+    def _zone_of(parsed: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+        """Return the zone id of a scoped IPv6 literal; ``""`` when there is none."""
+        if isinstance(parsed, ipaddress.IPv6Address) and parsed.scope_id:
+            return parsed.scope_id
+        return ""
 
     @property
     def port(self) -> int:

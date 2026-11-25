@@ -75,3 +75,13 @@ def test_a_scoped_ipv6_host_matches_without_its_zone() -> None:
     assert address.proc_forms("tcp6") == {f"{V6_LOOP}:20E5", f"{V6_ANY}:20E5"}
     assert address.lsof_matches("IPv6", "[::1]:8421") is True
     assert address.lsof_matches("IPv6", "*:8421") is True
+
+
+def test_a_scoped_link_local_host_is_refused_naming_the_zone() -> None:
+    """The kernel row carries address bytes only, so with the zone dropped a
+    target on one interface would match a listener on another: fe80::1%2 and
+    fe80::1%3 are different sockets. Only loopback, one interface by
+    definition, may carry a zone."""
+    with pytest.raises(ValueError, match=r"fe80::1%2 .*zone") as refused:
+        ListenAddress("fe80::1%2", 8421)
+    assert "zone 2" in str(refused.value)
