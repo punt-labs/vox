@@ -650,15 +650,17 @@ class TestMicrophoneBeforeDial:
         """
         backend = fake_sounddevice(monkeypatch)
         sounddevice = sys.modules["sounddevice"]
-        queries: list[int] = []
+        rate_missing = True  # The first launch sees a device with no rate.
 
-        def rate_missing_once(kind: str) -> DeviceInfo:
-            del kind
-            queries.append(1)
-            rate = 0.0 if len(queries) == 1 else backend.device().default_samplerate_hz
-            return {"name": backend.device().name, "default_samplerate": rate}
+        def query_devices(kind: str | None = None) -> DeviceInfo | list[DeviceInfo]:
+            rate = 0.0 if rate_missing else backend.device().default_samplerate_hz
+            info: DeviceInfo = {
+                "name": backend.device().name,
+                "default_samplerate": rate,
+            }
+            return [info] if kind is None else info  # None: the whole table.
 
-        monkeypatch.setattr(sounddevice, "query_devices", rate_missing_once)
+        monkeypatch.setattr(sounddevice, "query_devices", query_devices)
         connector = _Connector()
         launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
         call_id = uuid4()
@@ -666,6 +668,7 @@ class TestMicrophoneBeforeDial:
         with pytest.raises(OSError, match="no usable default input device"):
             await launcher.launch(call_id, request)
         assert list(tmp_path.iterdir()) == []  # the reservation was undone
+        rate_missing = False
         active = await launcher.launch(call_id, request)
         await active.wait_connected(5)
         await active.cancel()
