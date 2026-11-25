@@ -23,6 +23,7 @@ from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerLaunch
 from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
+from punt_vox.voxd.workers.registry import WorkerRegistry
 from punt_vox.voxd.workers.types import WorkerDeadlines
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 from punt_vox.worker_client import WorkerClient
@@ -484,7 +485,7 @@ async def test_start_queued_behind_a_slow_start_is_refused_with_the_reason(
         await asyncio.to_thread(started.wait, 1)
         with (
             patch.object(WorkerDeadlines, "LOCK_WAIT", 0.05),
-            pytest.raises(ValueError, match="another worker is still starting"),
+            pytest.raises(ValueError, match="the worker controller is busy"),
         ):
             async with asyncio.timeout(1):
                 await actor.start("two", str(tmp_path), provider="fake", harness="test")
@@ -492,3 +493,44 @@ async def test_start_queued_behind_a_slow_start_is_refused_with_the_reason(
     finally:
         release.set()
     assert (await first)["state"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_start_refused_behind_a_slow_listing_names_the_controller(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The lock may be held by any worker call; the refusal says so and logs.
+
+    "another worker is still starting" would be false here: a listing holds
+    the lock. The message names the controller and the daemon log names the
+    project by its last path component.
+    """
+    listing, release = threading.Event(), threading.Event()
+
+    def slow_list() -> list[WorkerRecord]:
+        listing.set()
+        assert release.wait(5)
+        return []
+
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    actor = WorkerActor(registry)
+    with patch.object(WorkerRegistry, "list", side_effect=slow_list):
+        held = asyncio.create_task(actor.workers())
+        try:
+            await asyncio.to_thread(listing.wait, 1)
+            with (
+                patch.object(WorkerDeadlines, "LOCK_WAIT", 0.05),
+                caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.actor"),
+                pytest.raises(ValueError, match=r"^the worker controller is busy"),
+            ):
+                async with asyncio.timeout(1):
+                    await actor.start(
+                        "two", str(tmp_path), provider="fake", harness="test"
+                    )
+        finally:
+            release.set()
+        assert await held == []
+    [warning] = caplog.records
+    assert tmp_path.name in warning.getMessage()
+    assert str(tmp_path) not in warning.getMessage()
+    assert "controller was busy" in warning.getMessage()
