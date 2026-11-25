@@ -53,7 +53,9 @@ class ProbeBackend(Protocol):
 
     def open_default_input(
         self, *, samplerate: float, blocksize: int, callback: RawInputCallback
-    ) -> tuple[InputDevice, InputStreamHandle]: ...
+    ) -> tuple[InputDevice, InputStreamHandle]:
+        """Return the default input device and a started stream on it, or raise."""
+        ...
 
 
 @final
