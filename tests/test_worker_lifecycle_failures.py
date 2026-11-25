@@ -95,7 +95,30 @@ def test_rollback_checkpoint_failure_cannot_mask_launch_error(
     assert record.state == "stopped"
     [warning] = [r for r in caplog.records if "rollback checkpoint" in r.getMessage()]
     assert record.id in warning.getMessage()
-    assert "OSError" in warning.getMessage()
+    assert "OSError: disk failed" in warning.getMessage()
+
+
+def test_rollback_checkpoint_warning_scrubs_paths(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The message text reaches the log with every absolute path scrubbed."""
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    registry = _registry(tmp_path, provider)
+    with (
+        patch.object(
+            WorkerRecords,
+            "save",
+            side_effect=[None, OSError(28, "no space", "/Users/x/private/file")],
+        ),
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.registry"),
+        pytest.raises(OSError, match="launch failed"),
+    ):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    [warning] = [r for r in caplog.records if "rollback checkpoint" in r.getMessage()]
+    assert "no space" in warning.getMessage()
+    assert "/Users/x" not in warning.getMessage()
+    assert "<path>" in warning.getMessage()
 
 
 def test_terminal_stop_retries_only_failed_cleanup(tmp_path: Path) -> None:

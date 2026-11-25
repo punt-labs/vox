@@ -154,9 +154,9 @@ class WorkerRegistry:
         except (OSError, ValueError, RuntimeError) as exc:
             self._inventory.remember(record)
             logger.warning(
-                "Worker %s rollback checkpoint not saved (%s)",
+                "Worker %s rollback checkpoint not saved: %s",
                 record.id,
-                type(exc).__name__,
+                self._lifecycle.failure_text(exc),
             )
         self._retirement.schedule(record.id)
 

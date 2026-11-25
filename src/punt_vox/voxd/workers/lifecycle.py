@@ -110,12 +110,19 @@ class WorkerLifecycle:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             report["stop_error"] = type(exc).__name__
             logger.warning(
-                "Worker rollback termination failed (%s)", type(exc).__name__
+                "Worker %s rollback termination failed: %s",
+                record.id,
+                GitFailure(exc),
             )
         else:
             record = replace(record, state="stopped")
         cleaned = WorkerCleanup.run(replace(record, last_report=report), self._profiles)
         return WorkerDiscard.mark(cleaned)
+
+    @staticmethod
+    def failure_text(exc: Exception) -> str:
+        """Return ``"<type>: <message>"`` for a log line, paths scrubbed."""
+        return str(GitFailure(exc))
 
     def terminate(self, record: WorkerRecord) -> WorkerRecord:
         """Stop the provider without performing harness cleanup.
