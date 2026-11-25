@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from punt_vox.voxd.voice_call.call_log import CallLog
-from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+from punt_vox.voxd.voice_call.call_outcome import CallEnd, CallOutcome
 from punt_vox.voxd.voice_call.tool_reply import ToolReply
 
 _LOGGER = "punt_vox.voxd.voice_call.call_log"
@@ -112,6 +112,14 @@ class TestEnded:
             + re.escape(str(_TRACE)),
             line,
         )
+
+    def test_an_agent_ended_call_names_the_agent(
+        self, records: pytest.LogCaptureFixture
+    ) -> None:
+        with CallLog(_TRACE, lambda: CallOutcome("ended", None, 2, CallEnd.AGENT)):
+            pass
+        (line,) = _messages(records)
+        assert line.startswith("Call ended: ended by agent, 2 tool calls, duration ")
 
     def test_one_tool_call_is_singular(self, records: pytest.LogCaptureFixture) -> None:
         with CallLog(_TRACE, lambda: CallOutcome("ended", None, 1)):

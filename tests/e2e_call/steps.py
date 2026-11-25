@@ -17,6 +17,7 @@ __all__ = [
     "SendInterruption",
     "SendPing",
     "SendToolCall",
+    "SendToolResponse",
     "SendUserTranscript",
     "Step",
     "WaitForLogLine",
@@ -55,6 +56,21 @@ class SendToolCall:
     tool_call_id: str
     # The tool defines its own JSON schema; the wire carries plain JSON.
     parameters: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SendToolResponse:
+    """Acknowledge a tool the agent ran, as the server does after each tool.
+
+    A ``system`` tool named ``end_call`` is the agent hanging up: the real
+    server sends this acknowledgement and then closes the socket.
+    """
+
+    name: str
+    tool_call_id: str
+    tool_type: str = "client"
+    is_error: bool = False
+    is_called: bool = True  # False acknowledges a tool the agent did not run.
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +131,7 @@ type Step = (
     | SendUserTranscript
     | SendAgentResponse
     | SendToolCall
+    | SendToolResponse
     | SendInterruption
     | SendPing
     | ExpectPong

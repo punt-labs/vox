@@ -38,6 +38,7 @@ from .steps import (
     SendInterruption,
     SendPing,
     SendToolCall,
+    SendToolResponse,
     SendUserTranscript,
     WaitForLogLine,
     WaitForToolResult,
@@ -72,6 +73,16 @@ _TOOL_CALL_STEPS: tuple[Step, ...] = (
 # Two seconds of agent audio: far more than plays before the cut lands.
 _AGENT_PCM = bytes(16_000 * 2 * 2)
 _PLAYBACK_STARTED = "PCM playback started"
+_GOODBYE = "Goodbye for now."
+# The agent says one closing sentence, runs its built-in end_call system
+# tool, and the server hangs up: the order the real server uses.
+_AGENT_ENDS_STEPS: tuple[Step, ...] = (
+    SendUserTranscript("goodbye"),
+    SendAgentResponse(_GOODBYE, 1),
+    SendAudio(bytes(16_000 * 2 // 10), 1),  # 100 ms of the closing sentence.
+    SendToolResponse("end_call", "end_1", "system"),
+    HangUp(),
+)
 
 
 def _interrupted_steps(log: Path) -> tuple[Step, ...]:
@@ -252,7 +263,9 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
 
     The call's own outcome is primary: when it raised, a stop failure is
     attached to that exception as a note, never raised over it. When the
-    call returned, a stop failure is the error.
+    call returned, the daemon is given time to finish the call before the
+    cleanup stop, and a call it never finished, or a stop that failed, is
+    the error.
     """
     try:
         result = _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
@@ -260,9 +273,37 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
         if (failure := _stop_failure(env)) is not None:
             exc.add_note(failure)
         raise
-    if (failure := _stop_failure(env)) is not None:
+    unfinished = _unfinished_failure(env, _STOP_TIMEOUT_S)
+    unstopped = _stop_failure(env)
+    if (failure := unfinished or unstopped) is not None:
         raise AssertionError(failure)
     return result
+
+
+def _unfinished_failure(
+    env: dict[str, str], timeout_s: float
+) -> str | None:  # None: the daemon logged the call's end.
+    """Wait for the daemon's end line, written once the last reply has played.
+
+    The CLI returns when the status reads ended, which the daemon publishes
+    before the speaker drains the final reply; a stop sent then flushes the
+    audio a test measures. The end line follows the drain, so the cleanup
+    stop waits for it.
+    """
+    if _log_contains(_log_path(env), "Call ended: ", timeout_s=timeout_s):
+        return None
+    return f"voxd did not log the call's end within {timeout_s:.0f}s"
+
+
+def _log_contains(path: Path, text: str, *, timeout_s: float) -> bool:
+    """Poll a log file until it carries *text*; False once *timeout_s* passes."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if path.is_file() and text in path.read_text(errors="replace"):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 def _stop_failure(env: dict[str, str]) -> str | None:  # None: the stop was fine.
@@ -281,19 +322,27 @@ def _stop_failure(env: dict[str, str]) -> str | None:  # None: the stop was fine
     return f"vox call stop exited {stop.returncode}: {stop.stdout}{stop.stderr}"
 
 
-def _call_then_teardown(
-    env: dict[str, str], script: Path
-) -> subprocess.CompletedProcess[str]:
-    """Place the call, then delete the agent and tools the daemon provisioned."""
+@dataclass(frozen=True, slots=True)
+class CallRun:
+    """What one scripted call left behind: the CLI's run and the daemon's status."""
+
+    result: subprocess.CompletedProcess[str]
+    status: dict[str, object]  # ``vox call status --json`` after the call ended.
+
+
+def _call_then_teardown(env: dict[str, str], script: Path) -> CallRun:
+    """Place the call, read its final status, then delete the agent and tools."""
     result = _vox_call(env, script)
+    status = _vox(env, "call", "status", "--json", timeout=_STOP_TIMEOUT_S)
+    assert status.returncode == 0, status.stdout + status.stderr
     teardown = _vox(env, "call", "teardown", timeout=_STOP_TIMEOUT_S)
     assert teardown.returncode == 0, teardown.stdout + teardown.stderr
-    return result
+    return CallRun(result, cast("dict[str, object]", json.loads(status.stdout)))
 
 
 async def _run_call(
     env: dict[str, str], script: Path, steps: tuple[Step, ...]
-) -> tuple[FakeConvAIAgent, FakeConvAIRest, subprocess.CompletedProcess[str]]:
+) -> tuple[FakeConvAIAgent, FakeConvAIRest, CallRun]:
     """Start both fakes, then voxd with their addresses, then place the call.
 
     After the call the daemon tears its agent and tools down through the
@@ -304,8 +353,8 @@ async def _run_call(
         with FakeConvAIRest(agent.signed_url) as rest:
             env = {**env, "VOX_CONVAI_BASE_URL": rest.base_url}
             with _daemon(env):
-                result = await asyncio.to_thread(_call_then_teardown, env, script)
-            return agent, rest, result
+                run = await asyncio.to_thread(_call_then_teardown, env, script)
+            return agent, rest, run
 
 
 def _log_path(env: dict[str, str]) -> Path:
@@ -323,11 +372,26 @@ def _flush_dropped_ms(daemon_log: str) -> float:
     return float(match.group(1))
 
 
-def _played_ms(daemon_log: str) -> int:
-    """Return the audio the closing stream report says the device played."""
-    match = re.search(r"PCM stream closed at .*?, played (\d+) ms", daemon_log)
-    assert match is not None, daemon_log
-    return int(match.group(1))
+@dataclass(frozen=True, slots=True)
+class _StreamClose:
+    """The sink's closing report for the last PCM stream the daemon played."""
+
+    played_ms: int
+    dropped_ms: int
+    interrupted: bool
+
+    _LINE = re.compile(
+        r"PCM stream closed at \d+ ms: fed \d+ ms, played (\d+) ms, "
+        r"dropped (\d+) ms, interrupted=(True|False)"
+    )
+
+    @classmethod
+    def last(cls, daemon_log: str) -> _StreamClose:
+        """Parse the newest closing report; the log must carry one."""
+        reports = cls._LINE.findall(daemon_log)
+        assert reports, daemon_log
+        played, dropped, interrupted = reports[-1]
+        return cls(int(played), int(dropped), interrupted == "True")
 
 
 def _trace_events(report: str) -> list[str]:
@@ -396,6 +460,32 @@ def test_a_hung_stop_after_a_timed_out_call_is_a_note_on_the_call_error(
     ]
 
 
+def test_a_call_the_daemon_never_finished_is_the_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no end line in the log, the cleanup names the unfinished call."""
+    stopped: list[str] = []
+
+    def stop(env: dict[str, str], *args: str, timeout: float) -> object:
+        del env, timeout
+        stopped.append(" ".join(args))
+        return subprocess.CompletedProcess(["vox", *args], 0, "", "")
+
+    monkeypatch.setattr(f"{__name__}._vox", stop)
+    monkeypatch.setattr(f"{__name__}._STOP_TIMEOUT_S", 0.1)
+    env = {"HOME": str(tmp_path)}
+    with pytest.raises(AssertionError, match="did not log the call's end within 0s"):
+        _vox_call(env, tmp_path / "turns.jsonl")
+    assert stopped == ["call --script " + str(tmp_path / "turns.jsonl"), "call stop"]
+
+
+def test_the_cleanup_waits_for_the_end_line_before_stopping(tmp_path: Path) -> None:
+    log = tmp_path / "vox.log"
+    assert not _log_contains(log, "Call ended: ", timeout_s=0.1)
+    log.write_text("Call live: conversation c\nCall ended: ended by agent\n")
+    assert _log_contains(log, "Call ended: ", timeout_s=0.1)
+
+
 def test_a_daemon_killed_mid_call_puts_its_detail_on_the_propagating_error(
     voxd_env: dict[str, str],
 ) -> None:
@@ -418,9 +508,10 @@ def test_scripted_call_reaches_the_tool_result(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """One call provisions, dials, answers a tool call, and reports its end."""
-    agent, rest, result = asyncio.run(
+    agent, rest, run = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _TOOL_CALL_STEPS)
     )
+    result = run.result
 
     assert agent.fault is None
     assert agent.cut_short is None
@@ -468,9 +559,10 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """An interruption mid-reply, then a remote hangup, is a clean end, not a fault."""
-    agent, rest, result = asyncio.run(
+    agent, rest, run = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _interrupted_steps(_log_path(voxd_env)))
     )
+    result = run.result
 
     assert agent.fault is None
     assert agent.cut_short is None
@@ -487,7 +579,48 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     # closing report counts audio played and the remainder dropped.
     daemon_log = _daemon_log(voxd_env)
     assert "PCM flush at" in daemon_log
-    assert "interrupted=True" in daemon_log
     assert daemon_log.index(_PLAYBACK_STARTED) < daemon_log.index("PCM flush at")
-    assert _played_ms(daemon_log) > 0
+    close = _StreamClose.last(daemon_log)
+    assert close.interrupted
+    assert close.played_ms > 0
     assert _flush_dropped_ms(daemon_log) > 0
+
+
+def test_the_agent_ending_the_call_is_a_clean_end_by_the_agent(
+    tmp_path: Path, voxd_env: dict[str, str]
+) -> None:
+    """A goodbye the agent answers with end_call ends the call, credited to the agent.
+
+    The daemon treats the agent's hang-up as a normal end: the CLI exits 0 and
+    reports the call ended, the status names the agent as who ended it, the
+    end line in the daemon log says so too, and the trace records the agent's
+    end_call acknowledgement. The closing sentence plays to its end before
+    the hang-up: the sink's closing report shows the stream drained, not cut.
+    """
+    agent, rest, run = asyncio.run(
+        _run_call(voxd_env, _script(tmp_path), _AGENT_ENDS_STEPS)
+    )
+
+    assert agent.fault is None
+    assert agent.cut_short is None
+    assert rest.errors == []
+    report = run.result.stdout + run.result.stderr
+    assert run.result.returncode == 0, report
+    assert "call ended" in report
+    assert f"agent: {_GOODBYE}" in report
+    assert not [line for line in report.splitlines() if line.startswith("error: ")]
+    assert run.status["state"] == "ended", run.status
+    assert run.status["ended_by"] == "agent", run.status
+    assert run.status["error"] is None, run.status
+    daemon_log = _daemon_log(voxd_env)
+    ended = [line for line in daemon_log.splitlines() if "Call ended: " in line]
+    assert len(ended) == 1, daemon_log
+    assert "Call ended: ended by agent, 0 tool calls, duration " in ended[0], ended
+    events = _trace_events(report)
+    assert "agent_tool_response" in events, events
+    assert "agent_end_call" in events, events
+    assert "call ended by agent" in report
+    close = _StreamClose.last(daemon_log)
+    assert not close.interrupted, daemon_log
+    assert close.dropped_ms == 0, daemon_log
+    assert close.played_ms == 100, daemon_log

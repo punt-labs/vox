@@ -16,11 +16,13 @@ from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
     AgentResponseCorrection,
+    AgentToolResponse,
     ClientToolCall,
     Metadata,
     Ping,
     UserTranscript,
 )
+from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
@@ -85,7 +87,10 @@ class _Peer:
         await asyncio.sleep(0.01)  # lets a dispatched tool call finish
         if not self._events:
             raise EOFError
-        return self._events.pop(0)
+        event = self._events.pop(0)
+        if isinstance(event, Exception):  # The transport failing under the call.
+            raise event
+        return event
 
     async def send_audio(self, pcm: bytes) -> None:
         del pcm
@@ -101,6 +106,7 @@ def _call(
     peer: _Peer,
     audio: CallInput | None = None,
     speaker: AgentSpeaker | None = None,  # None: a speaker over a fake playback.
+    trace: EventTrace | None = None,  # None: a recording double nobody reads.
 ) -> VoiceAgentCall:
     """Build a call on ``peer``; ``audio`` None sends no caller audio at all."""
 
@@ -116,7 +122,7 @@ def _call(
         BossTools(workers, workers),
         audio if audio is not None else _Silent(),
         speaker or AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
-        trace=cast("EventTrace", None),
+        trace=trace if trace is not None else MagicMock(spec=EventTrace),
         opener=cast("Opener", opener),
         progress=ProgressEvents(),
     )
@@ -407,3 +413,94 @@ async def test_the_outcome_counts_every_tool_call_past_the_status_history() -> N
     shown = cast("list[dict[str, object]]", call.status()["tool_calls"])
     assert len(shown) == 20
     assert str(call.outcome()) == "connecting, 25 tool calls"
+
+
+_END_CALL = AgentToolResponse("end_1", False, "end_call", "system")
+
+
+async def test_a_failure_after_the_agents_end_call_is_nobodys_hang_up() -> None:
+    """C12 in docs/voice-call.tex: a failed call names nobody as who ended it.
+
+    The agent's end_call sets the attribution while the call is live; a
+    transport failure before the close is still a failure, not its hang-up.
+    """
+    call = _call(_Peer([_END_CALL, OSError("device lost")]))
+    assert call.status()["ended_by"] is None
+    await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "failed"
+    assert status["ended_by"] is None
+    assert str(call.outcome()) == "failed, 0 tool calls"
+
+
+async def test_a_stop_after_the_agents_end_call_is_still_the_agents_hang_up() -> None:
+    """C12 in docs/voice-call.tex: the agent's end_call survives any later end.
+
+    The caller cancelling the call after the acknowledgement, before the
+    provider's close arrives, does not take the attribution from the agent.
+    """
+
+    class _HoldingPeer(_Peer):
+        async def receive(self) -> object:
+            if self._events:
+                return await super().receive()
+            await asyncio.Event().wait()  # The close never comes.
+            raise AssertionError  # pragma: no cover
+
+    call = _call(_HoldingPeer([_END_CALL]))
+    task = asyncio.create_task(call.run(_dial))
+    async with asyncio.timeout(5):
+        while call.status()["ended_by"] != "agent":
+            await asyncio.sleep(0.01)
+    assert call.status()["state"] == "live"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    status = call.status()
+    assert status["state"] == "ended"
+    assert status["ended_by"] == "agent"
+    assert str(call.outcome()) == "ended by agent, 0 tool calls"
+
+
+class _OneChunk:
+    """Caller audio of one chunk, enough for the pump to send once."""
+
+    def open(self) -> None:
+        pass
+
+    async def chunks(self) -> AsyncIterator[bytes]:
+        yield bytes(640)
+
+    def close(self) -> None:
+        pass
+
+
+async def test_a_send_that_meets_the_peers_close_stops_the_pump_not_the_call() -> None:
+    """A writer's failure on the closed socket is noted; the listener ends the call.
+
+    The frames the agent sent before closing, its end_call acknowledgement
+    among them, still reach the listener, so the call ends by the agent.
+    """
+
+    class _ClosedPeer(_Peer):
+        async def send_audio(self, pcm: bytes) -> None:
+            del pcm
+            msg = "ElevenLabs WebSocket send failed (closed)"
+            raise ConvAIError(msg)
+
+    trace = MagicMock(spec=EventTrace)
+    call = _call(
+        _ClosedPeer([UserTranscript("goodbye", None), _END_CALL]),
+        audio=_OneChunk(),
+        trace=trace,
+    )
+    await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "ended"
+    assert status["ended_by"] == "agent"
+    assert status["transcript"] == [{"role": "user", "text": "goodbye"}]
+    trace.record.assert_any_call(
+        "note",
+        "caller_audio_stopped",
+        {"reason": "ElevenLabs WebSocket send failed (closed)"},
+    )

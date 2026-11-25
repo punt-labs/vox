@@ -20,6 +20,7 @@ from .steps import (
     SendInterruption,
     SendPing,
     SendToolCall,
+    SendToolResponse,
     SendUserTranscript,
     WaitForLogLine,
     WaitForToolResult,
@@ -223,6 +224,17 @@ class FakeConvAIAgent:
                 await socket.send(
                     json.dumps({"type": "client_tool_call", "client_tool_call": call})
                 )
+            case SendToolResponse(name, tool_call_id, tool_type, is_error, is_called):
+                ack = {
+                    "tool_name": name,
+                    "tool_call_id": tool_call_id,
+                    "tool_type": tool_type,
+                    "is_error": is_error,
+                    "is_called": is_called,
+                    "event_id": len(self._received),
+                }
+                frame = {"type": "agent_tool_response", "agent_tool_response": ack}
+                await socket.send(json.dumps(frame))
             case SendInterruption(event_id):
                 body = {"event_id": event_id}
                 await socket.send(

@@ -57,3 +57,10 @@ def test_seed_with_no_repositories_says_so_once_and_offers_no_workers() -> None:
 def test_seed_with_repositories_carries_no_empty_list_instruction() -> None:
     prompt = CallSeed(("/repo",), []).prompt()
     assert "No repository is allowlisted" not in prompt
+
+
+def test_seed_tells_the_agent_to_end_the_call_on_request_after_a_closing_line() -> None:
+    prompt = CallSeed(("/repo",), []).prompt()
+    assert "says goodbye, or asks you to end the call or hang up" in prompt
+    assert "one short closing sentence and then call end_call" in prompt
+    assert "Never end the call otherwise" in prompt

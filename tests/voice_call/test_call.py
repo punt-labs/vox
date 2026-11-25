@@ -8,6 +8,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -40,7 +41,6 @@ from .fakes import FakePlayback, FakeWorkers, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
-    from pathlib import Path
 
     from websockets.asyncio.server import ServerConnection
 
@@ -230,13 +230,125 @@ async def test_remote_hangup_ends_the_call(
         # logged its end.
         await _rpc(handlers, {"type": "call_stop"})
     assert cast("dict[str, object]", status)["state"] == "ended"
+    assert cast("dict[str, object]", status)["ended_by"] == "peer"
     messages = [r.message for r in caplog.records]
     started = [m for m in messages if m.startswith("Call starting:")]
     assert started == ["Call starting: input script, echo control none"]
     assert "Call live: conversation conv_call" in messages
     (ended,) = [m for m in messages if m.startswith("Call ended:")]
-    assert "0 tool calls" in ended
+    assert "Call ended: ended by peer, 0 tool calls" in ended
     assert str(cast("dict[str, object]", status)["trace"]) in ended
+
+
+_END_CALL_ACK = {
+    "type": "agent_tool_response",
+    "agent_tool_response": {
+        "tool_name": "end_call",
+        "tool_call_id": "end_1",
+        "tool_type": "system",
+        "is_error": False,
+        "is_called": True,
+        "event_id": 2,
+    },
+}
+
+
+@pytest.mark.parametrize("close_code", [1000, 1001, 1011])
+async def test_the_agent_ending_the_call_is_credited_to_the_agent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, close_code: int
+) -> None:
+    """C12 in docs/voice-call.tex: the agent's end_call, then any close, is its end.
+
+    1000 and 1001 reach the call as a normal end of the conversation; 1011 as
+    a transport fault, which the acknowledgement turns into the agent's
+    hang-up. The daemon pumps caller audio every 20 ms, so a send can fail on
+    the closed socket before the listener has read the acknowledgement; the
+    listener still drains it, and the call ends by the agent, not the peer.
+    """
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(json.dumps(_END_CALL_ACK))
+        await socket.close(code=close_code)
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call")
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        handlers = _handlers(
+            FakeWorkers(),
+            FakePlayback(),
+            tmp_path,
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while True:
+            status = (await _rpc(handlers, {"type": "call_status"}))["result"]
+            if cast("dict[str, object]", status)["state"] != "live":
+                break
+            await asyncio.sleep(0.01)
+        await _rpc(handlers, {"type": "call_stop"})
+    final = cast("dict[str, object]", status)
+    assert final["state"] == "ended"
+    assert final["ended_by"] == "agent"
+    assert final["error"] is None
+    messages = [r.message for r in caplog.records]
+    (ended,) = [m for m in messages if m.startswith("Call ended:")]
+    assert ended.startswith("Call ended: ended by agent, 0 tool calls, duration ")
+    trace = Path(str(final["trace"])).read_text()
+    assert "agent_end_call" in trace
+    assert ("agent_end_close" in trace) == (close_code == 1011)
+
+
+async def test_an_end_call_the_agent_did_not_run_is_not_its_hang_up(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An end_call acknowledgement with is_called false was skipped or blocked.
+
+    The agent never hung up, so the close that follows is the peer's, and the
+    trace carries no agent_end_call note.
+    """
+    skipped = json.loads(json.dumps(_END_CALL_ACK))
+    skipped["agent_tool_response"]["is_called"] = False
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(json.dumps(skipped))
+        await socket.close()
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call")
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        handlers = _handlers(
+            FakeWorkers(),
+            FakePlayback(),
+            tmp_path,
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while True:
+            status = (await _rpc(handlers, {"type": "call_status"}))["result"]
+            if cast("dict[str, object]", status)["state"] != "live":
+                break
+            await asyncio.sleep(0.01)
+        await _rpc(handlers, {"type": "call_stop"})
+    final = cast("dict[str, object]", status)
+    assert final["state"] == "ended"
+    assert final["ended_by"] == "peer"
+    (ended,) = [
+        r.message for r in caplog.records if r.message.startswith("Call ended:")
+    ]
+    assert ended.startswith("Call ended: ended by peer, 0 tool calls, duration ")
+    trace = Path(str(final["trace"])).read_text()
+    assert "agent_tool_response" in trace
+    assert "agent_end_call" not in trace
 
 
 async def test_return_opens_with_only_away_results_and_open_decisions(
@@ -925,6 +1037,7 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
         started = (await start)["result"]
         hold.set()
     assert cast("dict[str, object]", stopped)["state"] == "ended"
+    assert cast("dict[str, object]", stopped)["ended_by"] == "caller"
     assert cast("dict[str, object]", started)["state"] == "ended"
 
 
