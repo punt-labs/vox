@@ -117,7 +117,7 @@ mcp = _LoggingFastMCP(
         "Do NOT read or edit the content of .punt-labs/vox/vox.md or "
         "vox.local.md with Read, Write, Edit, or shell commands; use MCP tools "
         "or hook context. Read-only git (status, diff) is fine. The one "
-        "sanctioned rewrite: when punt release preflight reports vox.md dirty, "
+        "sanctioned rewrite: when punt release run preflight reports vox.md dirty, "
         "run git stash push -- .punt-labs/vox/vox.md, release, then git stash "
         "pop --index, with vox sessions stopped first."
     ),
