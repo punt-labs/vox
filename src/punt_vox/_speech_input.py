@@ -8,7 +8,8 @@ from typing import final
 
 from punt_vox._currency_grammar import CurrencyGrammar
 from punt_vox._inline_code import InlineCode
-from punt_vox._link_labels import VIBE_TAG_RE
+from punt_vox._link_labels import VIBE_TAG_RE, LinkSpan
+from punt_vox._speech_markdown import SpeechMarkdown
 
 _SPOKEN = {
     "<": "less than",
@@ -38,11 +39,36 @@ class SpeechInput:
     @classmethod
     def prepare(cls, text: str, *, vibed: bool = False) -> str:
         """Rewrite Markdown labels, amounts, and same-line comparison operators."""
-        prepared = "".join(
+        prepared = cls._spell_around_links(text, vibed=vibed)
+        return InlineCode.rewrite_currency(prepared, vibed=vibed)
+
+    @classmethod
+    def _spell_around_links(cls, text: str, *, vibed: bool) -> str:
+        if "](" not in text:
+            return cls._spell_text(text, vibed=vibed)
+        parts: list[str] = []
+        cursor = 0
+        for span in SpeechMarkdown.spans(text, vibed=vibed):
+            if isinstance(span, LinkSpan):
+                opening, label_end, end = span
+                parts.extend(
+                    (
+                        cls._spell_text(text[cursor:opening], vibed=vibed),
+                        "[",
+                        cls._spell_text(text[opening + 1 : label_end], vibed=vibed),
+                        text[label_end:end],
+                    )
+                )
+                cursor = end
+        parts.append(cls._spell_text(text[cursor:], vibed=vibed))
+        return "".join(parts)
+
+    @classmethod
+    def _spell_text(cls, text: str, *, vibed: bool) -> str:
+        return "".join(
             cls._spell_line(line, vibed=vibed)
             for line in text.splitlines(keepends=True)
         )
-        return InlineCode.rewrite_currency(prepared, vibed=vibed)
 
     @classmethod
     def _spell_line(cls, line: str, *, vibed: bool) -> str:
