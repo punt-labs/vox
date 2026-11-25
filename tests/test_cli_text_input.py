@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
 from punt_vox.cli_text_input import TextInput
+from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 
 
@@ -183,13 +184,22 @@ class TestTextInputFromFile:
     @pytest.mark.parametrize("flags", [[], ["--json"]])
     @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
     def test_unencodable_segment_is_usage_error(
-        self, tmp_path: Path, flags: list[str], command: list[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        flags: list[str],
+        command: list[str],
     ) -> None:
         """A lone surrogate fails the whole file before any segment is sent."""
+        sent: list[object] = []
+        monkeypatch.setattr(
+            VoxClientSync, "_drive", lambda _self, op, **_kw: sent.append(op)
+        )
         path = tmp_path / "segs.json"
         path.write_text('["before", "\\ud800", "after"]', encoding="utf-8")
         result = CliRunner().invoke(app, [*flags, *command, "--from", str(path)])
         assert result.exit_code == 2
+        assert sent == []
         message = (
             "Invalid value: Element 1 text is not valid UTF-8: "
             "unpaired surrogate U+D800 at character 0."
