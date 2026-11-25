@@ -45,6 +45,7 @@ from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
+from punt_vox.vibe import VibeChange
 from punt_vox.voice_target import VoiceTarget
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
@@ -1194,6 +1195,16 @@ class TestSessionConfig:
         a = SessionConfig()
         b = SessionConfig()
         assert a.session_id != b.session_id
+
+    def test_change_vibe_mode_only_keeps_omitted_fields(self) -> None:
+        state = SessionConfig(_vibe="", _vibe_tags="")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="manual"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == ("", "", "manual")
+
+    def test_change_vibe_clears_resolved_fields_to_none(self) -> None:
+        state = SessionConfig(_vibe="calm", _vibe_tags="[calm]")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="off"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == (None, None, "off")
 
 
 # ---------------------------------------------------------------------------

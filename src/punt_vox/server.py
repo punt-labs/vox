@@ -296,8 +296,9 @@ class SessionConfig:
         the field back to ``None``).  Raises ``ValueError`` for a bad mode.
         """
         updates = change.resolve()
-        self._vibe = updates.get("vibe", self._vibe) or None
-        self._vibe_tags = updates.get("vibe_tags", self._vibe_tags) or None
+        cleared = {field: value or None for field, value in updates.items()}
+        self._vibe = cleared.get("vibe", self._vibe)
+        self._vibe_tags = cleared.get("vibe_tags", self._vibe_tags)
         self._vibe_mode = updates.get("vibe_mode", self._vibe_mode)
         return updates
 
