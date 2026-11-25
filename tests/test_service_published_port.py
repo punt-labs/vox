@@ -64,20 +64,40 @@ def test_another_users_file_keeps_the_gate_closed(
     )
 
 
-def test_a_file_that_cannot_be_statted_keeps_the_error(
+def test_a_file_that_cannot_be_statted_raises_with_the_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stat failure is its own reason, with the OS error text, never "not ours"."""
+    """A stat failure keeps the OS error text and is never read as "not ours"."""
     (tmp_path / "serve.port").write_text("8421")
 
-    def denied(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+    def denied(fd: int) -> os.stat_result:
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(Path, "stat", denied)
-    why = _why(tmp_path / "serve.port")
-    assert why.startswith(f"cannot stat {tmp_path / 'serve.port'}: ")
-    assert "Permission denied" in why
-    assert "not this user" not in why
+    monkeypatch.setattr(os, "fstat", denied)
+    with pytest.raises(PortProbeError) as caught:
+        PublishedPort.at(tmp_path / "serve.port")
+    assert str(caught.value).startswith(f"cannot stat {tmp_path / 'serve.port'}: ")
+    assert "Permission denied" in str(caught.value)
+    assert "not this user" not in str(caught.value)
+
+
+def test_port_and_owner_come_from_the_file_that_was_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No stat of the path: a file renamed in after the read is never the owner."""
+    (tmp_path / "serve.port").write_text("8421")
+    real_stat = Path.stat
+
+    def never_the_port_file(
+        self: Path, *, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        if self.name == "serve.port":
+            msg = "stat(path) would describe whatever is at the path now"
+            raise AssertionError(msg)
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", never_the_port_file)
+    assert PublishedPort.at(tmp_path / "serve.port").unasked(8421) is None
 
 
 def test_an_unreadable_file_raises(tmp_path: Path) -> None:

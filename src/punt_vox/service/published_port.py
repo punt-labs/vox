@@ -5,20 +5,29 @@ attributed the port, but only through a port voxd itself published: the
 ``serve.port`` run file, which voxd writes by atomic rename when it binds.
 This class reads that hint once and says whether it names the service port
 and belongs to the calling user; when it does not, it says which of those
-failed, so the reading never reports a port it did not read. It never takes
+failed, so the reading never reports a port it did not read.
+
+The port and the owner come from one open descriptor: the bytes read and the
+``fstat`` of the file they were read from. A separate ``stat`` of the path
+could describe a file voxd renamed into place after the read, and then the
+uid trusted would not be the uid of the bytes trusted. The reader never takes
 voxd's lock and never changes the file.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.client_port import PortText
+from punt_vox.service.backend import PortProbeError
 from punt_vox.service.not_asked import NotAskedError
-from punt_vox.service.stale_port_file import StalePortFile
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["PublishedPort"]
 
@@ -52,20 +61,48 @@ class PublishedPort:
         """Read the hint at *path*; an absent file publishes nothing.
 
         Raises:
-            PortProbeError: If the file is there but cannot be read.
+            PortProbeError: If the file is there but cannot be read or statted.
         """
-        port = StalePortFile.read_hint(path)
-        try:
-            st = path.stat()
-        except FileNotFoundError:
+        read = cls._owned_text(path)
+        if read is None:
             return cls(None, absent=True)
+        text, uid = read
+        try:
+            port = PortText.parse(text)
+        except ValueError as exc:
+            logger.warning("Ignoring stale %s: %s", path, exc)
+            return cls(None, owner=cls._owner_of(uid))
+        return cls(port, owner=cls._owner_of(uid))
+
+    @staticmethod
+    def _owner_of(uid: int) -> NotAskedError | None:
+        """Return why a file owned by *uid* is not this user's; ``None`` when it is."""
+        return None if uid == os.getuid() else NotAskedError.not_owned(uid)
+
+    @staticmethod
+    def _owned_text(path: Path) -> tuple[str, int] | None:
+        """Return *path*'s text and owner uid from one open file; ``None`` if absent.
+
+        Raises:
+            PortProbeError: If the file is there but cannot be read or statted.
+        """
+        try:
+            with path.open("rb") as handle:
+                try:
+                    uid = os.fstat(handle.fileno()).st_uid
+                except OSError as exc:
+                    msg = f"cannot stat {path}: {exc}"
+                    raise PortProbeError(msg) from exc
+                text = handle.read().decode("utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except UnicodeDecodeError:
+            msg = f"cannot read {path}: invalid UTF-8"
+            raise PortProbeError(msg) from None
         except OSError as exc:
-            return cls(
-                port, owner=NotAskedError.unreadable(f"cannot stat {path}: {exc}")
-            )
-        if st.st_uid != os.getuid():
-            return cls(port, owner=NotAskedError.not_owned(st.st_uid))
-        return cls(port)
+            msg = f"cannot read {path}: {exc}"
+            raise PortProbeError(msg) from exc
+        return text, uid
 
     @property
     def port(self) -> int | None:
