@@ -15,6 +15,7 @@ from __future__ import annotations
 import array
 import asyncio
 import logging
+import sys
 from collections.abc import Buffer, Callable
 from typing import TYPE_CHECKING, Self, final
 
@@ -133,6 +134,7 @@ class SoundDeviceCapture:
             peak=max((abs(sample) for sample in pcm), default=0),
             samples=len(pcm),
             overflows=overflows,
+            platform=sys.platform,  # where the device is, for the doctor's advice
         )
 
 

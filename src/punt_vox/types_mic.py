@@ -16,17 +16,27 @@ class MicProbeReport:
     so a device macOS has silenced (no privacy grant for the daemon's
     process) reports ``peak == 0`` while still opening without error.
     ``overflows`` counts the callbacks PortAudio ran late, each of which
-    dropped audio before it; a loaded host shows here. The report is the
-    daemon's evidence; the verdict belongs to the caller, and the evidence
-    is read-only.
+    dropped audio before it; a loaded host shows here. ``platform`` is the
+    daemon's ``sys.platform``: the doctor may run on another machine, and
+    the advice for silence depends on where the device is. The report is
+    the daemon's evidence; the verdict belongs to the caller, and the
+    evidence is read-only.
     """
 
-    __slots__ = ("_device", "_overflows", "_peak", "_sample_rate_hz", "_samples")
+    __slots__ = (
+        "_device",
+        "_overflows",
+        "_peak",
+        "_platform",
+        "_sample_rate_hz",
+        "_samples",
+    )
     _device: str
     _sample_rate_hz: int
     _peak: int
     _samples: int
     _overflows: int
+    _platform: str
 
     def __new__(
         cls,
@@ -36,6 +46,7 @@ class MicProbeReport:
         peak: int,
         samples: int,
         overflows: int,
+        platform: str,
     ) -> Self:
         """Record one capture window's evidence."""
         self = super().__new__(cls)
@@ -44,6 +55,7 @@ class MicProbeReport:
         self._peak = peak
         self._samples = samples
         self._overflows = overflows
+        self._platform = platform
         return self
 
     @property
@@ -71,6 +83,11 @@ class MicProbeReport:
         """How many callbacks ran late and dropped audio."""
         return self._overflows
 
+    @property
+    def platform(self) -> str:
+        """The daemon's ``sys.platform``, where the device is."""
+        return self._platform
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MicProbeReport):
             return NotImplemented
@@ -83,16 +100,18 @@ class MicProbeReport:
         return (
             f"MicProbeReport(device={self._device!r},"
             f" sample_rate_hz={self._sample_rate_hz!r}, peak={self._peak!r},"
-            f" samples={self._samples!r}, overflows={self._overflows!r})"
+            f" samples={self._samples!r}, overflows={self._overflows!r},"
+            f" platform={self._platform!r})"
         )
 
-    def _key(self) -> tuple[str, int, int, int, int]:
+    def _key(self) -> tuple[str, int, int, int, int, str]:
         return (
             self._device,
             self._sample_rate_hz,
             self._peak,
             self._samples,
             self._overflows,
+            self._platform,
         )
 
     @property
@@ -118,6 +137,7 @@ class MicProbeReport:
             "peak": self._peak,
             "samples": self._samples,
             "overflows": self._overflows,
+            "platform": self._platform,
         }
 
     @classmethod
@@ -125,7 +145,7 @@ class MicProbeReport:
         """Build a report from a daemon reply; raise on a malformed one.
 
         Raises:
-            ValueError: If *raw* is not a mapping with the five report fields.
+            ValueError: If *raw* is not a mapping with the six report fields.
         """
         if not isinstance(raw, Mapping):
             raise ValueError("mic probe reply is not a mapping")
@@ -136,12 +156,14 @@ class MicProbeReport:
         peak = fields.get("peak")
         samples = fields.get("samples")
         overflows = fields.get("overflows")
+        platform = fields.get("platform")
         if not (
             isinstance(device, str)
             and isinstance(rate, int)
             and isinstance(peak, int)
             and isinstance(samples, int)
             and isinstance(overflows, int)
+            and isinstance(platform, str)
         ):
             raise ValueError("mic probe reply is missing a report field")
         return cls(
@@ -150,4 +172,5 @@ class MicProbeReport:
             peak=peak,
             samples=samples,
             overflows=overflows,
+            platform=platform,
         )

@@ -17,13 +17,16 @@ from punt_vox.doctor_call_daemon import MicCaptureCheck, WorkerReposCheck
 from punt_vox.types_mic import MicProbeReport
 
 
-def _reply(peak: int, samples: int = 16_000, overflows: int = 0) -> dict[str, object]:
+def _reply(
+    peak: int, samples: int = 16_000, overflows: int = 0, platform: str = "darwin"
+) -> dict[str, object]:
     return MicProbeReport(
         device="MacBook Pro Microphone",
         sample_rate_hz=16_000,
         peak=peak,
         samples=samples,
         overflows=overflows,
+        platform=platform,
     ).to_wire()
 
 
@@ -54,9 +57,11 @@ def test_mic_check_passes_but_shows_dropped_audio_when_callbacks_overflowed() ->
 def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On macOS, silence from an opened device is the missing privacy grant."""
-    monkeypatch.setattr(sys, "platform", "darwin")
-    with patch.object(DaemonControl, "request", return_value=_reply(0)):
+    """A macOS daemon hearing silence lacks the privacy grant, wherever doctor runs."""
+    monkeypatch.setattr(sys, "platform", "linux")  # the CLI's own platform
+    with patch.object(
+        DaemonControl, "request", return_value=_reply(0, platform="darwin")
+    ):
         result = MicCaptureCheck().run()
 
     assert result.status_kind == "warn"
@@ -71,9 +76,11 @@ def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero(
 def test_mic_check_names_the_audio_server_for_silence_off_macos(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Off macOS there is no privacy grant; the advice names the audio server."""
-    monkeypatch.setattr(sys, "platform", "linux")
-    with patch.object(DaemonControl, "request", return_value=_reply(0)):
+    """A daemon off macOS has no privacy grant; the advice names its audio server."""
+    monkeypatch.setattr(sys, "platform", "darwin")  # the CLI's own platform
+    with patch.object(
+        DaemonControl, "request", return_value=_reply(0, platform="linux")
+    ):
         result = MicCaptureCheck().run()
 
     assert result.status_kind == "warn"

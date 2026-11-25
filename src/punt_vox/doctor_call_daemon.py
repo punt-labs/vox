@@ -9,7 +9,6 @@ turns the reply into a line.
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import PurePath
 from typing import Self, cast, final
 
@@ -108,12 +107,16 @@ class MicCaptureCheck:
             return self._warn(f"{heard} — the device delivered no audio in one second")
         if report.signal:
             return CheckResult.of(OK, f"Microphone (voxd): {heard}", required=False)
-        return self._warn(f"{heard} — {self._silence_fix()}")
+        return self._warn(f"{heard} — {self._silence_fix(report.platform)}")
 
     @staticmethod
-    def _silence_fix() -> str:
-        """Return the silence advice for this host: the grant exists on macOS only."""
-        return _MAC_SILENCE_FIX if sys.platform == "darwin" else _SILENCE_FIX
+    def _silence_fix(platform: str) -> str:
+        """Return the silence advice for the daemon's *platform*, not the CLI's.
+
+        The doctor may run on another machine than voxd; the device, and the
+        grant that exists on macOS only, are where the daemon is.
+        """
+        return _MAC_SILENCE_FIX if platform == "darwin" else _SILENCE_FIX
 
     @staticmethod
     def _warn(reason: str) -> CheckResult:

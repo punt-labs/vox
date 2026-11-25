@@ -47,7 +47,12 @@ class _CollectingWs:
 
 def _report(peak: int) -> MicProbeReport:
     return MicProbeReport(
-        device="Fake Mic", sample_rate_hz=16_000, peak=peak, samples=16_000, overflows=0
+        device="Fake Mic",
+        sample_rate_hz=16_000,
+        peak=peak,
+        samples=16_000,
+        overflows=0,
+        platform=sys.platform,
     )
 
 
@@ -73,6 +78,7 @@ async def test_probe_replies_with_the_capture_report(peak: int) -> None:
     report = MicProbeReport.from_wire(frame["result"])
     assert report == _report(peak)
     assert report.signal == (peak > 0)
+    assert report.platform == sys.platform  # the daemon's, for the doctor
 
 
 @pytest.mark.asyncio
@@ -175,7 +181,12 @@ def test_capture_reserves_the_stream_on_the_device_table_for_its_duration(
     assert table.open_streams == 0
     assert backend.created[-1].closed
     assert report == MicProbeReport(
-        device=FAKE_DEVICE.name, sample_rate_hz=16_000, peak=16, samples=2, overflows=0
+        device=FAKE_DEVICE.name,
+        sample_rate_hz=16_000,
+        peak=16,
+        samples=2,
+        overflows=0,
+        platform=sys.platform,
     )
 
 
@@ -260,6 +271,7 @@ async def test_probe_logs_a_silent_or_empty_capture_as_a_warning(
             peak=peak,
             samples=samples,
             overflows=0,
+            platform=sys.platform,
         )
 
     with caplog.at_level("INFO", logger="punt_vox.voxd.mic_probe"):

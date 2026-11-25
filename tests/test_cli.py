@@ -2318,6 +2318,7 @@ class TestDoctorCommand:
                 "peak": 900,
                 "samples": 16_000,
                 "overflows": 0,
+                "platform": "darwin",
             }
         return ["/Users/me/vox-demo"]
 
