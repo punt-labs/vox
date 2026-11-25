@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = [
     "ExpectAudioChunks",
@@ -15,6 +19,7 @@ __all__ = [
     "SendToolCall",
     "SendUserTranscript",
     "Step",
+    "WaitForLogLine",
     "WaitForToolResult",
 ]
 
@@ -88,6 +93,19 @@ class ExpectAudioChunks:
 
 
 @dataclass(frozen=True, slots=True)
+class WaitForLogLine:
+    """Block until the daemon's log file contains this text.
+
+    What the socket cannot show, the daemon's log can: that it opened a
+    device and played audio. Waiting longer than ``timeout_s`` is a fault.
+    """
+
+    path: Path
+    text: str
+    timeout_s: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
 class HangUp:
     """Close the socket from the agent side."""
 
@@ -102,5 +120,6 @@ type Step = (
     | ExpectPong
     | WaitForToolResult
     | ExpectAudioChunks
+    | WaitForLogLine
     | HangUp
 )

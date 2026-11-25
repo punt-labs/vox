@@ -600,6 +600,21 @@ class TestDeviceFailures:
         assert "PCM output callback failed" in caplog.text
         await sink.close()
 
+    async def test_the_first_audible_block_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Silence pulled before any audio is not playback; the first audio is."""
+        caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
+        sink, device = await open_sink()
+        device.opened.pull()
+        await asyncio.sleep(0)
+        assert "PCM playback started" not in caplog.text
+        sink.feed(ms_of(OLD, 40))
+        device.opened.pull(2)
+        await asyncio.sleep(0)
+        assert caplog.text.count("PCM playback started") == 1
+        await sink.close()
+
     async def test_failed_close_still_reports(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

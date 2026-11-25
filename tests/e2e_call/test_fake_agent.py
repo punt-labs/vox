@@ -23,10 +23,13 @@ from .steps import (
     SendPing,
     SendToolCall,
     SendUserTranscript,
+    WaitForLogLine,
     WaitForToolResult,
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from websockets.asyncio.client import ClientConnection
 
     from .steps import Step
@@ -281,3 +284,52 @@ async def test_a_second_connection_is_refused_as_a_fault() -> None:
             assert closed.value.rcvd.code == 1011
             await first.close()
     assert isinstance(agent.fault, RuntimeError)
+
+
+async def test_a_log_line_wait_proceeds_once_the_line_is_written(
+    tmp_path: Path,
+) -> None:
+    """The step blocks until the daemon's log carries the text, then plays on."""
+    log = tmp_path / "vox.log"
+    steps: tuple[Step, ...] = (
+        WaitForLogLine(log, "PCM playback started"),
+        SendInterruption(1),
+        HangUp(),
+    )
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        await asyncio.sleep(0.15)
+        log.write_text("PCM stream open in 3 ms\nPCM playback started at 25 ms\n")
+        assert (await _recv(socket))["type"] == "interruption"
+        await socket.wait_closed()
+    assert agent.cut_short is None
+
+
+async def test_a_log_line_that_never_comes_is_a_fault_naming_it(
+    tmp_path: Path,
+) -> None:
+    """Past its timeout the wait fails the test with the missing text."""
+    log = tmp_path / "vox.log"
+    agent = FakeConvAIAgent((WaitForLogLine(log, "never written", 0.2), HangUp()))
+    with pytest.raises(TimeoutError, match="'never written' within 0s"):
+        async with asyncio.timeout(2), agent:
+            socket = await _open(agent)
+            await _recv(socket)
+            with pytest.raises(ConnectionClosed) as closed:
+                await socket.recv()
+            assert closed.value.rcvd is not None
+            assert closed.value.rcvd.code == 1011
+    assert isinstance(agent.fault, TimeoutError)
+
+
+async def test_a_client_close_during_a_log_line_wait_is_cut_short(
+    tmp_path: Path,
+) -> None:
+    steps: tuple[Step, ...] = (WaitForLogLine(tmp_path / "vox.log", "x"), HangUp())
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        await socket.close()
+        await asyncio.sleep(0.1)
+    assert agent.cut_short == WaitForLogLine(tmp_path / "vox.log", "x")

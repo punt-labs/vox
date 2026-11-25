@@ -21,6 +21,7 @@ from .steps import (
     SendPing,
     SendToolCall,
     SendUserTranscript,
+    WaitForLogLine,
     WaitForToolResult,
 )
 
@@ -236,6 +237,8 @@ class FakeConvAIAgent:
                 await self._wait_for(step, lambda: tool_call_id in self._tool_results)
             case ExpectAudioChunks(count):
                 await self._wait_for(step, lambda: self._audio_chunks >= count)
+            case WaitForLogLine():
+                await self._wait_for_log(step)
             case HangUp():
                 await socket.close()
                 return True
@@ -287,6 +290,27 @@ class FakeConvAIAgent:
         await self._wait_until(lambda: satisfied() or self._closed)
         if not satisfied():
             self._cut(step)
+
+    async def _wait_for_log(self, step: WaitForLogLine) -> None:
+        """Poll the daemon's log for a line; a client close first is cut-short.
+
+        The log is the daemon's side of the conversation: the socket cannot
+        show that audio reached the device. Past the step's timeout the wait
+        is a fault, so a line the daemon never writes fails the test with
+        the missing text rather than a call timeout.
+        """
+        deadline = asyncio.get_running_loop().time() + step.timeout_s
+        while not self._closed:
+            if step.path.is_file() and step.text in step.path.read_text(
+                errors="replace"
+            ):
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                msg = f"{step.path.name} did not contain {step.text!r} within "
+                msg += f"{step.timeout_s:.0f}s"
+                raise TimeoutError(msg)
+            await asyncio.sleep(0.05)
+        self._cut(step)
 
     def _cut(self, step: Step) -> None:
         """Record the first step a client close kept from completing."""

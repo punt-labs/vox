@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import signal
 import socket
 import subprocess
@@ -37,6 +38,7 @@ from .steps import (
     SendPing,
     SendToolCall,
     SendUserTranscript,
+    WaitForLogLine,
     WaitForToolResult,
 )
 
@@ -65,13 +67,24 @@ _TOOL_CALL_STEPS: tuple[Step, ...] = (
 )
 # Two seconds of agent audio: far more than plays before the cut lands.
 _AGENT_PCM = bytes(16_000 * 2 * 2)
-_INTERRUPTED_STEPS: tuple[Step, ...] = (
-    SendUserTranscript("please add a greeting"),
-    SendAgentResponse("Starting a worker on that now.", 1),
-    SendAudio(_AGENT_PCM, 1),
-    SendInterruption(1),
-    HangUp(),
-)
+_PLAYBACK_STARTED = "PCM playback started"
+
+
+def _interrupted_steps(log: Path) -> tuple[Step, ...]:
+    """Reply, let the daemon play some of it, then cut it mid-reply and hang up.
+
+    The wait is what makes the cut mid-reply: without it the interruption
+    could land before the device pulled a block, and the flush would drop
+    audio that never began to play.
+    """
+    return (
+        SendUserTranscript("please add a greeting"),
+        SendAgentResponse("Starting a worker on that now.", 1),
+        SendAudio(_AGENT_PCM, 1),
+        WaitForLogLine(log, _PLAYBACK_STARTED),
+        SendInterruption(1),
+        HangUp(),
+    )
 
 
 def _free_port() -> int:
@@ -275,8 +288,19 @@ async def _run_call(
             return agent, rest, result
 
 
+def _log_path(env: dict[str, str]) -> Path:
+    return Path(env["HOME"]) / ".punt-labs" / "vox" / "logs" / "vox.log"
+
+
 def _daemon_log(env: dict[str, str]) -> str:
-    return (Path(env["HOME"]) / ".punt-labs" / "vox" / "logs" / "vox.log").read_text()
+    return _log_path(env).read_text()
+
+
+def _played_ms(daemon_log: str) -> int:
+    """Return the audio the closing stream report says the device played."""
+    match = re.search(r"PCM stream closed at .*?, played (\d+) ms", daemon_log)
+    assert match is not None, daemon_log
+    return int(match.group(1))
 
 
 def _trace_events(report: str) -> list[str]:
@@ -381,7 +405,7 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
 ) -> None:
     """An interruption mid-reply, then a remote hangup, is a clean end, not a fault."""
     agent, rest, result = asyncio.run(
-        _run_call(voxd_env, _script(tmp_path), _INTERRUPTED_STEPS)
+        _run_call(voxd_env, _script(tmp_path), _interrupted_steps(_log_path(voxd_env)))
     )
 
     assert agent.fault is None
@@ -394,8 +418,11 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     assert not [line for line in report.splitlines() if line.startswith("error: ")]
     assert "interruption" in _trace_events(report)
     assert agent.tool_results == {}
-    # The daemon opened a stream for the agent's audio and the cut flushed it:
-    # the sink's closing report says so, with the unplayed audio dropped.
+    # The daemon played the start of the reply, then the cut flushed the
+    # rest: the sink logged playback beginning before the flush, and its
+    # closing report counts audio played and the remainder dropped.
     daemon_log = _daemon_log(voxd_env)
     assert "PCM flush at" in daemon_log
     assert "interrupted=True" in daemon_log
+    assert daemon_log.index(_PLAYBACK_STARTED) < daemon_log.index("PCM flush at")
+    assert _played_ms(daemon_log) > 0

@@ -386,16 +386,24 @@ class PcmStreamSink:
         out[len(block) : wanted] = bytes(wanted - len(block))
         if status:
             self._device_flags += 1
-        started = self._played > 0 or bool(block)
+        if block and not self._played:
+            # The first block with audio in it: playback is now audible, so
+            # a barge-in from here on cuts a reply the person has heard.
+            self._loop.call_soon_threadsafe(
+                logger.info, "PCM playback started at %.0f ms", self._since_open_ms()
+            )
         self._played += len(block)
-        if len(block) == wanted or self._drained:
-            return
+        if len(block) < wanted and not self._drained:
+            self._short_block()
+
+    def _short_block(self) -> None:
+        """Account for a block the buffer could not fill: starved, or played out."""
         phase = self._phase
         if phase == "streaming":
-            # Starved mid-response: the network fell behind real time.
-            if started:
+            # Starved mid-response: the network fell behind real time. A
+            # short block before any audio played is the response arriving.
+            if self._played:
                 self._underflows += 1
-            return
-        if phase == "finished":
+        elif phase == "finished":
             self._drained = True
             self._loop.call_soon_threadsafe(self._done.set)
