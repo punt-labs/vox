@@ -23,6 +23,8 @@ from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.output_device import OutputDevice
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
     # for the type checkers; the stub-free runtime module has no such attribute.
     from sounddevice import DeviceInfo, RawInputCallback
@@ -63,13 +65,22 @@ class PortAudio:
                 no default input or output device, or reports one it cannot
                 describe (:meth:`device`).
         """
+        self._refreshed(self._table)
+        return DevicePair(self.device(), self.output_device())
+
+    @staticmethod
+    def _refreshed(table: DeviceTable) -> None:
+        """Re-read *table*, converting PortAudio's refusal to OSError.
+
+        Raises:
+            OSError: When PortAudio refuses to re-read its device table.
+        """
         from sounddevice import PortAudioError
 
         try:
-            self._table.refresh()
+            table.refresh()
         except PortAudioError as exc:
             raise OSError(f"cannot re-read the audio device table: {exc}") from exc
-        return DevicePair(self.device(), self.output_device())
 
     @staticmethod
     def device() -> InputDevice:
@@ -152,12 +163,68 @@ class PortAudio:
         Raises:
             OSError: When PortAudio refuses the stream (:meth:`InputDevice.opened`).
         """
-        reservation = self._table.reserve()
+        return self._opened_counted(
+            self._table,
+            lambda: device,
+            samplerate=samplerate,
+            blocksize=blocksize,
+            callback=callback,
+        )[1]
+
+    def open_default_input(
+        self,
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
+    ) -> tuple[InputDevice, InputStreamHandle]:
+        """Re-read the table, then select and open the default input as one step.
+
+        For a caller that needs the microphone alone -- the doctor's probe --
+        and no output device: a host whose default output PortAudio cannot
+        describe still captures. The device is selected under the stream's
+        reservation, so no refresh on another thread can move the default
+        between the selection and the open; the device returned is the one
+        the stream captures from.
+
+        Raises:
+            OSError: When PortAudio refuses to re-read its table, has no
+                usable default input device, or refuses the stream.
+        """
+        self._refreshed(self._table)
+        return self._opened_counted(
+            self._table,
+            self.device,
+            samplerate=samplerate,
+            blocksize=blocksize,
+            callback=callback,
+        )
+
+    @staticmethod
+    def _opened_counted(
+        table: DeviceTable,
+        select: Callable[[], InputDevice],
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
+    ) -> tuple[InputDevice, InputStreamHandle]:
+        """Select a device and open its stream under one reservation on *table*.
+
+        The reservation is taken before *select* runs, so the table cannot
+        be re-read between selecting the device and binding the stream to
+        it; a refusal at either step gives the count back.
+
+        Raises:
+            OSError: When *select* or the open refuses.
+        """
+        reservation = table.reserve()
         try:
+            device = select()
             stream = device.opened(
                 samplerate=samplerate, blocksize=blocksize, callback=callback
             )
         except OSError:
             reservation.release()
             raise
-        return CountedStream(stream, reservation)
+        return device, CountedStream(stream, reservation)

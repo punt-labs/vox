@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import sys
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -419,3 +419,103 @@ def test_an_output_device_reported_without_a_name_is_an_oserror(
     with pytest.raises(OSError, match="no usable default output device") as failure:
         PortAudio.output_device()
     assert isinstance(failure.value.__cause__, ValueError)
+
+
+def test_open_default_input_opens_the_microphone_when_no_output_device_is_usable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe needs the input alone; a host with no default output still captures."""
+    created: list[FakeInputStream] = []
+
+    def query_devices(
+        kind: str | None = None,  # None: the whole table, for the refresh's summary
+    ) -> DeviceInfo | list[DeviceInfo]:
+        usb: DeviceInfo = {"name": "USB Audio", "default_samplerate": 48000.0}
+        if kind is None:
+            return [usb]
+        if kind == "output":
+            raise _FakePortAudioError("no default output device")
+        return usb
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(
+        monkeypatch,
+        query_devices=query_devices,
+        RawInputStream=raw_input_stream,
+        _terminate=_ignore,
+        _initialize=_ignore,
+    )
+    table = DeviceTable()
+    device, stream = PortAudio(table).open_default_input(
+        samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+
+    assert device == USB
+    assert created[0].kwargs["samplerate"] == 16000.0
+    assert table.open_streams == 1
+    stream.__exit__(None, None, None)
+    assert table.open_streams == 0
+
+
+def test_open_default_input_selects_and_opens_under_one_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh between select and open is kept, so the stream is the named device."""
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Speakers").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    refreshed: list[bool] = []
+    real_query = fake.query_devices
+
+    def query_then_reconnect(
+        kind: Literal["input", "output"] | None = None,  # None: the whole table
+    ) -> DeviceInfo | list[DeviceInfo]:
+        if kind is None:  # the refresh's log summary counts every device
+            return real_query()
+        info = real_query(kind)
+        if table.open_streams == 0:  # the refresh's own summary, under its lock
+            return info
+        # Another thread's call starts after the headset appears: its refresh
+        # must find the probe's reservation and keep the table.
+        fake.set_system_default("input", "Headset")
+        refreshed.append(table.refresh())
+        return info
+
+    monkeypatch.setattr(
+        sys.modules["sounddevice"], "query_devices", query_then_reconnect
+    )
+    device, stream = PortAudio(table).open_default_input(
+        samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+    stream.__exit__(None, None, None)
+
+    assert refreshed == [False]
+    assert device.name == "Built-in"
+    assert fake.streams[-1].device_name == "Built-in"
+    assert table.open_streams == 0
+
+
+def test_open_default_input_refreshes_first_and_releases_on_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Speakers").install(
+        monkeypatch
+    )
+    fake.set_system_default("input", "Headset")
+
+    def refuse(**_kwargs: object) -> FakeInputStream:
+        raise FakePortAudioError("Internal PortAudio error")
+
+    monkeypatch.setattr(sys.modules["sounddevice"], "RawInputStream", refuse)
+    table = DeviceTable()
+    with pytest.raises(OSError, match="cannot open input device Headset"):
+        PortAudio(table).open_default_input(
+            samplerate=16000.0, blocksize=0, callback=_ignore
+        )
+
+    assert fake.terminated == 1
+    assert table.open_streams == 0

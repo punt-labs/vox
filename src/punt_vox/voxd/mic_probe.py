@@ -16,7 +16,7 @@ import array
 import asyncio
 import logging
 from collections.abc import Buffer, Callable
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox.types_mic import MicProbeReport
 from punt_vox.voxd.conversation_mode.portaudio import PortAudio
@@ -24,12 +24,13 @@ from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
-    from sounddevice import CallbackFlags
+    from sounddevice import CallbackFlags, RawInputCallback
     from starlette.websockets import WebSocket
 
-    from punt_vox.voxd.conversation_mode.mic_audio_source import CaptureBackend
+    from punt_vox.voxd.conversation_mode.input_device import InputDevice
+    from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
 
-__all__ = ["MicProbeError", "MicProbeHandler", "SoundDeviceCapture"]
+__all__ = ["MicProbeError", "MicProbeHandler", "ProbeBackend", "SoundDeviceCapture"]
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +44,37 @@ class MicProbeError(RuntimeError):
     """The default input device could not be opened or read."""
 
 
+class ProbeBackend(Protocol):
+    """Opens the current default input device as a started raw mono stream.
+
+    The pair returned names the device the stream captures from; the backend
+    selects and opens it as one step so the two cannot disagree.
+    """
+
+    def open_default_input(
+        self, *, samplerate: float, blocksize: int, callback: RawInputCallback
+    ) -> tuple[InputDevice, InputStreamHandle]: ...
+
+
 @final
 class SoundDeviceCapture:
     """The real capture: one second from the current default input device.
 
     The device comes from the call's capture backend, not from a bare
     ``query_devices``: the backend re-reads PortAudio's device table first,
-    so the probe sees the microphone connected after voxd started, and its
-    stream is counted on that table, so a call's refresh cannot terminate
-    PortAudio under the probe. ``sounddevice`` is imported inside the call:
-    it is the optional ``call`` extra, and every voxd start imports this module.
+    so the probe sees the microphone connected after voxd started, selects
+    and opens the default input under one reservation, so the device the
+    report names is the one captured from and a call's refresh cannot
+    terminate PortAudio under the probe. Only the input is resolved: a host
+    with no usable default output still probes its microphone. ``sounddevice``
+    is imported inside the call: it is the optional ``call`` extra, and every
+    voxd start imports this module.
     """
 
     __slots__ = ("_backend",)
-    _backend: CaptureBackend
+    _backend: ProbeBackend
 
-    def __new__(cls, backend: CaptureBackend | None = None) -> Self:  # None: PortAudio
+    def __new__(cls, backend: ProbeBackend | None = None) -> Self:  # None: PortAudio
         """Capture through *backend*; voxd's shared PortAudio table by default."""
         self = super().__new__(cls)
         self._backend = PortAudio() if backend is None else backend
@@ -91,12 +107,8 @@ class SoundDeviceCapture:
         # A device name sounddevice cannot decode is a ValueError subclass,
         # not an OSError; both leave the probe with no device to open.
         try:
-            device = self._backend.devices().input
-            stream = self._backend.open(
-                device,
-                samplerate=float(_SAMPLE_RATE_HZ),
-                blocksize=0,
-                callback=_callback,
+            device, stream = self._backend.open_default_input(
+                samplerate=float(_SAMPLE_RATE_HZ), blocksize=0, callback=_callback
             )
         except (OSError, UnicodeDecodeError) as exc:
             raise MicProbeError(str(exc)) from exc
