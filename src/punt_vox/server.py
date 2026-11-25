@@ -117,7 +117,7 @@ mcp = _LoggingFastMCP(
         "Do NOT read or edit the content of .punt-labs/vox/vox.md or "
         "vox.local.md with Read, Write, Edit, or shell commands; use MCP tools "
         "or hook context. Read-only git (status, diff) is fine. The one "
-        "sanctioned rewrite: when punt release preflight reports vox.md dirty, "
+        "sanctioned rewrite: when punt release run preflight reports vox.md dirty, "
         "run git stash push -- .punt-labs/vox/vox.md, release, then git stash "
         "pop --index, with vox sessions stopped first."
     ),
@@ -296,12 +296,10 @@ class SessionConfig:
         the field back to ``None``).  Raises ``ValueError`` for a bad mode.
         """
         updates = change.resolve()
-        if "vibe" in updates:
-            self._vibe = updates["vibe"] or None
-        if "vibe_tags" in updates:
-            self._vibe_tags = updates["vibe_tags"] or None
-        if "vibe_mode" in updates:
-            self._vibe_mode = updates["vibe_mode"]
+        cleared = {field: value or None for field, value in updates.items()}
+        self._vibe = cleared.get("vibe", self._vibe)
+        self._vibe_tags = cleared.get("vibe_tags", self._vibe_tags)
+        self._vibe_mode = updates.get("vibe_mode", self._vibe_mode)
         return updates
 
     @classmethod

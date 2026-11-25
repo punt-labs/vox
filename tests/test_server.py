@@ -45,6 +45,7 @@ from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
+from punt_vox.vibe import VibeChange
 from punt_vox.voice_target import VoiceTarget
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
@@ -1194,6 +1195,46 @@ class TestSessionConfig:
         a = SessionConfig()
         b = SessionConfig()
         assert a.session_id != b.session_id
+
+    def test_change_vibe_mode_only_keeps_omitted_fields(self) -> None:
+        state = SessionConfig(_vibe="", _vibe_tags="")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="manual"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == ("", "", "manual")
+
+    def test_change_vibe_clears_resolved_fields_to_none(self) -> None:
+        state = SessionConfig(_vibe="calm", _vibe_tags="[calm]")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="off"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == (None, None, "off")
+
+    def test_set_vibe_mood_keeps_tags(self) -> None:
+        state = SessionConfig(_vibe_tags="[calm]")
+        state.set_vibe(mood="focused")
+        assert (state.vibe, state.vibe_tags) == ("focused", "[calm]")
+
+    def test_set_voice_strips_sigil(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@aria") == "aria"
+        assert state.voice == "aria"
+
+    def test_set_voice_blank_leaves_voice(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@") is None
+        assert state.voice == "roger"
+
+    def test_summary_sentence_notifications_off(self) -> None:
+        state = SessionConfig(_notify="n")
+        assert "notifications off" in state.summary_sentence()
+
+    @pytest.mark.parametrize(
+        ("speak", "delivery"), [("n", "chimes only"), ("y", "spoken")]
+    )
+    def test_summary_sentence_delivery(self, speak: str, delivery: str) -> None:
+        state = SessionConfig(
+            _notify="c", _speak=speak, _voice="roger", _vibe_mode="auto"
+        )
+        assert (
+            state.summary_sentence() == f"ready -- voice roger, {delivery}, auto vibe"
+        )
 
 
 # ---------------------------------------------------------------------------
