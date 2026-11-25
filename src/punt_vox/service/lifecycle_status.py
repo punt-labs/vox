@@ -48,7 +48,57 @@ if TYPE_CHECKING:
     from punt_vox.service.backend import LifecycleProbe, ProcessHandle
     from punt_vox.service.lifecycle_system import LifecycleSystem
 
-__all__ = ["StatusCheck"]
+__all__ = ["FirstAsk", "StatusCheck"]
+
+
+@final
+class FirstAsk:
+    """What the published-port request came to; every later reading names it.
+
+    Kept the moment that request returns nothing, because the attributed
+    request that may follow overwrites the probe's miss. Before any request
+    it is empty and adds nothing.
+    """
+
+    __slots__ = ("_miss",)
+
+    _miss: Exception | None  # None: no published-port request has been made
+
+    def __new__(cls, miss: Exception | None) -> Self:
+        """Create the record of the first ask: *miss* is why it got no answer."""
+        self = super().__new__(cls)
+        self._miss = miss
+        return self
+
+    @property
+    def sent(self) -> bool:
+        """Return True when a token-bearing request went out and got no answer."""
+        return not isinstance(self._miss, NotAskedError | None)
+
+    def clause(self) -> str:
+        """Return the clause a later unknown reading appends; empty before any ask."""
+        if self._miss is None:
+            return ""
+        said = (
+            "was not asked first"
+            if isinstance(self._miss, NotAskedError)
+            else "was asked first and gave no answer"
+        )
+        return f"; voxd {said}: {self._miss}"
+
+    def listener(self, seen: str) -> str:
+        """Return what reached a listener no visible voxd holds, after *seen*.
+
+        The published door may already have sent the token there and got no
+        answer; the reading then says so rather than "no token", which would
+        be false.
+        """
+        if self.sent:
+            return (
+                f"{seen}; the token went to the published port and got no answer: "
+                f"{self._miss}"
+            )
+        return f"{seen}; vox sent it no token{self.clause()}"
 
 
 @final
@@ -64,7 +114,7 @@ class StatusCheck:
     _deadline: Deadline
     _probe: LifecycleProbe
     _port: int
-    _first: Exception | None  # None: the published-port request not yet made
+    _first: FirstAsk
 
     def __new__(cls, system: LifecycleSystem, within_s: float) -> Self:
         """Start the reading's deadline: *within_s* seconds from now."""
@@ -72,7 +122,7 @@ class StatusCheck:
         self._deadline = Deadline(system.poll.now, within_s)
         self._probe = system.probe.within(self._deadline)
         self._port = system.port
-        self._first = None
+        self._first = FirstAsk(None)
         return self
 
     def run(self) -> DaemonStatus:
@@ -90,9 +140,7 @@ class StatusCheck:
         )
         if health is not None:
             return DaemonStatus.running(health)
-        # Kept now: the attributed request that may follow overwrites the
-        # probe's miss, and every later reading still names this one.
-        self._first = probe.health_miss()
+        self._first = FirstAsk(probe.health_miss())
         return self._attribute()
 
     def _attribute(self) -> DaemonStatus:
@@ -102,7 +150,11 @@ class StatusCheck:
         if holders:
             return self._ask(holders)
         if probe.port_listening():
-            return DaemonStatus.unknown(self._unattributed_listener())
+            seen = (
+                f"something listens on port {self._port} but no visible voxd "
+                "process holds it"
+            )
+            return DaemonStatus.unknown(self._first.listener(seen))
         return DaemonStatus.not_running(
             f"no voxd process holds port {self._port} and nothing listens on it",
             probe.off_port_voxd(),
@@ -134,27 +186,18 @@ class StatusCheck:
         token; the cause names the file.
         """
         why = self._probe.health_miss() or "no reply"
-        if isinstance(why, NotAskedError) and not isinstance(why, DaemonNotUpError):
+        if self._never_asked(why):
             return DaemonStatus.unknown(self._after_first_ask(str(why)))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))
 
-    def _unattributed_listener(self) -> str:
-        """Say what reached a listener no visible voxd holds.
+    @staticmethod
+    def _never_asked(why: Exception | str) -> bool:
+        """Return True when *why* says no request reached the visible holder.
 
-        The published door may already have sent the token there and got no
-        answer; the reading then says so rather than "no token", which would
-        be false.
+        A missing token is the one not-asked miss that still reads as
+        unresponsive: the holder is there and the file is the cause.
         """
-        seen = (
-            f"something listens on port {self._port} but no visible voxd "
-            "process holds it"
-        )
-        first = self._first
-        if first is None or isinstance(first, NotAskedError):
-            return self._after_first_ask(f"{seen}; vox sent it no token")
-        return (
-            f"{seen}; the token went to the published port and got no answer: {first}"
-        )
+        return isinstance(why, NotAskedError) and not isinstance(why, DaemonNotUpError)
 
     def _after_first_ask(self, what: str) -> str:
         """Return *what* with what the published-port request before it came to.
@@ -163,9 +206,4 @@ class StatusCheck:
         the health step spent, or a token that never went out, is never
         hidden behind the probe that failed later.
         """
-        first = self._first
-        if first is None:
-            return what
-        if isinstance(first, NotAskedError):
-            return f"{what}; voxd was not asked first: {first}"
-        return f"{what}; voxd was asked first and gave no answer: {first}"
+        return what + self._first.clause()
