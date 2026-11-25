@@ -18,3 +18,8 @@ def test_preserves_long_runs_of_vibe_tags() -> None:
 
 def test_requires_a_valid_operand_before_spelling_a_bare_angle() -> None:
     assert SpeechInput.prepare("... < 3") == "... < 3"
+
+
+def test_vibe_tags_do_not_make_an_attached_operator_standalone() -> None:
+    text = "x[warm]<[warm]3"
+    assert SpeechInput.prepare(text, vibed=True) == text

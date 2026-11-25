@@ -23,6 +23,7 @@ _SPOKEN = {
 _BARE_ANGLES = frozenset("<>")
 _ORDERED = _BARE_ANGLES | {"<=", ">="}
 _WORD_RE = re.compile(r"\S+")
+_STANDALONE_RE = re.compile(rf"(?<!\S)(?:{'|'.join(map(re.escape, _SPOKEN))})(?!\S)")
 _VIBED_WORD_RE = re.compile(
     rf"(?P<tag>{VIBE_TAG_RE.pattern})|(?:(?!{VIBE_TAG_RE.pattern})\S)+"
 )
@@ -109,8 +110,15 @@ class SpeechInput:
                     _Word(f"{previous.value} {word[0]}", previous.start, word.end())
                 )
             else:
-                words.append(_Word(word[0], word.start(), word.end()))
+                words.append(cls._comparison_word(line, word))
         return words
+
+    @staticmethod
+    def _comparison_word(line: str, word: re.Match[str]) -> _Word:
+        value = word[0]
+        if value in _SPOKEN and _STANDALONE_RE.match(line, word.start()) is None:
+            value = ""
+        return _Word(value, word.start(), word.end())
 
     @classmethod
     def _extends_amount(cls, amount: str, word: str) -> bool:
