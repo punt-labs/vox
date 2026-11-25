@@ -135,6 +135,20 @@ def test_clear_port_file_leaves_the_file_of_a_voxd_on_the_port() -> None:
     mgr.discard_port_file.assert_not_called()
 
 
+def test_open_handle_pins_through_the_process_manager() -> None:
+    """A handle on a pid that is gone, or not voxd, is None; a voxd is pinned."""
+    mgr = MagicMock()
+    pinned = MagicMock(pid=42)
+
+    def open_voxd(pid: int) -> MagicMock | None:
+        return pinned if pid == 42 else None
+
+    mgr.open_voxd.side_effect = open_voxd
+    probe = probe_over(mgr)
+    assert probe.open_handle(42) is pinned
+    assert probe.open_handle(43) is None
+
+
 def test_bind_is_read_lazily_inside_the_verb() -> None:
     """An unreadable unit fails when the probe is used, not when built."""
 

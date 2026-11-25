@@ -362,3 +362,17 @@ def test_status_without_a_token_file_is_unresponsive_naming_the_file() -> None:
         "is absent: voxd has not published its token; no token sent"
     )
     assert world.tokens_to_port == [8421]
+
+
+def test_status_unknown_before_any_ask_names_only_the_probe() -> None:
+    """The published door failed before any request (an unreadable unit bind):
+    there is no first ask to name, so the reading is the failure alone."""
+    world = FakeWorld(
+        port_file=8421,
+        probe_failures={"published_health": PortProbeError("cannot read the unit")},
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == "cannot read the unit"
+    assert world.tokens_to_port == []

@@ -470,6 +470,26 @@ def test_holds_port_linux_matches_the_listeners_address(
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_an_fd_closed_mid_scan_is_skipped(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An fd the process closes between the listing and the readlink is not a
+    failed probe: the remaining fds still decide."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "123" / "fd" / "3").symlink_to("/dev/null")
+    real_readlink = Path.readlink
+
+    def closed_mid_scan(self: Path) -> Path:
+        if self.name == "3":
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_readlink(self)
+
+    monkeypatch.setattr(Path, "readlink", closed_mid_scan)
+    assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is True
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
 def test_holds_port_linux_another_process_socket_is_not_held(
     _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

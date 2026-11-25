@@ -230,6 +230,18 @@ def test_a_port_file_unpublished_mid_read_closes_the_gate(
     assert "replaced while it was being read" in _why(path)
 
 
+def test_a_run_file_that_cannot_be_opened_raises_with_the_error(
+    tmp_path: Path,
+) -> None:
+    """A read failure other than "absent" is a failed probe naming the file."""
+    path = _publish(tmp_path)
+    path.chmod(0)
+    with pytest.raises(PortProbeError) as caught:
+        PublishedPort.at(path)
+    assert str(caught.value).startswith(f"cannot read {path}: ")
+    assert "Permission denied" in str(caught.value)
+
+
 def test_an_unreadable_file_raises(tmp_path: Path) -> None:
     (tmp_path / "serve.port").write_bytes(b"\xff\xfe")
     with pytest.raises(PortProbeError, match="invalid UTF-8"):

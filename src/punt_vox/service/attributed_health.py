@@ -82,16 +82,15 @@ class AttributedHealth:
         Returns why no request may be sent -- a holder seen at attribution no
         longer holds the port, as the same pinned process, a holder that has
         no listener on it, or the re-check left less than a request's floor
-        -- or ``None`` when voxd may be asked.
+        -- or ``None`` when voxd may be asked. The floor is checked once, before
+        the holder check: that check runs on its own slice of the bound and
+        can never reach into the floor, so nothing is left to re-check after.
         """
         if left := self._holders - self._probe.voxd_processes():
             return NotAskedError.left_port(h.pid for h in left)
-        unlistening = self._without_listener(host)
-        if unlistening is not None:
-            return unlistening
-        if self._bound.remaining() >= HealthRequest.MIN_S:
-            return None
-        return NotAskedError.budget_spent()
+        if self._bound.remaining() < HealthRequest.MIN_S:
+            return NotAskedError.budget_spent()
+        return self._without_listener(host)
 
     def _without_listener(self, host: str) -> NotAskedError | None:
         """Return why a holder is not the listener a request to *host* reaches.

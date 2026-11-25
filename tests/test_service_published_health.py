@@ -170,6 +170,24 @@ def test_a_publisher_owned_by_another_uid_sends_no_token(
     )
 
 
+def test_a_uid_read_that_cannot_run_sends_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connect = _listening(monkeypatch)
+    mgr = _published(monkeypatch, _ours())
+    mgr.within.return_value.owner_uid.side_effect = PortProbeError(
+        "cannot run ps: timed out after 0.3 seconds"
+    )
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = probe_over(mgr, target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    assert str(probe.health_miss()) == (
+        "cannot run ps: timed out after 0.3 seconds; no token sent unattributed"
+    )
+
+
 def test_a_publisher_gone_before_the_uid_read_sends_no_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

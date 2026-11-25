@@ -461,6 +461,7 @@ class FakeProbe:
     def published_health(self, within_s: float) -> HealthStatus | None:
         """The real probe's gate: our serve.port names 8421 and a listener answers."""
         world = self._world
+        self._fail("published_health")  # an unreadable unit: the bind cannot be read
         if world.port_file_stale:
             self._miss = NotAskedError.unparseable()
             return None
