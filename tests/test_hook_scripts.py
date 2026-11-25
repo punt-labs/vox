@@ -57,7 +57,7 @@ class TestHookScripts:
     @pytest.mark.parametrize("name", _SCRIPTS)
     def test_extracts_cwd_from_stdin(self, name: str) -> None:
         text = _read(name)
-        assert ".cwd // empty" in text
+        assert "vox_hook_payload_field cwd" in text
 
 
 class TestVibeNudgeHook:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.normalize import normalize_for_speech, strip_vibe_tags
+from punt_vox.normalize import SpeechText, normalize_for_speech, strip_vibe_tags
 
 # ---------------------------------------------------------------------------
 # snake_case splitting
@@ -196,6 +196,7 @@ class TestIdempotency:
             "The eof_received handler uses stderr",
             "normal sentence",
             "/usr/local/bin",
+            "`prefix[draft](/help)suffix`",
         ],
     )
     def test_idempotent(self, text: str) -> None:
@@ -331,7 +332,7 @@ class TestSymbolStripping:
             ("€-20", "minus 20 euros"),
             ("€\u221220", "minus 20 euros"),
             ("$-5", "minus 5 dollars"),
-            ("-$5.50", "minus 5.50 dollars"),
+            ("-$5.50", "minus 5 dollars and 50 cents"),
             ("$5", "5 dollars"),
             ("-$5._", "minus 5 dollars."),
             ("_-$5._", "minus 5 dollars."),
@@ -339,6 +340,31 @@ class TestSymbolStripping:
         ],
     )
     def test_currency_amounts_survive(self, text: str, expected: str) -> None:
+        normalized = normalize_for_speech(text)
+        assert normalized == expected
+        assert normalize_for_speech(normalized) == normalized
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("I paid 5€.", "I paid 5 euros."),
+            ("It cost 12.50$!", "It cost 12 dollars and 50 cents!"),
+            ("It cost (1£), not 1,000£.", "It cost 1 pound, not 1,000 pounds."),
+            ("It cost -5.50€.", "It cost minus 5 euros and 50 cents."),
+            ("I paid €5.", "I paid 5 euros."),
+            (
+                "I paid €1,50, not 1,50€.",
+                "I paid 1 euro and 50 cents, not 1 euro and 50 cents.",
+            ),
+            (
+                "Use `prices 5€ or $5` then pay 5€.",
+                "Use prices 5 or dollar sign 5 then pay 5 euros.",
+            ),
+            ("Use `prices 5€ or $5`.", "Use prices 5 or dollar sign 5."),
+            ("See /tmp/5€.", "See /tmp/5."),
+        ],
+    )
+    def test_suffix_currency_is_prose_money(self, text: str, expected: str) -> None:
         normalized = normalize_for_speech(text)
         assert normalized == expected
         assert normalize_for_speech(normalized) == normalized
@@ -358,6 +384,21 @@ class TestSymbolStripping:
             ("$1million", "1 million dollars"),
             ("$1billion", "1 billion dollars"),
             ("$1trillion", "1 trillion dollars"),
+            ("We saved $1 million", "We saved 1 million dollars"),
+            ("$1 million\u2019s worth", "1 million\u2019s worth"),
+            (
+                "We saved $1 million—enough to retire",
+                "We saved 1 million—enough to retire",
+            ),
+            ("$2.5 billion,", "2.5 billion dollars,"),
+            ("$10 thousand", "10 thousand dollars"),
+            ("$1 trillion", "1 trillion dollars"),
+            ("(-€1,50 MILLION)", "minus 1.50 million euros"),
+            ("£2\N{NO-BREAK SPACE}million/month", "2 million pounds per month"),
+            ("$1 millionth", "1 dollar millionth"),
+            ("$1 million-dollar plan", "1 dollar million-dollar plan"),
+            ("$1\nmillion", "1 dollar million"),
+            ("$5 m", "5 dollars m"),
             ("$5-$10", "5 dollars to 10 dollars"),
             ("$5\u201310", "5 to 10 dollars"),
             ("$5k\u201310", "5 thousand to 10 thousand dollars"),
@@ -368,6 +409,8 @@ class TestSymbolStripping:
             ("$10k/month", "10 thousand dollars per month"),
             ("$5-$10/month", "5 dollars to 10 dollars per month"),
             ("$5k-$10k", "5 thousand dollars to 10 thousand dollars"),
+            ("$1 million-$2 million", "1 million dollars to 2 million dollars"),
+            ("$5\u201310 million", "5 to 10 million dollars"),
             ("(+€1/day),", "plus 1 euro per day,"),
             ("\u2212£1.5K", "minus 1.5 thousand pounds"),
             ("-$10\u2013-$5", "minus 10 dollars to minus 5 dollars"),
@@ -386,6 +429,10 @@ class TestSymbolStripping:
         ("text", "expected"),
         [
             ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
+            (
+                "Use `$1 million` then pay $1 million",
+                "Use dollar sign 1 million then pay 1 million dollars",
+            ),
             (
                 "Use `$1suffix prefix$2` then pay $5",
                 "Use dollar sign 1 suffix prefix dollar sign 2 then pay 5 dollars",
@@ -533,6 +580,105 @@ class TestSymbolStripping:
         assert normalize_for_speech("hello () world") == "hello world"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("if x < 3 then x > 1", "if x less than 3 then x greater than 1"),
+        ("x != y; x == y", "x not equal to y; x equal to y"),
+        ("x > 1!", "x greater than 1!"),
+        (
+            "x <= -3 and x >= 1",
+            "x less than or equal to -3 and x greater than or equal to 1",
+        ),
+        ("`(x) < 3`", "x less than 3"),
+        ("**x** > 3", "x greater than 3"),
+        ("_x_ < 3", "x less than 3"),
+        ("\u201cx < 3\u201d", "x less than 3"),
+        ("[x < 3](/limits)", "x less than 3"),
+        ("[1. > 0](/limits)", "1. greater than 0"),
+        ("[![x < 3](limits.png)](/limits)", "x less than 3"),
+        ("3 > 2 >[Chapter](/guide)", "3 greater than 2 Chapter"),
+        ("[Chapter](/guide)> 3 > 2", "Chapter 3 greater than 2"),
+        ("50% < x", "50 percent less than x"),
+        ("-3 < x < 3", "-3 less than x less than 3"),
+        ("0 <= x < y", "0 less than or equal to x less than y"),
+        ("x > y >= 1", "x greater than y greater than or equal to 1"),
+        ("x < y == 3", "x less than y equal to 3"),
+        ("x != y > 3", "x not equal to y greater than 3"),
+        ("total <= limit", "total less than or equal to limit"),
+        ("0 <= idx < n", "0 less than or equal to idx n"),
+        ("3 > 2 > 1", "3 greater than 2 greater than 1"),
+        ("x < 1.5 and 3 > y", "x less than 1.5 and 3 greater than y"),
+        ("$5 < 10", "5 dollars less than 10"),
+        ("5€ < 10", "5 euros less than 10"),
+        ("$1 million < x", "1 million dollars less than x"),
+        (
+            "x < $1 million/year < y",
+            "x less than 1 million dollars per year less than y",
+        ),
+        ("a == $1 million", "a equal to 1 million dollars"),
+        ("0x10 < 0x20", "0 x 10 less than 0 x 20"),
+    ],
+)
+def test_standalone_comparisons_are_spoken(text: str, expected: str) -> None:
+    assert normalize_for_speech(text) == expected
+    assert SpeechText.for_synthesis(text, expressive=False) == expected
+    assert SpeechText.for_synthesis(f"[warm] {text}", expressive=True) == (
+        f"[warm] {expected}"
+    )
+
+
+def test_comparisons_survive_inline_expressive_tags() -> None:
+    text = "if x [warm] < [serious] 3"
+    assert SpeechText.for_synthesis(text, expressive=True) == (
+        "if x [warm] less than [serious] 3"
+    )
+    assert SpeechText.for_synthesis(text, expressive=False) == "if x less than 3"
+
+
+def test_comparison_before_an_attached_expressive_tag() -> None:
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=True) == (
+        "x less than 3 [sighs]"
+    )
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=False) == "x less than 3"
+
+
+def test_link_label_brackets_are_not_expressive_tags() -> None:
+    text = "[x == [expected]](/tests)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "x equal to expected"
+
+
+def test_nested_link_spans_keep_existing_markdown_speech() -> None:
+    text = "[![read [policy](/policy)](/badge)](/guide)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "read policy"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("See Settings > Voice > Provider", "See Settings Voice Provider"),
+        ("Chapter 2 > Section 3", "Chapter 2 Section 3"),
+        ("Menu > A > B and Home > 2 > 3", "Menu A B and Home 2 3"),
+        ("[A](/guide) > [B](/settings)", "A B"),
+        ("[Chapter](/guide) > 2 > 3", "Chapter 2 3"),
+        ("3 > 2 > [Chapter](/guide)", "3 2 Chapter"),
+        ("[label](<foo 3 > 'a')", "label"),
+        ("echo 3 > out", "echo 3 out"),
+        ("cat a > b", "cat a b"),
+        ("echo 3 > out.txt", "echo 3 out.txt"),
+        ("x <- 3 or x <=3 or x <> 3", "x 3 or x 3 or x 3"),
+        ("x === y and x >> 3", "x y and x 3"),
+        ("x <\n3", "x 3"),
+        ("1. > 0", "1. 0"),
+        ("x <\u20283", "x 3"),
+        ("x\n> 3\r1) > > 2\n- > 4", "x 3 1 2 4"),
+        ("x<3 with <https://example.org>", "x<3 with https://example.org"),
+    ],
+)
+def test_ambiguous_angle_tokens_are_not_spoken(text: str, expected: str) -> None:
+    assert normalize_for_speech(text) == expected
+
+
 # ---------------------------------------------------------------------------
 # strip_vibe_tags
 # ---------------------------------------------------------------------------
@@ -616,3 +762,42 @@ class TestStripVibeTags:
     )
     def test_parametrized(self, input_text: str, expected: str) -> None:
         assert strip_vibe_tags(input_text) == expected
+
+
+class TestLanguageNames:
+    def test_cpp_and_csharp_are_spoken_distinctly(self) -> None:
+        assert normalize_for_speech("I write C++ and C#.") == (
+            "I write C plus plus and C sharp."
+        )
+
+    def test_underscore_emphasis_keeps_language_names(self) -> None:
+        assert normalize_for_speech("I like _C#_ and __C++__.") == (
+            "I like C sharp and C plus plus."
+        )
+
+    def test_language_names_are_idempotent(self) -> None:
+        once = normalize_for_speech("Port the C# tool to C++.")
+        assert normalize_for_speech(once) == once
+
+
+class TestPercentages:
+    def test_percentage_keeps_its_unit(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") == "Error rate is 5 percent."
+
+    def test_percentage_differs_from_bare_count(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") != normalize_for_speech(
+            "Error rate is 5."
+        )
+
+    def test_code_modulo_is_unchanged(self) -> None:
+        assert normalize_for_speech("x %= 2 and a%b") == "x 2 and a%b"
+
+    def test_percentage_range_says_to(self) -> None:
+        assert (
+            normalize_for_speech("Coverage held at 85%\u201390% this week.")
+            == "Coverage held at 85 percent to 90 percent this week."
+        )
+
+    def test_percentages_are_idempotent(self) -> None:
+        once = normalize_for_speech("Coverage rose from 85% to 92.5%.")
+        assert normalize_for_speech(once) == once

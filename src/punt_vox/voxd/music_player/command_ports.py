@@ -32,20 +32,26 @@ class PlayerCommands(Protocol):
         """Halt the active source, returning the player to idle (Stop)."""
         ...
 
-    def advance(self) -> None:
-        """User transport next: step the replay cursor forward (Next)."""
+    def advance(self) -> bool:
+        """Admit a forward step if the queue tail projects an active source.
+
+        Return False otherwise. Admission does not confirm cursor movement.
+        """
         ...
 
-    def prev(self) -> None:
-        """User transport prev: step the replay cursor back (Prev)."""
+    def prev(self) -> bool:
+        """Admit a backward step if the queue tail projects an active source.
+
+        Return False otherwise. Admission does not confirm cursor movement.
+        """
         ...
 
-    def pause(self) -> None:
-        """Suspend the active source in place (Pause)."""
+    def pause(self) -> bool:
+        """Suspend the active source in place, or return False when off."""
         ...
 
-    def resume(self) -> None:
-        """Continue a suspended source (Resume)."""
+    def resume(self) -> bool:
+        """Continue a suspended source, or return False when off."""
         ...
 
 

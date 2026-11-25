@@ -43,3 +43,24 @@ def test_seed_drops_oldest_workers_to_stay_under_10_kb() -> None:
     assert 0 < len(kept) < 40
     assert state["older_workers_omitted"] == 40 - len(kept)
     assert kept[0]["worker_id"].startswith("w039")
+
+
+def test_seed_with_no_repositories_says_so_once_and_offers_no_workers() -> None:
+    prompt = CallSeed((), []).prompt()
+    assert "No repository is allowlisted" in prompt
+    assert "vox worker allow" in prompt
+    assert "say that once" in prompt
+    assert "do not offer to start workers" in prompt
+    assert "start_worker uses that repository" not in prompt
+
+
+def test_seed_with_repositories_carries_no_empty_list_instruction() -> None:
+    prompt = CallSeed(("/repo",), []).prompt()
+    assert "No repository is allowlisted" not in prompt
+
+
+def test_seed_tells_the_agent_to_end_the_call_on_request_after_a_closing_line() -> None:
+    prompt = CallSeed(("/repo",), []).prompt()
+    assert "says goodbye, or asks you to end the call or hang up" in prompt
+    assert "one short closing sentence and then call end_call" in prompt
+    assert "Never end the call otherwise" in prompt

@@ -34,7 +34,15 @@ def test_worker_records_load_once_during_recovery() -> None:
         load.assert_called_once_with(strict=False)
 
 
-def test_daemon_shutdown_cancels_queued_worker_cleanup(tmp_path: Path) -> None:
+def test_daemon_shutdown_is_bounded_and_leaves_unfinished_cleanup_pending(
+    tmp_path: Path,
+) -> None:
+    """Shutdown waits a short grace period, and an interrupted cleanup stays owed.
+
+    Each worker's cleanup runs on its own lane, so both start at once; the
+    daemon must still stop within its bound while both block, and the
+    records on disk keep ``cleanup_pending`` until a job actually finishes.
+    """
     provider = FakeWorkerProvider()
     registry = _registry(tmp_path, provider)
     one, two = (
@@ -42,14 +50,12 @@ def test_daemon_shutdown_cancels_queued_worker_cleanup(tmp_path: Path) -> None:
         for task in ("one", "two")
     )
     provider.alive = False
-    started, release, queued = (threading.Event() for _ in range(3))
+    started = {one.worktree: threading.Event(), two.worktree: threading.Event()}
+    release = threading.Event()
 
     def cleanup(path: Path) -> None:
-        if str(path) == one.worktree:
-            started.set()
-            assert release.wait(3)
-        if str(path) == two.worktree:
-            queued.set()
+        started[str(path)].set()
+        assert release.wait(3)
 
     with (
         patch.object(TrivialProfile, "cleanup", side_effect=cleanup),
@@ -58,14 +64,14 @@ def test_daemon_shutdown_cancels_queued_worker_cleanup(tmp_path: Path) -> None:
         try:
             with TestClient(build_app()):
                 registry.list()
-                assert started.wait(1)
+                assert all(event.wait(1) for event in started.values())
                 before_shutdown = time.monotonic()
             assert time.monotonic() - before_shutdown < 1.0
+            saved = {r.id: r for r in WorkerRecords(tmp_path / "workers").load()}
+            assert saved[one.id].last_report["cleanup_pending"]
+            assert saved[two.id].last_report["cleanup_pending"]
         finally:
             release.set()
-        assert not queued.wait(0.5)
-        saved = WorkerRecords(tmp_path / "workers").load()
-        assert next(r for r in saved if r.id == two.id).last_report["cleanup_pending"]
 
 
 def _rpc_health(app: Starlette) -> None:

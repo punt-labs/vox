@@ -81,17 +81,21 @@ class _FakeCommands:
     def stop(self) -> None:
         self.stops += 1
 
-    def advance(self) -> None:
+    def advance(self) -> bool:
         self.nexts += 1
+        return True
 
-    def prev(self) -> None:
+    def prev(self) -> bool:
         self.prevs += 1
+        return True
 
-    def pause(self) -> None:
+    def pause(self) -> bool:
         self.pauses += 1
+        return True
 
-    def resume(self) -> None:
+    def resume(self) -> bool:
         self.resumes += 1
+        return True
 
 
 @final
@@ -730,16 +734,16 @@ async def test_on_event_surfaces_a_playback_refusal_to_the_scene(
         def stop(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def advance(self) -> None:  # pragma: no cover - unused here
+        def advance(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def prev(self) -> None:  # pragma: no cover - unused here
+        def prev(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     opener = _FakeOpener()
@@ -768,16 +772,16 @@ async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
             msg = "cannot stop right now"
             raise ValueError(msg)
 
-        def advance(self) -> None:  # pragma: no cover - unused here
+        def advance(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def prev(self) -> None:  # pragma: no cover - unused here
+        def prev(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     opener = _FakeOpener()
@@ -813,16 +817,16 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
         def stop(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def advance(self) -> None:  # pragma: no cover - unused here
+        def advance(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def prev(self) -> None:  # pragma: no cover - unused here
+        def prev(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def pause(self) -> None:  # pragma: no cover - unused here
+        def pause(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
-        def resume(self) -> None:  # pragma: no cover - unused here
+        def resume(self) -> bool:  # pragma: no cover - unused here
             raise NotImplementedError
 
     sub = LuxSubscription(

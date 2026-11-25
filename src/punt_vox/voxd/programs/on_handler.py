@@ -15,7 +15,7 @@ class OnHandler(ProgramCommandHandler):
     """Handle ``program_on``: bind or mint an album by tags/name and start it."""
 
     __slots__ = ()
-    _WIRE_TYPE = "program_on"
+    _wire_type = "program_on"
 
     def _run(self, msg: dict[str, object], /) -> None:
         """Parse style/vibe/name/prompts and turn the Program on."""

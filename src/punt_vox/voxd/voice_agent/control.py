@@ -1,20 +1,30 @@
-"""Register client tools and fetch signed conversations through the REST API."""
+"""Register client tools and fetch signed conversations through the REST API.
+
+The API origin can be redirected to loopback by a test-only environment
+switch, which also replaces the key sent with a placeholder; see
+:mod:`punt_vox.voxd.voice_agent.call_overrides`.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import TYPE_CHECKING, Self, cast, final
 
 import httpx
 
 from punt_vox.voxd.voice_agent._decode import EventDecoder
+from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from punt_vox.voxd.voice_agent.contracts import (
         AgentPermissions,
+        BuiltInTools,
         ClientTool,
         CreateAgentConfig,
         CreateConfig,
@@ -32,6 +42,19 @@ _OVERRIDABLE: AgentPermissions = {
     "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
     "first_message": True,
 }
+# The provider ends the conversation itself when the agent runs this tool;
+# the daemon only hears the acknowledgement and the close that follows.
+_BUILT_IN_TOOLS: BuiltInTools = {
+    "end_call": {
+        "type": "system",
+        "name": "end_call",
+        "description": (
+            "End the call after the person says goodbye or asks to end the call "
+            "or hang up, once you have said one short closing sentence."
+        ),
+        "params": {"system_tool_type": "end_call"},
+    }
+}
 
 
 @final
@@ -42,11 +65,18 @@ class ConvAIControl:
     _credential_id: str
     _http: httpx.Client
 
-    def __new__(cls, api_key: str, *, base_url: str = _API) -> Self:
+    def __new__(
+        cls,
+        api_key: str,
+        *,
+        base_url: str | None = None,  # None reads the test override, else the API.
+    ) -> Self:
         """Construct off the event loop because key derivation is synchronous."""
         if not api_key.strip():
             msg = "ElevenLabs Conversational AI requires an API key"
             raise ValueError(msg)
+        if base_url is None:
+            base_url, api_key = CallOverrides.rest(_API, api_key)
         self = super().__new__(cls)
         self._credential_id = hashlib.scrypt(
             api_key.encode(),
@@ -60,10 +90,31 @@ class ConvAIControl:
         )
         return self
 
+    @classmethod
+    def from_environment(cls) -> Self:
+        """Construct from ``ELEVENLABS_API_KEY``, or from the REST override alone.
+
+        The override is resolved first: it supplies the placeholder key, so
+        with it in effect no key needs to be set. Without it, a missing key is
+        a :class:`ValueError` naming the variable.
+        """
+        base_url, api_key = CallOverrides.rest(
+            _API, os.environ.get("ELEVENLABS_API_KEY", "")
+        )
+        if not api_key:
+            msg = "voxd has no ELEVENLABS_API_KEY for a voice call"
+            raise ValueError(msg)
+        return cls(api_key, base_url=base_url)
+
     @property
     def credential_id(self) -> str:
         """Identify the key and endpoint without retaining the key in config."""
         return self._credential_id
+
+    @staticmethod
+    def registration_path(default: Path) -> Path:
+        """Return the registration path: *default*, or its override sibling."""
+        return CallOverrides.registration_path(default)
 
     def __enter__(self) -> Self:
         return self
@@ -120,7 +171,10 @@ class ConvAIControl:
                 "agent": {
                     "first_message": "",
                     "language": "en",
-                    "prompt": {"tool_ids": list(tool_ids)},
+                    "prompt": {
+                        "tool_ids": list(tool_ids),
+                        "built_in_tools": _BUILT_IN_TOOLS,
+                    },
                 },
                 "tts": {"agent_output_audio_format": "pcm_16000"},
                 "asr": {"user_input_audio_format": "pcm_16000"},

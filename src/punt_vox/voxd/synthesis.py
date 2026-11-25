@@ -1,6 +1,4 @@
 """Synthesis pipeline -- TTS provider orchestration, caching, and direct play."""
-# pyright: reportPrivateUsage=false
-# Internal module within the voxd package -- cross-module private access is expected.
 
 from __future__ import annotations
 
@@ -11,20 +9,11 @@ from collections.abc import Callable
 from typing import Self
 
 from punt_vox import usage
-from punt_vox.normalize import SpeechText
 from punt_vox.providers import get_provider
-from punt_vox.types import (
-    AudioProviderId,
-    AudioRequest,
-    TTSProvider,
-)
-from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types import SynthesisSpec, TTSProvider
 from punt_vox.voxd.api_key_env import ApiKeyEnv
-from punt_vox.voxd.direct_play import (
-    DirectPlayFailure,
-    DirectPlayInvocation,
-    DirectPlayResult,
-)
+from punt_vox.voxd.direct_play import DirectPlayInvocation, DirectPlayResult
+from punt_vox.voxd.speech_preparation import SYNTHESIS_REJECTIONS, SpeechPreparation
 from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
@@ -72,62 +61,6 @@ class SynthesisPipeline:
         """Return the lock held while a caller's API key is in the environment."""
         return self._env_lock
 
-    # -- Static helpers ----------------------------------------------------
-
-    @staticmethod
-    def model_supports_expressive_tags(provider_name: str, model: str | None) -> bool:
-        """Whether the given provider+model combo interprets bracket-style tags.
-
-        Pure lookup: does NOT construct the provider or touch any SDK client,
-        so it can run before voxd enters the env-mutation lock that the real
-        synthesize path needs. ElevenLabs is the only provider whose answer
-        depends on the model -- all others return False unconditionally.
-
-        The ``ElevenLabsProvider`` import is deferred inside the method so
-        voxd does not eagerly load the ElevenLabs SDK at module import time
-        on systems whose users only ever run espeak/say. Mirrors the lazy
-        pattern in :mod:`punt_vox.providers`.
-        """
-        if provider_name == "elevenlabs":
-            from punt_vox.providers.elevenlabs import ElevenLabsProvider
-
-            return ElevenLabsProvider.model_supports_expressive_tags(model)
-        return False
-
-    @staticmethod
-    def _build_audio_request(normalized_text: str, spec: SynthesisSpec) -> AudioRequest:
-        """Build the provider's AudioRequest: *spec*'s fields over normalized text."""
-        provider_id = spec.provider or ""
-        return AudioRequest(
-            text=normalized_text,
-            voice=spec.voice,
-            language=spec.language,
-            rate=spec.rate,
-            stability=spec.stability,
-            similarity=spec.similarity,
-            style=spec.style,
-            speaker_boost=spec.speaker_boost,
-            provider=AudioProviderId(provider_id)
-            if provider_id in AudioProviderId.__members__
-            else None,
-        )
-
-    @staticmethod
-    def apply_vibe_for_synthesis(
-        raw_text: str,
-        vibe_tags: str | None,
-        provider_name: str,
-        model: str | None,
-    ) -> str:
-        """Normalize raw input and apply vibe tags according to model capability."""
-        expressive = SynthesisPipeline.model_supports_expressive_tags(
-            provider_name, model
-        )
-        body = SpeechText.for_synthesis(raw_text, expressive=expressive)
-        if expressive and vibe_tags:
-            return " ".join(filter(None, (vibe_tags.strip(), body)))
-        return body
-
     # -- Instance methods --------------------------------------------------
 
     async def synthesize_to_file(
@@ -141,15 +74,12 @@ class SynthesisPipeline:
         credentials bypass lookup and store for billing isolation.
         """
         provider_name = spec.provider or ""
-        model = spec.model
-
-        # Normalize around bracket tags so expressive instructions survive.
-        normalized = self.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, provider_name, model
-        )
+        request = SpeechPreparation.audio_request(text, spec)
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
-        lookup = SynthesisCache.for_request(normalized, spec, len(text))
+        lookup = SynthesisCache.for_request(
+            request.text, spec, len(text), vibe_tags=request.vibe_tags
+        )
         if (cached := await lookup.outcome()) is not None:
             with usage.span("daemon", provider_name, text=text, cached=True):
                 return cached
@@ -163,8 +93,7 @@ class SynthesisPipeline:
                 if cached is not None:
                     return cached
                 with ApiKeyEnv(provider_name, spec.api_key).applied():
-                    provider = get_provider(provider_name, model=model)
-                    request = self._build_audio_request(normalized, spec)
+                    provider = get_provider(provider_name, model=spec.model)
                     output_path = await TempFileSynthesis(
                         provider, request, len(text)
                     ).run()
@@ -199,25 +128,23 @@ class SynthesisPipeline:
         cross-request blocking. Audio playback never holds the lock.
         """
         provider_name = spec.provider or ""
-        model = spec.model
-
-        normalized = self.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, provider_name, model
-        )
 
         def _factory() -> TTSProvider:
-            return get_provider(provider_name, model=model)
+            return get_provider(provider_name, model=spec.model)
 
         start = time.monotonic()
         try:
+            request = SpeechPreparation.audio_request(text, spec)
             with usage.span("daemon", provider_name, text=text, cached=False):
-                rc = usage.direct_result(
-                    await self._run_direct_play(
-                        spec, _factory, self._build_audio_request(normalized, spec)
-                    )
+                invocation = DirectPlayInvocation(
+                    provider_name,
+                    ApiKeyEnv(provider_name, spec.api_key),
+                    _factory,
+                    request,
                 )
+                rc = usage.direct_result(await self._run_direct_play(invocation))
         except Exception as exc:
-            if DirectPlayFailure(exc).unexpected:
+            if not isinstance(exc, SYNTHESIS_REJECTIONS):
                 logger.exception("Direct-play raised")
             return exc
 
@@ -232,12 +159,7 @@ class SynthesisPipeline:
         ).publish(record_result)
         return rc
 
-    async def _run_direct_play(
-        self,
-        spec: SynthesisSpec,
-        factory: Callable[[], TTSProvider],
-        request: AudioRequest,
-    ) -> int | None:
+    async def _run_direct_play(self, invocation: DirectPlayInvocation) -> int | None:
         """Run ``play_directly`` under the playback mutex.
 
         The ``_env_lock`` is added only when an API key must be injected into the
@@ -246,10 +168,7 @@ class SynthesisPipeline:
         queue consumer holds it too -- so two hooks firing at once cannot overlap
         even though direct play bypasses the queue.
         """
-        provider_name = spec.provider or ""
-        key_env = ApiKeyEnv(provider_name, spec.api_key)
-        invocation = DirectPlayInvocation(provider_name, key_env, factory, request)
-        if key_env.injects:
+        if invocation.key_env.injects:
             async with self._env_lock, self._playback_mutex:
                 return await asyncio.to_thread(invocation.run)
         async with self._playback_mutex:

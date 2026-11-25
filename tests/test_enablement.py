@@ -9,6 +9,7 @@ no-orphan-on-purge property (purge removes the import, never stranding a 404ing
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, final
 
@@ -19,15 +20,12 @@ from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
-from punt_vox.enablement import (
-    ENABLE_OUTCOME_REASONS,
-    EnableOutcome,
-    ProviderProposal,
-    RepoEnablement,
-)
+from punt_vox.enablement import RepoEnablement
+from punt_vox.gitignore_entry import VoxGitignore
 from punt_vox.guide_stamp import GuideStamp
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
+from punt_vox.provider_proposal import ProviderProposal
 from punt_vox.settings_registration import SettingsRegistration
 from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 
@@ -75,9 +73,94 @@ def _assert_biconditional(repo: Path) -> None:
 
 
 def test_enable_reaches_enabled(tmp_path: Path) -> None:
-    RepoEnablement.for_repo(tmp_path).enable()
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
     assert _marker_present(tmp_path)
     assert _import_count(tmp_path) == 1
+    host_rules = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+    assert enablement.import_line in host_rules
+
+
+_LOCAL_IGNORE = ".punt-labs/vox/vox.local.md"
+
+
+def _ignore_count(repo: Path) -> int:
+    text = (repo / ".gitignore").read_text(encoding="utf-8")
+    return text.splitlines().count(_LOCAL_IGNORE)
+
+
+def test_enable_gitignores_local_config(tmp_path: Path) -> None:
+    RepoEnablement.for_repo(tmp_path).enable()
+    assert _ignore_count(tmp_path) == 1
+
+
+@pytest.mark.subprocess
+def test_enable_keeps_runtime_locks_out_of_git_status(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "--quiet", "--template="], cwd=tmp_path, check=True)
+    RepoEnablement.for_repo(tmp_path).enable()
+    _config_store(tmp_path).write_field("vibe", "[focused]")
+    (tmp_path / "example.lock").touch()
+
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "status",
+            "--porcelain=v1",
+            "-uall",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths = {line.removeprefix("?? ") for line in result.stdout.splitlines()}
+    assert paths == {
+        ".claude/settings.json",
+        ".gitignore",
+        ".punt-labs/vox/CLAUDE.md",
+        ".punt-labs/vox/enabled",
+        ".punt-labs/vox/vox.md",
+        "CLAUDE.md",
+        "example.lock",
+    }
+
+
+def test_enable_keeps_user_gitignore_and_adds_no_duplicate(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    enablement.enable()
+    text = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert text.splitlines() == [
+        "node_modules/",
+        _LOCAL_IGNORE,
+        ".punt-labs/local/",
+        "/.CLAUDE.md.punt-import.lock",
+        "/.claude/.settings.json.punt-import.lock",
+    ]
+
+
+def test_enable_stops_without_modifying_an_unreadable_gitignore(tmp_path: Path) -> None:
+    gitignore = tmp_path / ".gitignore"
+    original = b"# user rules\n\xff\n"
+    gitignore.write_bytes(original)
+
+    with pytest.raises(UnicodeDecodeError):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert gitignore.read_bytes() == original
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / ".claude").exists()
+    assert not _dir_present(tmp_path)
+
+
+def test_disable_leaves_gitignore_entry(tmp_path: Path) -> None:
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    enablement.disable()
+    assert _ignore_count(tmp_path) == 1
     assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
     assert _dir_present(tmp_path)
     _assert_biconditional(tmp_path)
@@ -246,6 +329,16 @@ def test_purge_preserves_user_prose(tmp_path: Path) -> None:
     enablement.enable()
     enablement.purge()
     assert host.read_text(encoding="utf-8") == "# Rules\n\nKeep me.\n"
+
+
+def test_purge_absent_repo_keeps_existing_gitignore(tmp_path: Path) -> None:
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_bytes(b"dist/\n")
+
+    RepoEnablement.for_repo(tmp_path).purge()
+
+    assert not _dir_present(tmp_path)
+    assert gitignore.read_bytes() == b"dist/\n"
 
 
 # ---------------------------------------------------------------------------
@@ -441,8 +534,15 @@ class _RaisingStore(ConfigStore):
     bypassed by root in some CI environments).
     """
 
-    def write_field(self, key: str, value: str) -> None:
-        _ = (key, value)
+    def write_field(
+        self,
+        key: str,
+        value: str,
+        *,
+        # Match the base method, whose plain writes have no precondition.
+        check: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
+        _ = (key, value, check)
         msg = "disk write refused"
         raise PermissionError(msg)
 
@@ -477,7 +577,7 @@ def _wire_enablement(
 ) -> RepoEnablement:
     """Build a :class:`RepoEnablement` bound to *tmp_path* with a fake daemon.
 
-    Wires the six collaborators the way ``for_repo`` would but with the
+    Wires the seven collaborators the way ``for_repo`` would but with the
     proposal collaborator pointed at the test double, so the enable
     flow exercises the real file operations against ``tmp_path`` and
     the fake WebSocket boundary at once.
@@ -493,6 +593,7 @@ def _wire_enablement(
         settings=SettingsRegistration(tmp_path / ".claude" / "settings.json"),
         audible=AudibleNotify(vox_dir),
         proposal=proposal,
+        gitignore=VoxGitignore(tmp_path),
     )
 
 
@@ -611,43 +712,6 @@ def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
     assert _config_store(tmp_path).read().provider == "elevenlabs"
 
 
-def test_enable_outcome_reason_enumeration_is_closed() -> None:
-    """Every reason named in the enumeration comment is a member of the frozenset.
-
-    A change to the ``EnableOutcomeReason`` Literal must land in
-    :data:`ENABLE_OUTCOME_REASONS` in the same edit; this test proves
-    the frozenset is what the Literal claims to be.
-    """
-    assert (
-        frozenset(
-            {
-                "written",
-                "already_set",
-                "voxd_unavailable",
-                "no_ready_provider",
-                "write_failed",
-            }
-        )
-        == ENABLE_OUTCOME_REASONS
-    )
-
-
-def test_enable_outcome_refuses_unknown_reason() -> None:
-    """A novel reason string would slip past ``mypy`` (which only knows the Literal).
-
-    The runtime guard on ``__post_init__`` is the closing catch, so a
-    consumer branching on ``reason`` never sees a value no branch was
-    written for -- the same F4 shape the ``ProviderReadiness`` guard
-    exists to prevent.
-    """
-    with pytest.raises(ValueError, match="unknown enable outcome reason"):
-        EnableOutcome(
-            reason="mystery",  # type: ignore[arg-type]  # test intent: raise
-            provider_written=None,
-            detail="",
-        )
-
-
 def test_marker_content_is_deterministic(tmp_path: Path) -> None:
     # The marker bytes must be identical everywhere so the CLI and MCP surfaces
     # write the same file (§ 2.14). Two independent enables produce equal bytes.
@@ -658,3 +722,9 @@ def test_marker_content_is_deterministic(tmp_path: Path) -> None:
     a = (tmp_path / ".punt-labs" / "vox" / "enabled").read_bytes()
     b = (other / ".punt-labs" / "vox" / "enabled").read_bytes()
     assert a == b
+
+
+def test_enable_leaves_no_gitignore_lock_in_repo_root(tmp_path: Path) -> None:
+    RepoEnablement.for_repo(tmp_path).enable()
+    root_locks = [p.name for p in tmp_path.glob("*.lock")]
+    assert not [name for name in root_locks if "gitignore" in name]

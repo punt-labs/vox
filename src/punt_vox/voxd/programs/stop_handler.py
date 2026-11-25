@@ -14,7 +14,7 @@ class StopHandler(ProgramCommandHandler):
     """Handle ``program_stop``: stop playback and cancel the fill."""
 
     __slots__ = ()
-    _WIRE_TYPE = "program_stop"
+    _wire_type = "program_stop"
 
     def _run(self, _msg: dict[str, object], /) -> None:
         """Halt the active Program (no fields to parse)."""

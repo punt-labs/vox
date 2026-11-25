@@ -39,17 +39,21 @@ class _FakeCommands:
     def stop(self) -> None:
         self.stops += 1
 
-    def advance(self) -> None:
+    def advance(self) -> bool:
         self.nexts += 1
+        return True
 
-    def prev(self) -> None:
+    def prev(self) -> bool:
         self.prevs += 1
+        return True
 
-    def pause(self) -> None:
+    def pause(self) -> bool:
         self.pauses += 1
+        return True
 
-    def resume(self) -> None:
+    def resume(self) -> bool:
         self.resumes += 1
+        return True
 
 
 def test_play_album_applies_exactly_one_replay() -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from punt_vox.album_export import AlbumExport
     from punt_vox.types_programs.prompts import PromptSet
 
 __all__ = ["CatalogGateway"]
@@ -31,8 +32,8 @@ class CatalogGateway(Protocol):
         """
         ...
 
-    def get(self, album_id: str, dest_dir: str) -> str:
-        """Copy album *album_id* into *dest_dir*; return the written directory."""
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
+        """Copy album *album_id* into *dest_dir*; return the export and its skips."""
         ...
 
     def remove(self, album_id: str) -> None:

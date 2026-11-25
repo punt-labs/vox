@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.output_health import OutputHealth
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
 from punt_vox.voxd.programs.library_handlers import (
@@ -20,18 +21,13 @@ from punt_vox.voxd.programs.library_handlers import (
     MusicRemoveHandler,
 )
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.sleeper import RealSleeper
 from punt_vox.voxd.programs.status_handler import StatusHandler
 from punt_vox.voxd.programs.stop_handler import StopHandler
-from punt_vox.voxd.programs.transport_handlers import (
-    PauseHandler,
-    PrevHandler,
-    ResumeHandler,
-)
+from punt_vox.voxd.programs.transport_handler import TransportHandler
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,8 +42,8 @@ __all__ = ["ProgramSubsystem"]
 class ProgramSubsystem:
     """Own the one ProgramService and expose its wire handlers to the daemon."""
 
-    __slots__ = ("_library", "_root", "_service")
-    _root: Path
+    __slots__ = ("_library", "_output_health", "_service")
+    _output_health: OutputHealth
     _service: ProgramService
     _library: MusicLibrary
 
@@ -55,7 +51,7 @@ class ProgramSubsystem:
         """Create a program subsystem."""
         self = super().__new__(cls)
         store = FilesystemProgramStore(root)
-        self._root = root
+        self._output_health = OutputHealth(root)
         self._service = ProgramService(producer, store, root, RealSleeper(), mpv_socket)
         # The library shares the service's one catalog and store, so an authored
         # album is instantly listable/playable and a removed one vanishes.
@@ -66,6 +62,11 @@ class ProgramSubsystem:
     def service(self) -> ProgramService:
         """Return the service the daemon runs and the handlers drive."""
         return self._service
+
+    @property
+    def output_health(self) -> OutputHealth:
+        """Return the output probe bound to the same root as the store."""
+        return self._output_health
 
     @property
     def library(self) -> MusicLibrary:
@@ -79,10 +80,7 @@ class ProgramSubsystem:
         return {
             "program_on": OnHandler(service),
             "program_stop": StopHandler(service),
-            "program_next": NextHandler(service),
-            "program_prev": PrevHandler(service),
-            "program_pause": PauseHandler(service),
-            "program_resume": ResumeHandler(service),
+            **TransportHandler.handlers(service),
             "program_select": SelectHandler(service),
             "program_list": ListHandler(service),
             "program_status": StatusHandler(service),

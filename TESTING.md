@@ -157,7 +157,8 @@ tests/
 
   # CLI
   test_cli.py                # Typer CLI invocations via CliRunner
-  test_cli_io.py             # CLI stdin/stdout plumbing
+  test_cli_io.py             # CLI output flag routing
+  test_cli_text_input.py     # CLI argument, file, and stdin resolution
   test_cli_music.py          # vox music subcommands
   test_cli_rec.py            # vox rec subcommands
   test_cli_enablement.py     # vox enable / disable
@@ -190,7 +191,8 @@ tests/
   test_voxd_wire_text.py     # Wire text handling
   test_voxd_wire_fault.py    # Wire fault handling
   test_voxd_synthesis.py     # Daemon-side synthesis
-  test_voxd_speech_handlers.py    # Speech handlers
+  test_voxd_speech_request.py     # Shared speech request parsing
+  test_voxd_synthesize_handler.py # Synthesis handler
   test_voxd_play_handler.py  # Play handler
   test_voxd_playback.py      # Playback queue
   test_voxd_fetch_handler.py # Fetch handler
@@ -265,10 +267,11 @@ The tiers below reflect that shape, not a copy of biff's.
 
 | Tier / marker | What it covers | How to run | Runs in CI? | Current count |
 |---------------|----------------|------------|-------------|---------------|
-| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 8,058 |
-| `subprocess` | Real local shell and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 157 |
-| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 1 |
-| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 10 |
+| Default/unmarked | Unit and mocked in-process cross-component tests; no live services or credentials | `make test` | Yes, combined coverage job | 9,163 |
+| `subprocess` | Real local shell and Python process tests | `uv run pytest -m subprocess` | Yes, combined coverage job | 318 |
+| `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 2 |
+| `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 11 |
+| `call_e2e` | A real `voxd` subprocess places a `vox call --script` call against a fake ElevenLabs Conversational AI agent and fake REST on loopback; scripted PCM in, agent audio through a silent device, no microphone, no credentials | `make test-call-e2e` | Yes, inside the combined coverage job and again as its own step | 2 |
 | `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/manual | 40 |
 | `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
 | `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |

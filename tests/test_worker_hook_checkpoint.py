@@ -26,6 +26,7 @@ from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.hook_gaps import HookGaps
 from punt_vox.voxd.hook_snapshot import WorkerHookCheckpoint
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.voice_call.greeting import CallGreeting
 from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.workers.actor import WorkerActor
@@ -615,7 +616,7 @@ async def test_quarantined_progress_retries_before_return_opener(
         opener = ReturnBrief(cursor).options(
             await actor.workers(), (str(tmp_path),), ()
         )
-        assert opener.first_message is None
+        assert opener.first_message == CallGreeting((str(tmp_path),)).spoken()
         wait.assert_awaited_once()
     assert records.load()[0].last_report["worker_seq"] == 3
 

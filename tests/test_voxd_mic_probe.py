@@ -82,8 +82,8 @@ async def test_missing_call_extra_names_the_fix(
     """Without sounddevice the default capture names the extra instead of crashing."""
     import sys
 
-    from punt_vox.voxd.mic_probe import sounddevice_capture
+    from punt_vox.voxd.mic_probe import SoundDeviceCapture
 
     monkeypatch.setitem(sys.modules, "sounddevice", None)
     with pytest.raises(MicProbeError, match=r"punt-vox\[call\]"):
-        sounddevice_capture(0.01)
+        SoundDeviceCapture()(0.01)

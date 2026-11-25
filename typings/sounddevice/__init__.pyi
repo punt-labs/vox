@@ -1,14 +1,52 @@
 from __future__ import annotations
 
-from collections.abc import Buffer, Callable, Mapping
-from typing import Self
+from collections.abc import Buffer, Callable, Sequence
+from typing import Literal, NotRequired, Self, TypedDict, overload
+
+# The two re-enumeration functions are exported by name: sounddevice keeps
+# them private, but they are the only way to re-read PortAudio's device
+# table, and declaring them here is what makes that use a typed one.
+__all__ = [
+    "CallbackFlags",
+    "DeviceInfo",
+    "PortAudioError",
+    "RawInputCallback",
+    "RawInputStream",
+    "RawOutputCallback",
+    "RawOutputStream",
+    "_initialize",
+    "_terminate",
+    "query_devices",
+    "sleep",
+]
 
 class PortAudioError(Exception):
-    """Raised when PortAudio refuses an operation, such as opening a device."""
+    """Raised by sounddevice when PortAudio reports an error."""
 
-# Only the ``kind="input"`` form this project calls is declared; the real
-# function also takes a device index or name and returns a list for ``kind=None``.
-def query_devices(*, kind: str) -> Mapping[str, object]: ...
+# The three keys of ``query_devices``'s per-device dict this project reads;
+# the real dict carries hostapi, channel counts and latencies too.
+class DeviceInfo(TypedDict):
+    name: str
+    # Always present in the real dict; NotRequired so test doubles that
+    # describe a device by name and rate alone still type-check.
+    index: NotRequired[int]
+    default_samplerate: float
+
+# Without arguments: every device PortAudio enumerated (a ``DeviceList``,
+# a list subclass). With ``kind``: the default device of that kind.
+@overload
+def query_devices() -> Sequence[DeviceInfo]: ...
+@overload
+def query_devices(kind: Literal["input", "output"]) -> DeviceInfo: ...
+
+# PortAudio enumerates devices in Pa_Initialize and never again; sounddevice
+# wraps the two calls as these private functions and offers no public way to
+# re-read the table, so the daemon's DeviceTable calls them in this order.
+def _terminate() -> None: ...
+def _initialize() -> None: ...
+
+# Block the calling thread for *msec* milliseconds while a stream's callback
+# keeps running; the mic probe uses it to hold its input stream open.
 def sleep(msec: int) -> None: ...
 
 # The subset of PortAudio's ``CallbackFlags`` this project inspects: whether

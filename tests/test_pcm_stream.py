@@ -15,9 +15,15 @@ from collections.abc import Callable
 from typing import Self, final
 
 import pytest
+from conversation_mode._fake_sounddevice import FakeSoundDevice
 
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
-from punt_vox.voxd.pcm_output import OutputCallback, OutputDeviceLostError
+from punt_vox.voxd.pcm_output import (
+    OutputCallback,
+    OutputDeviceLostError,
+    sounddevice_output_stream,
+)
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
 
@@ -600,6 +606,42 @@ class TestDeviceFailures:
         assert "PCM output callback failed" in caplog.text
         await sink.close()
 
+    async def test_the_first_audible_block_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Silence pulled before any audio is not playback; the first audio is."""
+        caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
+        sink, device = await open_sink()
+        device.opened.pull()
+        await asyncio.sleep(0)
+        assert "PCM playback started" not in caplog.text
+        sink.feed(ms_of(OLD, 40))
+        device.opened.pull(2)
+        await asyncio.sleep(0)
+        assert caplog.text.count("PCM playback started") == 1
+        await sink.close()
+
+    async def test_a_closed_loop_during_the_first_block_is_not_a_device_fault(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """At shutdown the loop may be gone while the device still pulls.
+
+        The started log and the played-out signal are posted to the loop
+        from the device thread; with the loop closed they are dropped, and
+        the callback neither raises nor logs a device failure.
+        """
+        caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
+        sink, device = await open_sink()
+        sink.feed(ms_of(OLD, 10))
+        sink.finish()
+        gone = asyncio.new_event_loop()
+        gone.close()
+        sink._loop = gone  # pyright: ignore[reportPrivateUsage]
+        device.opened.pull(2)
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+        sink._loop = asyncio.get_running_loop()  # pyright: ignore[reportPrivateUsage]
+        await sink.close()
+
     async def test_failed_close_still_reports(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -779,3 +821,35 @@ class TestPlaybackQueueOwnership:
 async def _enter_and_exit(playback: PlaybackQueue) -> None:
     async with playback.stream_pcm():
         pass
+
+
+class TestOutputDeviceFollowsTheSystem:
+    async def test_a_stream_opened_after_a_headset_connects_plays_through_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The output leg must follow the system's current default too."""
+        fake = FakeSoundDevice(
+            input_name="MacBook Air Microphone", output_name="MacBook Air Speakers"
+        ).install(monkeypatch)
+        fake.connect("J's AirPods #1")
+        playback = PlaybackQueue(sounddevice_output_stream, DeviceTable())
+        async with playback.stream_pcm():
+            pass
+        (stream,) = fake.streams
+        assert stream.device_name == "J's AirPods #1"
+        assert stream.closed
+
+    async def test_the_table_is_kept_while_the_microphone_is_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A live call holds its microphone; terminating PortAudio would kill it."""
+        fake = FakeSoundDevice(input_name="Headset", output_name="Headset").install(
+            monkeypatch
+        )
+        table = DeviceTable()
+        table.reserve()  # The call's microphone, counted by its backend.
+        playback = PlaybackQueue(sounddevice_output_stream, table)
+        async with playback.stream_pcm():
+            assert fake.terminated == 0
+            assert table.open_streams == 2
+        assert table.open_streams == 1

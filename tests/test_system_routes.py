@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.mic_probe import MicProbeHandler
 from punt_vox.voxd.playback import PlaybackQueue
@@ -20,3 +22,17 @@ def test_build_returns_the_four_system_routes() -> None:
     assert isinstance(routes["voices"], VoicesHandler)
     assert isinstance(routes["health"], HealthHandler)
     assert isinstance(routes["mic_probe"], MicProbeHandler)
+
+
+def test_build_hands_the_output_health_probe_to_the_health_route() -> None:
+    playback = PlaybackQueue()
+    output_health = Mock()
+    routes = SystemRoutes.build(
+        playback=playback,
+        health=DaemonHealth(playback, lambda: 0, 0),
+        output_health=output_health,
+    )
+
+    health = routes["health"]
+    assert isinstance(health, HealthHandler)
+    assert health._output_health is output_health

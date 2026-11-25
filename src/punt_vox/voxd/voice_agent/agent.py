@@ -43,12 +43,16 @@ class VoiceAgent:
         *,
         path: Path | None = None,  # None selects the daemon's default config path.
     ) -> Self:
-        """Bind the agent to the per-user daemon config or a separate test path."""
+        """Bind the agent to the per-user daemon config or a separate test path.
+
+        The default path is the control's: a fake endpoint gets its own
+        registration file, so fake and live registrations never meet.
+        """
         self = super().__new__(cls)
         self._control = control
-        self._file = AtomicFile(
-            path if path is not None else config_dir() / "voice-agent.json"
-        )
+        live = config_dir() / "voice-agent.json"
+        default = control.registration_path(live)
+        self._file = AtomicFile(path if path is not None else default)
         self._lock = SiblingLock(self._file.path)
         return self
 
@@ -63,17 +67,30 @@ class VoiceAgent:
                 stored = None
             if stored is None:
                 stored = self._provision(ordered, fingerprint)
-            if stored.configuration_hash != fingerprint:
-                msg = "Vox voice agent configuration changed; run `vox call teardown`"
-                raise ConvAIError(msg)
-            agent_id = stored.agent_id
-            if agent_id is None:
-                msg = "No provisioned ElevenLabs agent"
-                raise ConvAIError(msg)
+            agent_id = self._usable_agent_id(stored, fingerprint)
         return self._control.signed_url(agent_id), stored.tool_ids
 
+    @staticmethod
+    def _usable_agent_id(stored: Registration, fingerprint: str) -> str:
+        """Return the agent id of a registration that matches this catalog, or raise."""
+        if stored.configuration_hash != fingerprint:
+            msg = "Vox voice agent configuration changed; run `vox call teardown`"
+            raise ConvAIError(msg)
+        if stored.agent_id is None:
+            msg = "No provisioned ElevenLabs agent"
+            raise ConvAIError(msg)
+        return stored.agent_id
+
     def teardown(self) -> None:
-        """Delete managed resources; retain the config if deletion must be retried."""
+        """Delete managed resources; retain the config if deletion must be retried.
+
+        The registration file goes under the lock; the lock file itself
+        stays, for a fake endpoint as for the live one. Unlinking a flock
+        path is unsafe: a waiter that already opened the old inode would
+        hold a lock on it while a newcomer created a fresh file at the same
+        path, and both would believe they held the lock. One small lock
+        file per fake port is the price of that safety.
+        """
         with self._locked():
             if (stored := self._read()) is not None:
                 self._delete(stored)

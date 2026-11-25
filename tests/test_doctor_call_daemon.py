@@ -79,7 +79,7 @@ def test_mic_check_never_captures_in_the_doctor_process() -> None:
     """The check talks to the daemon only; no capture backend is imported here."""
     with (
         patch.object(DaemonControl, "request", return_value=_reply(5)),
-        patch("punt_vox.voxd.mic_probe.sounddevice_capture") as local_capture,
+        patch("punt_vox.voxd.mic_probe.SoundDeviceCapture") as local_capture,
     ):
         MicCaptureCheck().run()
     local_capture.assert_not_called()

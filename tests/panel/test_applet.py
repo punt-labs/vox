@@ -51,16 +51,18 @@ def _isolate_claim_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def _isolate_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Redirect ``_leg_for``'s config-dir lookup into *tmp_path*.
 
-    ``_leg_for`` builds its ``ConfigStore`` from ``find_config_dir()``, which
-    walks the process cwd's parents for a ``.punt-labs/vox`` directory. Pinning
-    the lookup at an empty tmp directory means the panel's store reads no
-    ambient repo config -- the test does not rely on where it happens to run.
+    ``_leg_for`` builds a ``RepoConfig``, whose reads go through
+    ``find_config_dir()``, which walks the process cwd's parents for a
+    ``.punt-labs/vox`` directory. Pinning the lookup at an empty tmp
+    directory means the panel's store reads no ambient repo config -- the
+    test does not rely on where it happens to run.
     """
 
     def _pinned(_start: Path | None = None) -> Path:
         return tmp_path
 
-    monkeypatch.setattr("punt_vox.panel.applet.find_config_dir", _pinned)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", _pinned)
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _pinned)
 
 
 class TestForSession:

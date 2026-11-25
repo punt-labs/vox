@@ -44,12 +44,14 @@ class VoiceCallCli:
         return super().__new__(cls)
 
     @classmethod
-    def register(cls, app: typer.Typer) -> None:
-        """Register the bare call and its subcommands."""
+    def build_app(cls) -> typer.Typer:
+        """Build a Typer group for the call lifecycle commands."""
+        app = typer.Typer(help="Place or manage a Vox call.")
         cli = cls()
         app.callback(invoke_without_command=True)(cli.call)
-        app.command("status")(cli.status)
         app.command("teardown")(cli.teardown)
+        app.command("stop")(VoiceCall().stop)
+        return app
 
     def call(
         self,
@@ -64,26 +66,18 @@ class VoiceCallCli:
             VoiceCall().start(
                 VoiceCallOptions.from_flags(script, headset=headset, aec=aec)
             )
-        elif option := next(
-            (
-                flag
-                for flag, used in (
-                    ("--script", script is not None),
-                    ("--headset", headset),
-                    ("--aec", aec),
-                )
-                if used
-            ),
-            None,
-        ):
+        else:
+            self._reject_call_only_options(
+                {"--script": script is not None, "--headset": headset, "--aec": aec}
+            )
+
+    @staticmethod
+    def _reject_call_only_options(options: dict[str, bool]) -> None:
+        if option := next((flag for flag, used in options.items() if used), None):
             raise typer.BadParameter(
                 f"{option} before a subcommand applies only to bare `vox call`",
                 param_hint=option,
             )
-
-    def status(self) -> None:
-        """Show voxd's call: state, tool calls, transcript so far."""
-        VoiceCall().status()
 
     def teardown(self) -> None:
         """Delete the managed ElevenLabs agent and tools when no call is active."""

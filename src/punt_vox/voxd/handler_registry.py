@@ -11,7 +11,7 @@ from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 from punt_vox.voxd.recording_handlers import RecordingHandlers
-from punt_vox.voxd.speech_handlers import SynthesizeHandler
+from punt_vox.voxd.synthesize_handler import SynthesizeHandler
 from punt_vox.voxd.system_routes import SystemRoutes
 from punt_vox.voxd.workers.context import WorkerContext
 
@@ -32,8 +32,8 @@ class HandlerRegistry:
     """Assemble the ``{message type -> handler}`` dispatch table.
 
     Extracted from the daemon composition root so wiring the concrete handlers
-    lives in one focused module rather than fanning every handler import into
-    the daemon; the subsystem-free routes come from :class:`SystemRoutes`.
+    (and the dedup/chime collaborators they need) lives in one focused module
+    rather than fanning every handler import into the daemon.
     """
 
     __slots__ = ("_health", "_playback", "_programs", "_synthesis")
@@ -77,7 +77,11 @@ class HandlerRegistry:
             "cache_status": CacheStatusHandler(cache_status),
             "cache_clear": CacheClearHandler(cache_clear),
             "set_log_level": LogLevelHandler(apply_log_level),
-            **SystemRoutes.build(playback=self._playback, health=self._health),
+            **SystemRoutes.build(
+                playback=self._playback,
+                health=self._health,
+                output_health=self._programs.output_health,
+            ),
             "provider_status": ProviderStatusHandler(env_lock=self._synthesis.env_lock),
             **WorkerContext.handlers(
                 self._playback,

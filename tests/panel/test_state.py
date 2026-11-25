@@ -8,6 +8,7 @@ from punt_vox.panel.state import PanelState
 
 if TYPE_CHECKING:
     from punt_vox.config import VoxConfig
+    from punt_vox.voice_target import VoiceTarget
 
 
 @final
@@ -32,10 +33,12 @@ class _FakeClient:
     def __init__(self, voices: list[str]) -> None:
         self._voices = voices
         self.last_provider_arg: str | None = None
+        self.last_model_arg: str | None = None
         self.call_count = 0
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        self.last_provider_arg = provider
+    def voices(self, provider: VoiceTarget) -> list[str]:
+        self.last_provider_arg = provider.provider
+        self.last_model_arg = provider.model
         self.call_count += 1
         return self._voices
 
@@ -68,22 +71,51 @@ class TestEmpty:
 
 class TestRead:
     def test_reads_config_and_roster(self) -> None:
-        state = PanelState.read(
-            _FakeClient(["aria", "roger"]),
-            _FakeStore(_config(provider="elevenlabs")),
+        state = PanelState.read(_FakeStore(_config(provider="elevenlabs"))).with_roster(
+            _FakeClient(["aria", "roger"])
         )
         assert state.notify == "y"
         assert state.speak == "y"
         assert state.voice == "roger"
         assert state.roster == ("aria", "roger")
 
-    def test_reads_provider_and_model_from_config(self) -> None:
-        state = PanelState.read(
-            _FakeClient(["aria"]),
-            _FakeStore(_config(provider="openai", model="tts-1")),
+    def test_refreshes_the_roster_for_a_new_selection_missing_from_it(self) -> None:
+        client = _FakeClient(["aria", "roger"])
+        store = _FakeStore(_config(provider="elevenlabs"))
+        previous = PanelState(
+            notify="y",
+            speak="y",
+            voice="aria",
+            roster=("aria",),
+            provider="elevenlabs",
         )
+
+        state = PanelState.read(store).with_roster(client, previous=previous)
+        assert state.voice == "roger"
+        assert state.roster == ("aria", "roger")
+        assert PanelState.read(store).with_roster(client, previous=state) == state
+        assert client.call_count == 1
+
+    def test_refreshes_the_roster_when_the_model_changes(self) -> None:
+        client = _FakeClient(["roger", "aria"])
+        previous = PanelState.read(
+            _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))
+        ).with_roster(client)
+        state = PanelState.read(
+            _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
+        ).with_roster(client, previous=previous)
+        assert client.call_count == 2
+        assert client.last_model_arg == "eleven_flash_v2_5"
+        assert state.roster == previous.roster
+
+    def test_reads_provider_and_model_from_config(self) -> None:
+        client = _FakeClient(["marin"])
+        state = PanelState.read(
+            _FakeStore(_config(provider="openai", model="gpt-4o-mini-tts"))
+        ).with_roster(client)
         assert state.provider == "openai"
-        assert state.model == "tts-1"
+        assert state.model == "gpt-4o-mini-tts"
+        assert client.last_model_arg == state.model
 
     def test_roster_fetch_carries_the_current_provider(self) -> None:
         """PanelState.read asks voxd for the CURRENT provider's roster.
@@ -93,7 +125,7 @@ class TestRead:
         the previous roster until voxd restarts.
         """
         client = _FakeClient(["en", "en-us"])
-        PanelState.read(client, _FakeStore(_config(provider="espeak")))
+        PanelState.read(_FakeStore(_config(provider="espeak"))).with_roster(client)
         assert client.last_provider_arg == "espeak"
 
     def test_roster_fetch_skipped_when_provider_unset(self) -> None:
@@ -103,7 +135,7 @@ class TestRead:
         daemon is not asked to guess a provider.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config()))
+        state = PanelState.read(_FakeStore(_config())).with_roster(client)
         assert client.call_count == 0
         assert state.roster == ()
 
@@ -115,7 +147,7 @@ class TestRead:
         the voice-roster request.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config(provider="   ")))
+        state = PanelState.read(_FakeStore(_config(provider="   "))).with_roster(client)
         assert state.provider is None
         assert state.roster == ()
         assert client.call_count == 0
@@ -127,7 +159,7 @@ class TestRead:
         crosses the boundary.
         """
         client = _FakeClient(["aria"])
-        state = PanelState.read(client, _FakeStore(_config(provider="")))
+        state = PanelState.read(_FakeStore(_config(provider=""))).with_roster(client)
         assert state.provider is None
         assert client.call_count == 0
 
@@ -139,7 +171,9 @@ class TestRead:
         return an empty roster for a name the user typed correctly.
         """
         client = _FakeClient(["aria", "roger"])
-        state = PanelState.read(client, _FakeStore(_config(provider="  elevenlabs  ")))
+        state = PanelState.read(
+            _FakeStore(_config(provider="  elevenlabs  "))
+        ).with_roster(client)
         assert state.provider == "elevenlabs"
         assert client.last_provider_arg == "elevenlabs"
 
@@ -155,8 +189,8 @@ class TestRead:
         """
         client = _FakeClient(["aria"])
         state = PanelState.read(
-            client, _FakeStore(_config(provider="elevenlabs", model="   "))
-        )
+            _FakeStore(_config(provider="elevenlabs", model="   "))
+        ).with_roster(client)
         assert state.model is None
 
 
@@ -238,18 +272,6 @@ class TestWithField:
         assert after.roster == ("only", "roger")
         assert after.model == "eleven_flash_v2_5"
         assert after.voice == "only"
-
-    def test_with_model_stores_cascaded_voice(self) -> None:
-        """The cascade rule stores exactly what the caller resolved."""
-        after = PanelState.empty().with_model("tts-1", voice="alloy")
-        assert after.model == "tts-1"
-        assert after.voice == "alloy"
-
-    def test_with_model_voice_none_stores_none(self) -> None:
-        """A ``voice=None`` cascade (empty roster) is stored verbatim."""
-        after = PanelState.empty().with_model("tts-1", voice=None)
-        assert after.model == "tts-1"
-        assert after.voice is None
 
 
 class TestScene:

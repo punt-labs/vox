@@ -220,11 +220,12 @@ class TestCheckDaemonHealth:
         )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()
-        assert len(results) == 1
+        assert len(results) == 2
         assert results[0].passed is True
         assert "8421" in results[0].message
         # The daemon has no provider of its own; readiness is reported separately.
         assert "provider:" not in results[0].message
+        assert results[1].status_kind == "skip"
 
     def test_daemon_running_version_mismatch(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
@@ -233,7 +234,7 @@ class TestCheckDaemonHealth:
         )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()
-        assert len(results) == 1
+        assert len(results) == 2
         assert results[0].passed is False
         assert results[0].symbol == "⚠"
         assert "4.8.0" in results[0].message
@@ -243,15 +244,16 @@ class TestCheckDaemonHealth:
         mock_client = MagicMock(spec=VoxClientSync)
         mock_client.health.side_effect = VoxdRefusedError("refused")
         results = DoctorCheck(client=mock_client).check_daemon_health()
-        assert len(results) == 1
+        assert len(results) == 2
         assert results[0].passed is False
         assert "not running" in results[0].message
+        assert results[1].status_kind == "skip"
 
     def test_daemon_unhealthy(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
         mock_client.health.side_effect = VoxdProtocolError("bad state")
         results = DoctorCheck(client=mock_client).check_daemon_health()
-        assert len(results) == 1
+        assert len(results) == 2
         assert results[0].passed is False
         assert "unhealthy" in results[0].message
 
@@ -410,7 +412,7 @@ class TestCheckUvx:
 
 
 # ---------------------------------------------------------------------------
-# check_music_dir / check_output_dir
+# Daemon output rows
 # ---------------------------------------------------------------------------
 
 
@@ -419,11 +421,13 @@ def test_dir_checks_delegate_to_output_dir_check() -> None:
     music = CheckResult.warn("output music dir: absent")
     output = CheckResult.ok("output: writable")
     with (
-        patch("punt_vox.doctor.OutputDirCheck.music_dir", return_value=[music]),
-        patch("punt_vox.doctor.OutputDirCheck.output_dir", return_value=[output]),
+        patch("punt_vox.doctor.OutputDirCheck") as check,
     ):
-        assert DoctorCheck().check_music_dir() == [music]
-        assert DoctorCheck().check_output_dir() == [output]
+        client = MagicMock(spec=VoxClientSync)
+        client.health.return_value = HealthStatus()
+        check.return_value.run.return_value = [music, output]
+        results = DoctorCheck(client=client).check_daemon_health()
+        assert results[1:] == [music, output]
 
 
 # ---------------------------------------------------------------------------
@@ -718,7 +722,6 @@ class TestRunAll:
         config_path = tmp_path / "sekret-home" / "config.json"
         with (
             patch("punt_vox.doctor.shutil.which", return_value=which_path),
-            patch("punt_vox.doctor_output.default_output_dir", return_value=tmp_path),
             patch(
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
@@ -762,7 +765,7 @@ def test_a_daemon_that_rejects_the_handshake_is_never_not_running() -> None:
         client = VoxClientSync(host="127.0.0.1", port=port, token="wrong")
         results = DoctorCheck(client=client).check_daemon_health()
         thread.join(timeout=5.0)
-    assert len(results) == 1
+    assert len(results) == 2
     assert results[0].passed is False
     message = results[0].message
     assert "not running" not in message

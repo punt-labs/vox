@@ -15,6 +15,9 @@ warnings.filterwarnings(
 )
 from pydub import AudioSegment as AudioSegment  # noqa: E402
 
+_TRAILING_SILENCE_MS = 150
+_TAIL_FADE_MS = 20
+
 
 @final
 class MP3Assembly:
@@ -59,6 +62,16 @@ class MP3Assembly:
             frame_rate=self._head.frame_rate,
             channels=self._head.channels,
         )
+
+    def export_padded(self, output_path: Path) -> None:
+        """Fade the speech tail before appending the playback guard silence."""
+        audio = self.build()
+        fade_ms = min(len(audio), _TAIL_FADE_MS)
+        faded = audio.fade_out(fade_ms) if fade_ms else audio
+        tail = AudioSegment.silent(
+            duration=_TRAILING_SILENCE_MS, frame_rate=self._head.frame_rate
+        )
+        (faded + tail).export(str(output_path), format="mp3")
 
     @staticmethod
     def _read_segment(path: Path) -> AudioSegment:

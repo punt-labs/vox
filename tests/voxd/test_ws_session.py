@@ -15,10 +15,13 @@ from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 from punt_vox.types_audio import FETCH_CHUNK_BYTES
 from punt_vox.voxd import recording_handlers
 from punt_vox.voxd.fetch_digest import FetchDigest
+from punt_vox.voxd.record_store import RecordingEntry, RecordStore
 from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.ws_session import WebSocketSession
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -33,15 +36,19 @@ def router(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WebSocketRouter:
 class _FetchPeer:
     """Drive the router's receive and send sides independently."""
 
-    __slots__ = ("_inbox", "_sent", "_task")
+    __slots__ = ("_inbox", "_receive_failed", "_received", "_sent", "_task")
 
     _inbox: asyncio.Queue[str | Exception]
+    _receive_failed: asyncio.Event
+    _received: asyncio.Queue[str]
     _sent: list[dict[str, object]]
     _task: asyncio.Task[None]
 
     def __new__(cls, router: WebSocketRouter) -> _FetchPeer:
         self = super().__new__(cls)
         self._inbox = asyncio.Queue()
+        self._receive_failed = asyncio.Event()
+        self._received = asyncio.Queue()
         self._sent = []
         socket = AsyncMock(spec=WebSocket)
         socket.headers = {}
@@ -58,6 +65,12 @@ class _FetchPeer:
     async def wait_closed(self) -> None:
         await self._task
 
+    async def wait_receive_failure(self) -> None:
+        await self._receive_failed.wait()
+
+    async def wait_received(self) -> str:
+        return await self._received.get()
+
     def send(self, kind: str, label: str) -> None:
         self._inbox.put_nowait(json.dumps({"type": kind, "id": label, "ref": label}))
 
@@ -69,7 +82,9 @@ class _FetchPeer:
     async def _receive(self) -> str:
         frame = await self._inbox.get()
         if isinstance(frame, Exception):
+            self._receive_failed.set()
             raise frame
+        self._received.put_nowait(frame)
         return frame
 
 
@@ -152,6 +167,67 @@ async def test_fetch_peer_disconnect_stops_measurement(
         assert reads.count(active) == 1
 
 
+async def test_rec_list_peer_disconnect_stops_scan_between_batches(
+    router: WebSocketRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = Event()
+    batches: list[int] = []
+
+    def scan(_store: RecordStore) -> Iterator[list[RecordingEntry]]:
+        batches.append(1)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(5), "test did not release the scan"
+        yield [RecordingEntry("first.mp3", 0)]
+        batches.append(2)
+        yield [RecordingEntry("second.mp3", 0)]
+
+    monkeypatch.setattr(RecordStore, "entry_batches", scan)
+    peer = _FetchPeer(router)
+    peer.send("rec_list", "r")
+    try:
+        async with asyncio.timeout(2):
+            await entered.wait()
+            peer.disconnect()
+            await asyncio.shield(peer.wait_closed())
+        assert not peer.sent
+    finally:
+        release.set()
+        await asyncio.wait_for(peer.wait_closed(), timeout=5)
+        await loop.shutdown_default_executor()
+    assert batches == [1]
+
+
+async def test_program_list_peer_disconnect_cancels_active_handler() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def list_albums(msg: dict[str, object], websocket: WebSocket) -> None:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    peer = _FetchPeer(
+        WebSocketRouter(handlers={"program_list": list_albums}, auth_token=None)
+    )
+    peer.send("program_list", "albums")
+    try:
+        async with asyncio.timeout(2):
+            await started.wait()
+            peer.disconnect()
+            await asyncio.shield(peer.wait_closed())
+    finally:
+        release.set()
+        await asyncio.wait_for(peer.wait_closed(), timeout=5)
+    assert cancelled.is_set()
+    assert not peer.sent
+
+
 @pytest.mark.parametrize("broken_receive", [False, True])
 async def test_fetch_keeps_pipelined_replies_in_request_order(
     router: WebSocketRouter,
@@ -162,7 +238,9 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
 ) -> None:
     (tmp_path / "r.mp3").write_bytes(b"data")
     started, resume, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    watcher_finished = asyncio.Event()
     original_measure = FetchDigest.measure
+    original_watch = WebSocketSession._watch_stream
 
     async def measure(digest: FetchDigest, path: Path) -> object:
         started.set()
@@ -173,7 +251,12 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
         await websocket.send_json({"type": "next", "id": msg["id"]})
         finished.set()
 
+    async def watch(session: WebSocketSession, fetch: asyncio.Task[None]) -> None:
+        await original_watch(session, fetch)
+        watcher_finished.set()
+
     monkeypatch.setattr(FetchDigest, "measure", measure)
+    monkeypatch.setattr(WebSocketSession, "_watch_stream", watch)
     router.handlers["next"] = next_request
     peer = _FetchPeer(router)
     try:
@@ -183,7 +266,12 @@ async def test_fetch_keeps_pipelined_replies_in_request_order(
             peer.send("next", "after")
             if broken_receive:
                 peer.disconnect(RuntimeError("broken receive"))
-            await asyncio.sleep(0)
+                await peer.wait_receive_failure()
+                await watcher_finished.wait()
+            else:
+                assert json.loads(await peer.wait_received())["id"] == "r.mp3"
+                assert json.loads(await peer.wait_received())["id"] == "after"
+                assert not peer.sent
             resume.set()
             await finished.wait()
     finally:

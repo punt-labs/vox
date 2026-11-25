@@ -23,19 +23,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["TTSClient", "split_text", "stitch_audio"]
 
-# Trailing silence appended to every final output file to prevent
-# MP3 frame truncation / player cutoff at end of audio.
-TRAILING_SILENCE_MS = 150
-
-
-def _pad_audio_file(path: Path) -> None:
-    """Append trailing silence to an MP3 file to prevent end-of-audio clipping."""
-    audio = AudioSegment.from_mp3(str(path))
-    tail = AudioSegment.silent(duration=TRAILING_SILENCE_MS)
-    padded = audio + tail
-    padded.export(str(path), format="mp3")
-
-
 # Sentence-ending punctuation followed by a space.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -137,7 +124,7 @@ class TTSClient:
     ) -> SynthesisResult:
         """Synthesize a single text to an audio file."""
         result = self._provider.synthesize(request, output_path)
-        _pad_audio_file(output_path)
+        MP3Assembly(output_path).export_padded(output_path)
         return result
 
     def synthesize_batch(
@@ -332,7 +319,6 @@ def stitch_audio(segments: list[Path], output_path: Path, pause_ms: int = 500) -
     for path in paths:
         combined.append_file(path, silence)
 
-    combined.append(AudioSegment.silent(duration=TRAILING_SILENCE_MS))
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    combined.build().export(str(output_path), format="mp3")
+    combined.export_padded(output_path)
     logger.info("Stitched %d segments → %s", len(segments), output_path)

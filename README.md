@@ -217,12 +217,14 @@ vox also works as a standalone TTS tool, without Claude Code.
 |---------|--------------|
 | `vox say "Hello world"` | Synthesize and play text; reads stdin when piped |
 | `vox say "Wall broadcast" --once 600` | Skip the play if the same text played in the last 600 seconds |
-| `vox vibe excited` | Set the session mood |
+| `vox vibe excited` | Set the session mood and use it as a speech cue on ElevenLabs v3 |
 | `vox notify normal` | Notify on task completion and permission prompts |
 | `vox notify continuous` | Also announce real-time signals |
 | `vox speak n` | Chimes only (`vox speak y` turns speech back on) |
 | `vox voice` | List the voices for the active provider |
+| `vox voice --provider openai` | List OpenAI voices without switching providers |
 | `vox voice matilda` | Set the session voice |
+| `vox voice alloy --provider openai` | Set the session voice only if OpenAI is active |
 | `vox provider` | List the five providers and mark the current one |
 | `vox provider openai` | Set the TTS provider |
 | `vox model` | List the models the current provider offers |
@@ -240,6 +242,39 @@ vox also works as a standalone TTS tool, without Claude Code.
 | `vox rec play 5b9fc536a112.mp3` | Play a stored recording on the daemon's machine |
 | `vox rec get 5b9fc536a112.mp3` | Copy a recording into the current directory |
 | `vox rec remove 5b9fc536a112.mp3` | Delete a recording from the store |
+
+Without `--name`, the recording id depends only on the text. Recording the
+same text again silently replaces the earlier take, even if you change the
+voice or rate. Use a different `--name` for each take (for example,
+`--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
+`--name` only works for a single text segment.
+
+#### Batch segment output
+
+`vox say --from segments.json` and `vox rec new --from segments.json` read a
+JSON array of strings or objects with a string `text` field. Blank segments
+are skipped. With `--json`, stdout is JSON Lines, not a JSON array: each
+successful segment produces one JSON object per line, in input order.
+
+If the daemon rejects a segment or the connection fails during processing,
+the command writes a final `{"error": "..."}` object to stdout, skips the
+remaining segments, and exits nonzero. Earlier results stay in the output.
+An invalid segments file instead produces a single `{"error": "..."}`
+object and exits with status 2 before processing any segments. Successful
+objects do not have an `error` key.
+
+Save stdout before parsing so you can check Vox's exit status separately
+and still read partial results. `jq -c .` reads the objects individually:
+
+```sh
+printf '%s\n' '["First line.", {"text":"Second line."}]' > segments.json
+status=0
+vox rec new --from segments.json --json > results.jsonl || status=$?
+jq -c . results.jsonl
+printf 'Vox exit status: %s\n' "$status" >&2
+```
+
+Use `vox say` in place of `vox rec new` to play the segments instead.
 
 #### Music
 
@@ -302,7 +337,7 @@ vox also works as a standalone TTS tool, without Claude Code.
 vox is also a Python library. It talks to the same `voxd` daemon as the plugin and the CLI; `vox install` is the only setup.
 
 ```python
-from punt_vox import VoxClientSync, SynthesisSpec, VoxError
+from punt_vox import SynthesisSpec, VoiceTarget, VoxClientSync, VoxError
 
 vox = VoxClientSync()  # connects per call — no setup, no teardown
 
@@ -313,8 +348,8 @@ try:
     # ...or get the MP3 bytes to save or stream yourself:
     audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
 
-    # List the voices the active provider offers:
-    print(vox.voices())
+    # List voices for a provider and model (omit the model for its default):
+    print(vox.voices(VoiceTarget("openai", "gpt-4o-mini-tts")))
 except VoxError as exc:  # VoxdConnectionError, VoxdProtocolError, or VoxdRejectionError
     print(f"vox failed: {exc}")
 ```
@@ -625,15 +660,18 @@ pip install "punt-vox[call]"
 `sounddevice` uses PortAudio. On macOS, run `brew install portaudio`; on
 most Linux distributions, install `libportaudio2`.
 
-To let Vox start workers, add the Git repository's absolute path to the
-durable global config (`~/.punt-labs/vox/vox.md` for a user-run daemon).
-Use the daemon's config path if you run it as a system service:
+To let Vox start workers, allowlist the Git repository on the machine that
+runs the daemon:
 
-```yaml
----
-worker_repos: "['/absolute/path/to/vox-demo']"
----
+```bash
+vox worker allow /absolute/path/to/vox-demo
 ```
+
+The path must be a repository top level; `vox worker repos` lists the
+allowlist, `vox worker disallow <path>` removes one, and `vox status` shows
+the allowlisted repositories on its `Workers:` line. The daemon writes the
+list to its own durable config, so the command works the same for a user-run
+daemon and a system service.
 
 This list controls which repositories workers can start in, not which
 commands they can run. Workers inherit the harness's permissions. Vox

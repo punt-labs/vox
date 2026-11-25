@@ -12,6 +12,12 @@
     "added_at": "2026-11-23T19:45:00Z"
   },
   {
+    "file": "src/punt_vox/voxd/conversation_mode/device_table.py",
+    "ceiling": 1,
+    "justify": "Lazy sounddevice import for the optional call extra (PortAudio): DeviceTable re-reads the device table only when a call opens a device, the same per-file PLC0415 ignore portaudio.py, input_device.py and pcm_output.py carry; a top-level import would break voxd start on a host without PortAudio.",
+    "added_at": "2026-11-25T07:29:02.180409Z"
+  },
+  {
     "file": "src/punt_vox/voxd/conversation_mode/git_ignores.py",
     "ceiling": 1,
     "justify": "S603 per-file-ignore: GitIgnores runs a fixed git argv (rev-parse, check-ignore) so the secret guard honours every ignore source git does; no shell, no caller-built program name -- the same allowance every other subprocess module in src has",
@@ -24,15 +30,27 @@
     "added_at": "2026-08-25T08:01:32Z"
   },
   {
+    "file": "src/punt_vox/voxd/conversation_mode/portaudio.py",
+    "ceiling": 1,
+    "justify": "PortAudio moved out of input_device.py into its own module; it keeps the same per-file PLC0415 lazy-import ignore because sounddevice is loaded only when a stream is opened, so voxd starts without the call extra (the pattern every PortAudio-touching module follows)",
+    "added_at": "2026-11-24T22:24:20.963851Z"
+  },
+  {
     "file": "src/punt_vox/voxd/mic_probe.py",
     "ceiling": 1,
-    "justify": "PLC0415 per-file-ignore: sounddevice is the optional call extra, imported inside sounddevice_capture so every voxd start can import this module without PortAudio -- the same allowance pcm_output.py and mic_audio_source.py carry",
-    "added_at": "2026-11-24T07:11:36.517586Z"
+    "justify": "sounddevice is the optional call extra: imported inside the capture so every voxd start can import the module without it (PLC0415 per-file ignore)",
+    "added_at": "2026-11-25T14:22:23.534130Z"
   },
   {
     "file": "src/punt_vox/voxd/pcm_output.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.",
     "added_at": "2026-11-22T07:34:00.284238Z"
+  },
+  {
+    "file": "src/punt_vox/voxd/workers/worktrees.py",
+    "ceiling": 2,
+    "justify": "git worktree add/remove/prune, branch -D and show-ref with a fixed argv list, the same S603/S607 waiver policy.py and command.py carry for their git calls; no shell, no caller text in argv",
+    "added_at": "2026-11-24T16:27:30.168899Z"
   }
 ]

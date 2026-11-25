@@ -10,10 +10,10 @@ from punt_vox._speech_punctuation import SpeechPunctuation
 @pytest.mark.parametrize(
     ("token", "core", "suffix"),
     [
-        ("[\u2212£.50],", "minus 0.50 pounds", ","),
+        ("[\u2212£.50],", "minus 50 pence", ","),
         ("+€1,200!", "plus 1,200 euros", "!"),
         ("$1", "1 dollar", ""),
-        ("$1.00", "1.00 dollars", ""),
+        ("$1.00", "1 dollar", ""),
         ("$HOME", "HOME", ""),
         ("€", "", ""),
     ],
@@ -24,3 +24,78 @@ def test_split_currency_token(token: str, core: str, suffix: str) -> None:
 
 def test_combining_mark_after_trailing_underscore() -> None:
     assert SpeechPunctuation.split("foo_\u0301") == ("foo", "")
+
+
+@pytest.mark.parametrize(
+    ("token", "core", "suffix"),
+    [
+        ("C++", "C plus plus", ""),
+        ("C#", "C sharp", ""),
+        ("F#.", "F sharp", "."),
+        ("(C++),", "C plus plus", ","),
+        ("`C#`", "C sharp", ""),
+        ("Notepad++", "Notepad plus plus", ""),
+        ("i++;", "i plus plus", ";"),
+        ("_C#_", "_C sharp", ""),
+        ("__C++__.", "__C plus plus", "."),
+        ("_count++", "_count plus plus", ""),
+        ("Java/C#", "Java/C sharp", ""),
+        ("C++/C#.", "C++/C sharp", "."),
+        ("C#,C++", "C#,C plus plus", ""),
+        ("Java-C#", "Java-C sharp", ""),
+    ],
+)
+def test_split_keeps_language_name_marks(token: str, core: str, suffix: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, suffix)
+
+
+@pytest.mark.parametrize(
+    ("token", "core"),
+    [("#include", "include"), ("SHA#", "SHA"), ("C++17", "C++17")],
+)
+def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, "")
+
+
+@pytest.mark.parametrize(
+    ("token", "core", "suffix"),
+    [
+        ("5%", "5 percent", ""),
+        ("5%.", "5 percent", "."),
+        ("(5.5%),", "5.5 percent", ","),
+        ("-3%", "-3 percent", ""),
+        ("5\u201310%!", "5 to 10 percent", "!"),
+        ("5-10%", "5 to 10 percent", ""),
+        ("-5\u2013-3%", "-5 to -3 percent", ""),
+        ("`100%`", "100 percent", ""),
+        ("1,000%", "1,000 percent", ""),
+        ("\u22122%", "\u22122 percent", ""),
+        (".5%", ".5 percent", ""),
+        ("1.234,5%", "1.234,5 percent", ""),
+        ("1.234.567%", "1.234.567 percent", ""),
+        ("-.5%", "-.5 percent", ""),
+        ("85%\u201390%,", "85 percent to 90 percent", ","),
+    ],
+)
+def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, suffix)
+
+
+@pytest.mark.parametrize(
+    ("token", "core"),
+    [
+        ("a%b", "a%b"),
+        ("%d", "d"),
+        ("n%", "n"),
+        ("%", ""),
+        ("10%3", "10%3"),
+        ("$5%", "5 dollars"),
+        ("/tmp/5%", "/tmp/5"),
+        ("foo5%", "foo5"),
+        ("v1.2%", "v1.2"),
+        ("5%%", "5"),
+        ("192.168.1.1%", "192.168.1.1"),
+    ],
+)
+def test_split_leaves_other_percent_signs_alone(token: str, core: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, "")

@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+
+import pytest
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_synthesis import SynthesisSpec
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _echo(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
@@ -24,28 +22,29 @@ def _echo(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
 
 
 class TestRender:
-    """``render`` synthesizes each non-empty segment against the defaults."""
+    """Only validated batches can render against the defaults."""
 
     def test_renders_each_segment(self) -> None:
         segments = [{"text": "one"}, {"text": "two"}]
-        batch = SegmentBatch(segments, SynthesisSpec(voice="roger"))
+        batch = SegmentBatch(segments)
 
-        results = json.loads(batch.render(handler=_echo, error_label="Test"))
+        results = json.loads(
+            batch.render(
+                SynthesisSpec(voice="roger"), handler=_echo, error_label="Test"
+            )
+        )
 
         assert [r["text"] for r in results] == ["one", "two"]
 
-    def test_skips_empty_and_missing_text(self) -> None:
-        segments = [{"text": "keep"}, {"text": ""}, {"voice": "x"}]
-        batch = SegmentBatch(segments, SynthesisSpec())
+    def test_mixed_batch_fails_at_construction(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"segments\[1\]\.text must be a non-blank"
+        ):
+            SegmentBatch([{"text": "keep"}, {"text": ""}, {"voice": "x"}])
 
-        results = json.loads(batch.render(handler=_echo, error_label="Test"))
-
-        assert [r["text"] for r in results] == ["keep"]
-
-    def test_empty_segments_yield_empty_list(self) -> None:
-        batch = SegmentBatch([], SynthesisSpec())
-
-        assert batch.render(handler=_echo, error_label="Test") == "[]"
+    def test_empty_batch_fails_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="segments must contain at least one"):
+            SegmentBatch([])
 
 
 class TestOverrides:
@@ -56,21 +55,23 @@ class TestOverrides:
             {"text": "hi", "voice": "sam", "language": "de", "vibe_tags": "[x]"}
         ]
         defaults = SynthesisSpec(voice="roger", language="en", vibe_tags="[y]")
-        batch = SegmentBatch(segments, defaults)
+        batch = SegmentBatch(segments)
 
-        result = json.loads(batch.render(handler=_echo, error_label="Test"))[0]
+        result = json.loads(batch.render(defaults, handler=_echo, error_label="Test"))[
+            0
+        ]
 
         assert result["voice"] == "sam"
         assert result["language"] == "de"
         assert result["vibe_tags"] == "[x]"
 
     def test_defaults_fill_omitted_fields(self) -> None:
-        batch = SegmentBatch(
-            [{"text": "hi"}],
-            SynthesisSpec(voice="roger", language="en", vibe_tags="[y]"),
-        )
+        batch = SegmentBatch([{"text": "hi"}])
+        defaults = SynthesisSpec(voice="roger", language="en", vibe_tags="[y]")
 
-        result = json.loads(batch.render(handler=_echo, error_label="Test"))[0]
+        result = json.loads(batch.render(defaults, handler=_echo, error_label="Test"))[
+            0
+        ]
 
         assert result["voice"] == "roger"
         assert result["language"] == "en"
@@ -84,9 +85,11 @@ class TestErrorHandling:
         def boom(_text: str, _spec: SynthesisSpec) -> dict[str, object]:
             raise VoxdConnectionError("voxd down")
 
-        batch = SegmentBatch([{"text": "hi"}], SynthesisSpec())
+        batch = SegmentBatch([{"text": "hi"}])
 
-        result = json.loads(batch.render(handler=boom, error_label="Test"))
+        result = json.loads(
+            batch.render(SynthesisSpec(), handler=boom, error_label="Test")
+        )
 
         assert result == {"error": "voxd down"}
 
@@ -94,9 +97,11 @@ class TestErrorHandling:
         def boom(_text: str, _spec: SynthesisSpec) -> dict[str, object]:
             raise VoxdProtocolError("bad frame")
 
-        batch = SegmentBatch([{"text": "hi"}], SynthesisSpec())
+        batch = SegmentBatch([{"text": "hi"}])
 
-        result = json.loads(batch.render(handler=boom, error_label="Test"))
+        result = json.loads(
+            batch.render(SynthesisSpec(), handler=boom, error_label="Test")
+        )
 
         assert result == {"error": "bad frame"}
 
@@ -106,9 +111,11 @@ class TestErrorHandling:
         def boom(_text: str, _spec: SynthesisSpec) -> dict[str, object]:
             raise ValueError("bad value")
 
-        batch = SegmentBatch([{"text": "hi"}], SynthesisSpec())
+        batch = SegmentBatch([{"text": "hi"}])
 
-        result = json.loads(batch.render(handler=boom, error_label="Record"))
+        result = json.loads(
+            batch.render(SynthesisSpec(), handler=boom, error_label="Record")
+        )
 
         assert result == {"error": "bad value"}
         assert "Record failed" in caplog.text
@@ -127,9 +134,11 @@ class TestPartialFailure:
                 raise VoxdProtocolError("segment 2 died")
             return {"id": f"{text}.mp3", "bytes": 3}
 
-        batch = SegmentBatch([{"text": "one"}, {"text": "two"}], SynthesisSpec())
+        batch = SegmentBatch([{"text": "one"}, {"text": "two"}])
 
-        result = json.loads(batch.render(handler=handler, error_label="Record"))
+        result = json.loads(
+            batch.render(SynthesisSpec(), handler=handler, error_label="Record")
+        )
 
         assert result["error"] == "segment 2 died"
         assert result["results"] == [{"id": "one.mp3", "bytes": 3}]
@@ -139,8 +148,10 @@ class TestPartialFailure:
         def boom(_text: str, _spec: SynthesisSpec) -> dict[str, object]:
             raise VoxdConnectionError("voxd down")
 
-        batch = SegmentBatch([{"text": "one"}], SynthesisSpec())
+        batch = SegmentBatch([{"text": "one"}])
 
-        result = json.loads(batch.render(handler=boom, error_label="Record"))
+        result = json.loads(
+            batch.render(SynthesisSpec(), handler=boom, error_label="Record")
+        )
 
         assert result == {"error": "voxd down"}

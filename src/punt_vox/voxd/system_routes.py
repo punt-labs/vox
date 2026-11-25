@@ -1,9 +1,8 @@
 """Build the daemon's system routes: chime, voices, health and the mic probe.
 
-The handler registry once imported each system handler and its chime
-collaborators directly, which pushed its fan-out past the module coupling
-limit. These four routes share nothing with synthesis or programs, so they
-are assembled here and the registry imports one name.
+These four routes share nothing with synthesis or programs. Assembling them
+here, with the chime collaborators they need, keeps the handler registry's
+fan-out within the module coupling limit: it imports one name.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHan
 
 if TYPE_CHECKING:
     from punt_vox.voxd.health import DaemonHealth
+    from punt_vox.voxd.output_health import OutputHealth
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.types import MessageHandler
 
@@ -31,7 +31,10 @@ class SystemRoutes:
 
     @staticmethod
     def build(
-        *, playback: PlaybackQueue, health: DaemonHealth
+        *,
+        playback: PlaybackQueue,
+        health: DaemonHealth,
+        output_health: OutputHealth | None = None,  # absent in a bare build
     ) -> dict[str, MessageHandler]:
         """Return the chime, voices, health and mic probe routes."""
         return {
@@ -41,6 +44,6 @@ class SystemRoutes:
                 playback=playback,
             ),
             "voices": VoicesHandler(),
-            "health": HealthHandler(health=health),
+            "health": HealthHandler(health=health, output_health=output_health),
             "mic_probe": MicProbeHandler(),
         }

@@ -26,12 +26,15 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.programs.control_signal import ControlSignal
+from punt_vox.voxd.programs.control_queue import ControlQueue
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.mode_transition_log import ModeTransitionLog
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.programs.change_signal import ChangeSignal
+    from punt_vox.voxd.programs.control_signal import ControlSignal
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
     from punt_vox.voxd.programs.playback_source import PlaybackSource
 
@@ -60,7 +63,7 @@ class ControlChannel:
         "_source",
     )
     _source: PlaybackSource
-    _queue: asyncio.Queue[ControlSignal]
+    _queue: ControlQueue
     _changed: asyncio.Event
     _interrupt: asyncio.Event
     _reconciler: FillReconciler | None
@@ -71,7 +74,7 @@ class ControlChannel:
         """Create a control channel."""
         self = super().__new__(cls)
         self._source = source
-        self._queue = asyncio.Queue()
+        self._queue = ControlQueue()
         self._changed = asyncio.Event()
         self._interrupt = asyncio.Event()
         self._reconciler = None
@@ -91,6 +94,20 @@ class ControlChannel:
     def source(self) -> PlaybackSource:
         """Return the active source this channel is the sole writer to."""
         return self._source
+
+    def apply_transport(self, action: Callable[[], None]) -> bool:
+        """Apply and publish an in-place transport action on an active source.
+
+        Return False for an off Program without running the action or emitting
+        a change. For an active Program or replay Selection, run the action,
+        emit a change, and return True. This changes suspension, not the
+        source cursor, so no control signal is enqueued.
+        """
+        if self._queue.is_off(self._source):
+            return False
+        action()
+        self._emit_change()
+        return True
 
     def retarget(self, source: PlaybackSource) -> None:
         """Swap which source the sole writer animates (a switch to program/replay).
@@ -112,9 +129,9 @@ class ControlChannel:
         """Return the event set when an interrupting command is applied."""
         return self._interrupt
 
-    def post(self, signal: ControlSignal) -> None:
-        """Enqueue a command for the single consumer to apply."""
-        self._queue.put_nowait(signal)
+    def post(self, signal: ControlSignal) -> bool:
+        """Enqueue a command, or refuse a user step if the queue tail is off."""
+        return self._queue.post(self._source, signal)
 
     async def serve(self) -> None:
         """Drain and apply commands forever -- the sole writer to the source."""

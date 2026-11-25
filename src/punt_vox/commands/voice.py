@@ -1,23 +1,26 @@
 """``vox voice`` -- list or set the session voice for the active provider.
 
-The command is a callable object (:class:`VoiceCommand`) so both surfaces
-share one instance and the ratchet counts the class-per-command shape
-the rest of vox uses (see :class:`~punt_vox.server_switches.VoiceTool`).
+The CLI command and MCP voice tool share the voice-selection rules in
+:class:`~punt_vox.voice_roster.VoiceRoster`.
 """
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
+from punt_vox.voice_roster import RosterError, VoiceRoster
+from punt_vox.voice_target import VoiceTarget
+
+if TYPE_CHECKING:
+    from punt_vox.config import VoxConfig
 
 
 @final
 class VoiceCommand:
-    """List or set the session voice for the active (or given) provider."""
+    """List a provider's voices or set the active provider's voice."""
 
     __slots__ = ()
 
@@ -30,57 +33,55 @@ class VoiceCommand:
     ) -> CommandResult:
         """List the roster (no arg) or set the session voice (name given).
 
-        Roster branch: reach voxd through :attr:`Ctx.client` for the current
-        provider's voices; a daemon fault is reported as an error result the
-        CLI adapter turns into exit code 1.
+        Listing uses the requested provider or the active one. Setting a
+        voice requires an active provider and accepts a roster name or a raw
+        ElevenLabs ID. An explicit provider must match the active one.
 
         Set branch: strip a stray leading ``@`` via
         :meth:`SynthesisSpec.normalize_voice`; a blank/lone-``@`` write
         returns an error result rather than corrupting the config.
         """
-        cfg = ctx.store.read()
-
         if name is None:
-            return self._list(ctx, provider, cfg.voice)
-
-        # Voice names are provider-scoped, so setting requires a provider.
-        if not cfg.provider:
-            message = str(ProviderNotConfiguredError.for_cli())
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
-
+            cfg = ctx.store.read()
+            return self._list(ctx, provider or cfg.provider, cfg)
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
-            return CommandResult(
-                text="voice name is empty",
-                json_data={"error": "voice name is empty"},
-                error=True,
-                exit_code=1,
-            )
+            return self._error("voice name is empty", prefix="")
+        return self._set(ctx, normalized, provider)
+
+    @classmethod
+    def _set(cls, ctx: Ctx, name: str, target: str | None) -> CommandResult:
         try:
-            ctx.store.write_field("voice", normalized)
-        except ValueError as exc:
-            # ConfigStore rejects control chars / unescaped quotes in string
-            # values (raises ConfigValueError, a ValueError subclass). Return a
-            # clean error envelope rather than let the exception cross the
-            # boundary as a traceback.
-            message = str(exc)
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
-        return CommandResult(
-            text=f"{normalized}'s here.", json_data={"voice": normalized}
-        )
+            cfg = ctx.store.read()
+            active = cls._require_provider(target, cfg.provider)
+            voice_target = VoiceTarget(active, cfg.model)
+            if (
+                error := VoiceRoster.selection_error(ctx.client, voice_target, name)
+            ) is not None:
+                return cls._error(error)
+
+            def check(fields: dict[str, str]) -> None:
+                cls._require_provider(active, fields.get("provider"))
+                voice_target.require_current_model(fields)
+
+            ctx.store.write_field("voice", name, check=check)
+        except (OSError, ValueError) as exc:
+            return cls._error(str(exc))
+        return CommandResult(text=f"{name}'s here.", json_data={"voice": name})
 
     @staticmethod
-    def _list(ctx: Ctx, provider: str | None, current: str | None) -> CommandResult:
+    def _require_provider(target: str | None, active: str | None) -> str:
+        if not active:
+            raise ProviderNotConfiguredError.for_cli()
+        if target and target.lower() != active.lower():
+            msg = (
+                f"Cannot set a voice for {target!r}: the active provider is {active!r}."
+            )
+            raise ValueError(msg)
+        return active
+
+    @classmethod
+    def _list(cls, ctx: Ctx, provider: str | None, cfg: VoxConfig) -> CommandResult:
         """Return the voice roster, or an empty listing when no provider is set.
 
         Listing needs no synthesis, so an unset provider (no ``--provider``
@@ -97,30 +98,29 @@ class VoiceCommand:
         authority on which provider voxd runs) so the empty-roster branch
         must not reach it.
         """
-        cfg = ctx.store.read()
-        resolved = provider or cfg.provider
-        if not resolved:
-            listing: SwitchList = SwitchList(names=(), current=current)
-            payload: dict[str, object] = dict(listing.payload())
-            payload["provider"] = None
-            return CommandResult(
-                text=listing.render("No voices for this provider."),
-                json_data=payload,
+        roster = (
+            VoiceRoster.fetch(
+                ctx.client, VoiceTarget.for_listing(provider, cfg.provider, cfg.model)
             )
-        try:
-            names = ctx.client.voices(resolved)
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            message = str(exc)
-            return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
-                error=True,
-                exit_code=1,
-            )
-        listing = SwitchList(names=tuple(names), current=current)
-        payload = dict(listing.payload())
-        payload["provider"] = resolved
-        return CommandResult(text=listing.render(), json_data=payload)
+            if provider
+            else []
+        )
+        if isinstance(roster, RosterError):
+            return cls._error(roster.message)
+        listing = SwitchList(names=tuple(roster), current=cfg.voice)
+        return CommandResult(
+            text=listing.render("" if provider else "No voices for this provider."),
+            json_data=listing.payload() | {"provider": provider},
+        )
+
+    @staticmethod
+    def _error(message: str, *, prefix: str = "Error: ") -> CommandResult:
+        return CommandResult(
+            text=f"{prefix}{message}",
+            json_data={"error": message},
+            error=True,
+            exit_code=1,
+        )
 
 
 voice: VoiceCommand = VoiceCommand()

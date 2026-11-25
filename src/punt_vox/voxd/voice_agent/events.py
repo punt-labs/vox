@@ -38,10 +38,27 @@ class ClientToolCall:
 
 @dataclass(frozen=True, slots=True)
 class AgentToolResponse:
-    """Acknowledge a tool result on the ElevenLabs side."""
+    """Acknowledge a tool the agent ran, a client tool or a built-in system tool."""
 
     tool_call_id: str
     is_error: bool
+    tool_name: str | None = None  # Some acknowledgements name no tool.
+    tool_type: str | None = None  # "client", or "system" for a built-in tool.
+    is_called: bool = True  # False when the agent skipped the tool or was blocked.
+
+    @property
+    def ends_call(self) -> bool:
+        """Return whether the agent ran its built-in end_call tool and hung up.
+
+        An acknowledgement of a tool that was never run is not a hang-up: the
+        agent decided against it, or the provider blocked it.
+        """
+        return (self.tool_type, self.tool_name, self.is_called, self.is_error) == (
+            "system",
+            "end_call",
+            True,
+            False,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +67,7 @@ class AgentResponse:
 
     text: str
     event_id: int | None  # Some ElevenLabs response frames omit this ID.
-    response_id: str | None = None  # Older responses do not identify corrections.
+    response_id: str | None = None  # Absent, the response cannot be corrected.
 
 
 @dataclass(frozen=True, slots=True)
