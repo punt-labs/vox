@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Self, cast, final
 
 __all__ = ["MicProbeReport"]
 
 
 @final
-@dataclass(frozen=True, slots=True)
 class MicProbeReport:
     """What the daemon heard when it opened its default input device briefly.
 
@@ -19,14 +17,83 @@ class MicProbeReport:
     process) reports ``peak == 0`` while still opening without error.
     ``overflows`` counts the callbacks PortAudio ran late, each of which
     dropped audio before it; a loaded host shows here. The report is the
-    daemon's evidence; the verdict belongs to the caller.
+    daemon's evidence; the verdict belongs to the caller, and the evidence
+    is read-only.
     """
 
-    device: str
-    sample_rate_hz: int
-    peak: int
-    samples: int
-    overflows: int
+    __slots__ = ("_device", "_overflows", "_peak", "_sample_rate_hz", "_samples")
+    _device: str
+    _sample_rate_hz: int
+    _peak: int
+    _samples: int
+    _overflows: int
+
+    def __new__(
+        cls,
+        *,
+        device: str,
+        sample_rate_hz: int,
+        peak: int,
+        samples: int,
+        overflows: int,
+    ) -> Self:
+        """Record one capture window's evidence."""
+        self = super().__new__(cls)
+        self._device = device
+        self._sample_rate_hz = sample_rate_hz
+        self._peak = peak
+        self._samples = samples
+        self._overflows = overflows
+        return self
+
+    @property
+    def device(self) -> str:
+        """The input device's name as PortAudio reports it."""
+        return self._device
+
+    @property
+    def sample_rate_hz(self) -> int:
+        """The capture's sample rate, in hertz."""
+        return self._sample_rate_hz
+
+    @property
+    def peak(self) -> int:
+        """The largest absolute 16-bit sample in the window."""
+        return self._peak
+
+    @property
+    def samples(self) -> int:
+        """How many samples the device delivered."""
+        return self._samples
+
+    @property
+    def overflows(self) -> int:
+        """How many callbacks ran late and dropped audio."""
+        return self._overflows
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, MicProbeReport):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash((MicProbeReport, *self._key()))
+
+    def __repr__(self) -> str:
+        return (
+            f"MicProbeReport(device={self._device!r},"
+            f" sample_rate_hz={self._sample_rate_hz!r}, peak={self._peak!r},"
+            f" samples={self._samples!r}, overflows={self._overflows!r})"
+        )
+
+    def _key(self) -> tuple[str, int, int, int, int]:
+        return (
+            self._device,
+            self._sample_rate_hz,
+            self._peak,
+            self._samples,
+            self._overflows,
+        )
 
     @property
     def delivered(self) -> bool:
@@ -36,21 +103,21 @@ class MicProbeReport:
         or driver that is not producing, not one that is silenced; the two
         need different advice.
         """
-        return self.samples > 0
+        return self._samples > 0
 
     @property
     def signal(self) -> bool:
         """Return whether any non-zero sample arrived."""
-        return self.peak > 0
+        return self._peak > 0
 
     def to_wire(self) -> dict[str, object]:
         """Return the JSON-ready mapping the ``mic_result`` frame carries."""
         return {
-            "device": self.device,
-            "sample_rate_hz": self.sample_rate_hz,
-            "peak": self.peak,
-            "samples": self.samples,
-            "overflows": self.overflows,
+            "device": self._device,
+            "sample_rate_hz": self._sample_rate_hz,
+            "peak": self._peak,
+            "samples": self._samples,
+            "overflows": self._overflows,
         }
 
     @classmethod

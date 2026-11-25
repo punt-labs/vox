@@ -49,3 +49,34 @@ def test_empty_report_delivered_nothing_and_has_no_signal() -> None:
 def test_from_wire_rejects_a_non_mapping_reply() -> None:
     with pytest.raises(ValueError, match="mic probe reply"):
         MicProbeReport.from_wire(["not", "a", "mapping"])
+
+
+def test_report_fields_are_read_only() -> None:
+    """The report is the daemon's evidence; a caller reads it and cannot edit it."""
+    report = MicProbeReport(
+        device="mic", sample_rate_hz=16_000, peak=5, samples=10, overflows=0
+    )
+    assert (report.device, report.sample_rate_hz) == ("mic", 16_000)
+    assert (report.peak, report.samples, report.overflows) == (5, 10, 0)
+    with pytest.raises(AttributeError):
+        report.peak = 0  # type: ignore[misc]  # the assignment is the test
+    assert not hasattr(report, "__dict__")
+
+
+def test_equal_reports_hash_alike_and_repr_as_their_constructor() -> None:
+    report = MicProbeReport(
+        device="mic", sample_rate_hz=16_000, peak=5, samples=10, overflows=1
+    )
+    same = MicProbeReport(
+        device="mic", sample_rate_hz=16_000, peak=5, samples=10, overflows=1
+    )
+    assert report == same
+    assert hash(report) == hash(same)
+    assert report != MicProbeReport(
+        device="mic", sample_rate_hz=16_000, peak=5, samples=10, overflows=2
+    )
+    assert report != "mic"
+    assert repr(report) == (
+        "MicProbeReport(device='mic', sample_rate_hz=16000, peak=5, samples=10,"
+        " overflows=1)"
+    )
