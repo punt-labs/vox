@@ -152,25 +152,29 @@ class MicProbeReport:
         # Wire boundary: JSON yields object until each field is narrowed below.
         fields = cast("Mapping[str, object]", raw)
         device = fields.get("device")
-        rate = fields.get("sample_rate_hz")
-        peak = fields.get("peak")
-        samples = fields.get("samples")
-        overflows = fields.get("overflows")
         platform = fields.get("platform")
-        if not (
-            isinstance(device, str)
-            and isinstance(rate, int)
-            and isinstance(peak, int)
-            and isinstance(samples, int)
-            and isinstance(overflows, int)
-            and isinstance(platform, str)
-        ):
+        if not (isinstance(device, str) and isinstance(platform, str)):
             raise ValueError("mic probe reply is missing a report field")
         return cls(
             device=device,
-            sample_rate_hz=rate,
-            peak=peak,
-            samples=samples,
-            overflows=overflows,
+            sample_rate_hz=cls._count(fields, "sample_rate_hz"),
+            peak=cls._count(fields, "peak"),
+            samples=cls._count(fields, "samples"),
+            overflows=cls._count(fields, "overflows"),
             platform=platform,
         )
+
+    @staticmethod
+    def _count(fields: Mapping[str, object], name: str) -> int:
+        """Return the integer field *name*, refusing a JSON boolean.
+
+        ``bool`` is a subclass of ``int``, so ``true`` would otherwise read
+        as 1 and a malformed reply as a signal verdict.
+
+        Raises:
+            ValueError: If the field is absent, a boolean, or not an integer.
+        """
+        value = fields.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"mic probe reply is missing a report field: {name}")
+        return value

@@ -132,3 +132,19 @@ def test_equal_reports_hash_alike_and_repr_as_their_constructor() -> None:
         "MicProbeReport(device='mic', sample_rate_hz=16000, peak=5, samples=10,"
         " overflows=1, platform='linux')"
     )
+
+
+@pytest.mark.parametrize("field", ["sample_rate_hz", "peak", "samples", "overflows"])
+def test_from_wire_rejects_a_boolean_in_a_numeric_field(field: str) -> None:
+    """JSON booleans are ints to isinstance; a reply carrying one is malformed."""
+    wire = MicProbeReport(
+        device="mic",
+        sample_rate_hz=16_000,
+        peak=812,
+        samples=16_000,
+        overflows=0,
+        platform="darwin",
+    ).to_wire()
+    wire[field] = True
+    with pytest.raises(ValueError, match=field):
+        MicProbeReport.from_wire(wire)
