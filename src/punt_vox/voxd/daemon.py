@@ -156,10 +156,12 @@ class VoxDaemon:
         try:
             yield
         finally:
-            # First, before anything slow: uvicorn has already closed the
-            # listening socket, so from here on serve.port and serve.pid would
-            # advertise a live voxd that no longer holds the port, and a
-            # status reading could send the token to whatever binds it next.
+            # First, before anything slow. uvicorn closed the listening socket
+            # and drained connections before this ran, so the run files have
+            # already been advertising a voxd without its port; during that
+            # time the status reading's holder check is what keeps the token
+            # from going out. Unpublishing here, not after the worker and
+            # player teardown, stops the files from advertising it any longer.
             # Shutdown is the boundary: whatever the cleanup raises is logged
             # with its traceback, never swallowed, and never stops the exit.
             try:
