@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Speak spaced currency scales such as `$1 million` as “1 million dollars.”
 
+- `vox say --from` and `vox rec new --from` reject a segment whose text has an
+  escaped lone surrogate (such as `"\ud800"`) as an invalid segments file:
+  one usage error, exit 2, before any segment is spoken or recorded. (PL-1611)
+
 - The first setting written from a Git repo's subdirectory now goes to the
   repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
 
@@ -198,6 +202,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speak dotted thousands in euro amounts with a two-digit decimal comma,
   such as `€1.234,56` and `1.234,56€`, as euros and cents. Dot-only amounts
   such as `€1.234` keep their existing reading. (PL-1536)
+- Speak the percent sign of a number or range, such as `5%`, `.5%` and
+  `85%–90%`, as "percent" instead of dropping it, so `5%` no longer sounds
+  like a bare `5`; a range's dash is spoken as "to" ("85 percent to 90
+  percent"). Modulo, format codes, identifiers and paths are unchanged.
+  (PL-1603)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS

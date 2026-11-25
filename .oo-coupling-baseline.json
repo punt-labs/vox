@@ -20,6 +20,13 @@
     "max_lcom": 0.5,
     "avg_lcom": 0.5
   },
+  "src/punt_vox/_code_currency.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/_currency_grammar.py": {
     "efferent_coupling": 1.0,
     "public_names": 3.0,
@@ -1549,6 +1556,13 @@
   "src/punt_vox/resolve.py": {
     "efferent_coupling": 1.0,
     "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/segment_array.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0

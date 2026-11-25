@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from itertools import starmap
 from pathlib import Path
-from typing import Self, cast
+from typing import Self
 
 import typer
 
-from punt_vox.option_file import OptionFile
+from punt_vox.segment_array import SegmentArray
 
 
 class SegmentFile:
@@ -26,29 +24,12 @@ class SegmentFile:
         return self
 
     def segments(self) -> list[str]:
-        """Parse a JSON segments file into its non-blank text strings."""
-        texts = starmap(self._segment_text, enumerate(self._items()))
+        """Parse a JSON segments file into its non-blank text strings.
+
+        Every element is validated before any is returned, so one bad element
+        rejects the whole file.
+        """
+        texts = (item.text() for item in SegmentArray(self._path).items())
         if segments := list(filter(str.strip, texts)):
             return segments
         raise typer.BadParameter("--from file has no text to speak.")
-
-    def _items(self) -> list[object]:
-        """Read the UTF-8 JSON array, translating bad input into usage errors."""
-        try:
-            raw = json.loads(OptionFile(self._path, "--from").text())
-        except json.JSONDecodeError as exc:
-            detail = f"{exc.msg}: line {exc.lineno} column {exc.colno}"
-            raise typer.BadParameter(f"{self._path}: invalid JSON: {detail}") from exc
-        if not isinstance(raw, list):
-            raise typer.BadParameter("--from file must contain a JSON array.")
-        return cast("list[object]", raw)
-
-    @staticmethod
-    def _segment_text(index: int, item: object) -> str:
-        """Resolve a segment string or object, preserving its index on error."""
-        match item:
-            case (str() as text) | {"text": str() as text}:
-                return text
-            case _:
-                msg = f"Element {index} must be a string or an object with string text."
-                raise typer.BadParameter(msg)
