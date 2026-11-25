@@ -77,7 +77,7 @@ class MicCaptureCheck:
         return super().__new__(cls)
 
     def run(self) -> CheckResult:
-        """Report signal, silence, an unopenable device, or an absent daemon."""
+        """Report signal, silence, no audio, an unopenable device, or no daemon."""
         answer = _DaemonAnswer("mic", "probe", timeout=15)
         try:
             report = MicProbeReport.from_wire(answer.fetch())
@@ -89,6 +89,8 @@ class MicCaptureCheck:
             f"{report.device}, {report.sample_rate_hz} Hz, peak {report.peak}"
             f" over {report.samples} samples"
         )
+        if not report.delivered:
+            return self._warn(f"{heard} — the device delivered no audio in one second")
         if report.signal:
             return CheckResult.of(OK, f"Microphone (voxd): {heard}", required=False)
         return self._warn(f"{heard} — the daemon hears silence; {_MIC_FIX}")

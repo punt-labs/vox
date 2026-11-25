@@ -16,12 +16,12 @@ from punt_vox.doctor_call_daemon import MicCaptureCheck, WorkerReposCheck
 from punt_vox.types_mic import MicProbeReport
 
 
-def _reply(peak: int) -> dict[str, object]:
+def _reply(peak: int, samples: int = 16_000) -> dict[str, object]:
     return MicProbeReport(
         device="MacBook Pro Microphone",
         sample_rate_hz=16_000,
         peak=peak,
-        samples=16_000,
+        samples=samples,
     ).to_wire()
 
 
@@ -50,6 +50,19 @@ def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero() -> None
     assert "Privacy & Security" in result.message
     assert "Microphone" in result.message
     assert "terminal" in result.message
+
+
+def test_mic_check_warns_without_grant_advice_when_no_audio_arrived() -> None:
+    """Zero samples is the device delivering nothing; the grant is not the fix."""
+    with patch.object(DaemonControl, "request", return_value=_reply(0, samples=0)):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert not result.required
+    assert "MacBook Pro Microphone" in result.message
+    assert "delivered no audio in one second" in result.message
+    assert "silence" not in result.message
+    assert "Privacy & Security" not in result.message
 
 
 @pytest.mark.parametrize(

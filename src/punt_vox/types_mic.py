@@ -26,6 +26,16 @@ class MicProbeReport:
     samples: int
 
     @property
+    def delivered(self) -> bool:
+        """Return whether the device delivered any samples at all.
+
+        A stream that opens but delivers nothing in the window is a device
+        or driver that is not producing, not one that is silenced; the two
+        need different advice.
+        """
+        return self.samples > 0
+
+    @property
     def signal(self) -> bool:
         """Return whether any non-zero sample arrived."""
         return self.peak > 0
