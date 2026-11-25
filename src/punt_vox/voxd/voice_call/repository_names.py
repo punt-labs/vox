@@ -24,6 +24,7 @@ class RepositoryNames:
     _names: tuple[str, ...]
 
     def __new__(cls, projects: tuple[str, ...]) -> Self:
+        """Speak each path's last segment, deepening colliding names until unique."""
         self = super().__new__(cls)
         paths = [SpokenPath(project) for project in projects]
         while cls._deepened(paths):
