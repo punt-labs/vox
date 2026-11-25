@@ -17,7 +17,7 @@ from punt_vox.voxd.log_text import LogText
 if TYPE_CHECKING:
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
     # for the type checkers; the stub-free runtime module has no such attribute.
-    from sounddevice import RawInputStream
+    from sounddevice import RawInputCallback, RawInputStream
 
     from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
 
@@ -67,6 +67,37 @@ class InputDevice:
     def __repr__(self) -> str:
         return f"InputDevice({self._name!r}, {self._default_samplerate_hz!r})"
 
+    def opened(
+        self, *, samplerate: float, blocksize: int, callback: RawInputCallback
+    ) -> InputStreamHandle:
+        """Create and start a raw mono int16 stream on this device, or refuse.
+
+        ``sounddevice`` opens the native stream in the constructor and starts
+        it on entry, and either step can fail with its own
+        :class:`~sounddevice.PortAudioError`. Both are one refusal here: the
+        caller sees the same :class:`OSError` naming this device, and a
+        stream that opened but would not start is closed before it is
+        raised, so no device handle outlives the failure.
+
+        Raises:
+            OSError: When PortAudio refuses the stream: the device is busy,
+                has no input channels, rejects the sample rate, or will not
+                start.
+        """
+        from sounddevice import PortAudioError, RawInputStream
+
+        try:
+            stream = RawInputStream(
+                samplerate=samplerate,
+                blocksize=blocksize,
+                channels=1,
+                dtype="int16",
+                callback=callback,
+            )
+        except PortAudioError as exc:
+            raise self.refused(exc) from exc
+        return self.started(stream)
+
     def started(self, stream: RawInputStream) -> InputStreamHandle:
         """Start a stream opened on this device; one that will not start is closed.
 
@@ -84,7 +115,7 @@ class InputDevice:
     def refused(self, exc: Exception) -> OSError:
         """Name this device as the one PortAudio refused, with a remedy."""
         return OSError(
-            f"cannot open input device {self.name}: {exc}. Close another application "
+            f"cannot open input device {self._name}: {exc}. Close another application "
             "holding the microphone, or choose a device with an input channel"
         )
 
@@ -119,6 +150,6 @@ class InputDevice:
         except PortAudioError as exc:
             logger.warning(
                 "Input stream on %s not closed after a start failure (%s)",
-                self.name,
+                self._name,
                 LogText.failure(exc),
             )

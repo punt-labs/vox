@@ -1,0 +1,141 @@
+%
+% device-table.tex
+%
+% Z specification of PortAudio's device table as voxd keeps it
+% (src/punt_vox/voxd/conversation_mode/device_table.py): the count of
+% streams reserved on the table, whether the library is initialized, and
+% the three properties the tests in tests/conversation_mode/ assert by name.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+
+\begin{document}
+
+\title{The PortAudio Device Table: A Z Specification}
+\author{Punt Labs}
+\date{November 2026}
+\maketitle
+
+\section{Introduction}
+
+PortAudio enumerates the system's audio devices once, when it is
+initialized, and answers every later query from that copy. The only way to
+read the table again is to terminate the library and initialize it again,
+and terminating closes every stream still open. voxd therefore keeps one
+\texttt{DeviceTable} per process: it counts the streams reserved on the
+current table and re-reads the table only when that count is zero.
+
+A stream is counted from before its native stream exists. The opener takes
+a reservation under the table's lock, then creates the stream; the
+reservation is released once, when the stream closes or when creating or
+starting it fails. The model names three properties, and the tests carry
+the same names:
+
+\begin{enumerate}
+  \item[P1] \emph{Refresh never terminates PortAudio while a stream is
+    reserved}: a refresh with the count above zero keeps the table.
+  \item[P2] \emph{Refresh terminates PortAudio only while it is
+    initialized}: an initialize that fails leaves the library terminated,
+    and the next refresh initializes directly instead of terminating again.
+  \item[P3] \emph{Reservations balance}: every release answers one
+    reservation; releasing more than were reserved is a bug.
+\end{enumerate}
+
+\section{Types}
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{State}
+
+\begin{schema}{DeviceTable}
+  openStreams : \nat \\
+  initialized : ZBOOL
+\end{schema}
+
+\texttt{openStreams} is the number of reservations held, each for one
+stream that exists or is about to. \texttt{initialized} is whether PortAudio
+is initialized; it is \texttt{zfalse} only between a terminate and the
+initialize that failed to follow it.
+
+\begin{schema}{InitDeviceTable}
+  DeviceTable'
+\where
+  openStreams' = 0 \\
+  initialized' = ztrue
+\end{schema}
+
+Importing \texttt{sounddevice} initializes PortAudio, and a table is first
+consulted after that import.
+
+\section{Reservations}
+
+\begin{schema}{Reserve}
+  \Delta DeviceTable
+\where
+  openStreams' = openStreams + 1 \\
+  initialized' = initialized
+\end{schema}
+
+\begin{schema}{Release}
+  \Delta DeviceTable
+\where
+  openStreams \geq 1 \\
+  openStreams' = openStreams - 1 \\
+  initialized' = initialized
+\end{schema}
+
+The precondition of \texttt{Release} is P3: the implementation raises
+\texttt{ValueError} when no stream is reserved. A \texttt{Reservation}
+object applies \texttt{Release} at most once, so a stream closed twice
+releases once.
+
+\section{Refresh}
+
+\texttt{terminated!} reports whether the refresh terminated the library
+before initializing it.
+
+\begin{schema}{Refresh}
+  \Delta DeviceTable \\
+  terminated! : ZBOOL
+\where
+  openStreams = 0 \\
+  terminated! = initialized \\
+  openStreams' = openStreams \\
+  initialized' = ztrue
+\end{schema}
+
+\begin{schema}{RefreshKept}
+  \Xi DeviceTable \\
+  terminated! : ZBOOL
+\where
+  openStreams \geq 1 \\
+  terminated! = zfalse
+\end{schema}
+
+\texttt{Refresh} and \texttt{RefreshKept} together are total over
+\texttt{openStreams}, and only \texttt{Refresh} terminates: P1. In
+\texttt{Refresh}, \texttt{terminated!} equals \texttt{initialized}: P2, the
+library is terminated only while it is initialized.
+
+\begin{schema}{FailedInitialize}
+  \Delta DeviceTable \\
+  terminated! : ZBOOL
+\where
+  openStreams = 0 \\
+  terminated! = initialized \\
+  openStreams' = openStreams \\
+  initialized' = zfalse
+\end{schema}
+
+A \texttt{FailedInitialize} is a \texttt{Refresh} whose initialize step
+raised. It leaves \texttt{initialized} false, so the \texttt{Refresh} that
+follows has \texttt{terminated!} = \texttt{zfalse}: it initializes directly
+and re-reads the table, which is what the regression test for P2 asserts.
+Without the flag the next refresh would terminate an uninitialized library
+and fail there, every time, until the daemon restarted.
+
+\end{document}

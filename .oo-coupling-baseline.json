@@ -2303,7 +2303,7 @@
     "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/conversation_mode/portaudio.py": {
-    "efferent_coupling": 1.0,
+    "efferent_coupling": 5.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -2765,7 +2765,7 @@
     "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/playback.py": {
-    "efferent_coupling": 5.0,
+    "efferent_coupling": 7.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.762,

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Self
 
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
+from punt_vox.voxd.conversation_mode.counted_output import CountedOutput
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
@@ -90,29 +92,34 @@ def _monotonic() -> float:
 class PlaybackQueue:
     """Own the playback queue, mutex, and last-result state for voxd."""
 
-    __slots__ = ("_last_result", "_mutex", "_output_stream", "_queue")
+    __slots__ = ("_last_result", "_mutex", "_output_stream", "_queue", "_table")
 
     _last_result: PlaybackResult | None
     _mutex: asyncio.Lock
     _output_stream: OutputStreamFactory
     _queue: asyncio.Queue[PlaybackItem]
+    _table: DeviceTable
 
     def __new__(
         cls,
         output_stream: OutputStreamFactory | None = None,  # None: the default.
+        table: DeviceTable | None = None,  # None: the process's shared table.
     ) -> Self:
         """Create a playback queue that opens PCM streams with *output_stream*.
 
         The default is PortAudio, unless the test-only ``VOX_PCM_OUTPUT``
         switch names the silent device; a device passed explicitly is kept
         whatever the switch says. The queue is built once at daemon boot,
-        so this is where every test-only call switch is validated.
+        so this is where every test-only call switch is validated. Every
+        stream is opened through *table*, so it binds to the system's
+        current default output and is counted while open.
         """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
         self._output_stream = CallOverrides.check(output_stream)
+        self._table = table if table is not None else DeviceTable.shared()
         return self
 
     # -- Properties ----------------------------------------------------------
@@ -150,13 +157,16 @@ class PlaybackQueue:
         the mutex: a voice call keeps it across replies and opens one stream
         per reply. The device is released on exit whether the utterance
         played out, was flushed, or the caller raised.
+
+        The stream opens on the device table's current defaults and is
+        counted on the table while open.
         """
         guard: contextlib.AbstractAsyncContextManager[object] = (
             contextlib.nullcontext() if locked else self._mutex
         )
         async with guard:
             sink = PcmStreamSink(asyncio.get_running_loop())
-            await sink.open(self._output_stream)
+            await sink.open(CountedOutput(self._output_stream, self._table))
             try:
                 yield sink
             finally:

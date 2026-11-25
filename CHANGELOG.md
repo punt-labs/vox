@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A vox call now uses the system's current default microphone and output
+  device, not the ones voxd saw when it started. Headphones connected after
+  the daemon came up are used for both legs without a restart; the daemon
+  logs the input device, the output device, and a warning when the two are
+  different hardware, the configuration that feeds the agent its own voice.
+  (PL-1619)
+
 - The vox call agent ends the call when asked. Saying goodbye, or asking it
   to end the call or hang up, gets one short closing sentence and then the
   agent's built-in `end_call` tool; the daemon treats that as a normal end,

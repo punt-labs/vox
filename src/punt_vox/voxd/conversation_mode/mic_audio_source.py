@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from sounddevice import RawInputCallback
 
     from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+    from punt_vox.voxd.conversation_mode.device_pair import DevicePair
     from punt_vox.voxd.conversation_mode.input_device import InputDevice
 
 __all__ = ["MicAudioSource"]
@@ -39,12 +40,22 @@ class InputStreamHandle(Protocol):
 
 
 class CaptureBackend(Protocol):
-    """Names the default input device and opens a started raw stream on it."""
+    """Names the current default devices and opens a started raw input stream.
 
-    def device(self) -> InputDevice: ...
+    :meth:`devices` reports the system's defaults as they are now, not as
+    they were when the process started; :meth:`open` takes the input device
+    it reported, so a refusal names that device.
+    """
+
+    def devices(self) -> DevicePair: ...
 
     def open(
-        self, *, samplerate: float, blocksize: int, callback: RawInputCallback
+        self,
+        device: InputDevice,
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
     ) -> InputStreamHandle: ...
 
 
