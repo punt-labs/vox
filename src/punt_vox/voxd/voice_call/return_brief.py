@@ -6,11 +6,11 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, cast, final
 
-from punt_vox.voxd.voice_agent.contracts import SessionOptions
 from punt_vox.voxd.voice_call.departure_cursor import DepartureCursor
-from punt_vox.voxd.voice_call.seed import CallSeed
+from punt_vox.voxd.voice_call.opening import CallOpening
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.voice_agent.contracts import SessionOptions
     from punt_vox.voxd.workers.types import WorkerPayload
 
 
@@ -51,23 +51,17 @@ class ReturnBrief:
         self._covered.update(
             (worker["id"], self._sequence(worker, "worker_seq")) for worker in workers
         )
-        opening, labels = self._opening(workers)
+        away, labels = self._away(workers)
         self._labels.update(
             (label.casefold(), worker_id) for label, worker_id in labels.items()
         )
-        return SessionOptions(
-            CallSeed(projects, workers).prompt(labels),
-            tool_ids,
-            first_message=opening,
-        )
+        return CallOpening(projects, workers).options(tool_ids, labels, away)
 
-    def _opening(
-        self, workers: list[WorkerPayload]
-    ) -> tuple[str | None, dict[str, str]]:
+    def _away(self, workers: list[WorkerPayload]) -> tuple[str, dict[str, str]]:
         """Name the most recent away results and the current worker questions."""
         baseline = ((w["id"], self._sequence(w, "result_seq")) for w in workers)
         if not self._cursor.load(baseline):
-            return None, {}
+            return "", {}
         updates: list[tuple[str, str, str]] = []
         for worker in sorted(workers, key=lambda row: row["created_at"], reverse=True):
             worker_id = worker["id"]
@@ -81,7 +75,7 @@ class ReturnBrief:
     @staticmethod
     def _labelled_updates(
         updates: list[tuple[str, str, str]],
-    ) -> tuple[str | None, dict[str, str]]:
+    ) -> tuple[str, dict[str, str]]:
         counts = Counter(project.casefold() for _, project, _ in updates)
         ordinals: Counter[str] = Counter()
         labels: dict[str, str] = {}
@@ -96,7 +90,7 @@ class ReturnBrief:
             labels[label] = worker_id
             spoken.append(f"{label} {update}")
         if not spoken:
-            return None, labels
+            return "", labels
         opening = " ".join(spoken)
         return f"While you were away, {opening[:1].lower()}{opening[1:]}", labels
 

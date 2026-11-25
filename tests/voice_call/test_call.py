@@ -24,6 +24,7 @@ from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.connector import CallConnector
+from punt_vox.voxd.voice_call.greeting import CallGreeting
 from punt_vox.voxd.voice_call.handlers import CallHandlers
 from punt_vox.voxd.voice_call.launcher import CallLauncher
 from punt_vox.voxd.voice_call.progress import ProgressEvents
@@ -59,6 +60,7 @@ _METADATA = {
     },
 }
 _LOOPBACK = functools.partial(Conversation.open, allow_loopback=True)
+_GREETING = CallGreeting(("/repo",)).spoken()
 
 
 @pytest.fixture(autouse=True)
@@ -317,11 +319,11 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
         assert "result" in await _rpc(third, start)
         assert "result" in await _rpc(third, {"type": "call_stop"})
 
-    assert opening[0] is None
+    assert opening[0] == _GREETING
     assert opening[1] is not None
     assert "Wrote hello.py." in opening[1]
     assert "Which suite?" in opening[1]
-    assert opening[1].startswith("While you were away, the worker in ")
+    assert opening[1].startswith(f"{_GREETING} While you were away, the worker in ")
     assert "worker in greeting finished: Wrote hello.py." in opening[1]
     assert "worker in quality needs your input: Which suite?" in opening[1]
     assert "Run the exact Bash command" not in opening[1]
@@ -329,7 +331,7 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
     assert "/private/" not in opening[1]
     assert "Already reviewed." not in opening[1]
     assert all(f"Result {index}." in opening[1] for index in range(4, 7))
-    assert opening[2] is None
+    assert opening[2] == _GREETING
 
 
 def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> None:
@@ -340,7 +342,7 @@ def test_first_call_without_cursor_sets_live_snapshot_cut(tmp_path: Path) -> Non
 
     options = brief.options([worker], ("/repo",), ())
 
-    assert options.first_message is None
+    assert options.first_message == _GREETING
     assert brief.covered == {"worker": 5}
 
 
@@ -420,6 +422,7 @@ async def test_return_call_opens_with_recovered_worker_result(
             release.set()
             actor.shutdown()
     expected = (
+        f"{CallGreeting(policy.repos()).spoken()} "
         f"While you were away, the worker in {tmp_path.name} finished: "
         "Finished the tests."
     )
@@ -468,7 +471,7 @@ async def test_corrupt_departure_cursor_dials_and_is_replaced_on_hangup(
         assert cursor.read_bytes() == corrupt
         assert "result" in await _rpc(handlers, {"type": "call_stop"})
 
-    assert openers == [None]
+    assert openers == [_GREETING]
     assert json.loads(cursor.read_bytes()) == {"worker": 3}
     assert "Ignoring invalid call departure cursor" in caplog.text
 
@@ -485,7 +488,7 @@ def test_return_opener_bounds_long_result_for_speech(tmp_path: Path) -> None:
     spoken = " ".join(("A long result.\n" * 20).split())[:159] + "…"
     assert (
         options.first_message
-        == f"While you were away, the worker in repo finished: {spoken}"
+        == f"{_GREETING} While you were away, the worker in repo finished: {spoken}"
     )
 
 
@@ -500,8 +503,8 @@ def test_return_opener_distinguishes_two_workers_in_the_same_repository(
     options = brief.options([blocked, finished], ("/repo",), ())
 
     assert options.first_message == (
-        "While you were away, worker 1 in repo finished: Wrote hello.py. "
-        "Worker 2 in repo needs your input: Which suite?"
+        f"{_GREETING} While you were away, worker 1 in repo finished: "
+        "Wrote hello.py. Worker 2 in repo needs your input: Which suite?"
     )
     lookup = next(
         line.split(": ", 1)[1]
@@ -551,7 +554,8 @@ def test_return_opener_numbers_case_equivalent_projects_together(
     options = brief.options([first, second], (), ())
 
     assert options.first_message == (
-        "While you were away, worker 1 in Repo finished: Second result. "
+        f"{CallGreeting(()).spoken()} While you were away, "
+        "worker 1 in Repo finished: Second result. "
         "Worker 2 in repo finished: First result."
     )
     assert brief.labels == {"worker 1 in repo": "second", "worker 2 in repo": "first"}
@@ -612,8 +616,11 @@ async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None
         await _rpc(second, {"type": "call_stop"})
 
     assert openings == [
-        None,
-        "While you were away, the worker in repo finished: Finished during playback.",
+        _GREETING,
+        (
+            f"{_GREETING} While you were away, the worker in repo finished: "
+            "Finished during playback."
+        ),
     ]
 
 
@@ -746,8 +753,11 @@ async def test_result_after_live_progress_stops_is_away(
         await _rpc(handlers, {"type": "call_stop"})
 
     assert openings == [
-        None,
-        "While you were away, the worker in repo finished: Finished at hang-up.",
+        _GREETING,
+        (
+            f"{_GREETING} While you were away, the worker in repo finished: "
+            "Finished at hang-up."
+        ),
     ]
 
 

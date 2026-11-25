@@ -6811,6 +6811,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/voice_call/greeting.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.5,
+    "module_size": 21.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/voice_call/handlers.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -6863,6 +6876,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/voice_call/opening.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.5,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 27.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/voice_call/progress.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -6889,6 +6915,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/voice_call/repository_names.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.4,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.6,
+    "module_size": 31.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/voice_call/result_cache.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -6907,8 +6946,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.18,
     "max_complexity": 6.0,
-    "avg_complexity": 2.64,
-    "module_size": 102.0,
+    "avg_complexity": 2.91,
+    "module_size": 109.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -6935,6 +6974,19 @@
     "max_complexity": 4.0,
     "avg_complexity": 1.83,
     "module_size": 60.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/voice_call/spoken_path.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.33,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.33,
+    "module_size": 24.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

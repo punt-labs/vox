@@ -191,6 +191,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a track file was deleted out of band, naming each skipped track
   instead of failing the whole export. (PL-1476)
 
+- A vox call now opens with the agent speaking first. It says it is Vox,
+  that it starts, steers, checks and stops coding workers, and names the
+  allowlisted repositories, or tells you to run `vox worker allow` with the
+  repository path when none is. Away updates follow the greeting. (PL-1495)
+
 - A live `vox call` whose microphone delivers only silence for its first
   3 seconds (macOS denying the microphone to the daemon's process) now fails
   with a message naming the cause and the two remedies, instead of sending
