@@ -299,6 +299,54 @@ async def test_the_agent_ending_the_call_is_credited_to_the_agent(
     assert "agent_end_call" in Path(str(final["trace"])).read_text()
 
 
+async def test_an_end_call_the_agent_did_not_run_is_not_its_hang_up(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An end_call acknowledgement with is_called false was skipped or blocked.
+
+    The agent never hung up, so the close that follows is the peer's, and the
+    trace carries no agent_end_call note.
+    """
+    skipped = json.loads(json.dumps(_END_CALL_ACK))
+    skipped["agent_tool_response"]["is_called"] = False
+
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(json.dumps(skipped))
+        await socket.close()
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call")
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        handlers = _handlers(
+            FakeWorkers(),
+            FakePlayback(),
+            tmp_path,
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while True:
+            status = (await _rpc(handlers, {"type": "call_status"}))["result"]
+            if cast("dict[str, object]", status)["state"] != "live":
+                break
+            await asyncio.sleep(0.01)
+        await _rpc(handlers, {"type": "call_stop"})
+    final = cast("dict[str, object]", status)
+    assert final["state"] == "ended"
+    assert final["ended_by"] == "peer"
+    (ended,) = [
+        r.message for r in caplog.records if r.message.startswith("Call ended:")
+    ]
+    assert ended.startswith("Call ended: ended by peer, 0 tool calls, duration ")
+    trace = Path(str(final["trace"])).read_text()
+    assert "agent_tool_response" in trace
+    assert "agent_end_call" not in trace
+
+
 async def test_return_opens_with_only_away_results_and_open_decisions(
     tmp_path: Path,
 ) -> None:

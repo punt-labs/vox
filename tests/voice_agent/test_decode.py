@@ -53,11 +53,18 @@ def test_a_system_end_call_ack_is_the_agent_hanging_up() -> None:
     "fields",
     [
         {"tool_name": "end_call", "tool_type": "system", "is_error": True},
+        {"tool_name": "end_call", "tool_type": "system", "is_called": False},
         {"tool_name": "end_call", "tool_type": "client"},
         {"tool_name": "stop_worker", "tool_type": "client"},
         {},
     ],
-    ids=["failed-end-call", "client-tool-named-end-call", "other-tool", "unnamed"],
+    ids=[
+        "failed-end-call",
+        "skipped-end-call",
+        "client-tool-named-end-call",
+        "other-tool",
+        "unnamed",
+    ],
 )
 def test_any_other_ack_does_not_end_the_call(fields: dict[str, object]) -> None:
     ack = _ack(**fields)
@@ -69,3 +76,36 @@ def test_any_other_ack_does_not_end_the_call(fields: dict[str, object]) -> None:
 def test_an_ack_with_a_non_string_tool_field_is_rejected(field: str) -> None:
     with pytest.raises(ConvAIError, match=f"requires string {field}"):
         _ack(**{field: 3})
+
+
+def test_an_ack_without_the_called_flag_counts_as_a_tool_that_ran() -> None:
+    """Older acknowledgements omit is_called; only an explicit False withholds it."""
+    ack = EventDecoder.decode(
+        "agent_tool_response",
+        Message(
+            {
+                "agent_tool_response": {
+                    "tool_call_id": "end_1",
+                    "is_error": False,
+                    "tool_name": "end_call",
+                    "tool_type": "system",
+                }
+            }
+        ),
+    )
+    assert ack == AgentToolResponse("end_1", False, "end_call", "system")
+    assert isinstance(ack, AgentToolResponse)
+    assert ack.is_called
+    assert ack.ends_call
+
+
+def test_a_skipped_end_call_decodes_as_not_called() -> None:
+    ack = _ack(tool_name="end_call", tool_type="system", is_called=False)
+    assert ack == AgentToolResponse(
+        "end_1", False, "end_call", "system", is_called=False
+    )
+
+
+def test_an_ack_with_a_non_boolean_called_flag_is_rejected() -> None:
+    with pytest.raises(ConvAIError, match="requires boolean is_called"):
+        _ack(tool_name="end_call", tool_type="system", is_called="yes")

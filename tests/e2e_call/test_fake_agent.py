@@ -186,6 +186,20 @@ async def test_a_tool_response_step_names_the_tool_its_type_and_outcome() -> Non
     assert isinstance(ack["event_id"], int)
 
 
+async def test_a_tool_response_step_can_acknowledge_a_tool_the_agent_skipped() -> None:
+    steps: tuple[Step, ...] = (
+        SendToolResponse("end_call", "end_1", "system", is_called=False),
+        HangUp(),
+    )
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        frame = await _recv(socket)
+        await socket.wait_closed()
+    ack = cast("Message", frame["agent_tool_response"])
+    assert ack["is_called"] is False
+
+
 async def test_client_close_ends_the_script_without_raising() -> None:
     steps: tuple[Step, ...] = (WaitForToolResult("never"), SendAudio(b"\x00", 1))
     async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:

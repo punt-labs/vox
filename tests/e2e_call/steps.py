@@ -70,6 +70,7 @@ class SendToolResponse:
     tool_call_id: str
     tool_type: str = "client"
     is_error: bool = False
+    is_called: bool = True  # False acknowledges a tool the agent did not run.
 
 
 @dataclass(frozen=True, slots=True)

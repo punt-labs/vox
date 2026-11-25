@@ -193,6 +193,7 @@ class EventDecoder:
                 body.flag("is_error"),
                 body.optional_text("tool_name"),
                 body.optional_text("tool_type"),
+                is_called=body.flag("is_called", default=True),
             ),
         ),
         "user_transcript": (
