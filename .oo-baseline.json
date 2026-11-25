@@ -158,10 +158,10 @@
   "src/punt_vox/_speech_input.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.22,
+    "avg_params": 2.28,
     "max_complexity": 7.0,
-    "avg_complexity": 3.72,
-    "module_size": 210.0,
+    "avg_complexity": 3.78,
+    "module_size": 214.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

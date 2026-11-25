@@ -111,15 +111,21 @@ class SpeechInput:
     @classmethod
     def _spell_text(cls, text: str, *, vibed: bool, label: bool = False) -> str:
         return "".join(
-            cls._spell_line(line, vibed=vibed, label=label)
-            for line in text.splitlines(keepends=True)
+            cls._spell_line(
+                line, vibed=vibed, label=label, inline_start=label and i == 0
+            )
+            for i, line in enumerate(text.splitlines(keepends=True))
         )
 
     @classmethod
-    def _spell_line(cls, line: str, *, vibed: bool, label: bool) -> str:
+    def _spell_line(
+        cls, line: str, *, vibed: bool, label: bool, inline_start: bool
+    ) -> str:
         if not any(mark in line for mark in "<>=!"):
             return line
-        words = cls._word_matches(line, vibed=vibed and not label, label=label)
+        vibed = vibed and not label
+        start = 0 if inline_start else cls._quote_end(line, vibed=vibed)
+        words = cls._word_matches(line, start, vibed=vibed, label=label)
         parts: list[str] = []
         cursor = 0
         for index in cls._operators([word.value for word in words]):
@@ -129,19 +135,17 @@ class SpeechInput:
         return "".join(parts) + line[cursor:]
 
     @staticmethod
-    def _quote_end(line: str, *, vibed: bool, label: bool) -> int:
-        if label:
-            return 0
+    def _quote_end(line: str, *, vibed: bool) -> int:
         quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
         return quote.end() if quote else 0
 
     @classmethod
-    def _word_matches(cls, line: str, *, vibed: bool, label: bool) -> list[_Word]:
+    def _word_matches(
+        cls, line: str, start: int, *, vibed: bool, label: bool
+    ) -> list[_Word]:
         pattern = _VIBED_WORD_RE if vibed else _WORD_RE
         words: list[_Word] = []
-        for word in pattern.finditer(
-            line, cls._quote_end(line, vibed=vibed, label=label)
-        ):
+        for word in pattern.finditer(line, start):
             if vibed and word["tag"] is not None:
                 continue
             if words and cls._extends_amount(words[-1].value, word[0]):

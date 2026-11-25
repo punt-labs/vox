@@ -10,6 +10,13 @@ def test_preserves_comparison_spacing_and_quote_prefixes() -> None:
     assert SpeechInput.prepare(text) == "> x\tless than  3\r\n1) > > 2\nx <\u20283"
 
 
+def test_preserves_block_quote_prefix_on_link_label_continuation() -> None:
+    text = "> [a\n>3 > 2](/limits)"
+    expected = "> a\n>3 greater than 2"
+    assert SpeechInput.prepare(text) == expected
+    assert SpeechInput.prepare(text, vibed=True) == expected
+
+
 def test_preserves_long_runs_of_vibe_tags() -> None:
     tags = "[warm] " * 4_000
     assert SpeechInput.prepare(f"x {tags}< 3", vibed=True) == f"x {tags}less than 3"
