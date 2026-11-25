@@ -16,6 +16,7 @@ from _lifecycle_fakes import (
 
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_status import DaemonState
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_status import StatusCheck
 
@@ -78,14 +79,21 @@ def test_status_a_listener_check_that_fails_is_unknown() -> None:
 
 
 def test_status_slow_probes_cannot_push_status_past_its_deadline() -> None:
-    """Port and process probes and the health request share one bound."""
+    """Port and process probes and the health request share one bound.
+
+    Two 3 s probes do not fit in 5 s: the re-attribution before the token
+    goes out is cut off, and the reading is ``unknown`` naming it, never
+    ``unresponsive`` -- voxd was not asked.
+    """
     world = FakeWorld(probe_blocks_s=3.0, health_blocks_s=60.0)
     world.health_error = "no answer from voxd within the time left"
     world.run_unit(100)
     clock = FakeClock()
     reading = lifecycle(world, clock).status()
     assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
-    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason.startswith("cannot run fuser: timed out after 2s")
+    assert world.tokens_to == []
 
 
 def test_status_deadline_spent_on_probes_is_unknown_and_sends_no_token() -> None:
@@ -118,7 +126,7 @@ def test_status_with_the_minimum_health_budget_left_still_asks_voxd() -> None:
     world.run_unit(100)
     clock = FakeClock()
     world.before_holders = lambda: clock.advance(
-        DaemonLifecycle.STATUS_DEADLINE_S - StatusCheck.MIN_HEALTH_S
+        DaemonLifecycle.STATUS_DEADLINE_S - HealthRequest.MIN_S
     )
     reading = lifecycle(world, clock).status()
     assert reading.state is DaemonState.RUNNING
@@ -253,3 +261,15 @@ def test_status_unknown_names_why_voxd_was_not_asked_first() -> None:
         "cannot run lsof: timed out after 2 seconds; voxd was not asked first: "
         "serve.port publishes no port; no token sent unattributed"
     )
+
+
+def test_status_a_slow_second_lsof_is_unknown_naming_it_never_unresponsive() -> None:
+    """The re-attribution leaves less than a request's floor: no token, unknown."""
+    world = FakeWorld(
+        port_file=8421, published_health_error="connection reset", probe_blocks_s=2.3
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert "re-checking port 8421 spent the health budget" in reading.reason
+    assert world.tokens_to == []

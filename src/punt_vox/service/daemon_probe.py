@@ -33,6 +33,7 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll, SystemClock
 from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import HealthTarget
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.process import DEFAULT_PORT, ProcessManager
 from punt_vox.service.published_health import PublishedHealth
@@ -223,8 +224,14 @@ class DaemonProbe:
     def wait_up(self, deadline_s: float) -> HealthStatus | None:
         """Poll gated health until voxd answers; ``None`` if it never does.
 
-        Each request is bounded by what is left of *deadline_s*.
+        Each request is bounded by what is left of *deadline_s*. The last
+        sliver, below a request's floor, is not spent on a request that could
+        only time out: the last real miss stays as :meth:`health_miss`.
         """
-        return self._poll.first(
-            lambda left: self.health(self.voxd_processes(), left), deadline_s
-        )
+        return self._poll.first(self._ask_with, deadline_s)
+
+    def _ask_with(self, left: float) -> HealthStatus | None:
+        """One poll step: ask the visible voxd when *left* is worth a request."""
+        if left < HealthRequest.MIN_S:
+            return None
+        return self.health(self.voxd_processes(), left)

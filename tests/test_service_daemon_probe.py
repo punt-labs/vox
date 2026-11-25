@@ -17,6 +17,7 @@ from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.published_port import PublishedPort
@@ -275,6 +276,24 @@ def test_wait_up_never_outlives_its_deadline_on_a_hung_health_check() -> None:
     assert isinstance(probe.health_miss(), VoxdProtocolError)
 
 
+def test_wait_up_keeps_the_last_real_miss_below_the_floor() -> None:
+    """The sliver after the last interval is not spent on a doomed request."""
+    clock = FakeClock()
+    mgr = MagicMock()
+    mgr.find_pid_on_port.return_value = [42]
+    mgr.open_voxd.return_value = MagicMock()
+    target = MagicMock()
+    rejected = VoxdConnectionError("auth rejected (4401)")
+    target.client.return_value.health.side_effect = rejected
+    probe = DaemonProbe(mgr, lambda: target, Poll(clock))
+    assert probe.wait_up(1.0) is None
+    assert probe.health_miss() is rejected
+    budgets = [
+        c.kwargs["timeout"] for c in target.client.return_value.health.mock_calls
+    ]
+    assert min(budgets) >= HealthRequest.MIN_S
+
+
 def test_within_bounds_the_process_probes_by_the_deadline() -> None:
     mgr = MagicMock()
     deadline = Deadline.never()
@@ -366,8 +385,11 @@ def test_health_is_handed_only_what_the_rescan_left_of_its_budget() -> None:
     target.client.return_value.health.assert_called_once_with(timeout=0.5)
 
 
-def test_a_rescan_that_spends_the_budget_sends_no_token() -> None:
-    probe, target, held = _slow_scan(2.0)
+@pytest.mark.parametrize("scan_s", [2.0, 1.24])
+def test_a_rescan_that_spends_the_budget_sends_no_token(scan_s: float) -> None:
+    """Nothing left, or less than a request's floor: a 10 ms request would
+    read a healthy voxd as unresponsive, so none is sent."""
+    probe, target, held = _slow_scan(scan_s)
     assert probe.health(frozenset({held}), 1.25) is None
     target.client.assert_not_called()
     miss = probe.health_miss()
@@ -550,6 +572,25 @@ def test_published_health_request_gets_what_the_connect_left(
     target.client.return_value.health.assert_called_once_with(
         timeout=pytest.approx(1.25)
     )
+
+
+def test_published_health_connect_that_leaves_less_than_the_floor_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+
+    def connect(address: object, timeout: float) -> object:
+        clock.advance(1.49)
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = DaemonProbe(_published(monkeypatch, 8421), lambda: target, Poll(clock))
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    assert "spent the health budget" in str(probe.health_miss())
 
 
 def test_published_health_no_reply_is_none_and_kept(

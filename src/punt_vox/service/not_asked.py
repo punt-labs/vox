@@ -35,7 +35,7 @@ class NotAskedError(RuntimeError):
 
     @classmethod
     def budget_spent(cls) -> Self:
-        """Return the miss for a re-check of the port that spent the budget."""
+        """Return the miss for a re-check that left less than a request's floor."""
         return cls(
             f"re-checking port {DEFAULT_PORT} spent the health budget before "
             "voxd could be asked; no token sent"

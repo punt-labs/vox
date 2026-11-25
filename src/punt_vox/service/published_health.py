@@ -95,6 +95,6 @@ class PublishedHealth:
             return NotAskedError.cannot_connect(str(exc))
         if not listening:
             return NotAskedError.nothing_listens()
-        if self._bound.remaining() > 0:
+        if self._bound.remaining() >= HealthRequest.MIN_S:
             return None
         return NotAskedError.budget_spent()

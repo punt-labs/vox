@@ -85,10 +85,10 @@ class AttributedHealth:
 
         Returns why no request may be sent -- a holder seen at attribution no
         longer holds the port, as the same pinned process, or the re-check
-        spent the bound -- or ``None`` when voxd may be asked.
+        left less than a request's floor -- or ``None`` when voxd may be asked.
         """
         if left := self._holders - self._rescan():
             return NotAskedError.left_port(h.pid for h in left)
-        if self._bound.remaining() > 0:
+        if self._bound.remaining() >= HealthRequest.MIN_S:
             return None
         return NotAskedError.budget_spent()

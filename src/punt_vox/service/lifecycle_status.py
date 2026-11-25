@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.not_asked import NotAskedError
 
 if TYPE_CHECKING:
@@ -54,9 +55,6 @@ class StatusCheck:
 
     __slots__ = ("_deadline", "_port", "_probe")
 
-    # The least a health request is given. With less left, a timeout would
-    # measure vox's own probing, not voxd, so voxd is not asked at all.
-    MIN_HEALTH_S: ClassVar[float] = 0.5
     # The share of the deadline the published-port health request is given
     # before any attribution probe runs. lsof/fuser get only the rest.
     HEALTH_RESERVE_S: ClassVar[float] = 1.5
@@ -108,7 +106,7 @@ class StatusCheck:
     def _ask(self, holders: frozenset[ProcessHandle]) -> DaemonStatus:
         """Ask the visible voxd for health; no answer is ``unresponsive``."""
         left = self._deadline.remaining()
-        if left < self.MIN_HEALTH_S:
+        if left < HealthRequest.MIN_S:
             return DaemonStatus.unknown(
                 f"the status deadline was spent probing port {self._port} "
                 f"before voxd could be asked ({left:.2f}s left)"

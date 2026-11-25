@@ -8,7 +8,7 @@ the request is bounded and its failures are classified in exactly one place.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.service.health import DaemonNotUpError
@@ -26,6 +26,10 @@ class HealthRequest:
     """The request *target* answers within what is left of *bound*."""
 
     __slots__ = ("_bound", "_miss", "_target")
+
+    # The least a request is given. With less left, a timeout would measure
+    # vox's own probing, not voxd, so the gates send nothing below it.
+    MIN_S: ClassVar[float] = 0.5
 
     _target: HealthTarget
     _bound: Deadline

@@ -27,6 +27,7 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.clock import Poll
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
@@ -459,6 +460,9 @@ class FakeProbe:
         if not (world.foreign_listener or world.holder() is not None):
             self._miss = NotAskedError.nothing_listens()
             return None
+        if within_s < HealthRequest.MIN_S:
+            self._miss = NotAskedError.budget_spent()
+            return None
         world.tokens_to_port.append(8421)
         if world.published_health_error:
             self._miss = RuntimeError(world.published_health_error)
@@ -474,14 +478,26 @@ class FakeProbe:
         hook, self._world.before_token = self._world.before_token, None
         if hook is not None:
             hook()
+        # The real request re-attributes the port (a second fuser/lsof run,
+        # bounded by the reading's deadline) and spends from its own budget.
+        bound = Deadline(self._world_now, within_s)
+        self._block("fuser")
         current = frozenset(
             FakeHandle(p) for p in self._world.procs.values() if p.on_port
         )
         if not holders <= current:
             self._miss = NotAskedError.left_port(h.pid for h in holders - current)
             return None
+        if bound.remaining() < HealthRequest.MIN_S:
+            self._miss = NotAskedError.budget_spent()
+            return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
-        return self._answer(within_s)
+        return self._answer(bound.remaining())
+
+    def _world_now(self) -> float:
+        """The world's clock reading; 0.0 for a world no lifecycle has timed."""
+        clock = self._world.clock
+        return clock.monotonic() if clock is not None else 0.0
 
     def _answer(self, within_s: float) -> HealthStatus | None:
         """What the voxd on the port answers to a token-bearing request."""
@@ -504,9 +520,12 @@ class FakeProbe:
     def wait_up(self, deadline_s: float) -> HealthStatus | None:
         """The real probe's wait, on the world's fake clock."""
         assert self._world.clock is not None
-        return Poll(self._world.clock).first(
-            lambda left: self.health(self.voxd_processes(), left), deadline_s
-        )
+        return Poll(self._world.clock).first(self._ask_with, deadline_s)
+
+    def _ask_with(self, left: float) -> HealthStatus | None:
+        if left < HealthRequest.MIN_S:
+            return None
+        return self.health(self.voxd_processes(), left)
 
 
 @final
