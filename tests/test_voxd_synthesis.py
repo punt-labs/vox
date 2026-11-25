@@ -1311,6 +1311,7 @@ class TestSynthesizeCacheObservability:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A burst of hits for one long text reuses its normalized speech."""
+        SpeechPreparation._speech_body.cache_clear()
         text = "Run `myTool --dry_run` for [the guide](https://example.com). " * 200
         spec = _default_spec(provider="openai")
         with patch(
