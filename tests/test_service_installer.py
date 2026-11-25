@@ -147,7 +147,7 @@ def _visible_voxd(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(DaemonProbe, "voxd_processes", lambda self: held)
     # The gate also proves the holder has the listener; that check reads
     # lsof or /proc for the real pid 42, so it is faked like the holders.
-    monkeypatch.setattr(DaemonProbe, "holds_port", lambda self, pid, bound: True)
+    monkeypatch.setattr(DaemonProbe, "holds_port", lambda self, pid, host, bound: True)
     # Above the request floor (HealthRequest.MIN_S): below it no poll step asks.
     monkeypatch.setattr("punt_vox.service.health_verify._HEALTH_DEADLINE_S", 0.6)
 

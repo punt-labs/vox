@@ -217,8 +217,8 @@ class DaemonProbe:
         self._miss = request.miss
         return health
 
-    def holds_port(self, pid: int, bound: Deadline) -> bool:
-        """Return True when *pid* itself holds the service port's listener.
+    def holds_port(self, pid: int, host: str, bound: Deadline) -> bool:
+        """Return True when *pid* itself holds the listener a request to *host* reaches.
 
         One bounded per-pid check (:meth:`ProcessManager.holds_port`), cut to
         *bound* so a request's budget covers it.
@@ -226,7 +226,7 @@ class DaemonProbe:
         Raises:
             PortProbeError: If the check cannot be made.
         """
-        return self._process_mgr.within(bound).holds_port(pid, DEFAULT_PORT)
+        return self._process_mgr.within(bound).holds_port(pid, host, DEFAULT_PORT)
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""

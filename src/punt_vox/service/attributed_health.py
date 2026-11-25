@@ -67,7 +67,7 @@ class AttributedHealth:
         # The bind is resolved before the re-check so an unreadable unit is
         # reported as such, not as a spent budget.
         target = self._probe.target
-        unasked = self._unasked()
+        unasked = self._unasked(target.host)
         if unasked is not None:
             self._miss = unasked
             return None
@@ -76,7 +76,7 @@ class AttributedHealth:
         self._miss = request.miss
         return health
 
-    def _unasked(self) -> NotAskedError | None:
+    def _unasked(self, host: str) -> NotAskedError | None:
         """Attribute the port again, immediately before the token goes out.
 
         Returns why no request may be sent -- a holder seen at attribution no
@@ -86,18 +86,21 @@ class AttributedHealth:
         """
         if left := self._holders - self._probe.voxd_processes():
             return NotAskedError.left_port(h.pid for h in left)
-        unlistening = self._without_listener()
+        unlistening = self._without_listener(host)
         if unlistening is not None:
             return unlistening
         if self._bound.remaining() >= HealthRequest.MIN_S:
             return None
         return NotAskedError.budget_spent()
 
-    def _without_listener(self) -> NotAskedError | None:
-        """Return why a holder is not the port's listener; ``None`` when all are."""
+    def _without_listener(self, host: str) -> NotAskedError | None:
+        """Return why a holder is not the listener a request to *host* reaches.
+
+        ``None`` when every holder is.
+        """
         for holder in self._holders:
             try:
-                holds = self._probe.holds_port(holder.pid, self._bound)
+                holds = self._probe.holds_port(holder.pid, host, self._bound)
             except PortProbeError as exc:
                 return NotAskedError.holder_uncheckable(str(exc))
             if not holds:

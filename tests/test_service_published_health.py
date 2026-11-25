@@ -206,7 +206,25 @@ def test_the_ps_and_the_holder_check_are_cut_to_the_request_bound(
     for call in mgr.within.call_args_list:
         (bound,) = call.args
         assert bound.remaining() == pytest.approx(1.5)
-    mgr.within.return_value.holds_port.assert_called_once_with(os.getpid(), 8421)
+    mgr.within.return_value.holds_port.assert_called_once_with(
+        os.getpid(), "127.0.0.1", 8421
+    )
+
+
+def test_the_holder_check_is_made_for_the_targets_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """voxd on 127.0.0.1 while the unit polls ::1: the check names ::1, and a
+    listener on another address closes the gate."""
+    connect = _listening(monkeypatch)
+    mgr = _published(monkeypatch, _ours())
+    mgr.within.return_value.holds_port.return_value = False
+    target = MagicMock(host="::1", port=8421)
+    probe = probe_over(mgr, target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    mgr.within.return_value.holds_port.assert_called_once_with(os.getpid(), "::1", 8421)
 
 
 def test_a_live_own_voxd_that_does_not_hold_the_port_sends_no_token(

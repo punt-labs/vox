@@ -91,7 +91,7 @@ def test_a_holder_without_the_listener_is_not_asked() -> None:
     listener is closed, or a client, is a pid on the port but not its holder."""
     mgr, held = holding_voxd()
     mgr.within.return_value.holds_port.return_value = False
-    target = MagicMock()
+    target = MagicMock(host="127.0.0.1")
     probe = probe_over(mgr, target)
     assert probe.health(frozenset({held}), 5.0) is None
     target.client.assert_not_called()
@@ -101,7 +101,18 @@ def test_a_holder_without_the_listener_is_not_asked() -> None:
         "voxd pid 42 has a socket on port 8421 but holds no listener there; "
         "no token sent"
     )
-    mgr.within.return_value.holds_port.assert_called_once_with(42, 8421)
+    mgr.within.return_value.holds_port.assert_called_once_with(42, "127.0.0.1", 8421)
+
+
+def test_the_holder_check_is_made_for_the_targets_address() -> None:
+    """The unit polls ::1: a holder of 127.0.0.1:8421 is not the listener reached."""
+    mgr, held = holding_voxd()
+    mgr.within.return_value.holds_port.return_value = False
+    target = MagicMock(host="::1", port=8421)
+    probe = probe_over(mgr, target)
+    assert probe.health(frozenset({held}), 5.0) is None
+    target.client.assert_not_called()
+    mgr.within.return_value.holds_port.assert_called_once_with(42, "::1", 8421)
 
 
 def test_a_holder_check_that_cannot_be_made_is_not_asked() -> None:

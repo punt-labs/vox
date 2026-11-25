@@ -101,7 +101,7 @@ class PublishedHealth:
         if not ipaddress.ip_address(target.host).is_loopback:
             raise NotAskedError.not_loopback(target.host)
         self._require_voxd(pid)
-        self._require_holder(pid)
+        self._require_holder(pid, target)
         self._require_listener(target)
         return target
 
@@ -134,15 +134,20 @@ class PublishedHealth:
         if not seen.is_voxd():
             raise NotAskedError.not_voxd(pid, seen.command)
 
-    def _require_holder(self, pid: int) -> None:
-        """Raise unless *pid* itself holds the listener, checked within the bound.
+    def _require_holder(self, pid: int, target: HealthTarget) -> None:
+        """Raise unless *pid* holds the listener the request to *target* reaches.
+
+        The address counts: a listener on the port at another address than
+        the target's host is not the one the token would reach.
 
         Raises:
-            NotAskedError: If *pid* does not hold the port, or the check could
-                not be made in time.
+            NotAskedError: If *pid* does not hold the port at that address, or
+                the check could not be made in time.
         """
         try:
-            holds = self._processes.within(self._bound).holds_port(pid, DEFAULT_PORT)
+            holds = self._processes.within(self._bound).holds_port(
+                pid, target.host, DEFAULT_PORT
+            )
         except PortProbeError as exc:
             raise NotAskedError.holder_uncheckable(str(exc)) from exc
         if not holds:
