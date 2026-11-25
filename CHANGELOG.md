@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The vox call agent ends the call when asked. Saying goodbye, or asking it
+  to end the call or hang up, gets one short closing sentence and then the
+  agent's built-in `end_call` tool; the daemon treats that as a normal end,
+  reports `ended_by: agent` in `vox call status`, and logs
+  `Call ended: ended by agent`. The agent registration changed, so run
+  `vox call teardown` once before the next call. (PL-1620)
+
 - Speak standalone comparisons such as `x < 3` and `x != y`. Bare `<`
   and `>` require a number and only accept numbers or single-letter
   operands, leaving word breadcrumbs such as `Settings > Voice` alone. (PL-1610)
