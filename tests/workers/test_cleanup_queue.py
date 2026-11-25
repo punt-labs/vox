@@ -174,3 +174,27 @@ def test_a_job_releases_its_worker_before_its_future_resolves() -> None:
         job.result(timeout=1)
     assert queue.is_idle()
     assert not settled_before_release
+
+
+def test_a_rerun_dropped_at_shutdown_is_logged_with_the_worker(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A parked rerun the shutdown drops leaves a line naming the worker."""
+    queue = WorkerCleanupQueue()
+    started, release = Event(), Event()
+
+    def hold() -> None:
+        started.set()
+        assert release.wait(3)
+
+    job = queue.submit("w-4", hold)
+    assert job is not None
+    assert started.wait(1)
+    assert queue.submit("w-4", lambda: None) is None
+    with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.cleanup_queue"):
+        queue.shutdown()
+    release.set()
+    job.result(timeout=1)
+    [record] = [r for r in caplog.records if "dropped" in r.getMessage()]
+    assert "w-4" in record.getMessage()
+    assert "closed" in record.getMessage()

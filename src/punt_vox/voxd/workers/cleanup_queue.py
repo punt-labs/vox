@@ -128,10 +128,31 @@ class WorkerCleanupQueue:
     ) -> Callable[[], None] | None:  # PY-TS-14: None releases the worker.
         """Take the worker's parked rerun, or release the worker; under the lock."""
         with self._lock:
-            rerun = self._rerun.pop(worker_id, None)
+            rerun = self._take_rerun(worker_id)
             if rerun is None:
                 self._release(worker_id)
             return rerun
+
+    def _take_rerun(
+        self, worker_id: str
+    ) -> Callable[[], None] | None:  # PY-TS-14: None when nothing is parked.
+        """Pop the worker's parked rerun; a closed queue drops it with a log.
+
+        The disk marker keeps the debt owed, but nothing runs it until the
+        next start, so the drop names the worker. The lock is held.
+        """
+        rerun = self._rerun.pop(worker_id, None)
+        if rerun is not None and self._closed:
+            self._dropped(worker_id)
+            return None
+        return rerun
+
+    @staticmethod
+    def _dropped(worker_id: str) -> None:
+        """Say which worker's requested cleanup did not run; the queue closed."""
+        logger.warning(
+            "Worker %s cleanup request dropped: the queue is closed", worker_id
+        )
 
     @staticmethod
     def _settle(
@@ -153,6 +174,8 @@ class WorkerCleanupQueue:
         """Refuse new work, drop reruns and allow running jobs a short grace period."""
         with self._lock:
             self._closed = True
+            for worker_id in self._rerun:
+                self._dropped(worker_id)
             self._rerun.clear()
             threads = list(self._threads.values())
         deadline = time.monotonic() + _DRAIN_S
