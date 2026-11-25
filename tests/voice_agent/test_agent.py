@@ -5,12 +5,14 @@ import stat
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Self
+from urllib.parse import urlsplit
 
 import pytest
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.sibling_lock import SiblingLock
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
+from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -84,7 +86,9 @@ def wire() -> Iterator[Requests]:
                 self._reply(500, {})
 
         def _observe(self, body: object) -> None:
-            assert self.headers["xi-api-key"] == _API_KEY
+            # A live control sends the key; one built under the REST
+            # override sends the placeholder instead.
+            assert self.headers["xi-api-key"] in {_API_KEY, PLACEHOLDER_KEY}
             requests.calls.append((self.command, self.path, body))
 
         def _reply(self, code: int, body: dict[str, object]) -> None:
@@ -106,6 +110,57 @@ def wire() -> Iterator[Requests]:
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_a_fake_call_and_a_live_call_keep_separate_registrations(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under one HOME, the override's registration never meets the live one."""
+    monkeypatch.setattr("punt_vox.voxd.voice_agent.agent.config_dir", lambda: tmp_path)
+    live = tmp_path / _COMPLETED_REGISTRATION
+    port = int(wire.url.rsplit(":", 1)[1])
+    fake = tmp_path / f"voice-agent.loopback-v4-{port}.json"
+
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", wire.url)
+    with ConvAIControl(_API_KEY) as control:
+        VoiceAgent(control).connection((_CLOCK,))
+    assert fake.is_file()
+    assert not live.exists()
+
+    # A live call under the same HOME has no registration yet: it would
+    # provision its own, not refuse the fake one as an identity mismatch.
+    monkeypatch.delenv("VOX_CONVAI_BASE_URL")
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        VoiceAgent(control).connection((_CLOCK,))
+    assert live.is_file()
+    assert json.loads(live.read_text()) != json.loads(fake.read_text())
+
+    # And the fake registration is still there for the override's teardown.
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", wire.url)
+    with ConvAIControl(_API_KEY) as control:
+        VoiceAgent(control).teardown()
+    assert not fake.exists()
+    assert live.is_file()
+
+
+def test_teardown_under_the_override_removes_the_registration_and_keeps_its_lock(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Teardown removes the fake registration but never its lock file.
+
+    Unlinking a flock path lets a waiter on the old inode and a newcomer on
+    a fresh one both hold the lock, so the lock sibling stays and a second
+    teardown on the same port still serializes on it.
+    """
+    monkeypatch.setattr("punt_vox.voxd.voice_agent.agent.config_dir", lambda: tmp_path)
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", wire.url)
+    with ConvAIControl(_API_KEY) as control:
+        VoiceAgent(control).connection((_CLOCK,))
+        VoiceAgent(control).teardown()
+        VoiceAgent(control).teardown()
+    port = urlsplit(wire.url).port
+    names = sorted(path.name for path in tmp_path.iterdir())
+    assert names == [f".voice-agent.loopback-v4-{port}.json.punt-import.lock"]
 
 
 def test_lazy_agent_persists_and_reuses_id_then_force_deletes(

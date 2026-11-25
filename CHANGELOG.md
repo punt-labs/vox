@@ -310,6 +310,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
+  real `voxd` subprocess places one scripted `vox call --script` call against
+  a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,
+  with no microphone, credentials or network. Three test-only daemon switches
+  make it possible: `VOX_CONVAI_BASE_URL` (exactly `http://127.0.0.1:<port>`
+  or `http://[::1]:<port>`, any other value fails the call by name, and the
+  daemon sends the placeholder key `test-override` instead of its real one),
+  `VOX_CALL_ALLOW_LOOPBACK=1` (plaintext `ws://` to those two loopback IPs)
+  and `VOX_PCM_OUTPUT=silent` (agent audio plays through a silent device, so
+  a host with no sound card still plays, cuts and plays out agent audio).
+
 - `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
   edit and list the repositories workers may start in, through the daemon;
   `vox status` shows them on a `Workers:` line, and `--json` carries

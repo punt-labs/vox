@@ -349,8 +349,22 @@ jobs:
         with:
           path: *apt-cache-paths
           key: ${{ steps.apt-prepare.outputs.key }}
-      - run: uv sync --frozen --all-extras
+      - id: sync
+        run: uv sync --frozen --all-extras
       - run: make coverage
+      # Voice-call e2e: a real voxd subprocess dials a fake ElevenLabs agent
+      # and fake REST on loopback with scripted PCM, no microphone and no
+      # credentials. The coverage run above already collects this tier
+      # (tools/run_coverage.py selects every credential-free marker, and the
+      # daemon and CLI it spawns report through the subprocess coverage hook),
+      # so this step adds no coverage. It runs again on its own, from the uv
+      # venv, so a call-path break is reported as this step and never buried
+      # in the coverage run. It runs whether or not the coverage step passed:
+      # a regression the tier catches also fails coverage, and this step is
+      # the one that names it. A cancelled job, or one whose environment
+      # never installed, skips it: a second failure there would only confuse.
+      - if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: make test-call-e2e
       - name: Save main coverage baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
