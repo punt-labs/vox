@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from punt_vox.normalize import normalize_for_speech, strip_vibe_tags
+from punt_vox.normalize import SpeechText, normalize_for_speech, strip_vibe_tags
 
 # ---------------------------------------------------------------------------
 # snake_case splitting
@@ -578,6 +578,105 @@ class TestSymbolStripping:
 
     def test_punctuation_only_token_dropped(self) -> None:
         assert normalize_for_speech("hello () world") == "hello world"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("if x < 3 then x > 1", "if x less than 3 then x greater than 1"),
+        ("x != y; x == y", "x not equal to y; x equal to y"),
+        ("x > 1!", "x greater than 1!"),
+        (
+            "x <= -3 and x >= 1",
+            "x less than or equal to -3 and x greater than or equal to 1",
+        ),
+        ("`(x) < 3`", "x less than 3"),
+        ("**x** > 3", "x greater than 3"),
+        ("_x_ < 3", "x less than 3"),
+        ("\u201cx < 3\u201d", "x less than 3"),
+        ("[x < 3](/limits)", "x less than 3"),
+        ("[1. > 0](/limits)", "1. greater than 0"),
+        ("[![x < 3](limits.png)](/limits)", "x less than 3"),
+        ("3 > 2 >[Chapter](/guide)", "3 greater than 2 Chapter"),
+        ("[Chapter](/guide)> 3 > 2", "Chapter 3 greater than 2"),
+        ("50% < x", "50 percent less than x"),
+        ("-3 < x < 3", "-3 less than x less than 3"),
+        ("0 <= x < y", "0 less than or equal to x less than y"),
+        ("x > y >= 1", "x greater than y greater than or equal to 1"),
+        ("x < y == 3", "x less than y equal to 3"),
+        ("x != y > 3", "x not equal to y greater than 3"),
+        ("total <= limit", "total less than or equal to limit"),
+        ("0 <= idx < n", "0 less than or equal to idx n"),
+        ("3 > 2 > 1", "3 greater than 2 greater than 1"),
+        ("x < 1.5 and 3 > y", "x less than 1.5 and 3 greater than y"),
+        ("$5 < 10", "5 dollars less than 10"),
+        ("5€ < 10", "5 euros less than 10"),
+        ("$1 million < x", "1 million dollars less than x"),
+        (
+            "x < $1 million/year < y",
+            "x less than 1 million dollars per year less than y",
+        ),
+        ("a == $1 million", "a equal to 1 million dollars"),
+        ("0x10 < 0x20", "0 x 10 less than 0 x 20"),
+    ],
+)
+def test_standalone_comparisons_are_spoken(text: str, expected: str) -> None:
+    assert normalize_for_speech(text) == expected
+    assert SpeechText.for_synthesis(text, expressive=False) == expected
+    assert SpeechText.for_synthesis(f"[warm] {text}", expressive=True) == (
+        f"[warm] {expected}"
+    )
+
+
+def test_comparisons_survive_inline_expressive_tags() -> None:
+    text = "if x [warm] < [serious] 3"
+    assert SpeechText.for_synthesis(text, expressive=True) == (
+        "if x [warm] less than [serious] 3"
+    )
+    assert SpeechText.for_synthesis(text, expressive=False) == "if x less than 3"
+
+
+def test_comparison_before_an_attached_expressive_tag() -> None:
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=True) == (
+        "x less than 3 [sighs]"
+    )
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=False) == "x less than 3"
+
+
+def test_link_label_brackets_are_not_expressive_tags() -> None:
+    text = "[x == [expected]](/tests)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "x equal to expected"
+
+
+def test_nested_link_spans_keep_existing_markdown_speech() -> None:
+    text = "[![read [policy](/policy)](/badge)](/guide)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "read policy"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("See Settings > Voice > Provider", "See Settings Voice Provider"),
+        ("Chapter 2 > Section 3", "Chapter 2 Section 3"),
+        ("Menu > A > B and Home > 2 > 3", "Menu A B and Home 2 3"),
+        ("[A](/guide) > [B](/settings)", "A B"),
+        ("[Chapter](/guide) > 2 > 3", "Chapter 2 3"),
+        ("3 > 2 > [Chapter](/guide)", "3 2 Chapter"),
+        ("[label](<foo 3 > 'a')", "label"),
+        ("echo 3 > out", "echo 3 out"),
+        ("cat a > b", "cat a b"),
+        ("echo 3 > out.txt", "echo 3 out.txt"),
+        ("x <- 3 or x <=3 or x <> 3", "x 3 or x 3 or x 3"),
+        ("x === y and x >> 3", "x y and x 3"),
+        ("x <\n3", "x 3"),
+        ("1. > 0", "1. 0"),
+        ("x <\u20283", "x 3"),
+        ("x\n> 3\r1) > > 2\n- > 4", "x 3 1 2 4"),
+        ("x<3 with <https://example.org>", "x<3 with https://example.org"),
+    ],
+)
+def test_ambiguous_angle_tokens_are_not_spoken(text: str, expected: str) -> None:
+    assert normalize_for_speech(text) == expected
 
 
 # ---------------------------------------------------------------------------
