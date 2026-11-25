@@ -9,10 +9,13 @@ from typing import Final, Self, final
 
 # An absolute path inside a git message or argv; it names the operator's
 # filesystem, which neither the log nor a worker record should carry.
-# A quoted path may hold spaces ("'/Users/Jim Freeman/x'"): inside quotes it
-# runs to the closing quote. A bare path ends at whitespace, a quote or a
-# colon, the way git and the OS print them.
-_ABSOLUTE_PATH: Final = re.compile(r"(?<![\w.])/(?:[^'\":]+(?=['\"])|[^\s'\":]+)")
+# A quoted path may hold spaces ("'/Users/Jim Freeman/x'"): between a matching
+# pair of quotes it runs to the closing quote. A bare path ends at whitespace,
+# a quote or a colon, the way git and the OS print them; a quote later in the
+# line never extends it.
+_ABSOLUTE_PATH: Final = re.compile(
+    r"(?<=')/[^':]+(?=')|(?<=\")/[^\":]+(?=\")|(?<![\w.'\"])/[^\s'\":]+"
+)
 # git's own error lines; progress lines such as "Preparing worktree" precede
 # them on stderr and are never the reason a command failed.
 _GIT_ERROR_LINE: Final = re.compile(r"^(?:fatal|error): .*$", re.MULTILINE)

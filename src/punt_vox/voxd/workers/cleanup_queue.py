@@ -104,20 +104,21 @@ class WorkerCleanupQueue:
         parked rerun. A rerun starts only after the future is settled, so a
         waiting reply never depends on a second lane coming up.
         """
+        failure: BaseException | None = None  # PY-TS-14: None is success.
         try:
             failure = self._attempt(worker_id, operation)
         except BaseException as exc:
             # SystemExit or KeyboardInterrupt from inside an operation: the
-            # lane dies, but the worker is released and the reply hears it.
-            self._detach(worker_id)
-            self._settle(job, exc)
+            # lane dies, but the reply hears it and a parked rerun still runs.
+            failure = exc
             raise
-        rerun = self._detach(worker_id)
-        try:
-            self._settle(job, failure)
         finally:
-            if rerun is not None:
-                self._hand_off(worker_id, rerun)
+            rerun = self._detach(worker_id)
+            try:
+                self._settle(job, failure)
+            finally:
+                if rerun is not None:
+                    self._hand_off(worker_id, rerun)
 
     def _hand_off(self, worker_id: str, rerun: Callable[[], None]) -> None:
         """Start the detached rerun, or drop it if the queue closed meanwhile.
@@ -175,8 +176,14 @@ class WorkerCleanupQueue:
         job: Future[None],
         failure: BaseException | None,  # PY-TS-14: None is the job's success.
     ) -> None:
-        """Resolve the job's future with its outcome."""
-        if failure is None:
+        """Resolve the job's future with its outcome.
+
+        A caller that cancelled its future has stopped listening; the
+        outcome is then logged, not raised on the lane thread.
+        """
+        if not job.set_running_or_notify_cancel():
+            logger.info("Cleanup job finished after its caller gave up: %s", failure)
+        elif failure is None:
             job.set_result(None)
         else:
             job.set_exception(failure)

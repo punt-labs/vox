@@ -48,6 +48,10 @@ def test_bytes_stderr_is_decoded() -> None:
             "[Errno 1] denied: '/Users/Jim Freeman/x/.git'",
             "[Errno 1] denied: '<path>'",
         ),
+        (
+            "error: /tmp/worker requires 'git lfs install' before checkout",
+            "error: <path> requires 'git lfs install' before checkout",
+        ),
     ],
 )
 def test_other_errors_keep_their_message_with_paths_scrubbed(

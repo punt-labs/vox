@@ -274,6 +274,34 @@ def test_a_base_exception_in_a_job_still_settles_it_and_releases_the_worker() ->
         time.sleep(0.01)
 
 
+def test_a_base_exception_in_a_job_still_hands_a_parked_rerun_off() -> None:
+    """A parked rerun must run even when the first job dies of SystemExit.
+
+    The fatal path detached the rerun and then skipped the hand-off, so the
+    rerun was lost and the worker stayed active for good.
+    """
+    queue = WorkerCleanupQueue()
+    first_running, finish_first, rerun_ran = Event(), Event(), Event()
+
+    def first() -> None:
+        first_running.set()
+        assert finish_first.wait(2)
+        raise SystemExit(3)
+
+    job = queue.submit("w-8", first)
+    assert job is not None
+    assert first_running.wait(1)
+    assert queue.submit("w-8", rerun_ran.set) is None
+    finish_first.set()
+    with pytest.raises(SystemExit):
+        job.result(timeout=1)
+    assert rerun_ran.wait(1), "the parked rerun never ran"
+    deadline = time.monotonic() + 1
+    while not queue.is_idle():
+        assert time.monotonic() < deadline, "the worker was never released"
+        time.sleep(0.01)
+
+
 def test_a_settle_failure_on_the_rerun_path_still_hands_the_rerun_off() -> None:
     """A cancelled future must not leave the worker active forever.
 
