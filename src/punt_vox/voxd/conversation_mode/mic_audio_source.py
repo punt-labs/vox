@@ -36,7 +36,9 @@ _CHUNK_S = 0.02
 class InputStreamHandle(Protocol):
     """A started stream: leaving it stops the capture and releases the device."""
 
-    def __exit__(self, *exc_info: object) -> None: ...
+    def __exit__(self, *exc_info: object) -> None:
+        """Stop the capture and release the device."""
+        ...
 
 
 class NativeInputStream(InputStreamHandle, Protocol):
@@ -46,8 +48,13 @@ class NativeInputStream(InputStreamHandle, Protocol):
     adapter that counts the stream on the device table asks for them.
     """
 
-    def stop(self, *, ignore_errors: bool = True) -> None: ...
-    def close(self, *, ignore_errors: bool = True) -> None: ...
+    def stop(self, *, ignore_errors: bool = True) -> None:
+        """Stop the stream; with *ignore_errors* off, PortAudio's refusal is raised."""
+        ...
+
+    def close(self, *, ignore_errors: bool = True) -> None:
+        """Close the stream; with *ignore_errors* off, PortAudio's refusal is raised."""
+        ...
 
 
 class CaptureBackend(Protocol):
@@ -58,7 +65,9 @@ class CaptureBackend(Protocol):
     it reported, so a refusal names that device.
     """
 
-    def devices(self) -> DevicePair: ...
+    def devices(self) -> DevicePair:
+        """Return the system's current default input and output devices."""
+        ...
 
     def open(
         self,
@@ -67,7 +76,9 @@ class CaptureBackend(Protocol):
         samplerate: float,
         blocksize: int,
         callback: RawInputCallback,
-    ) -> InputStreamHandle: ...
+    ) -> InputStreamHandle:
+        """Open and start a raw mono int16 stream on *device*, or raise."""
+        ...
 
 
 @final
