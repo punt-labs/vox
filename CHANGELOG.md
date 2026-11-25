@@ -53,8 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Speak standalone comparisons such as `x < 3` and `x != y` without reading
-  breadcrumbs such as `Settings > Voice` as comparisons. (PL-1610)
+- Speak standalone comparisons such as `x < 3` and `x != y`. Bare `<`
+  and `>` require a number and only accept numbers or single-letter
+  operands, leaving word breadcrumbs such as `Settings > Voice` alone. (PL-1610)
 
 - Speak spaced currency scales such as `$1 million` as “1 million dollars.”
 

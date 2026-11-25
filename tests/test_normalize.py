@@ -585,6 +585,7 @@ class TestSymbolStripping:
     [
         ("if x < 3 then x > 1", "if x less than 3 then x greater than 1"),
         ("x != y; x == y", "x not equal to y; x equal to y"),
+        ("x > 1!", "x greater than 1!"),
         (
             "x <= -3 and x >= 1",
             "x less than or equal to -3 and x greater than or equal to 1",
@@ -593,7 +594,8 @@ class TestSymbolStripping:
         ("**x** > 3", "x greater than 3"),
         ("50% < x", "50 percent less than x"),
         ("-3 < x < 3", "-3 less than x less than 3"),
-        ("x < y and x > 1.5", "x less than y and x greater than 1.5"),
+        ("3 > 2 > 1", "3 greater than 2 greater than 1"),
+        ("x < 1.5 and 3 > y", "x less than 1.5 and 3 greater than y"),
         ("$5 < 10", "5 dollars less than 10"),
         ("0x10 < 0x20", "0 x 10 less than 0 x 20"),
     ],
@@ -619,12 +621,15 @@ def test_comparisons_survive_inline_expressive_tags() -> None:
     [
         ("See Settings > Voice > Provider", "See Settings Voice Provider"),
         ("Chapter 2 > Section 3", "Chapter 2 Section 3"),
+        ("Menu > A > B and Home > 2 > 3", "Menu A B and Home 2 3"),
         ("[A](/guide) > [B](/settings)", "A B"),
         ("echo 3 > out", "echo 3 out"),
+        ("cat a > b", "cat a b"),
         ("echo 3 > out.txt", "echo 3 out.txt"),
         ("x <- 3 or x <=3 or x <> 3", "x 3 or x 3 or x 3"),
         ("x === y and x >> 3", "x y and x 3"),
         ("x <\n3", "x 3"),
+        ("x <\u20283", "x 3"),
         ("x\n> 3\r1) > > 2\n- > 4", "x 3 1 2 4"),
         ("x<3 with <https://example.org>", "x<3 with https://example.org"),
     ],
