@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, final
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, final
 
 from markdown_it.common.utils import unescapeAll
 from markdown_it.rules_inline import image
@@ -19,7 +20,8 @@ ALT_OPENING = "vox_alt_opening"
 SOURCE_OFFSET = "vox_source_offset"
 
 
-class LabelBounds(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class LabelBounds:
     opening: int
     label_end: int
     close: int
@@ -66,9 +68,8 @@ class SpeechLabelRule:
     @staticmethod
     def _wrappers(state: StateInline, start: int, label_end: int) -> int:
         # An image alone in literal brackets must not become an expressive cue.
-        if not VIBE_TAG_RE.fullmatch(
-            f"[{unescapeAll(state.src[start + 2 : label_end])}]"
-        ):
+        label = unescapeAll(state.src[start + 2 : label_end])
+        if not VIBE_TAG_RE.fullmatch(f"[{label}]"):
             return 0
         left, right = start - 1, state.pos
         while (

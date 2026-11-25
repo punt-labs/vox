@@ -50,10 +50,10 @@ class SpeechMarkdown:
                 start, close = cast("tuple[int, int]", code)
                 return CodeSpan(start, start + width, close)
         elif isinstance(bounds := token.meta.get(md.SOURCE_OFFSET), md.LabelBounds):
-            opening, label_end, end, width = bounds
+            opening, label_end, end = bounds.opening, bounds.label_end, bounds.close
             return SpeechMarkdown._label_span(
                 (at(offset + opening), at(offset + label_end), at(offset + end)),
-                width=width,
+                width=bounds.prefix_width,
             )
         return None
 
