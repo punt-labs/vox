@@ -42,8 +42,10 @@ class PublishedPort:
 
     PID_FILE: ClassVar[str] = "serve.pid"
     # pid_t is a signed 32-bit int on every platform voxd runs on; a larger
-    # number is not a pid, and os.kill would raise OverflowError on it.
+    # number is not a pid, and os.kill would raise OverflowError on it. The
+    # digit count is checked before int(), which refuses very long strings.
     PID_MAX: ClassVar[int] = 2**31 - 1
+    PID_DIGITS: ClassVar[int] = len(str(PID_MAX))
 
     _port: int | None  # None: no port file, or one that does not name a port
     _pid: int | None  # None: no pid file, or one that does not name a pid
@@ -91,9 +93,18 @@ class PublishedPort:
         if read is None:
             return cls(port, refusal=NotAskedError.no_pid())
         text, uid = read
-        if not text.isdecimal() or not 0 < int(text) <= cls.PID_MAX:
+        if not cls._is_pid(text):
             return cls(port, refusal=NotAskedError.pid_unparseable())
         return cls(port, int(text), refusal=cls._foreign(pid_file.name, uid))
+
+    @classmethod
+    def _is_pid(cls, text: str) -> bool:
+        """Return True for a decimal pid in 1..PID_MAX; long text is never converted."""
+        return (
+            text.isdecimal()
+            and len(text) <= cls.PID_DIGITS
+            and 0 < int(text) <= cls.PID_MAX
+        )
 
     @staticmethod
     def _foreign(name: str, uid: int) -> NotAskedError | None:

@@ -3408,10 +3408,10 @@
   "src/punt_vox/service/published_port.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.25,
+    "avg_params": 1.22,
     "max_complexity": 7.0,
-    "avg_complexity": 3.12,
-    "module_size": 100.0,
+    "avg_complexity": 3.0,
+    "module_size": 108.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

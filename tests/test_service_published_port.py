@@ -96,10 +96,21 @@ def test_no_pid_file_keeps_the_gate_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ["", "abc", "0", "-5", "99999999999999999999", str(2**31)]
+    "text",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("abc", id="letters"),
+        pytest.param("0", id="zero"),
+        pytest.param("-5", id="negative"),
+        pytest.param("99999999999999999999", id="past-pid_t-overflow"),
+        pytest.param(str(2**31), id="pid_t-plus-one"),
+        pytest.param("9" * 5000, id="past-the-int-conversion-limit"),
+    ],
 )
 def test_an_unparseable_pid_file_says_so(tmp_path: Path, text: str) -> None:
-    """Digits past pid_t would make os.kill raise OverflowError: not a pid."""
+    """Digits past pid_t would make os.kill raise OverflowError, and digits
+    past the interpreter's conversion limit make int() raise ValueError:
+    neither is a pid, and neither reaches a conversion."""
     assert _why(_publish(tmp_path, pid=text)) == (
         "serve.pid does not name a pid; no token sent unattributed"
     )
