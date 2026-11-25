@@ -58,6 +58,8 @@ class WorkerCleanupQueue:
         """Run one job per worker on that worker's own lane.
 
         A declined request for an active worker is run once that job ends.
+        A lane that cannot start returns a job already failed with the
+        reason, never a job that waits forever.
         """
         with self._lock:
             if self._closed:
@@ -69,7 +71,12 @@ class WorkerCleanupQueue:
             return self._start(worker_id, operation)
 
     def _start(self, worker_id: str, operation: Callable[[], None]) -> Future[None]:
-        """Start the worker's lane for one job; the lock is held."""
+        """Start the worker's lane for one job; the lock is held.
+
+        A lane that cannot start (the process is out of threads) releases
+        the worker, fails the job so a waiting reply hears it, and logs
+        under the worker id; the disk marker keeps the debt owed.
+        """
         job: Future[None] = Future()
         thread = Thread(
             target=self._run,
@@ -77,39 +84,57 @@ class WorkerCleanupQueue:
             name=f"vox-cleanup-{worker_id[:8]}",
             daemon=True,
         )
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            logger.exception("Worker %s cleanup lane could not start", worker_id)
+            self._release(worker_id)
+            job.set_exception(exc)
+            return job
         self._threads[worker_id] = thread
-        thread.start()
         return job
 
     def _run(
         self, worker_id: str, job: Future[None], operation: Callable[[], None]
     ) -> None:
-        failure = None
+        """Run one job, settle its future, then rerun or release the worker.
+
+        The job's future is settled before any rerun starts, so a reply
+        waiting on it never depends on a second lane coming up.
+        """
         try:
             operation()
         except Exception as exc:
             logger.exception("Worker %s cleanup job failed", worker_id)
-            failure = exc
-        finally:
-            with self._lock:
-                self._release_or_rerun(worker_id)
+            self._settle(job, exc)
+        else:
+            self._settle(job, None)
+        self._next(worker_id)
+
+    @staticmethod
+    def _settle(
+        job: Future[None],
+        failure: Exception | None,  # PY-TS-14: None is the job's success.
+    ) -> None:
+        """Resolve the job's future with its outcome."""
         if failure is None:
             job.set_result(None)
         else:
             job.set_exception(failure)
 
-    def _release_or_rerun(self, worker_id: str) -> None:
-        """Rerun a request declined during the job, or release the worker.
+    def _next(self, worker_id: str) -> None:
+        """Rerun a request declined during the job, or release the worker."""
+        with self._lock:
+            rerun = self._rerun.pop(worker_id, None)
+            if rerun is None:
+                self._release(worker_id)
+            else:
+                self._start(worker_id, rerun)
 
-        The lock is held. The rerun keeps the worker active, so idleness
-        still means every requested job has ended.
-        """
-        operation = self._rerun.pop(worker_id, None)
-        if operation is None or self._closed:
-            self._active.remove(worker_id)
-            del self._threads[worker_id]
-            return
-        self._start(worker_id, operation)
+    def _release(self, worker_id: str) -> None:
+        """Forget the worker's lane; the lock is held."""
+        self._active.discard(worker_id)
+        self._threads.pop(worker_id, None)
 
     def shutdown(self) -> None:
         """Refuse new work, drop reruns and allow running jobs a short grace period."""
