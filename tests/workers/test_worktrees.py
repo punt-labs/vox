@@ -228,3 +228,25 @@ def test_discard_keeps_a_worktree_with_uncommitted_changes(
         WorkerWorktrees().discard(repo, worktree, worker_id)
     assert (worktree / "patch.txt").is_file()
     assert _git(repo, "branch", "--list", f"vox-worker/{worker_id}") != ""
+
+
+def test_discard_removes_a_checkout_git_never_finished_populating(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A kill at the deadline can land after the .git pointer and before the
+    first index write; status then lists every tracked file as deleted. That
+    is the launch's debris, not an operator's edits, so the discard runs."""
+    (repo / "README.md").write_text("tracked\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "r")
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    branch = f"vox-worker/{worker_id}"
+    WorkerWorktrees().create(repo, worktree, branch)
+    gitdir = (worktree / ".git").read_text().removeprefix("gitdir:").strip()
+    (Path(gitdir) / "index").unlink()
+    assert "D  README.md" in _git(worktree, "status", "--porcelain")
+    WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert not worktree.exists()
+    assert not _is_listed(repo, worktree)
+    assert _git(repo, "branch", "--list", branch) == ""

@@ -262,7 +262,7 @@ and the record says why. Neither branch runs git.
 \where
   worker? \in \dom discard \\
   discard~worker? = dPending \\
-  outcome? \in \{dDone, dError\} \\
+  outcome? \in \{dDone, dError, dSkipped\} \\
   discard' = discard \oplus \{worker? \mapsto outcome?\} \\
   report' = report \oplus \{worker? \mapsto result?\} \\
   phase' = phase \\
@@ -271,9 +271,11 @@ and the record says why. Neither branch runs git.
   providerStopped' = providerStopped
 \end{schema}
 
-The cleanup queue runs a pending discard and records done or the error,
-folding only the discard markers onto a record that may carry a later
-worker report. A pending discard already has a stopped phase and a stopped
+The cleanup queue runs a pending discard and records done, the error, or
+skipped when the checkout holds edits made since the launch failed (the
+operator's work is kept and a later stop owes the discard again), folding
+only the discard markers onto a record that may carry a later worker
+report. A pending discard already has a stopped phase and a stopped
 provider, so done never contradicts the state invariant.
 
 \begin{schema}{DiscardRetryOnStopOfStarting}

@@ -224,10 +224,25 @@ class WorkerWorktrees:
             worktree.parent.rmdir()
 
     def _has_changes(self, worktree: Path) -> bool:
-        """Say whether the checkout holds edits the launch did not make."""
-        if not (worktree / ".git").exists():
+        """Say whether the checkout holds edits the launch did not make.
+
+        A kill at the deadline can land after git wrote the ``.git`` pointer
+        and before its first index write; status then lists every tracked
+        file as deleted. A checkout with no index is the launch's debris,
+        never anyone's work, so it is discarded like an empty directory.
+        """
+        pointer = worktree / ".git"
+        if not pointer.exists() or not self._index_written(pointer):
             return False
         return bool(self._git(worktree, "status", "--porcelain").strip())
+
+    @staticmethod
+    def _index_written(pointer: Path) -> bool:
+        """Say whether git finished populating the checkout behind *pointer*."""
+        if pointer.is_dir():
+            return (pointer / "index").exists()
+        gitdir = pointer.read_text().removeprefix("gitdir:").strip()
+        return (Path(gitdir) / "index").exists()
 
     def _registered(self, project: Path, worktree: Path) -> bool:
         listing = self._git(project, "worktree", "list", "--porcelain")

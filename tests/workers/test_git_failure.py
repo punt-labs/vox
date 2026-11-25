@@ -52,6 +52,10 @@ def test_bytes_stderr_is_decoded() -> None:
             "error: /tmp/worker requires 'git lfs install' before checkout",
             "error: <path> requires 'git lfs install' before checkout",
         ),
+        (
+            "fatal: '/Users/x/a:b' is not a git repository",
+            "fatal: '<path>' is not a git repository",
+        ),
     ],
 )
 def test_other_errors_keep_their_message_with_paths_scrubbed(
