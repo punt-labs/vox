@@ -343,3 +343,37 @@ def test_discard_retried_while_a_job_winds_down_is_not_dropped(
     assert done.last_report["worktree_discarded"] is True
     assert "discard_pending" not in done.last_report
     assert worktrees.discard.call_count == 2
+
+
+async def test_another_workers_discard_does_not_delay_a_stop(tmp_path: Path) -> None:
+    """Worker B's stop settles its harness cleanup while worker A's discard runs.
+
+    A discard is up to six git calls at 20 s each; a stop reply has 30 s.
+    Each worker's cleanup runs on its own lane, so B's reply never waits
+    behind A's discard.
+    """
+    provider = FakeWorkerProvider()
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    discarding, release = Event(), Event()
+
+    def blocking_discard(project: Path, worktree: Path, worker_id: str) -> None:
+        discarding.set()
+        assert release.wait(5)
+
+    worktrees.discard.side_effect = blocking_discard
+    registry = _registry(tmp_path, provider, worktrees)
+    provider.fail = True
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("doomed", str(tmp_path), provider="fake", harness="test")
+    provider.fail = False
+    try:
+        assert await asyncio.to_thread(discarding.wait, 1)
+        live = registry.start("live", str(tmp_path), provider="fake", harness="test")
+        actor = WorkerActor(registry)
+        async with asyncio.timeout(1):
+            reply = await actor.stop(live.id)
+    finally:
+        release.set()
+    assert reply["state"] == "stopped"
+    assert "cleanup_pending" not in reply["last_report"]
+    _settled(registry)

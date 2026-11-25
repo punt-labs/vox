@@ -1,4 +1,4 @@
-"""Retirement queue shutdown behavior."""
+"""Cleanup lanes: one job per worker, workers independent, bounded shutdown."""
 
 import logging
 from threading import Event
@@ -8,7 +8,7 @@ import pytest
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
 
 
-def test_shutdown_cancels_waiting_and_future_work() -> None:
+def test_shutdown_refuses_new_work_and_drops_reruns() -> None:
     queue = WorkerCleanupQueue()
     started, release, ran = Event(), Event(), Event()
 
@@ -22,10 +22,7 @@ def test_shutdown_cancels_waiting_and_future_work() -> None:
         assert started.wait(1)
         assert not queue.is_idle()
         assert queue.submit("running", ran.set) is None
-        waiting = queue.submit("waiting", ran.set)
-        assert waiting is not None
         queue.shutdown()
-        assert waiting.cancelled()
         assert queue.submit("closed", ran.set) is None
         assert not running.done()
     finally:
@@ -33,6 +30,28 @@ def test_shutdown_cancels_waiting_and_future_work() -> None:
     running.result(timeout=1)
     assert queue.is_idle()
     assert not ran.is_set()
+
+
+def test_jobs_for_different_workers_run_at_once() -> None:
+    """One worker's slow job never holds another worker's quick one."""
+    queue = WorkerCleanupQueue()
+    started, release = Event(), Event()
+
+    def hold() -> None:
+        started.set()
+        assert release.wait(3)
+
+    blocked = queue.submit("slow", hold)
+    assert blocked is not None
+    try:
+        assert started.wait(1)
+        quick = queue.submit("quick", lambda: None)
+        assert quick is not None
+        quick.result(timeout=1)
+    finally:
+        release.set()
+    blocked.result(timeout=1)
+    assert queue.is_idle()
 
 
 def test_failed_job_log_names_the_worker(caplog: pytest.LogCaptureFixture) -> None:
