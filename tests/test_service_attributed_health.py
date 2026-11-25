@@ -139,3 +139,24 @@ def test_a_holder_check_that_cannot_be_made_is_not_asked() -> None:
     assert "cannot tell whether the publisher holds port 8421" in str(
         probe.health_miss()
     )
+
+
+def test_a_holder_check_that_overruns_into_the_floor_sends_no_token() -> None:
+    """The slice bounds lsof's timeout, but the last readlink or a subprocess
+    finishing as its timeout fires can still overrun; a request with less
+    than the floor left would read a healthy voxd as unresponsive."""
+    clock = FakeClock()
+    mgr, held = holding_voxd()
+
+    def overrunning_check(pid: int, host: str, port: int) -> bool:
+        clock.advance(1.0)  # 0.25 of the 1.25 bound left: under the floor
+        return True
+
+    mgr.within.return_value.holds_port.side_effect = overrunning_check
+    target = MagicMock(host="127.0.0.1")
+    probe = DaemonProbe(mgr, lambda: target, Poll(clock))
+    assert probe.health(frozenset({held}), 1.25) is None
+    target.client.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, NotAskedError)
+    assert "spent the health budget" in str(miss)
