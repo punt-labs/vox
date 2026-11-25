@@ -203,8 +203,53 @@ class TestWritableConfigDir:
         with patch("punt_vox.dirs.find_repo_root", return_value=None):
             assert writable_config_dir(child) == found
 
-    def test_no_config_anywhere(self, tmp_path: Path) -> None:
-        with patch("punt_vox.dirs.find_config_dir", return_value=None):
+    def test_first_write_targets_repo_root_without_seeding(
+        self, no_config_dir: Path
+    ) -> None:
+        (no_config_dir / ".git").mkdir()
+        child = no_config_dir / "src"
+        child.mkdir()
+
+        assert writable_config_dir(child) == no_config_dir / DEFAULT_CONFIG_DIR
+        assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
+
+    @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory", "locks"])
+    @pytest.mark.parametrize("inherited", [False, True], ids=["fresh", "inherited"])
+    def test_first_write_refuses_a_destination_outside_the_checkout(
+        self, no_config_dir: Path, entry: str, *, inherited: bool
+    ) -> None:
+        if inherited:
+            workspace_config = no_config_dir / DEFAULT_CONFIG_DIR
+            workspace_config.mkdir(parents=True)
+            (workspace_config / "vox.md").write_text("---\nnotify: n\n---\n")
+        repo = no_config_dir / "repo"
+        child = repo / "src"
+        child.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        config = repo / DEFAULT_CONFIG_DIR
+        outside = no_config_dir / "outside"
+        if entry in {"directory", "locks"}:
+            config.parent.mkdir()
+            outside.mkdir()
+            link = config if entry == "directory" else config.parent / "local"
+            link.symlink_to(outside, target_is_directory=True)
+        else:
+            config.mkdir(parents=True)
+            (config / entry).symlink_to(outside)
+
+        with pytest.raises(OSError, match="outside the Git checkout"):
+            writable_config_dir(child)
+        assert not (repo / ".gitignore").exists()
+        if entry in {"directory", "locks"}:
+            assert not list(outside.iterdir())
+        else:
+            assert not outside.exists()
+
+    def test_no_config_or_repo(self, tmp_path: Path) -> None:
+        with (
+            patch("punt_vox.dirs.find_config_dir", return_value=None),
+            patch("punt_vox.dirs.find_repo_root", return_value=None),
+        ):
             assert writable_config_dir(tmp_path) is None
 
 

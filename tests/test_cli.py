@@ -1482,6 +1482,34 @@ class TestNotifyCommand:
         assert inner_store.read_field("speak") == "y"
         assert inner_store.read_field("voice") == "roger"
 
+    @pytest.mark.parametrize("in_repo", [True, False], ids=["git", "no-git"])
+    def test_first_notify_write_from_subdirectory(
+        self, no_config_dir: Path, monkeypatch: pytest.MonkeyPatch, *, in_repo: bool
+    ) -> None:
+        child = no_config_dir / "a" / "b"
+        child.mkdir(parents=True)
+        if in_repo:
+            (no_config_dir / ".git").mkdir()
+        else:
+            monkeypatch.setattr(
+                "punt_vox.dirs.find_repo_root", MagicMock(return_value=None)
+            )
+        relative_config = Path(".punt-labs") / "vox"
+        monkeypatch.chdir(child)
+        monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", relative_config)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", real_writable_config_dir
+        )
+
+        result = CliRunner().invoke(app, ["notify", "continuous", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == {"notify": "c", "speak": "y"}
+        expected = (no_config_dir if in_repo else child) / relative_config
+        assert list(no_config_dir.rglob("vox.md")) == [expected / "vox.md"]
+        assert ConfigStore(expected).read_field("notify") == "c"
+
     def test_unchanged_provider_in_nested_repo_keeps_inheriting(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
