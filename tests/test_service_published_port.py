@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import IO, cast
 
 import pytest
 
@@ -231,11 +232,22 @@ def test_a_port_file_unpublished_mid_read_closes_the_gate(
 
 
 def test_a_run_file_that_cannot_be_opened_raises_with_the_error(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A read failure other than "absent" is a failed probe naming the file."""
+    """A read failure other than "absent" is a failed probe naming the file.
+
+    The refusal is faked at the open call, not with a mode-000 file, which
+    root can read: the test must hold whatever uid runs it.
+    """
     path = _publish(tmp_path)
-    path.chmod(0)
+    real_open = Path.open
+
+    def denied(self: Path, mode: str = "r") -> IO[bytes]:
+        if self.name == "serve.port":
+            raise PermissionError(13, "Permission denied", str(self))
+        return cast("IO[bytes]", real_open(self, mode))
+
+    monkeypatch.setattr(Path, "open", denied)
     with pytest.raises(PortProbeError) as caught:
         PublishedPort.at(path)
     assert str(caught.value).startswith(f"cannot read {path}: ")
