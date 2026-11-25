@@ -22,6 +22,7 @@ from punt_vox.voxd.voice_agent.events import (
     Ping,
     UserTranscript,
 )
+from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.trace import EventTrace
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
@@ -105,6 +106,7 @@ def _call(
     peer: _Peer,
     audio: CallInput | None = None,
     speaker: AgentSpeaker | None = None,  # None: a speaker over a fake playback.
+    trace: EventTrace | None = None,  # None: a recording double nobody reads.
 ) -> VoiceAgentCall:
     """Build a call on ``peer``; ``audio`` None sends no caller audio at all."""
 
@@ -120,7 +122,7 @@ def _call(
         BossTools(workers, workers),
         audio if audio is not None else _Silent(),
         speaker or AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
-        trace=MagicMock(spec=EventTrace),
+        trace=trace if trace is not None else MagicMock(spec=EventTrace),
         opener=cast("Opener", opener),
         progress=ProgressEvents(),
     )
@@ -458,3 +460,47 @@ async def test_a_stop_after_the_agents_end_call_is_still_the_agents_hang_up() ->
     assert status["state"] == "ended"
     assert status["ended_by"] == "agent"
     assert str(call.outcome()) == "ended by agent, 0 tool calls"
+
+
+class _OneChunk:
+    """Caller audio of one chunk, enough for the pump to send once."""
+
+    def open(self) -> None:
+        pass
+
+    async def chunks(self) -> AsyncIterator[bytes]:
+        yield bytes(640)
+
+    def close(self) -> None:
+        pass
+
+
+async def test_a_send_that_meets_the_peers_close_stops_the_pump_not_the_call() -> None:
+    """A writer's failure on the closed socket is noted; the listener ends the call.
+
+    The frames the agent sent before closing, its end_call acknowledgement
+    among them, still reach the listener, so the call ends by the agent.
+    """
+
+    class _ClosedPeer(_Peer):
+        async def send_audio(self, pcm: bytes) -> None:
+            del pcm
+            msg = "ElevenLabs WebSocket send failed (closed)"
+            raise ConvAIError(msg)
+
+    trace = MagicMock(spec=EventTrace)
+    call = _call(
+        _ClosedPeer([UserTranscript("goodbye", None), _END_CALL]),
+        audio=_OneChunk(),
+        trace=trace,
+    )
+    await call.run(_dial)
+    status = call.status()
+    assert status["state"] == "ended"
+    assert status["ended_by"] == "agent"
+    assert status["transcript"] == [{"role": "user", "text": "goodbye"}]
+    trace.record.assert_any_call(
+        "note",
+        "caller_audio_stopped",
+        {"reason": "ElevenLabs WebSocket send failed (closed)"},
+    )

@@ -41,7 +41,7 @@ class CallTranscript:
                 self._turns.append((None, {"role": "user", "text": text}))
             case AgentResponse(text=text, response_id=response_id):
                 self._turns.append((response_id, {"role": "agent", "text": text}))
-            case AgentResponseCorrection():
+            case _:  # What remains of the union is a correction.
                 self._correct(event)
 
     def turns(self) -> list[Turn]:
