@@ -60,34 +60,43 @@ class ListenAddress:
         """Return the port."""
         return self._port
 
-    def lsof_names(self) -> frozenset[str]:
-        """Return the ``lsof -Fn`` names a matching LISTEN socket shows."""
+    def lsof_matches(self, family: str, name: str) -> bool:
+        """Return True when an ``lsof -Fnt`` socket (*family*, *name*) serves the host.
+
+        *family* is lsof's type field, ``IPv4`` or ``IPv6``. A wildcard
+        listener counts only in the host's own family: uvicorn sets
+        ``IPV6_V6ONLY``, so ``[::]`` does not serve 127.0.0.1, and ``0.0.0.0``
+        never serves ``::1``. An IPv4 host is also served by its v4-mapped
+        form on an IPv6 socket.
+        """
         port = self._port
         if self._host.version == 6:
-            return frozenset({f"[{self._host}]:{port}", f"*:{port}"})
-        return frozenset(
-            {f"{self._host}:{port}", f"[::ffff:{self._host}]:{port}", f"*:{port}"}
+            return name == f"[{self._host}]:{port}" or (
+                family == "IPv6" and name == f"*:{port}"
+            )
+        return name in {f"{self._host}:{port}", f"[::ffff:{self._host}]:{port}"} or (
+            family == "IPv4" and name == f"*:{port}"
         )
 
     def proc_forms(self, table: str) -> frozenset[str]:
         """Return the ``local_address`` hex forms that match in ``/proc/net/<table>``.
 
-        The wildcard is written as the integer zero address, never as a
-        literal: nothing here binds.
+        A wildcard counts only in the host's own family (``IPV6_V6ONLY``:
+        ``[::]`` does not serve an IPv4 host); an IPv4 host is also served by
+        its v4-mapped form in ``tcp6``. The wildcard is written as the
+        integer zero address, never as a literal: nothing here binds.
         """
         hexport = f"{self._port:04X}"
-        if table == "tcp":
-            if self._host.version == 6:
+        if self._host.version == 6:
+            if table == "tcp":
                 return frozenset()
+            hosts6 = (self._host, ipaddress.IPv6Address(0))
+            return frozenset(f"{self._hex6(h)}:{hexport}" for h in hosts6)
+        if table == "tcp":
             hosts = (self._host, ipaddress.IPv4Address(0))
             return frozenset(f"{self._hex4(h)}:{hexport}" for h in hosts)
-        mapped = (
-            self._host
-            if self._host.version == 6
-            else ipaddress.IPv6Address(f"::ffff:{self._host}")
-        )
-        hosts6 = (mapped, ipaddress.IPv6Address(0))
-        return frozenset(f"{self._hex6(h)}:{hexport}" for h in hosts6)
+        mapped = ipaddress.IPv6Address(f"::ffff:{self._host}")
+        return frozenset({f"{self._hex6(mapped)}:{hexport}"})
 
     @staticmethod
     def _hex4(host: ipaddress.IPv4Address) -> str:
@@ -235,12 +244,13 @@ class ProcessManager:
     def _lsof_holds_port(self, pid: int, address: ListenAddress) -> bool:
         """``lsof`` limited to *pid*: True when it lists a listener at *address*.
 
-        ``-Fn`` prints one ``n<name>`` line per socket, so the local address
-        is matched, not only the port.
+        ``-Fnt`` prints a ``t<family>`` and an ``n<name>`` line per socket, so
+        the local address and the address family are matched, not only the
+        port.
         """
         port = address.port
         cmd = [
-            "lsof", "-w", "-nP", "-Fn", "-a", "-p", str(pid),
+            "lsof", "-w", "-nP", "-Fnt", "-a", "-p", str(pid),
             f"-iTCP:{port}", "-sTCP:LISTEN",
         ]  # fmt: skip
         result = self._probe(cmd)
@@ -252,8 +262,13 @@ class ProcessManager:
                 f"{result.returncode}: {result.stderr.strip()}"
             )
             raise PortProbeError(msg)
-        names = {line[1:] for line in result.stdout.splitlines() if line[:1] == "n"}
-        return not names.isdisjoint(address.lsof_names())
+        family = ""
+        for line in result.stdout.splitlines():
+            if line[:1] == "t":
+                family = line[1:]
+            elif line[:1] == "n" and address.lsof_matches(family, line[1:]):
+                return True
+        return False
 
     def _proc_holds_port(self, pid: int, address: ListenAddress) -> bool:
         """Match *pid*'s socket inodes against the LISTEN sockets at *address*.

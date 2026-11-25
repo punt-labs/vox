@@ -250,38 +250,52 @@ def test_find_pid_on_port_fuser_missing_raises_naming_psmisc(
 def test_holds_port_macos_asks_lsof_about_one_pid(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    mock_run.return_value = _ran(0, "p123\nf5\nn127.0.0.1:8421\n")
+    mock_run.return_value = _ran(0, "p123\nf5\ntIPv4\nn127.0.0.1:8421\n")
     assert ProcessManager().holds_port(123, "127.0.0.1", 8421) is True
     argv = mock_run.call_args.args[0]
     assert argv[:1] == ["lsof"]
     assert argv[argv.index("-p") + 1] == "123"
     assert "-a" in argv
-    assert "-Fn" in argv
+    assert "-Fnt" in argv
     assert "-iTCP:8421" in argv
     assert "-sTCP:LISTEN" in argv
 
 
 @pytest.mark.parametrize(
-    ("name", "host", "held"),
+    ("family", "name", "host", "held"),
     [
-        pytest.param("127.0.0.1:8421", "127.0.0.1", True, id="exact-v4"),
-        pytest.param("127.0.0.1:8421", "::1", False, id="v4-listener-v6-host"),
-        pytest.param("[::1]:8421", "::1", True, id="exact-v6"),
-        pytest.param("[::1]:8421", "127.0.0.1", False, id="v6-listener-v4-host"),
-        pytest.param("*:8421", "127.0.0.1", True, id="wildcard-serves-v4"),
-        pytest.param("*:8421", "::1", True, id="wildcard-serves-v6"),
-        pytest.param("[::ffff:127.0.0.1]:8421", "127.0.0.1", True, id="v4-mapped"),
-        pytest.param("127.0.0.2:8421", "127.0.0.1", False, id="other-loopback"),
+        pytest.param("IPv4", "127.0.0.1:8421", "127.0.0.1", True, id="exact-v4"),
+        pytest.param("IPv4", "127.0.0.1:8421", "::1", False, id="v4-listener-v6-host"),
+        pytest.param("IPv6", "[::1]:8421", "::1", True, id="exact-v6"),
+        pytest.param(
+            "IPv6", "[::1]:8421", "127.0.0.1", False, id="v6-listener-v4-host"
+        ),
+        pytest.param("IPv4", "*:8421", "127.0.0.1", True, id="v4-wildcard-serves-v4"),
+        pytest.param("IPv6", "*:8421", "::1", True, id="v6-wildcard-serves-v6"),
+        pytest.param("IPv6", "*:8421", "127.0.0.1", False, id="v6-wildcard-not-v4"),
+        pytest.param("IPv4", "*:8421", "::1", False, id="v4-wildcard-not-v6"),
+        pytest.param(
+            "IPv6", "[::ffff:127.0.0.1]:8421", "127.0.0.1", True, id="v4-mapped"
+        ),
+        pytest.param("IPv4", "127.0.0.2:8421", "127.0.0.1", False, id="other-loopback"),
     ],
 )
 @patch("punt_vox.service.process.platform.system", return_value="Darwin")
 @patch("punt_vox.service.process.subprocess.run")
 def test_holds_port_macos_matches_the_listeners_address(
-    mock_run: MagicMock, _mock_sys: MagicMock, name: str, host: str, held: bool
+    mock_run: MagicMock,
+    _mock_sys: MagicMock,
+    family: str,
+    name: str,
+    host: str,
+    held: bool,
 ) -> None:
-    """A listener on the port at another address is not the one the token reaches."""
-    mock_run.return_value = _ran(0, f"p123\nf5\nn{name}\n")
+    """A listener on the port at another address, or a wildcard of the other
+    family (uvicorn sets IPV6_V6ONLY, so [::] does not serve 127.0.0.1), is
+    not the one the token reaches."""
+    mock_run.return_value = _ran(0, f"p123\nf5\nt{family}\nn{name}\n")
     assert ProcessManager().holds_port(123, host, 8421) is held
+    assert "-Fnt" in mock_run.call_args.args[0]
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Darwin")
@@ -308,7 +322,7 @@ def test_holds_port_macos_lsof_failure_raises(
 def test_holds_port_is_cut_to_the_deadline(
     mock_run: MagicMock, _mock_sys: MagicMock
 ) -> None:
-    mock_run.return_value = _ran(0, "p123\nn127.0.0.1:8421\n")
+    mock_run.return_value = _ran(0, "p123\ntIPv4\nn127.0.0.1:8421\n")
     clock = FakeClock()
     ProcessManager().within(Deadline(clock.monotonic, 0.75)).holds_port(
         123, "127.0.0.1", 8421
@@ -434,9 +448,10 @@ def test_holds_port_linux_non_ascii_table_raises(
             "tcp6",
             "00000000000000000000000000000000",
             "127.0.0.1",
-            True,
-            id="wildcard-v6-serves-v4",
+            False,
+            id="v6-wildcard-does-not-serve-v4",
         ),
+        pytest.param("tcp", "00000000", "::1", False, id="v4-wildcard-not-v6"),
     ],
 )
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
