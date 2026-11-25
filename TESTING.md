@@ -385,7 +385,8 @@ cause of the current runtime. Profile the current suite before attributing
 its cost to a particular component or to machine contention.
 
 Set `VOX_PYTEST_WORKERS=2` on developer machines to limit workers for `make test`,
-`make test-push`, and `make coverage`; CI leaves it unset to keep xdist's `auto`.
+`make test-push`, `make test-changed`, and `make coverage`; CI leaves it unset to
+keep xdist's `auto`.
 
 ## The MP3 Problem
 

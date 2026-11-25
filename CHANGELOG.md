@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Set `VOX_PYTEST_WORKERS` to limit pytest workers for `make test`,
-  `make test-push`, and `make coverage`; the default remains `auto`. (PL-1627)
+  `make test-push`, `make test-changed`, and `make coverage`; the default remains
+  `auto`. (PL-1627)
 
 - Point agent guidance, rules, and docs at the punt noun-verb CLI
   (`punt repo audit`, `punt repo scan-pii`, `punt release run`); needs the
