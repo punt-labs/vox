@@ -23,7 +23,7 @@ failing checks.
 | Required PR checks | Pull request | Parallel `make coverage` (includes default, slow, subprocess and installed-wheel e2e), offline `make test-roundtrip`, packaging `make test-e2e`, no-drop coverage comparison | <10 min normally |
 | Main verification | Push to main | Same CI suite; save successful coverage as `coverage-baseline-<sha>` | <10 min normally |
 
-`make test` runs the default tier with `-n auto`. `make test-push` includes slow
+`make test` runs the default tier in parallel. `make test-push` includes slow
 and subprocess tests but excludes integration, SDK, e2e, roundtrip, and quarantine.
 `make test-changed` selects changed test files and tests directly importing staged
 `src/punt_vox` modules. Use `make test-changed REF=origin/main` to compare HEAD
@@ -384,8 +384,8 @@ ratchet-test breakdown and CPU-contention hypothesis do not establish the
 cause of the current runtime. Profile the current suite before attributing
 its cost to a particular component or to machine contention.
 
-`pytest-xdist` is not a declared dependency; the default command does not
-request parallel workers.
+Set `VOX_PYTEST_WORKERS=2` on developer machines to limit workers for `make test`,
+`make test-push`, and `make coverage`; CI leaves it unset to keep xdist's `auto`.
 
 ## The MP3 Problem
 
