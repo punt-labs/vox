@@ -53,7 +53,7 @@ __all__ = ["StatusCheck"]
 class StatusCheck:
     """Read voxd's state on the service port once, within one deadline."""
 
-    __slots__ = ("_deadline", "_port", "_probe")
+    __slots__ = ("_deadline", "_first", "_port", "_probe")
 
     # The share of the deadline the published-port health request is given
     # before any attribution probe runs. lsof/fuser get only the rest.
@@ -62,6 +62,7 @@ class StatusCheck:
     _deadline: Deadline
     _probe: LifecycleProbe
     _port: int
+    _first: Exception | None  # None: the published-port request not yet made
 
     def __new__(cls, system: LifecycleSystem, within_s: float) -> Self:
         """Start the reading's deadline: *within_s* seconds from now."""
@@ -69,6 +70,7 @@ class StatusCheck:
         self._deadline = Deadline(system.poll.now, within_s)
         self._probe = system.probe.within(self._deadline)
         self._port = system.port
+        self._first = None
         return self
 
     def run(self) -> DaemonStatus:
@@ -76,15 +78,19 @@ class StatusCheck:
         try:
             return self._read()
         except (PortProbeError, BackendCommandError) as exc:
-            return DaemonStatus.unknown(self._spent_on(exc))
+            return DaemonStatus.unknown(self._after_first_ask(str(exc)))
 
     def _read(self) -> DaemonStatus:
         """Ask the published port first; then classify the port by its holders."""
-        health = self._probe.published_health(
+        probe = self._probe
+        health = probe.published_health(
             min(self.HEALTH_RESERVE_S, self._deadline.remaining())
         )
         if health is not None:
             return DaemonStatus.running(health)
+        # Kept now: the attributed request that may follow overwrites the
+        # probe's miss, and every later reading still names this one.
+        self._first = probe.health_miss()
         return self._attribute()
 
     def _attribute(self) -> DaemonStatus:
@@ -95,8 +101,10 @@ class StatusCheck:
             return self._ask(holders)
         if probe.port_listening():
             return DaemonStatus.unknown(
-                f"something listens on port {self._port} but no visible voxd "
-                "process holds it; vox sent it no token"
+                self._after_first_ask(
+                    f"something listens on port {self._port} but no visible "
+                    "voxd process holds it; vox sent it no token"
+                )
             )
         return DaemonStatus.not_running(
             f"no voxd process holds port {self._port} and nothing listens on it",
@@ -108,8 +116,10 @@ class StatusCheck:
         left = self._deadline.remaining()
         if left < HealthRequest.MIN_S:
             return DaemonStatus.unknown(
-                f"the status deadline was spent probing port {self._port} "
-                f"before voxd could be asked ({left:.2f}s left)"
+                self._after_first_ask(
+                    f"the status deadline was spent probing port {self._port} "
+                    f"before voxd could be asked ({left:.2f}s left)"
+                )
             )
         health = self._probe.health(holders, left)
         if health is not None:
@@ -125,19 +135,19 @@ class StatusCheck:
         """
         why = self._probe.health_miss() or "no reply"
         if isinstance(why, NotAskedError):
-            return DaemonStatus.unknown(str(why))
+            return DaemonStatus.unknown(self._after_first_ask(str(why)))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))
 
-    def _spent_on(self, exc: Exception) -> str:
-        """Name the probe that failed and what the health request before it did.
+    def _after_first_ask(self, what: str) -> str:
+        """Return *what* with what the published-port request before it came to.
 
-        A probe fails only after the published-port request has run, so the
-        reading never blames ``lsof`` alone for a deadline the health step
-        may have spent first.
+        Every ``unknown`` reading after that request names it, so a deadline
+        the health step spent, or a token that never went out, is never
+        hidden behind the probe that failed later.
         """
-        first = self._probe.health_miss()
+        first = self._first
         if first is None:
-            return str(exc)
+            return what
         if isinstance(first, NotAskedError):
-            return f"{exc}; voxd was not asked first: {first}"
-        return f"{exc}; voxd was asked first and gave no answer: {first}"
+            return f"{what}; voxd was not asked first: {first}"
+        return f"{what}; voxd was asked first and gave no answer: {first}"

@@ -272,4 +272,35 @@ def test_status_a_slow_second_lsof_is_unknown_naming_it_never_unresponsive() -> 
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
     assert "re-checking port 8421 spent the health budget" in reading.reason
+    assert "voxd was asked first and gave no answer: connection reset" in reading.reason
+    assert world.tokens_to == []
+
+
+def test_status_deadline_spent_after_a_hung_first_ask_names_both() -> None:
+    """A hung published request, then lsof spends the rest: the reason says so."""
+    world = FakeWorld(
+        port_file=8421,
+        health_blocks_s=60.0,
+        health_error="no answer in time",
+        probe_blocks_s=3.2,
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason.startswith("the status deadline was spent probing port 8421")
+    assert (
+        "voxd was asked first and gave no answer: no answer in time" in reading.reason
+    )
+    assert world.tokens_to == []
+
+
+def test_status_unattributed_listener_names_the_first_ask() -> None:
+    """A listener vox cannot attribute was asked through serve.port first."""
+    world = FakeWorld(
+        port_file=8421, foreign_listener=True, published_health_error="connection reset"
+    )
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason.startswith("something listens on port 8421")
+    assert "voxd was asked first and gave no answer: connection reset" in reading.reason
     assert world.tokens_to == []
