@@ -1,7 +1,11 @@
 """Environment switches that let an end-to-end test stand in for ElevenLabs.
 
 The switches are test-only and production never sets them. The daemon
-reads them once per use, so a test sets them in the daemon's environment:
+validates all three once at boot, through :meth:`CallOverrides.check` as
+its playback queue is built, so a misconfigured environment stops the
+daemon at start with the error naming the variable rather than running
+until the first call; it then reads each switch again per use, so a test
+sets them in the daemon's environment:
 
 - ``VOX_CONVAI_BASE_URL`` replaces the REST origin. It must be exactly
   ``http://127.0.0.1:<port>`` or ``http://[::1]:<port>``; any other value
@@ -27,13 +31,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Final, final
+from typing import Final, final
 from urllib.parse import urlsplit
 
+from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_silent import SilentOutputStream
-
-if TYPE_CHECKING:
-    from punt_vox.voxd.pcm_output import OutputStreamFactory
 
 __all__ = [
     "LOOPBACK_HOSTS",
@@ -59,6 +61,18 @@ class CallOverrides:
     """Read the loopback-only test switches from the process environment."""
 
     __slots__ = ()
+
+    @classmethod
+    def check(cls, default: OutputStreamFactory) -> OutputStreamFactory:
+        """Validate every switch now and return the output device.
+
+        Called once at daemon boot, from the playback queue. A malformed
+        switch raises the same :class:`ValueError` its use would; the REST
+        and loopback values are discarded here and read again per use.
+        """
+        cls.rest("", "")
+        cls.allow_loopback()
+        return cls.pcm_output(default)
 
     @classmethod
     def rest(cls, default: str, api_key: str) -> tuple[str, str]:

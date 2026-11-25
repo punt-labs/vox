@@ -103,13 +103,14 @@ class PlaybackQueue:
         """Create a playback queue that opens PCM streams with *output_stream*.
 
         The default is PortAudio, unless the test-only ``VOX_PCM_OUTPUT``
-        switch names the silent device.
+        switch names the silent device. The queue is built once at daemon
+        boot, so this is where every test-only call switch is validated.
         """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
-        self._output_stream = CallOverrides.pcm_output(output_stream)
+        self._output_stream = CallOverrides.check(output_stream)
         return self
 
     # -- Properties ----------------------------------------------------------
