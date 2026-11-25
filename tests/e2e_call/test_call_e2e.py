@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import signal
 import socket
@@ -55,6 +56,9 @@ _STARTUP_TIMEOUT_S = 30.0
 _CALL_TIMEOUT_S = 45.0
 _STOP_TIMEOUT_S = 10.0
 _TASK = "add greeting.py"
+# What tools/run_coverage.py sets for its subprocess startup hook; the daemon
+# and the CLI the tier launches are measured only when these pass through.
+_COVERAGE_VARS = ("COVERAGE_PROCESS_START", "COVERAGE_FILE")
 _TOOL_CALL_STEPS: tuple[Step, ...] = (
     SendPing(1),
     ExpectPong(1),
@@ -132,18 +136,25 @@ def _wait_for_port_file(
 
 @pytest.fixture
 def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Return a daemon environment rooted at ``tmp_path`` with no mic needed."""
+    """Return a daemon environment rooted at ``tmp_path`` with no mic needed.
+
+    The environment is bare: nothing of the test process's own leaks in but
+    the coverage runner's variables, so a daemon under ``make coverage`` is
+    measured and one under plain pytest is not.
+    """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     repo = _git_repo(tmp_path / "repo")
     ConfigStore(ConfigStore.global_dir()).write_field("worker_repos", repr([str(repo)]))
+    coverage = {name: os.environ[name] for name in _COVERAGE_VARS if name in os.environ}
     return {
         "HOME": str(home),
         "PATH": BarePath(tmp_path).value,
         "PUNT_TELEMETRY": "off",
         "VOX_CALL_ALLOW_LOOPBACK": "1",
         "VOX_PCM_OUTPUT": "silent",
+        **coverage,
     }
 
 
@@ -311,6 +322,33 @@ def _trace_events(report: str) -> list[str]:
     trace = Path(trace_line.removeprefix("trace: "))
     assert trace.is_file(), report
     return [json.loads(line)["type"] for line in trace.read_text().splitlines()]
+
+
+def test_the_daemon_env_carries_the_coverage_runner_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under the coverage runner, the daemon and CLI it spawns are measured too.
+
+    tools/run_coverage.py sets these two for the subprocess startup hook;
+    everything else in the test process's environment stays out.
+    """
+    monkeypatch.setenv("COVERAGE_PROCESS_START", "/cfg/pyproject.toml")
+    monkeypatch.setenv("COVERAGE_FILE", "/cfg/.coverage")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "must-not-leak")
+    env = voxd_env.__wrapped__(tmp_path, monkeypatch)
+    assert env["COVERAGE_PROCESS_START"] == "/cfg/pyproject.toml"
+    assert env["COVERAGE_FILE"] == "/cfg/.coverage"
+    assert "ELEVENLABS_API_KEY" not in env
+
+
+def test_the_daemon_env_is_bare_without_the_coverage_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    env = voxd_env.__wrapped__(tmp_path, monkeypatch)
+    assert "COVERAGE_PROCESS_START" not in env
+    assert "COVERAGE_FILE" not in env
 
 
 def test_tail_survives_bytes_that_are_not_utf8(tmp_path: Path) -> None:
