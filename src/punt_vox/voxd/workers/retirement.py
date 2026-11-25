@@ -129,32 +129,25 @@ class WorkerRetirement:
         self.schedule(observed.id)
 
     def _cleanup(self, worker_id: str) -> None:
-        """Settle the worker's debts; a save that fails is logged under its id.
+        """Settle the debts owed when this job starts, and only those.
+
+        A stop that marks a further debt while this job runs has its request
+        rerun by the queue as a job of its own once this one ends. That keeps
+        a reply waiting on this job bound to the work it was queued for: a
+        harness cleanup never grows into a discard of up to six git calls.
 
         The discard a job ran is irreversible, so the record is the only
         trace of its outcome. A save that fails after it names the worker
         and the failure, not just the exception type.
         """
         try:
-            self._settle_all(self._inventory.get(worker_id))
+            record = self._inventory.get(worker_id)
+            if self._settlement.owed(record):
+                self._checkpoint(worker_id, self._settlement.settle(record))
         except (OSError, ValueError) as exc:
             logger.warning(
                 "Worker %s settlement outcome not saved: %s", worker_id, GitFailure(exc)
             )
-
-    def _settle_all(self, record: WorkerRecord) -> None:
-        """Settle the owed debts, and any a stop queued while they ran.
-
-        The queue holds one job per worker; a stop that marks a debt pending
-        during this job has its request rerun by the queue once this job
-        ends. Only a debt this job did not run repeats the loop here, never
-        one it ran and recorded as failed.
-        """
-        while self._settlement.owed(record):
-            settled = self._settlement.settle(record)
-            record = self._checkpoint(record.id, settled)
-            if not settled.left_owing(record):
-                return
 
     def _checkpoint(self, worker_id: str, settled: SettledDebts) -> WorkerRecord:
         """Fold the settled markers onto the newest record and save it.

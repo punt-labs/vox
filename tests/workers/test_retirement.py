@@ -18,7 +18,7 @@ from punt_vox.voxd.workers.inventory import WorkerInventory
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.retirement import WorkerRetirement
-from punt_vox.voxd.workers.settlement import WorkerSettlement
+from punt_vox.voxd.workers.settlement import SettledDebts, WorkerSettlement
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 if TYPE_CHECKING:
@@ -319,14 +319,17 @@ def test_discard_retried_while_a_job_winds_down_is_not_dropped(
     busy.attempt("rmtree", lambda: _raise(OSError("busy")))
     worktrees.discard.side_effect = busy
     settled_once, release = Event(), Event()
-    original = WorkerRetirement._settle_all
+    original = WorkerRetirement._checkpoint
 
-    def settle_then_linger(self: WorkerRetirement, record: WorkerRecord) -> None:
-        original(self, record)
+    def checkpoint_then_linger(
+        self: WorkerRetirement, worker_id: str, settled: SettledDebts
+    ) -> WorkerRecord:
+        record = original(self, worker_id, settled)
         settled_once.set()
         assert release.wait(3)
+        return record
 
-    with patch.object(WorkerRetirement, "_settle_all", settle_then_linger):
+    with patch.object(WorkerRetirement, "_checkpoint", checkpoint_then_linger):
         registry = _registry(tmp_path, provider, worktrees)
         with pytest.raises(OSError, match="launch failed"):
             registry.start("edit", str(tmp_path), provider="fake", harness="test")
@@ -410,3 +413,55 @@ def test_unsaved_settlement_outcome_still_reaches_memory(tmp_path: Path) -> None
     remembered = inventory.remember.call_args.args[0]
     assert remembered.last_report["worktree_discarded"] is True
     assert "discard_pending" not in remembered.last_report
+
+
+async def test_a_second_stop_on_the_same_worker_never_grows_the_awaited_job(
+    tmp_path: Path,
+) -> None:
+    """Reply A waits on its cleanup job; a discard a later stop marks runs apart.
+
+    While job A runs harness cleanup, a second stop on the same worker marks
+    the discard pending. That discard is up to six git calls; it must run as
+    its own job after A ends, never inside the future reply A is awaiting.
+    """
+    provider = FakeWorkerProvider()
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    discarding, discard_release = Event(), Event()
+
+    def blocking_discard(project: Path, worktree: Path, worker_id: str) -> None:
+        discarding.set()
+        assert discard_release.wait(5)
+
+    worktrees.discard.side_effect = blocking_discard
+    registry = _registry(tmp_path, provider, worktrees)
+    worker = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    cleaning, cleanup_release = Event(), Event()
+
+    def hold_cleanup(_path: Path) -> None:
+        cleaning.set()
+        assert cleanup_release.wait(5)
+
+    actor = WorkerActor(registry)
+    with patch.object(TrivialProfile, "cleanup", side_effect=hold_cleanup):
+        first = asyncio.create_task(actor.stop(worker.id))
+        try:
+            assert await asyncio.to_thread(cleaning.wait, 1)
+            registry.hook_records.update(
+                worker.id,
+                lambda r: replace(
+                    r, last_report={**r.last_report, "discard_error": "rmtree: busy"}
+                ),
+            )
+            second, job = registry.request_stop(worker.id)
+            assert second.last_report["discard_pending"] is True
+            assert job is None
+            cleanup_release.set()
+            async with asyncio.timeout(1):
+                reply = await first
+        finally:
+            cleanup_release.set()
+            discard_release.set()
+    assert "cleanup_pending" not in reply["last_report"]
+    assert not discarding.is_set() or reply["last_report"].get("discard_pending")
+    _settled(registry)
+    assert registry.list()[0].last_report["worktree_discarded"] is True

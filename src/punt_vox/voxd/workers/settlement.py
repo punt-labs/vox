@@ -45,18 +45,6 @@ class SettledDebts:
             record = markers.fold(record, self._result)
         return record
 
-    def left_owing(self, record: WorkerRecord) -> bool:
-        """Check whether *record* owes a debt this job did not run.
-
-        A stop during the job marks such a debt pending; a debt that ran and
-        failed is not owed again until the next stop.
-        """
-        return (
-            WorkerCleanup.MARKERS not in self._markers and WorkerCleanup.pending(record)
-        ) or (
-            WorkerDiscard.MARKERS not in self._markers and WorkerDiscard.queued(record)
-        )
-
 
 @final
 class WorkerSettlement:
