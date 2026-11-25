@@ -11,7 +11,8 @@ import re
 import unicodedata
 from typing import final
 
-from punt_vox._inline_code import VIBE_TAG_RE, InlineCode
+from punt_vox._inline_code import InlineCode
+from punt_vox._link_labels import VIBE_TAG_RE
 from punt_vox._speech_abbreviations import SpeechAbbreviations
 from punt_vox._speech_punctuation import SpeechPunctuation
 

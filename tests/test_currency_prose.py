@@ -3,7 +3,7 @@
 import pytest
 
 from punt_vox._currency_prose import ProseCurrency
-from punt_vox._inline_code import VIBE_TAG_RE
+from punt_vox._link_labels import VIBE_TAG_RE
 
 
 @pytest.mark.parametrize(

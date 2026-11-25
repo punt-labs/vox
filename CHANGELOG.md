@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the daemon's ElevenLabs call and persistent workers. Retired the former
   pi call, its context snapshot and summary handoff, and its prompt lock.
 
+- `ToolReply.from_wire` reads the tool runner's error once at the call
+  boundary; main's `ToolAnswer` and `BossTools` are unchanged. (PL-1491)
+
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
@@ -164,6 +167,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vox music get` and `mic:music get` now export an album's surviving tracks
   when a track file was deleted out of band, naming each skipped track
   instead of failing the whole export. (PL-1476)
+
+- A live `vox call` whose microphone delivers only silence for its first
+  3 seconds (macOS denying the microphone to the daemon's process) now fails
+  with a message naming the cause and the two remedies, instead of sending
+  silence to the agent. The daemon logs each call's start, input mode, echo
+  declaration, input device, first-second capture level, every tool call
+  with its outcome, and the end with duration, tool call count and trace
+  path. (PL-1491, PL-1494)
 
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)

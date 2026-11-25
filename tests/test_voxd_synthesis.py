@@ -1364,6 +1364,49 @@ class TestModelSupportsExpressiveTags:
 class TestApplyVibeForSynthesis:
     """Normalization gates vibe-tag handling on model capability."""
 
+    @pytest.mark.parametrize(
+        ("provider", "model", "expected"),
+        [
+            ("espeak", None, "Run draft now. Read the guide next."),
+            (
+                "elevenlabs",
+                "eleven_v3",
+                "[whispering] Run draft now. Read the guide next.",
+            ),
+        ],
+    )
+    def test_markdown_link_labels_are_spoken(
+        self, provider: str, model: str | None, expected: str
+    ) -> None:
+        text = (
+            "[whispering] Run [draft](https://example.com) now. "
+            "Read [the guide](https://example.com/guide) next."
+        )
+        request = SynthesisPipeline.prepare_audio_request(
+            text, SynthesisSpec(provider=provider, model=model)
+        )
+        assert request.text == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("[[draft]](/docs)", "draft"),
+            ("[~~~ fences](/manual) then `$5`", "fences then dollar sign 5"),
+            (r"Read [C\+\+](/docs) and [R&amp;D](/docs).", "Read C plus plus and R&D."),
+            (r"[$5\`](/x)[$5\`](/y)", "5 dollars 5 dollars"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("provider", "model"), [("espeak", None), ("elevenlabs", "eleven_v3")]
+    )
+    def test_markdown_labels_stay_prose(
+        self, text: str, expected: str, provider: str, model: str | None
+    ) -> None:
+        request = SynthesisPipeline.prepare_audio_request(
+            text, SynthesisSpec(provider=provider, model=model)
+        )
+        assert request.text == expected
+
     @staticmethod
     def _apply(raw: str, tags: str | None, provider: str, model: str | None) -> str:
         body, vibe_tags = SynthesisPipeline._normalize_for_synthesis(
