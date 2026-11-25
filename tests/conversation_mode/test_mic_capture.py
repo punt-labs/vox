@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Self, final
 
 import pytest
 
@@ -47,13 +48,19 @@ async def test_open_logs_a_device_name_with_a_newline_on_one_line(
     assert line == "Call output device: USB Call ended: forged (default 44100 Hz)"
 
 
+@final
 class _NamedBackend:
     """A backend reporting the given input and output device names."""
 
-    def __init__(self, input_name: str, output_name: str) -> None:
+    __slots__ = ("_devices",)
+    _devices: DevicePair
+
+    def __new__(cls, input_name: str, output_name: str) -> Self:
+        self = super().__new__(cls)
         self._devices = DevicePair(
             InputDevice(input_name, 48_000.0), OutputDevice(output_name, 44_100.0)
         )
+        return self
 
     def devices(self) -> DevicePair:
         return self._devices

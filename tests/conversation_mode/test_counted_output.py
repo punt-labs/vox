@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
 import pytest
 
@@ -23,41 +23,62 @@ if TYPE_CHECKING:
 class _Stream:
     """An output stream recording the calls made on it."""
 
-    __slots__ = ("calls", "close_error", "start_error")
+    __slots__ = ("_calls", "_close_error", "_start_error")
+    _calls: list[str]
+    _close_error: Exception | None  # None: close succeeds; else raised by close.
+    _start_error: Exception | None  # None: start succeeds; else raised by start.
 
-    def __init__(
-        self,
-        start_error: Exception | None = None,
-        close_error: Exception | None = None,
-    ) -> None:
-        self.calls: list[str] = []
-        self.start_error = start_error
-        self.close_error = close_error
+    def __new__(
+        cls,
+        start_error: Exception | None = None,  # None: the stream starts.
+        close_error: Exception | None = None,  # None: the stream closes.
+    ) -> Self:
+        self = super().__new__(cls)
+        self._calls = []
+        self._start_error = start_error
+        self._close_error = close_error
+        return self
+
+    @property
+    def calls(self) -> list[str]:
+        """The calls made on the stream, in order."""
+        return list(self._calls)
 
     def start(self) -> None:
-        if self.start_error is not None:
-            raise self.start_error
-        self.calls.append("start")
+        if self._start_error is not None:
+            raise self._start_error
+        self._calls.append("start")
 
     def stop(self) -> None:
-        self.calls.append("stop")
+        self._calls.append("stop")
 
     def abort(self) -> None:
-        self.calls.append("abort")
+        self._calls.append("abort")
 
     def close(self) -> None:
-        if self.close_error is not None:
-            raise self.close_error
-        self.calls.append("close")
+        if self._close_error is not None:
+            raise self._close_error
+        self._calls.append("close")
 
 
 @final
 class _Factory:
-    __slots__ = ("kwargs", "stream")
+    """An output stream factory returning one stream and recording its arguments."""
 
-    def __init__(self, stream: _Stream) -> None:
-        self.stream = stream
-        self.kwargs: dict[str, object] = {}
+    __slots__ = ("_kwargs", "_stream")
+    _kwargs: dict[str, object]
+    _stream: _Stream
+
+    def __new__(cls, stream: _Stream) -> Self:
+        self = super().__new__(cls)
+        self._stream = stream
+        self._kwargs = {}
+        return self
+
+    @property
+    def kwargs(self) -> dict[str, object]:
+        """The keyword arguments of the last call, empty before any."""
+        return dict(self._kwargs)
 
     def __call__(
         self,
@@ -67,13 +88,13 @@ class _Factory:
         callback: OutputCallback,
         finished_callback: Callable[[], None],
     ) -> _Stream:
-        self.kwargs = {
+        self._kwargs = {
             "samplerate": samplerate,
             "blocksize": blocksize,
             "callback": callback,
             "finished_callback": finished_callback,
         }
-        return self.stream
+        return self._stream
 
 
 def _ignore(*_args: object) -> None:
