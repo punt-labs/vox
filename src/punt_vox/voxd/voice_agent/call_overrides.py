@@ -117,13 +117,19 @@ class CallOverrides:
 
         With ``VOX_CONVAI_BASE_URL`` set, the registration provisioned on
         that loopback origin lives beside *default* in a file named for the
-        origin's port, one per fake endpoint.
+        origin's host and port, one per fake endpoint: the two loopback
+        addresses may each serve the same port, and a registration carries
+        the full origin in its credential id, so sharing a file between
+        them would make the second refuse the first's record.
         """
         override = os.environ.get(BASE_URL_ENV)
         if override is None:
             return default
-        port = urlsplit(cls._loopback_origin(override)).port
-        return default.with_name(f"{default.stem}.loopback-{port}{default.suffix}")
+        url = urlsplit(cls._loopback_origin(override))
+        host = "v6" if url.hostname == "::1" else "v4"
+        return default.with_name(
+            f"{default.stem}.loopback-{host}-{url.port}{default.suffix}"
+        )
 
     @classmethod
     def _loopback_origin(cls, override: str) -> str:

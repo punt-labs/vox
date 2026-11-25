@@ -119,7 +119,7 @@ def test_a_fake_call_and_a_live_call_keep_separate_registrations(
     monkeypatch.setattr("punt_vox.voxd.voice_agent.agent.config_dir", lambda: tmp_path)
     live = tmp_path / _COMPLETED_REGISTRATION
     port = int(wire.url.rsplit(":", 1)[1])
-    fake = tmp_path / f"voice-agent.loopback-{port}.json"
+    fake = tmp_path / f"voice-agent.loopback-v4-{port}.json"
 
     monkeypatch.setenv("VOX_CONVAI_BASE_URL", wire.url)
     with ConvAIControl(_API_KEY) as control:
@@ -160,7 +160,7 @@ def test_teardown_under_the_override_removes_the_registration_and_keeps_its_lock
         VoiceAgent(control).teardown()
     port = urlsplit(wire.url).port
     names = sorted(path.name for path in tmp_path.iterdir())
-    assert names == [f".voice-agent.loopback-{port}.json.punt-import.lock"]
+    assert names == [f".voice-agent.loopback-v4-{port}.json.punt-import.lock"]
 
 
 def test_lazy_agent_persists_and_reuses_id_then_force_deletes(

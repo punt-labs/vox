@@ -316,6 +316,13 @@ def _daemon_log(env: dict[str, str]) -> str:
     return _log_path(env).read_text()
 
 
+def _flush_dropped_ms(daemon_log: str) -> float:
+    """Return how much queued audio the cut flushed, from the flush log line."""
+    match = re.search(r"PCM flush at [\d.]+ ms: dropped ([\d.]+) ms", daemon_log)
+    assert match is not None, "no flush line in the daemon log"
+    return float(match.group(1))
+
+
 def _played_ms(daemon_log: str) -> int:
     """Return the audio the closing stream report says the device played."""
     match = re.search(r"PCM stream closed at .*?, played (\d+) ms", daemon_log)
@@ -479,3 +486,4 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     assert "interrupted=True" in daemon_log
     assert daemon_log.index(_PLAYBACK_STARTED) < daemon_log.index("PCM flush at")
     assert _played_ms(daemon_log) > 0
+    assert _flush_dropped_ms(daemon_log) > 0

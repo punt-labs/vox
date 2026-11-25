@@ -72,14 +72,20 @@ def test_registration_path_is_the_default_without_the_override(
     assert CallOverrides.registration_path(default) == default
 
 
-def test_registration_path_is_a_sibling_named_for_the_override_port(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("origin", "name"),
+    [
+        ("http://127.0.0.1:4321", "voice-agent.loopback-v4-4321.json"),
+        ("http://[::1]:4321", "voice-agent.loopback-v6-4321.json"),
+    ],
+)
+def test_registration_path_is_a_sibling_named_for_the_override_host_and_port(
+    monkeypatch: pytest.MonkeyPatch, origin: str, name: str
 ) -> None:
-    monkeypatch.setenv("VOX_CONVAI_BASE_URL", "http://127.0.0.1:4321")
+    """The two loopback addresses on one port never share a registration."""
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", origin)
     default = Path("/cfg/voice-agent.json")
-    assert CallOverrides.registration_path(default) == Path(
-        "/cfg/voice-agent.loopback-4321.json"
-    )
+    assert CallOverrides.registration_path(default) == Path("/cfg") / name
 
 
 def test_registration_path_rejects_a_malformed_override_by_name(
