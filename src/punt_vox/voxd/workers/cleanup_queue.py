@@ -108,7 +108,22 @@ class WorkerCleanupQueue:
         rerun = self._detach(worker_id)
         self._settle(job, failure)
         if rerun is not None:
-            with self._lock:
+            self._hand_off(worker_id, rerun)
+
+    def _hand_off(self, worker_id: str, rerun: Callable[[], None]) -> None:
+        """Start the detached rerun, or drop it if the queue closed meanwhile.
+
+        shutdown snapshots the lanes it drains under the lock; a rerun that
+        started after that snapshot would escape the bounded drain. The
+        closed flag is read again under the same lock before any thread
+        starts; a closed queue drops the rerun with the usual log line and
+        releases the worker.
+        """
+        with self._lock:
+            if self._closed:
+                self._dropped(worker_id)
+                self._release(worker_id)
+            else:
                 self._start(worker_id, rerun)
 
     @staticmethod
@@ -136,16 +151,8 @@ class WorkerCleanupQueue:
     def _take_rerun(
         self, worker_id: str
     ) -> Callable[[], None] | None:  # PY-TS-14: None when nothing is parked.
-        """Pop the worker's parked rerun; a closed queue drops it with a log.
-
-        The disk marker keeps the debt owed, but nothing runs it until the
-        next start, so the drop names the worker. The lock is held.
-        """
-        rerun = self._rerun.pop(worker_id, None)
-        if rerun is not None and self._closed:
-            self._dropped(worker_id)
-            return None
-        return rerun
+        """Pop the worker's parked rerun; the lock is held."""
+        return self._rerun.pop(worker_id, None)
 
     @staticmethod
     def _dropped(worker_id: str) -> None:

@@ -198,3 +198,53 @@ def test_a_rerun_dropped_at_shutdown_is_logged_with_the_worker(
     [record] = [r for r in caplog.records if "dropped" in r.getMessage()]
     assert "w-4" in record.getMessage()
     assert "closed" in record.getMessage()
+
+
+def test_a_rerun_detached_before_shutdown_never_starts_after_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A shutdown that lands between detach and start wins; no lane escapes.
+
+    shutdown takes its thread snapshot under the lock; a rerun that started
+    after that would outlive the bounded drain. The rerun path rechecks the
+    closed flag under the lock, drops with the log line, and the queue goes
+    idle.
+    """
+    queue = WorkerCleanupQueue()
+    detached, proceed = Event(), Event()
+    original_detach = WorkerCleanupQueue._detach
+
+    def detach_then_pause(self: WorkerCleanupQueue, worker_id: str) -> object:
+        rerun = original_detach(self, worker_id)
+        if rerun is not None:
+            detached.set()
+            assert proceed.wait(3)
+        return rerun
+
+    started, release = Event(), Event()
+
+    def hold() -> None:
+        started.set()
+        assert release.wait(3)
+
+    with (
+        patch.object(WorkerCleanupQueue, "_detach", detach_then_pause),
+        patch.object(WorkerCleanupQueue, "_start", wraps=queue._start) as start,
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.workers.cleanup_queue"),
+    ):
+        job = queue.submit("w-6", hold)
+        assert job is not None
+        assert started.wait(1)
+        assert queue.submit("w-6", lambda: None) is None
+        release.set()
+        assert detached.wait(1)
+        queue.shutdown()
+        proceed.set()
+        job.result(timeout=1)
+        deadline = time.monotonic() + 1
+        while not queue.is_idle():
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+    assert start.call_count == 1  # the first lane only; the rerun never started
+    [record] = [r for r in caplog.records if "dropped" in r.getMessage()]
+    assert "w-6" in record.getMessage()
