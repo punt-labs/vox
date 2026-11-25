@@ -815,3 +815,32 @@ def test_open_refuses_when_the_selected_index_cannot_be_described_after_the_open
 
     assert created[0].closed
     assert table.open_streams == 0
+
+
+def test_open_refuses_when_the_index_now_names_a_same_named_device_at_another_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identity is name and rate; a re-read table with the same name is not enough."""
+    created: list[FakeInputStream] = []
+
+    def query_devices(kind: str | int) -> DeviceInfo:
+        if kind == 3:  # same name, but the device at index 3 runs at 44.1 kHz now
+            return {"name": "USB Audio", "index": 3, "default_samplerate": 44100.0}
+        return {"name": "USB Audio", "index": 3, "default_samplerate": 48000.0}
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(monkeypatch, query_devices=query_devices, RawInputStream=raw_input_stream)
+    table = DeviceTable()
+    with pytest.raises(OSError, match=r"at 44100\.0 Hz, not USB Audio at 48000\.0"):
+        PortAudio(table).open(
+            InputDevice("USB Audio", 48000.0, index=3),
+            samplerate=16000.0,
+            blocksize=0,
+            callback=_ignore,
+        )
+
+    assert created[0].closed
+    assert table.open_streams == 0

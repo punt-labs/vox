@@ -125,21 +125,30 @@ class InputDevice:
     def _still_named(self, stream: RawInputStream) -> None:
         """Refuse a stream whose index the table has given to another device.
 
+        Identity is the name and the default sample rate together, so a
+        same-named device at another rate is another device.
+
         Raises:
-            OSError: When the device at this index is now named differently.
+            OSError: When the device at this index now differs in name or
+                rate, or cannot be described.
         """
         from sounddevice import PortAudioError, query_devices
 
         if self._index is None:
             return
         try:
-            now = str(query_devices(self._index)["name"])
-        except (PortAudioError, UnicodeDecodeError) as exc:
+            info = query_devices(self._index)
+            now = InputDevice(str(info["name"]), float(info["default_samplerate"]))
+        except (PortAudioError, UnicodeDecodeError, ValueError) as exc:
             self._close_unstarted(stream)
             raise self.refused(exc) from exc
-        if now != self._name:
+        if now != self:
             self._close_unstarted(stream)
-            raise self.refused(f"device {self._index} is now {now}")
+            raise self.refused(
+                f"device {self._index} is now {now.name} at"
+                f" {now.default_samplerate_hz} Hz, not {self._name} at"
+                f" {self._default_samplerate_hz} Hz"
+            )
 
     def started(self, stream: RawInputStream) -> NativeInputStream:
         """Start a stream opened on this device; one that will not start is closed.
