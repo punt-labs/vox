@@ -28,10 +28,10 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
-from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.config import SpeakMode
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.repo_config import RepoConfig
 from punt_vox.types_cli_options import (
     FromOpt,
     LanguageOpt,
@@ -231,15 +231,29 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
+
+    With --from and --json, stdout is JSON Lines: one JSON object per successful
+    segment, in input order. Blank segments are skipped. If the daemon rejects a
+    segment or the connection fails during processing, Vox writes a final
+    {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
+    are skipped. An invalid segments file produces one error object and exits 2.
+
+    With a segments file named in.json, save stdout before running jq:
+
+    status=0
+
+    vox say --from in.json --json >out.jsonl ||
+
+    status=$?
+
+    jq -c . out.jsonl
+
+    echo "Vox exit status: $status" >&2
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    # Resolve the per-call API key from exactly one of the four
-    # supported sources (file, stdin, env var, argv) and fire a
-    # stderr warning when the argv path was used. See
-    # ``ApiKeyResolver`` for the full rationale.
-    resolved_api_key = ApiKeyResolver(
+    key_resolver = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
-    ).resolve()
+    )
 
     segments, spec = _synthesis.prepare(
         text,
@@ -253,7 +267,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
         similarity=similarity,
         style=style,
         speaker_boost=speaker_boost,
-        api_key=resolved_api_key,
+        api_key=_synthesis.resolve_api_key(key_resolver, text, from_file),
     )
 
     _speak_segments(segments, spec, once or None)
@@ -289,7 +303,7 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
     """
     try:
         updates = VibeChange.from_cli(mood).resolve()
-        ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(updates)
+        RepoConfig().write_fields(updates)
     except ConfigValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="mood") from exc
     if updates["vibe_mode"] == "manual":
@@ -344,7 +358,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("speak", mode)
+    RepoConfig().write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -424,7 +438,7 @@ _VoiceName = Annotated[
 
 def _ctx() -> Ctx:
     """Wire the collaborators the command layer needs."""
-    return Ctx(ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR), VoxClientSync())
+    return Ctx(RepoConfig(), VoxClientSync())
 
 
 def _run(coro: Coroutine[object, object, CommandResult]) -> None:
@@ -531,7 +545,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+    cfg = RepoConfig().read()
     StatusCli.emit(_formatter, cfg)
 
 

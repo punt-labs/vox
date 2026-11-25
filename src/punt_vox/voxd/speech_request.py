@@ -1,12 +1,8 @@
-"""Speech synthesis and recording WebSocket handlers."""
-# pyright: reportPrivateUsage=false
-# Internal module within the voxd package -- cross-module private access is expected.
+"""Speech request parsing and replies shared by synthesis and recording."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -18,16 +14,12 @@ from punt_vox.voxd._parse import (
     parse_optional_str,
     parse_required_str,
 )
-from punt_vox.voxd.dedup import OnceDedup
-from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
-from punt_vox.voxd.speech_reply import SpeechReply
-from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
-    _LOCAL_PROVIDERS,
-    _SYNTHESIS_REJECTIONS,
+from punt_vox.voxd.speech_preparation import (
+    SYNTHESIS_REJECTIONS,
     EmptyNormalizedTextError,
-    SynthesisPipeline,
+    SpeechPreparation,
 )
-from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.speech_reply import SpeechReply
 from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
@@ -36,9 +28,10 @@ if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.dedup import DedupHit
+    from punt_vox.voxd.synthesis import SynthesisPipeline
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
-__all__ = ["SynthesizeHandler"]
+__all__ = ["SpeechRequest"]
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +41,8 @@ _REQUEST_KEY = ApiKeyCheck("the request's api_key")
 
 
 @dataclass(frozen=True, slots=True)
-class _SpeechRequest:
-    """Bundle parsed synthesis fields and their id-stamped reply channel."""
+class SpeechRequest:
+    """Bundle parsed synthesis fields and their ID-stamped reply channel."""
 
     text: str
     spec: SynthesisSpec
@@ -65,10 +58,10 @@ class _SpeechRequest:
         """Parse a wire message into a request, validating at the boundary.
 
         A string-typed field raises ``ValueError`` on a non-string value while a
-        numeric field accepts a JSON number (via the parse helpers); empty or
-        whitespace-only text, an ``api_key`` no HTTP header may carry, and a
-        rate or voice setting :meth:`SynthesisSpec.validate` refuses are
-        rejected here, so both handlers share one validation point.
+        numeric field accepts a JSON number (via the parse helpers); empty,
+        whitespace-only or non-UTF-8 text, an ``api_key`` no HTTP header may
+        carry, and any rate or voice settings :meth:`SynthesisSpec.validate`
+        refuses are rejected here, so both handlers share one validation point.
 
         Raises:
             ValueError: If the message has no speech text or an invalid field.
@@ -76,7 +69,11 @@ class _SpeechRequest:
         text = parse_required_str(msg, "text")
         if not text.strip():
             raise ValueError("empty text")
-        speaker_boost_raw = msg.get("speaker_boost")
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("text must be valid UTF-8") from None
+        boost = msg.get("speaker_boost")
         # ``provider`` is required on the wire (design §3.7): every client
         # surface (MCP, hook, CLI, panel, record) fills it from state via
         # :class:`SessionSpec` before crossing the wire. A hand-rolled
@@ -92,9 +89,7 @@ class _SpeechRequest:
             stability=parse_optional_float(msg, "stability"),
             similarity=parse_optional_float(msg, "similarity"),
             style=parse_optional_float(msg, "style"),
-            speaker_boost=(
-                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
-            ),
+            speaker_boost=None if boost is None else bool(boost),
             api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
         spec.validate()
@@ -119,7 +114,7 @@ class _SpeechRequest:
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except Exception as exc:
-            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
+            if not isinstance(exc, SYNTHESIS_REJECTIONS):
                 logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
             await self.fail(exc)
@@ -134,7 +129,7 @@ class _SpeechRequest:
         :meth:`fault` (design §3.5). Any other exception, or a nonzero exit
         code, is a daemon-side fault.
         """
-        if isinstance(result, _SYNTHESIS_REJECTIONS):
+        if isinstance(result, SYNTHESIS_REJECTIONS):
             await self._wire.error(result)
         elif isinstance(result, Exception):
             await self.fault(SafeFault.from_exception(result))
@@ -153,7 +148,7 @@ class _SpeechRequest:
     async def reply_duplicate(self, hit: DedupHit) -> None:
         """Validate and acknowledge a duplicate without a synthesis advisory."""
         try:
-            SynthesisPipeline.normalized_text(self.text, self.spec)
+            SpeechPreparation.audio_request(self.text, self.spec)
         except EmptyNormalizedTextError as exc:
             await self.fail(exc)
             return
@@ -184,103 +179,3 @@ class _SpeechRequest:
         no absolute prefix reaches the client.
         """
         await self._wire.fault(fault)
-
-
-class SynthesizeHandler(MessageHandler):
-    """Handle 'synthesize' WebSocket messages: TTS + enqueue playback."""
-
-    __slots__ = ("_once_dedup", "_playback", "_synthesis")
-
-    _once_dedup: OnceDedup
-    _playback: PlaybackQueue
-    _synthesis: SynthesisPipeline
-
-    def __new__(
-        cls,
-        *,
-        synthesis: SynthesisPipeline,
-        playback: PlaybackQueue,
-        once_dedup: OnceDedup,
-    ) -> Self:
-        """Create a synthesize handler."""
-        self = super().__new__(cls)
-        self._synthesis = synthesis
-        self._playback = playback
-        self._once_dedup = once_dedup
-        return self
-
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Synthesize speech and enqueue for playback."""
-        # Parse at the boundary: a non-string wire field (or empty text) is an
-        # id-stamped error frame, never a ValueError that tears the connection down.
-        try:
-            req = _SpeechRequest.from_msg(msg, websocket)
-            once = parse_optional_int(msg, "once") or 0
-        except ValueError as exc:
-            # WireReply makes a gone-peer send a clean no-op, matching the siblings.
-            await SpeechReply(websocket, str(msg.get("id", ""))).error(exc)
-            return
-
-        await self._dispatch(req, once)
-
-    async def _dispatch(self, req: _SpeechRequest, once: int) -> None:
-        """Play a local provider directly, else synthesize to a file and enqueue."""
-        with ExitStack() as reservation:
-            if once > 0:
-                hit = self._once_dedup.check_and_record(req.text, float(once))
-                if hit is not None:
-                    await req.reply_duplicate(hit)
-                    return
-                reservation.callback(self._once_dedup.rollback_for(req.text))
-
-            logger.info("Synthesize: id=%r chars=%d", req.request_id, len(req.text))
-            if await self._play_local(req, reservation):
-                return
-            await self._synthesize_and_enqueue(req, reservation)
-
-    async def _play_local(self, req: _SpeechRequest, reservation: ExitStack) -> bool:
-        """Play a local provider (espeak/say) straight to the device.
-
-        Return True when the request was fully handled (a terminal reply was
-        sent); False when no local path applied and the caller should fall
-        through to file synthesis.
-        """
-        if req.spec.provider not in _LOCAL_PROVIDERS:
-            return False
-        result = await self._synthesis.try_direct_play(
-            req.text, req.spec, record_result=self._playback.record_result
-        )
-        if result is None:
-            return False
-        if result == 0:
-            reservation.pop_all()
-            await req.reply({"type": "done"})
-        else:
-            reservation.close()
-            await req.fail(result)
-        return True
-
-    async def _synthesize_and_enqueue(
-        self, req: _SpeechRequest, reservation: ExitStack
-    ) -> None:
-        """Synthesize to a file, enqueue it, and drive the playing/done replies."""
-        outcome = await req.synthesize(self._synthesis, on_failure=reservation.close)
-        if outcome is None:
-            return
-
-        # `cached` rides the 'playing' response (the client's terminal).
-        item = PlaybackItem(
-            path=outcome.path,
-            request_id=req.request_id,
-            notify=asyncio.Event(),
-            discard=outcome.discard,
-            on_failure=reservation.pop_all().close,
-        )
-        try:
-            await self._playback.enqueue(item)
-        except BaseException:
-            item.finish("playback was not queued")
-            raise
-        await req.reply({"type": "playing", "cached": outcome.cached})
-        await item.notify.wait()
-        await req.reply({"type": "done"})

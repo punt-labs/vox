@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from punt_vox.dirs import (
     DEFAULT_CONFIG_DIR,
     _read_xdg_music_dir,  # pyright: ignore[reportPrivateUsage]
@@ -12,6 +14,7 @@ from punt_vox.dirs import (
     default_output_dir,
     find_config_dir,
     find_repo_root,
+    writable_config_dir,
 )
 
 # ---------------------------------------------------------------------------
@@ -142,6 +145,115 @@ class TestFindConfigDir:
 
 
 # ---------------------------------------------------------------------------
+# writable_config_dir
+# ---------------------------------------------------------------------------
+
+
+def _config(root: Path, **files: str) -> Path:
+    """Write ``.punt-labs/vox/<name>`` files under *root*; return the dir."""
+    config_dir = root / ".punt-labs" / "vox"
+    config_dir.mkdir(parents=True)
+    for name, text in files.items():
+        (config_dir / name.replace("_", ".")).write_text(text)
+    return config_dir
+
+
+class TestWritableConfigDir:
+    @pytest.fixture(autouse=True)
+    def _real_find_config_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The hermetic_config fixture pins dirs.find_config_dir; walk for real.
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", find_config_dir)
+
+    def test_inherited_config_seeds_inner_repo(self, tmp_path: Path) -> None:
+        outer = _config(
+            tmp_path, vox_md='---\nvoice: "roger"\n---\n', vox_local_md="---\n---\n"
+        )
+        inner = tmp_path / "inner"
+        (inner / ".git").mkdir(parents=True)
+        assert find_config_dir(inner) == outer
+
+        own = writable_config_dir(inner / "src")
+
+        assert own == inner / ".punt-labs" / "vox"
+        assert own is not None
+        assert (own / "vox.md").read_text() == '---\nvoice: "roger"\n---\n'
+        assert (own / "vox.local.md").read_text() == "---\n---\n"
+        assert find_config_dir(inner) == own
+
+    def test_seeds_only_files_the_inherited_config_has(self, tmp_path: Path) -> None:
+        _config(tmp_path, vox_md="---\n---\n")
+        inner = tmp_path / "inner"
+        (inner / ".git").mkdir(parents=True)
+        own = writable_config_dir(inner)
+        assert own is not None
+        assert not (own / "vox.local.md").exists()
+
+    def test_repo_with_own_config_writes_there(self, tmp_path: Path) -> None:
+        _config(tmp_path, vox_md="---\n---\n")
+        inner = tmp_path / "inner"
+        (inner / ".git").mkdir(parents=True)
+        own = _config(inner, vox_local_md="---\n---\n")
+        assert writable_config_dir(inner) == own
+        assert not (own / "vox.md").exists()
+
+    def test_outside_a_repo_writes_the_found_config(self, tmp_path: Path) -> None:
+        found = _config(tmp_path, vox_md="---\n---\n")
+        child = tmp_path / "child"
+        child.mkdir()
+        with patch("punt_vox.dirs.find_repo_root", return_value=None):
+            assert writable_config_dir(child) == found
+
+    def test_first_write_targets_repo_root_without_seeding(
+        self, no_config_dir: Path
+    ) -> None:
+        (no_config_dir / ".git").mkdir()
+        child = no_config_dir / "src"
+        child.mkdir()
+
+        assert writable_config_dir(child) == no_config_dir / DEFAULT_CONFIG_DIR
+        assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
+
+    @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory", "locks"])
+    @pytest.mark.parametrize("inherited", [False, True], ids=["fresh", "inherited"])
+    def test_first_write_refuses_a_destination_outside_the_checkout(
+        self, no_config_dir: Path, entry: str, *, inherited: bool
+    ) -> None:
+        if inherited:
+            workspace_config = no_config_dir / DEFAULT_CONFIG_DIR
+            workspace_config.mkdir(parents=True)
+            (workspace_config / "vox.md").write_text("---\nnotify: n\n---\n")
+        repo = no_config_dir / "repo"
+        child = repo / "src"
+        child.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        config = repo / DEFAULT_CONFIG_DIR
+        outside = no_config_dir / "outside"
+        if entry in {"directory", "locks"}:
+            config.parent.mkdir()
+            outside.mkdir()
+            link = config if entry == "directory" else config.parent / "local"
+            link.symlink_to(outside, target_is_directory=True)
+        else:
+            config.mkdir(parents=True)
+            (config / entry).symlink_to(outside)
+
+        with pytest.raises(OSError, match="outside the Git checkout"):
+            writable_config_dir(child)
+        assert not (repo / ".gitignore").exists()
+        if entry in {"directory", "locks"}:
+            assert not list(outside.iterdir())
+        else:
+            assert not outside.exists()
+
+    def test_no_config_or_repo(self, tmp_path: Path) -> None:
+        with (
+            patch("punt_vox.dirs.find_config_dir", return_value=None),
+            patch("punt_vox.dirs.find_repo_root", return_value=None),
+        ):
+            assert writable_config_dir(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
 # XDG music directory
 # ---------------------------------------------------------------------------
 
@@ -151,25 +263,29 @@ class TestReadXdgMusicDir:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_MUSIC_DIR="$HOME/Musik"\n')
-        result = _read_xdg_music_dir(tmp_path)
+        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
+            result = _read_xdg_music_dir()
         assert result == tmp_path / "Musik"
 
     def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
-        result = _read_xdg_music_dir(tmp_path)
+        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
+            result = _read_xdg_music_dir()
         assert result is None
 
     def test_returns_none_when_key_missing(self, tmp_path: Path) -> None:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_DESKTOP_DIR="$HOME/Desktop"\n')
-        result = _read_xdg_music_dir(tmp_path)
+        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
+            result = _read_xdg_music_dir()
         assert result is None
 
     def test_expands_home(self, tmp_path: Path) -> None:
         dirs_file = tmp_path / ".config" / "user-dirs.dirs"
         dirs_file.parent.mkdir(parents=True)
         dirs_file.write_text('XDG_MUSIC_DIR="$HOME/Music"\n')
-        result = _read_xdg_music_dir(tmp_path)
+        with patch("punt_vox.dirs.Path.home", return_value=tmp_path):
+            result = _read_xdg_music_dir()
         assert result == tmp_path / "Music"
 
 

@@ -114,10 +114,11 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     * ``ConfigStore(None)`` and the module-level ``read_config`` /
       ``read_field`` / ``write_field`` / ``write_fields`` wrappers, which fall
       back to ``config.DEFAULT_CONFIG_DIR``;
-    * ``server._find_config_dir()``, which re-imports ``find_config_dir`` from
+    * ``server._find_config_dir()`` and ``server._writable_config_dir()``,
+      which re-import ``find_config_dir`` / ``writable_config_dir`` from
       ``dirs`` at call time;
     * the ``/vibe`` / ``notify`` / ``voice`` CLI commands, which read
-      ``__main__.find_config_dir``.
+      ``__main__.find_config_dir`` / ``__main__.writable_config_dir``.
 
     ``hooks.find_config_dir`` is *not* redirected: hooks always pass an explicit
     ``cwd``, so they resolve relative to isolated payload directories and never
@@ -146,9 +147,8 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
         return config_dir
 
     monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", config_dir)
-    monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
-    monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _resolve)
     # SessionSpec.for_repo() is the config-lookup path shared by vox say,
     # vox rec new, and vox call. Patch the binding in session_spec itself.
     monkeypatch.setattr("punt_vox.session_spec.find_config_dir", _resolve)

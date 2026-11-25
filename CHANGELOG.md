@@ -44,11 +44,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the daemon's ElevenLabs call and persistent workers. Retired the former
   pi call, its context snapshot and summary handoff, and its prompt lock.
 
+- `ToolReply.from_wire` reads the tool runner's error once at the call
+  boundary; main's `ToolAnswer` and `BossTools` are unchanged. (PL-1491)
+
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- Speak spaced currency scales such as `$1 million` as “1 million dollars.”
+
+- `vox say --from` and `vox rec new --from` reject a segment whose text has an
+  escaped lone surrogate (such as `"\ud800"`) as an invalid segments file:
+  one usage error, exit 2, before any segment is spoken or recorded. (PL-1611)
+
+- The first setting written from a Git repo's subdirectory now goes to the
+  repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
+
+- A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
+  `voice`, or the matching `mic` tool) from a git repo nested in a workspace
+  no longer edits the workspace's config. The repo gets its own
+  `.punt-labs/vox/` config, seeded from the inherited one so only the
+  written setting differs, and reads it from then on. A nested repo with no
+  config of its own still reads the workspace's. (PL-1598)
+
+- `vox say` and `vox rec new` reject a positional TEXT argument combined with
+  `--from` instead of silently using the file. (PL-1599)
+
+- ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
+  Inline cues stay where they were written. (PL-1577)
 
 - `vox desktop install --provider` rejects unknown providers and shows how to
   set the suggested provider in Claude Desktop instead of claiming it was set.
@@ -147,6 +172,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a track file was deleted out of band, naming each skipped track
   instead of failing the whole export. (PL-1476)
 
+- A live `vox call` whose microphone delivers only silence for its first
+  3 seconds (macOS denying the microphone to the daemon's process) now fails
+  with a message naming the cause and the two remedies, instead of sending
+  silence to the agent. The daemon logs each call's start, input mode, echo
+  declaration, input device, first-second capture level, every tool call
+  with its outcome, and the end with duration, tool call count and trace
+  path. (PL-1491, PL-1494)
+
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
 
@@ -163,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speak euro amounts such as `€1,50` and `1,50€` as euros and cents. Commas
   with three-digit groups still mark thousands, and other currencies and
   inline code are unchanged. (PL-1535)
+- Speak dotted thousands in euro amounts with a two-digit decimal comma,
+  such as `€1.234,56` and `1.234,56€`, as euros and cents. Dot-only amounts
+  such as `€1.234` keep their existing reading. (PL-1536)
+- Speak the percent sign of a number or range, such as `5%`, `.5%` and
+  `85%–90%`, as "percent" instead of dropping it, so `5%` no longer sounds
+  like a bare `5`; a range's dash is spoken as "to" ("85 percent to 90
+  percent"). Modulo, format codes, identifiers and paths are unchanged.
+  (PL-1603)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS

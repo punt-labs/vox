@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from collections import deque
-from typing import TYPE_CHECKING, Final, Literal, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
@@ -16,18 +16,22 @@ from punt_vox.voxd.voice_agent.events import (
     Interruption,
     UserTranscript,
 )
-from punt_vox.voxd.voice_agent.fault import ConvAIError
-from punt_vox.voxd.voice_agent.session import Conversation
-from punt_vox.voxd.voice_call.progress import CallProgress, ProgressEvents
+from punt_vox.voxd.voice_call.call_log import CallLog
+from punt_vox.voxd.voice_call.call_outcome import CallOutcome
+from punt_vox.voxd.voice_call.progress import CallProgress
+from punt_vox.voxd.voice_call.tool_reply import ToolReply
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
+    from punt_vox.voxd.voice_agent.session import Conversation
     from punt_vox.voxd.voice_agent.trace import EventTrace
     from punt_vox.voxd.voice_call.boss_tools import BossTools
+    from punt_vox.voxd.voice_call.call_outcome import CallState
     from punt_vox.voxd.voice_call.contracts import CallInput
+    from punt_vox.voxd.voice_call.progress import ProgressEvents
     from punt_vox.voxd.voice_call.progress_types import WorkerProgress
     from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
@@ -35,15 +39,14 @@ if TYPE_CHECKING:
     # Provision the agent and return its signed URL and the session options.
     type Dial = Callable[[], Awaitable[tuple[str, SessionOptions]]]
 
-__all__ = ["CallState", "VoiceAgentCall"]
+__all__ = ["VoiceAgentCall"]
 
 logger = logging.getLogger(__name__)
 
-type CallState = Literal["connecting", "live", "ended", "failed"]
-
 _HISTORY: Final = 20
-# Failures a call can meet in normal operation; anything else is logged as a bug.
-_EXPECTED: Final = (ConvAIError, OSError, ValueError, RuntimeError)
+# Failures a call can meet in normal operation (ConvAIError is a RuntimeError);
+# anything else is logged as a bug.
+_EXPECTED: Final = (OSError, ValueError, RuntimeError)
 
 
 @final
@@ -61,6 +64,7 @@ class VoiceAgentCall:
         "_state",
         "_tool_calls",
         "_tools",
+        "_tools_answered",
         "_trace",
         "_transcript",
     )
@@ -75,7 +79,8 @@ class VoiceAgentCall:
     _error: str | None  # None unless the call failed.
     _connected: asyncio.Event
     _transcript: deque[tuple[str | None, dict[str, str]]]  # (response_id, turn)
-    _tool_calls: deque[dict[str, object]]
+    _tool_calls: deque[dict[str, object]]  # The recent ones a status reply shows.
+    _tools_answered: int  # Every one, for the end line; the history is capped.
 
     def __new__(
         cls,
@@ -84,21 +89,18 @@ class VoiceAgentCall:
         speaker: AgentSpeaker,
         *,
         trace: EventTrace,
-        opener: Opener | None = None,
-        progress: ProgressEvents | None = None,  # None creates an unconnected source.
+        opener: Opener,
+        progress: ProgressEvents,
     ) -> Self:
-        """Bind the call's tools, caller audio, speaker and trace."""
+        """Bind the call's tools, caller audio, speaker, trace and peer opener."""
         self = super().__new__(cls)
         self._tools, self._audio, self._speaker = tools, audio, speaker
-        self._progress = CallProgress(
-            progress if progress is not None else ProgressEvents()
-        )
-        self._trace = trace
-        self._opener = opener if opener is not None else Conversation.open
+        self._progress, self._trace = CallProgress(progress), trace
+        self._opener = opener
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._connected = asyncio.Event()
         self._transcript = deque(maxlen=_HISTORY)
-        self._tool_calls = deque(maxlen=_HISTORY)
+        self._tool_calls, self._tools_answered = deque(maxlen=_HISTORY), 0
         return self
 
     async def run(
@@ -123,19 +125,28 @@ class VoiceAgentCall:
                 logger.exception("Voice call failed", exc_info=failure)
             self.mark_failed(str(failure) or type(failure).__name__)
         finally:
-            if self._state in {"connecting", "live"}:
-                self._state = "ended"
-            self._connected.set()
+            await self._settle(depart, hung_up=hung_up)
+
+    async def _settle(
+        self,
+        depart: Callable[[dict[str, int]], Awaitable[None]] | None,
+        *,
+        hung_up: bool,
+    ) -> None:
+        """End the call: release the speaker, then depart, then play out a hang-up."""
+        if self._state in {"connecting", "live"}:
+            self._state = "ended"
+        self._connected.set()
+        try:
+            if not hung_up:
+                await self._speaker.close()
+        finally:
             try:
-                if not hung_up:
-                    await self._speaker.close()
+                if depart is not None and self._conversation_id is not None:
+                    await depart(self._progress.reported)
             finally:
-                try:
-                    if depart is not None and self._conversation_id is not None:
-                        await depart(self._progress.reported)
-                finally:
-                    if hung_up:
-                        await self._speaker.finish()
+                if hung_up:
+                    await self._speaker.finish()
 
     async def _converse(
         self,
@@ -146,6 +157,7 @@ class VoiceAgentCall:
         signed_url, options = await dial()
         async with self._opener(signed_url, options, trace=self._trace) as conv:
             self._conversation_id = conv.metadata.conversation_id
+            CallLog.live(self._conversation_id)
             self._state = "live"
             self._connected.set()
             async with asyncio.TaskGroup() as group:
@@ -160,6 +172,19 @@ class VoiceAgentCall:
     def mark_failed(self, error: str) -> None:
         """Keep the terminal failure reason in subsequent call status replies."""
         self._state, self._error = "failed", error
+
+    def mark_ended(self) -> None:
+        """End a call whose task was cancelled before :meth:`run` ever began.
+
+        Nothing was dialled and nothing is held by the call itself, so the
+        only work is the terminal state a status reply reports.
+        """
+        self._state = "ended"
+        self._connected.set()
+
+    def outcome(self) -> CallOutcome:
+        """Return the call's state, failure reason and tool call count."""
+        return CallOutcome(self._state, self._error, self._tools_answered)
 
     def status(self) -> dict[str, object]:
         """Return the call's state and its recent exchange."""
@@ -207,22 +232,26 @@ class VoiceAgentCall:
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
-        if call.tool_name == "steer_worker" and not is_error:
-            receipt: dict[str, object] = json.loads(result)
-            self._trace.record(
-                "note",
-                "worker_steer_receipt",
-                {
-                    **receipt,
-                    **(
-                        {"prompt_seq": call.parameters.get("prompt_seq")}
-                        if receipt.get("choice") in ("approve", "deny")
-                        else {}
-                    ),
-                },
-            )
+        try:
+            answer = ToolReply.from_wire(result, is_error=is_error)
+        except ValueError as exc:  # JSONDecodeError included: the call survives.
+            CallLog.unreadable(call.tool_name, exc)
+            answer = ToolReply.failed("tool reply was unreadable")
+        CallLog.tool(call.tool_name, answer)
+        if call.tool_name == "steer_worker" and not answer.is_error:
+            receipt: dict[str, object] = json.loads(answer.result)
+            if receipt.get("choice") in ("approve", "deny"):
+                receipt["prompt_seq"] = call.parameters.get("prompt_seq")
+            self._trace.record("note", "worker_steer_receipt", receipt)
         self._tool_calls.append(
-            {"tool": call.tool_name, "arguments": call.parameters, "error": is_error}
+            {
+                "tool": call.tool_name,
+                "arguments": call.parameters,
+                "error": answer.is_error,
+            }
         )
+        self._tools_answered += 1
         if call.expects_response:
-            await conv.send_tool_result(call.tool_call_id, result, is_error=is_error)
+            await conv.send_tool_result(
+                call.tool_call_id, answer.result, is_error=answer.is_error
+            )

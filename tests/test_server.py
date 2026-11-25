@@ -21,6 +21,10 @@ from punt_vox.atomic_file import AtomicFile
 from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
+from punt_vox.dirs import (
+    find_config_dir as real_find_config_dir,
+    writable_config_dir as real_writable_config_dir,
+)
 from punt_vox.music_phrases import (
     GENERATING_NO_STYLE,
     GENERATING_WITH_STYLE,
@@ -151,10 +155,8 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     ``vox.md`` or ``vox.local.md`` inside tmp_path.
     """
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     return tmp_path
 
 
@@ -846,6 +848,30 @@ class TestNotifyTool:
         result = json.loads(notify(mode="y"))
         assert result["notify"]["notify"] == "y"
         assert srv._session._notify == "y"
+
+    def test_nested_repo_write_lands_in_inner_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mic:notify in a repo inheriting a workspace config writes its own."""
+        workspace = tmp_path / "workspace"
+        (workspace / ".git").mkdir(parents=True)
+        outer = workspace / ".punt-labs" / "vox" / "vox.md"
+        outer.parent.mkdir(parents=True)
+        outer.write_text('---\nnotify: "n"\nvoice: "roger"\n---\n')
+        inner = workspace / "inner"
+        (inner / ".git").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.dirs.writable_config_dir", real_writable_config_dir
+        )
+
+        notify(mode="c")
+
+        assert outer.read_text() == '---\nnotify: "n"\nvoice: "roger"\n---\n'
+        inner_store = ConfigStore(inner / ".punt-labs" / "vox")
+        assert inner_store.read_field("notify") == "c"
+        assert inner_store.read_field("voice") == "roger"
 
     def test_speak_unset_c_inits_voice(self) -> None:
         """speak not yet set — mode=c should initialize it to y."""
@@ -1872,11 +1898,9 @@ class TestStatusProviderStatus:
 def _refresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # pyright: ignore[reportUnusedFunction]
     """Patch _find_config_dir and DEFAULT_CONFIG_DIR for refresh tests."""
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
     import punt_vox.server as srv
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(srv, "_find_config_dir", lambda: tmp_path)
     return tmp_path
 

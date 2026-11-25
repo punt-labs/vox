@@ -1,6 +1,4 @@
 """Synthesis pipeline -- TTS provider orchestration, caching, and direct play."""
-# pyright: reportPrivateUsage=false
-# Internal module within the voxd package -- cross-module private access is expected.
 
 from __future__ import annotations
 
@@ -8,20 +6,14 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import Final, Self
+from typing import Self
 
 from punt_vox import usage
-from punt_vox.normalize import SpeechText
 from punt_vox.providers import get_provider
-from punt_vox.providers.caller_errors import CALLER_ERRORS
-from punt_vox.types import (
-    AudioProviderId,
-    AudioRequest,
-    SynthesisSpec,
-    TTSProvider,
-)
+from punt_vox.types import SynthesisSpec, TTSProvider
 from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.direct_play import DirectPlayInvocation, DirectPlayResult
+from punt_vox.voxd.speech_preparation import SYNTHESIS_REJECTIONS, SpeechPreparation
 from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 from punt_vox.voxd.temp_synthesis import TempFileSynthesis
@@ -42,16 +34,6 @@ logger = logging.getLogger(__name__)
 # providers are skipped entirely so we don't pay for provider construction
 # only to discover they don't implement play_directly.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
-
-
-class EmptyNormalizedTextError(ValueError):
-    """The requested model leaves no text to synthesize after normalization."""
-
-
-_SYNTHESIS_REJECTIONS: Final[tuple[type[ValueError], ...]] = (
-    *CALLER_ERRORS,
-    EmptyNormalizedTextError,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -79,74 +61,6 @@ class SynthesisPipeline:
         """Return the lock held while a caller's API key is in the environment."""
         return self._env_lock
 
-    # -- Static helpers ----------------------------------------------------
-
-    @staticmethod
-    def model_supports_expressive_tags(provider_name: str, model: str | None) -> bool:
-        """Whether the given provider+model combo interprets bracket-style tags.
-
-        Pure lookup: does NOT construct the provider or touch any SDK client,
-        so it can run before voxd enters the env-mutation lock that the real
-        synthesize path needs. ElevenLabs is the only provider whose answer
-        depends on the model -- all others return False unconditionally.
-
-        The ``ElevenLabsProvider`` import is deferred inside the method so
-        voxd does not eagerly load the ElevenLabs SDK at module import time
-        on systems whose users only ever run espeak/say. Mirrors the lazy
-        pattern in :mod:`punt_vox.providers`.
-        """
-        if provider_name == "elevenlabs":
-            from punt_vox.providers.elevenlabs import ElevenLabsProvider
-
-            return ElevenLabsProvider.model_supports_expressive_tags(model)
-        return False
-
-    @staticmethod
-    def _prepare_audio_request(text: str, spec: SynthesisSpec) -> AudioRequest:
-        """Normalize and validate text before preparing a provider request."""
-        provider_id = spec.provider or ""
-        return AudioRequest(
-            text=SynthesisPipeline.normalized_text(text, spec),
-            voice=spec.voice,
-            language=spec.language,
-            rate=spec.rate,
-            stability=spec.stability,
-            similarity=spec.similarity,
-            style=spec.style,
-            speaker_boost=spec.speaker_boost,
-            provider=AudioProviderId.__members__.get(provider_id),
-        )
-
-    @staticmethod
-    def apply_vibe_for_synthesis(
-        raw_text: str,
-        vibe_tags: str | None,
-        provider_name: str,
-        model: str | None,
-    ) -> str:
-        """Normalize raw input and apply vibe tags according to model capability."""
-        expressive = SynthesisPipeline.model_supports_expressive_tags(
-            provider_name, model
-        )
-        body = SpeechText.for_synthesis(raw_text, expressive=expressive)
-        if expressive and vibe_tags:
-            return SynthesisPipeline._prefix_vibe(body, vibe_tags)
-        return body
-
-    @staticmethod
-    def _prefix_vibe(body: str, vibe_tags: str) -> str:
-        return " ".join(filter(None, (vibe_tags.strip(), body))) if body else ""
-
-    @staticmethod
-    def normalized_text(text: str, spec: SynthesisSpec) -> str:
-        """Return the normalized text, rejecting input that leaves none."""
-        normalized = SynthesisPipeline.apply_vibe_for_synthesis(
-            text, spec.vibe_tags, spec.provider or "", spec.model
-        )
-        if not normalized:
-            raise EmptyNormalizedTextError("empty text after normalization")
-        return normalized
-
     # -- Instance methods --------------------------------------------------
 
     async def synthesize_to_file(
@@ -160,10 +74,12 @@ class SynthesisPipeline:
         credentials bypass lookup and store for billing isolation.
         """
         provider_name = spec.provider or ""
-        request = self._prepare_audio_request(text, spec)
+        request = SpeechPreparation.audio_request(text, spec)
 
         # Anonymous cache only; credentials are deliberately excluded from identity.
-        lookup = SynthesisCache.for_request(request.text, spec, len(text))
+        lookup = SynthesisCache.for_request(
+            request.text, spec, len(text), vibe_tags=request.vibe_tags
+        )
         if (cached := await lookup.outcome()) is not None:
             with usage.span("daemon", provider_name, text=text, cached=True):
                 return cached
@@ -218,7 +134,7 @@ class SynthesisPipeline:
 
         start = time.monotonic()
         try:
-            request = self._prepare_audio_request(text, spec)
+            request = SpeechPreparation.audio_request(text, spec)
             with usage.span("daemon", provider_name, text=text, cached=False):
                 invocation = DirectPlayInvocation(
                     provider_name,
@@ -228,7 +144,7 @@ class SynthesisPipeline:
                 )
                 rc = usage.direct_result(await self._run_direct_play(invocation))
         except Exception as exc:
-            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
+            if not isinstance(exc, SYNTHESIS_REJECTIONS):
                 logger.exception("Direct-play raised")
             return exc
 
