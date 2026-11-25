@@ -192,9 +192,11 @@ class TestTextInputFromFile:
     ) -> None:
         """A lone surrogate fails the whole file before any segment is sent."""
         sent: list[object] = []
-        monkeypatch.setattr(
-            VoxClientSync, "_drive", lambda _self, op, **_kw: sent.append(op)
-        )
+
+        def drive(_self: VoxClientSync, op: object, **_kw: object) -> None:
+            sent.append(op)
+
+        monkeypatch.setattr(VoxClientSync, "_drive", drive)
         path = tmp_path / "segs.json"
         path.write_text('["before", "\\ud800", "after"]', encoding="utf-8")
         result = CliRunner().invoke(app, [*flags, *command, "--from", str(path)])
