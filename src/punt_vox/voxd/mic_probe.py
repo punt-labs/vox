@@ -141,7 +141,11 @@ class MicProbeHandler(MessageHandler):
             logger.warning("mic probe failed: %s", exc)
             await reply.send({"type": "error", "message": str(exc)})
             return
-        logger.info(
+        # A probe that heard nothing is the condition the doctor warns about;
+        # vox.log should show it at the same level without the doctor's output.
+        level = logging.INFO if report.signal else logging.WARNING
+        logger.log(
+            level,
             "mic probe: device=%r peak=%d samples=%d",
             report.device,
             report.peak,

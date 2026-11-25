@@ -219,3 +219,29 @@ async def test_decode_error_in_the_default_capture_is_an_error_frame(
     (frame,) = ws.sent
     assert frame["type"] == "error"
     assert "invalid start byte" in str(frame["message"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("peak", "samples", "level"),
+    [(812, 16_000, "INFO"), (0, 16_000, "WARNING"), (0, 0, "WARNING")],
+)
+async def test_probe_logs_a_silent_or_empty_capture_as_a_warning(
+    caplog: pytest.LogCaptureFixture, peak: int, samples: int, level: str
+) -> None:
+    """A healthy probe is INFO; one that heard nothing is a WARNING in vox.log."""
+
+    def capture(_seconds: float) -> MicProbeReport:
+        return MicProbeReport(
+            device="Fake Mic", sample_rate_hz=16_000, peak=peak, samples=samples
+        )
+
+    with caplog.at_level("INFO", logger="punt_vox.voxd.mic_probe"):
+        await MicProbeHandler(capture=capture)(
+            {"type": "mic_probe", "id": "m4"}, cast("WebSocket", _CollectingWs())
+        )
+
+    (record,) = [r for r in caplog.records if r.name == "punt_vox.voxd.mic_probe"]
+    assert record.levelname == level
+    assert f"peak={peak}" in record.getMessage()
+    assert f"samples={samples}" in record.getMessage()
