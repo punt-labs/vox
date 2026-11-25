@@ -4,14 +4,16 @@ import asyncio
 import base64
 import functools
 import json
+import logging
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from conversation_mode._mic_fakes import fake_sounddevice
 from starlette.websockets import WebSocket
 from test_workers import FakeWorkerProvider, _registry
 from websockets.asyncio.server import serve
@@ -19,10 +21,13 @@ from websockets.asyncio.server import serve
 from punt_vox.voxd.hook_context_store import HookContextStore
 from punt_vox.voxd.voice_agent import Conversation
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_call.agent_operations import AgentOperations
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.connector import CallConnector
 from punt_vox.voxd.voice_call.greeting import CallGreeting
 from punt_vox.voxd.voice_call.handlers import CallHandlers
+from punt_vox.voxd.voice_call.launcher import CallLauncher
+from punt_vox.voxd.voice_call.progress import ProgressEvents
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.seed import CallSeed
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
@@ -42,6 +47,9 @@ if TYPE_CHECKING:
     from punt_vox.voxd.playback import PlaybackQueue
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
     from punt_vox.voxd.voice_agent.trace import EventTrace
+    from punt_vox.voxd.voice_call.call import Opener
+    from punt_vox.voxd.voice_call.connector import AgentConnector
+    from punt_vox.voxd.voice_call.contracts import ProjectAllowlist, WorkerControl
 
 _METADATA = {
     "type": "conversation_initiation_metadata",
@@ -53,6 +61,12 @@ _METADATA = {
 }
 _LOOPBACK = functools.partial(Conversation.open, allow_loopback=True)
 _GREETING = CallGreeting(("/repo",)).spoken()
+
+
+@pytest.fixture(autouse=True)
+def _fake_microphone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mic-mode call_start opens the microphone before it dials: fake it."""
+    fake_sounddevice(monkeypatch)
 
 
 def _audio(pcm: bytes, event_id: int) -> str:
@@ -81,6 +95,29 @@ class _Connector:
 
     def teardown(self) -> None:
         self.teardowns += 1
+
+
+def _handlers(
+    workers: WorkerControl,
+    playback: FakePlayback,
+    trace_dir: Path,
+    *,
+    projects: ProjectAllowlist | None = None,  # None: ``workers`` is the allowlist.
+    connector: AgentConnector | None = None,  # None: ElevenLabs from the env key.
+    opener: Opener = _LOOPBACK,
+) -> CallHandlers:
+    """Build handlers over a launcher wired to the test's fakes."""
+    launcher = CallLauncher(
+        workers,
+        projects if projects is not None else cast("ProjectAllowlist", workers),
+        cast("PlaybackQueue", playback),
+        AgentOperations(connector),
+        progress=ProgressEvents(),
+        hold_music=nullcontext,
+        trace_dir=trace_dir,
+        opener=opener,
+    )
+    return CallHandlers(launcher)
 
 
 async def _rpc(handlers: CallHandlers, msg: dict[str, object]) -> dict[str, object]:
@@ -120,14 +157,13 @@ async def test_call_barge_in_reask_starts_one_worker(tmp_path: Path) -> None:
     pcm.write_bytes(bytes(640 * 3))
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", playback),
+            playback,
+            tmp_path / "calls",
             connector=_Connector(
                 f"ws://127.0.0.1:{port}/convai?conversation_signature=s"
             ),
-            trace_dir=tmp_path / "calls",
             opener=_LOOPBACK,
         )
         assert (await _rpc(handlers, {"type": "call_status"}))["result"] == {
@@ -163,22 +199,24 @@ async def test_call_barge_in_reask_starts_one_worker(tmp_path: Path) -> None:
     assert "conversation_signature=s" not in text
 
 
-async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
+async def test_remote_hangup_ends_the_call(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     async def peer(socket: ServerConnection) -> None:
         await socket.recv()
         await socket.send(json.dumps(_METADATA))
 
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call")
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
@@ -187,7 +225,18 @@ async def test_remote_hangup_ends_the_call(tmp_path: Path) -> None:
             if cast("dict[str, object]", status)["state"] != "live":
                 break
             await asyncio.sleep(0.01)
+        # The state reads "ended" while the last reply plays out and the
+        # departure is saved; stop joins the call's task, after which it has
+        # logged its end.
+        await _rpc(handlers, {"type": "call_stop"})
     assert cast("dict[str, object]", status)["state"] == "ended"
+    messages = [r.message for r in caplog.records]
+    started = [m for m in messages if m.startswith("Call starting:")]
+    assert started == ["Call starting: input script, echo control none"]
+    assert "Call live: conversation conv_call" in messages
+    (ended,) = [m for m in messages if m.startswith("Call ended:")]
+    assert "0 tool calls" in ended
+    assert str(cast("dict[str, object]", status)["trace"]) in ended
 
 
 async def test_return_opens_with_only_away_results_and_open_decisions(
@@ -217,14 +266,13 @@ async def test_return_opens_with_only_away_results_and_open_decisions(
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
 
         def handlers() -> CallHandlers:
-            return CallHandlers(
+            return _handlers(
                 workers,
-                workers,
-                cast("PlaybackQueue", playback),
+                playback,
+                tmp_path,
                 connector=_Connector(
                     f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
                 ),
-                trace_dir=tmp_path,
                 opener=_LOOPBACK,
             )
 
@@ -349,14 +397,14 @@ async def test_return_call_opens_with_recovered_worker_result(
         status.return_value = not exits_before_call
         try:
             async with serve(peer, "127.0.0.1", 0) as server:
-                handlers = CallHandlers(
+                handlers = _handlers(
                     actor,
-                    policy,
-                    cast("PlaybackQueue", FakePlayback()),
+                    FakePlayback(),
+                    tmp_path,
+                    projects=policy,
                     connector=_Connector(
                         f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
                     ),
-                    trace_dir=tmp_path,
                     opener=_LOOPBACK,
                 )
                 async with asyncio.timeout(2):
@@ -407,14 +455,13 @@ async def test_corrupt_departure_cursor_dials_and_is_replaced_on_hangup(
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(
                 f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
             ),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         reply = await _rpc(
@@ -546,14 +593,13 @@ async def test_result_during_remote_hangup_drain_is_away(tmp_path: Path) -> None
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
 
         def handlers() -> CallHandlers:
-            return CallHandlers(
+            return _handlers(
                 workers,
-                workers,
-                cast("PlaybackQueue", FakePlayback()),
+                FakePlayback(),
+                tmp_path,
                 connector=_Connector(
                     f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
                 ),
-                trace_dir=tmp_path,
                 opener=_LOOPBACK,
             )
 
@@ -605,14 +651,13 @@ async def test_local_hangup_releases_playback_before_saving_departure(
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", playback),
+            playback,
+            tmp_path,
             connector=_Connector(
                 f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
             ),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
 
@@ -641,7 +686,7 @@ async def test_local_hangup_releases_playback_before_saving_departure(
     assert released_at_departure == [1]
     assert steps == ["terminal", "released", "departure"]
     assert not playback.sinks[0].finished
-    assert ("Call departure not saved (OSError)" in caplog.text) is save_fails
+    assert ("Call departure not saved (OSError" in caplog.text) is save_fails
 
 
 @pytest.mark.parametrize("remote", [False, True], ids=["local", "remote"])
@@ -689,14 +734,13 @@ async def test_result_after_live_progress_stops_is_away(
         "script": [{"pcm_path": str(pcm)}],
     }
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(
                 f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/convai"
             ),
-            trace_dir=tmp_path,
             opener=opener,
         )
         assert "result" in await _rpc(handlers, start)
@@ -722,9 +766,7 @@ async def test_start_without_a_key_is_refused(
 ) -> None:
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     workers = FakeWorkers()
-    handlers = CallHandlers(
-        workers, workers, cast("PlaybackQueue", FakePlayback()), trace_dir=tmp_path
-    )
+    handlers = _handlers(workers, FakePlayback(), tmp_path)
     pcm = tmp_path / "turn.pcm"
     pcm.write_bytes(bytes(640))
     reply = await _rpc(
@@ -769,12 +811,11 @@ async def test_correction_rewrites_the_interrupted_reply(tmp_path: Path) -> None
     async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
@@ -811,12 +852,11 @@ async def test_stale_stop_does_not_hang_up_the_replacement_call(
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         first = await _rpc(handlers, {**start, "call_id": first_id})
@@ -860,12 +900,11 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         script = [{"pcm_path": str(pcm)}]
@@ -890,12 +929,21 @@ async def test_stop_cancels_a_call_still_connecting(tmp_path: Path) -> None:
 
 
 class _SlowConnector:
+    """Provisioning that holds until released; ``entered`` says it has begun.
+
+    The hold has no wall-clock bound: the test decides when provisioning
+    ends, so load cannot turn the hold into a provisioning failure.
+    """
+
     def __init__(self) -> None:
+        self.entered = asyncio.Event()
         self.release = threading.Event()
+        self._loop = asyncio.get_running_loop()
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
-        self.release.wait(5)
+        self._loop.call_soon_threadsafe(self.entered.set)
+        self.release.wait()
         raise ConvAIError("agent provisioning failed")
 
     def teardown(self) -> None:
@@ -905,25 +953,20 @@ class _SlowConnector:
 async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
     connector = _SlowConnector()
     workers = FakeWorkers()
-    handlers = CallHandlers(
-        workers,
-        workers,
-        cast("PlaybackQueue", FakePlayback()),
-        connector=connector,
-        trace_dir=tmp_path,
-        opener=_LOOPBACK,
+    handlers = _handlers(
+        workers, FakePlayback(), tmp_path, connector=connector, opener=_LOOPBACK
     )
-    async with asyncio.timeout(5):
-        start = asyncio.create_task(
-            _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
-        )
-        while (await _rpc(handlers, {"type": "call_status"}))["result"] == {
-            "state": "idle"
-        }:
-            await asyncio.sleep(0.01)
-        stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
-        connector.release.set()
-        await start
+    try:
+        async with asyncio.timeout(30):
+            start = asyncio.create_task(
+                _rpc(handlers, {"type": "call_start", "echo_control": "headset"})
+            )
+            await connector.entered.wait()  # provisioning is now in progress
+            stopped = (await _rpc(handlers, {"type": "call_stop"}))["result"]
+            connector.release.set()
+            await start
+    finally:
+        connector.release.set()  # never leave the provisioning thread blocked
     assert cast("dict[str, object]", stopped)["state"] == "ended"
 
 
@@ -931,22 +974,24 @@ async def test_stop_cancels_a_call_still_provisioning(tmp_path: Path) -> None:
 async def test_a_failed_provisioning_is_reported_to_the_caller(
     tmp_path: Path,
     echo_control: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="punt_vox.voxd.voice_call.call_log")
     connector = _SlowConnector()
     connector.release.set()
     workers = FakeWorkers()
-    handlers = CallHandlers(
-        workers,
-        workers,
-        cast("PlaybackQueue", FakePlayback()),
-        connector=connector,
-        trace_dir=tmp_path,
-        opener=_LOOPBACK,
+    handlers = _handlers(
+        workers, FakePlayback(), tmp_path, connector=connector, opener=_LOOPBACK
     )
     reply = await _rpc(handlers, {"type": "call_start", "echo_control": echo_control})
     assert "provisioning failed" in str(reply)
     status = (await _rpc(handlers, {"type": "call_status"}))["result"]
     assert cast("dict[str, object]", status)["state"] == "failed"
+    messages = [r.message for r in caplog.records]
+    assert f"Call starting: input mic, echo control {echo_control}" in messages
+    (ended,) = [m for m in messages if m.startswith("Call ended:")]
+    assert ended.startswith("Call ended: failed, 0 tool calls, duration ")
+    assert ", error agent provisioning failed" in ended
 
 
 @pytest.mark.parametrize(
@@ -959,12 +1004,7 @@ async def test_mic_call_without_echo_protection_does_not_dial(
 ) -> None:
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     workers = FakeWorkers()
-    handlers = CallHandlers(
-        workers,
-        workers,
-        cast("PlaybackQueue", FakePlayback()),
-        trace_dir=tmp_path,
-    )
+    handlers = _handlers(workers, FakePlayback(), tmp_path)
     reply = await _rpc(handlers, {"type": "call_start", **declaration})
     assert "Live calls require echo protection" in str(reply)
     assert "vox call --headset" in str(reply)
@@ -987,12 +1027,11 @@ async def test_a_call_that_never_connects_times_out(
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         workers = FakeWorkers()
-        handlers = CallHandlers(
+        handlers = _handlers(
             workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
+            FakePlayback(),
+            tmp_path,
             connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
-            trace_dir=tmp_path,
             opener=_LOOPBACK,
         )
         assert set(handlers.handlers()) == {
@@ -1013,12 +1052,11 @@ async def test_a_call_that_never_connects_times_out(
 
 async def test_stop_without_a_call_reports_idle(tmp_path: Path) -> None:
     workers = FakeWorkers()
-    handlers = CallHandlers(
+    handlers = _handlers(
         workers,
-        workers,
-        cast("PlaybackQueue", FakePlayback()),
+        FakePlayback(),
+        tmp_path,
         connector=_Connector("ws://unused"),
-        trace_dir=tmp_path,
         opener=_LOOPBACK,
     )
     assert (await _rpc(handlers, {"type": "call_stop"}))["result"] == {"state": "idle"}
@@ -1036,13 +1074,8 @@ async def test_agent_teardown_refuses_a_live_call(tmp_path: Path) -> None:
     async with asyncio.timeout(5), serve(peer, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         connector = _Connector(f"ws://127.0.0.1:{port}/convai")
-        handlers = CallHandlers(
-            workers,
-            workers,
-            cast("PlaybackQueue", FakePlayback()),
-            connector=connector,
-            trace_dir=tmp_path,
-            opener=_LOOPBACK,
+        handlers = _handlers(
+            workers, FakePlayback(), tmp_path, connector=connector, opener=_LOOPBACK
         )
         await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
         refused = await _rpc(handlers, {"type": "call_teardown"})
@@ -1059,9 +1092,7 @@ async def test_agent_teardown_resolves_the_cold_connector_off_loop(
 ) -> None:
     workers = FakeWorkers()
     connector = _Connector("ws://unused")
-    handlers = CallHandlers(
-        workers, workers, cast("PlaybackQueue", FakePlayback()), trace_dir=tmp_path
-    )
+    handlers = _handlers(workers, FakePlayback(), tmp_path)
     loop_thread = threading.get_ident()
 
     def resolve() -> _Connector:
@@ -1094,13 +1125,8 @@ async def test_agent_teardown_waits_for_cancelled_call_provisioning(
         order.append("deleted")
 
     workers = FakeWorkers()
-    handlers = CallHandlers(
-        workers,
-        workers,
-        cast("PlaybackQueue", FakePlayback()),
-        connector=connector,
-        trace_dir=tmp_path,
-        opener=_LOOPBACK,
+    handlers = _handlers(
+        workers, FakePlayback(), tmp_path, connector=connector, opener=_LOOPBACK
     )
     with (
         patch.object(connector, "connection", side_effect=connection),

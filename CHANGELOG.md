@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Point agent guidance, rules, and docs at the punt noun-verb CLI
+  (`punt repo audit`, `punt repo scan-pii`, `punt release run`); needs the
+  punt-kit CLI cutover. (PL-1519)
+
 - Reuse the ElevenLabs voice catalog across syntheses with the same API key,
   so repeat voice-name lookups do not add a network request. (PL-1561)
 
@@ -44,11 +48,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the daemon's ElevenLabs call and persistent workers. Retired the former
   pi call, its context snapshot and summary handoff, and its prompt lock.
 
+- `ToolReply.from_wire` reads the tool runner's error once at the call
+  boundary; main's `ToolAnswer` and `BossTools` are unchanged. (PL-1491)
+
 - Use advisory Ruff and shellcheck feedback on agent edits, blocking staged
   lint and quality ratchets at commit, and the full quality gate at handoff
   through the Ethos `vox-python` check set.
 
 ### Fixed
+
+- Speak inline Markdown images' alt text instead of their source filenames,
+  including images used as link labels.
+
+- `start_worker` gives up on `git worktree add` after 90 s with a spoken
+  error instead of hanging the call. A launch that fails returns its error
+  at once and discards its own worktree and branch in the background, off
+  the worker lock; a discard that was skipped because the pane would not
+  stop, or that failed, is retried on a later `stop_worker`. The client's
+  start budget is derived from that deadline plus a margin, so a start that
+  runs to the deadline still hears the reason. (PL-1496)
+
+- Speak spaced currency scales such as `$1 million` as “1 million dollars.”
+
+- `vox say --from` and `vox rec new --from` reject a segment whose text has an
+  escaped lone surrogate (such as `"\ud800"`) as an invalid segments file:
+  one usage error, exit 2, before any segment is spoken or recorded. (PL-1611)
+
+- The first setting written from a Git repo's subdirectory now goes to the
+  repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
+
+- A setting write (`vox notify`, `speak`, `vibe`, `model`, `provider`,
+  `voice`, or the matching `mic` tool) from a git repo nested in a workspace
+  no longer edits the workspace's config. The repo gets its own
+  `.punt-labs/vox/` config, seeded from the inherited one so only the
+  written setting differs, and reads it from then on. A nested repo with no
+  config of its own still reads the workspace's. (PL-1598)
+
+- `vox say` and `vox rec new` reject a positional TEXT argument combined with
+  `--from` instead of silently using the file. (PL-1599)
+
+- ElevenLabs v3 applies the session vibe cue to every chunk of long speech.
+  Inline cues stay where they were written. (PL-1577)
+
+- `vox desktop install --provider` rejects unknown providers and shows how to
+  set the suggested provider in Claude Desktop instead of claiming it was set.
+  (PL-1594)
+
+- Hooks on machines without `jq` decode the payload's `cwd` instead of
+  cutting it at the first quote, so a repo path with a quote, backslash or
+  non-ASCII name no longer silently drops the Stop and other notifications.
+  (PL-1595)
+
+- Warn when ElevenLabs ignores a non-default speech rate in `vox say`,
+  `vox rec new`, and the corresponding MCP and daemon replies. (PL-1570)
+
+- Selecting Continuous notifications in the Lux Vox panel switches Mic Mode
+  to Voice, matching `vox notify continuous`. (PL-1574)
+
+- OpenAI voice listings and validation follow the selected model. The
+  `gpt-4o-mini-tts` roster includes marin, cedar, ballad, and verse. (PL-1568)
+
+- SessionEnd resets the auto-vibe counter even when notifications are off
+  (`notify=n`), so the count no longer carries into the next session. (PL-1567)
+
+- `vox say` and `vox rec new` report `Error: empty text after normalization`
+  when the requested model leaves nothing to synthesize, without contacting
+  the speech provider. (PL-1566)
 
 - `vox cache status` and `vox cache clear` accept `--json`, `--verbose` (`-v`),
   and `--quiet` (`-q`) after the subcommand. (PL-1560)
@@ -127,6 +192,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowlisted repositories, or tells you to run `vox worker allow` with the
   repository path when none is. Away updates follow the greeting. (PL-1495)
 
+- A live `vox call` whose microphone delivers only silence for its first
+  3 seconds (macOS denying the microphone to the daemon's process) now fails
+  with a message naming the cause and the two remedies, instead of sending
+  silence to the agent. The daemon logs each call's start, input mode, echo
+  declaration, input device, first-second capture level, every tool call
+  with its outcome, and the end with duration, tool call count and trace
+  path. (PL-1491, PL-1494)
+
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
 
@@ -143,6 +216,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Speak euro amounts such as `€1,50` and `1,50€` as euros and cents. Commas
   with three-digit groups still mark thousands, and other currencies and
   inline code are unchanged. (PL-1535)
+- Speak dotted thousands in euro amounts with a two-digit decimal comma,
+  such as `€1.234,56` and `1.234,56€`, as euros and cents. Dot-only amounts
+  such as `€1.234` keep their existing reading. (PL-1536)
+- Speak the percent sign of a number or range, such as `5%`, `.5%` and
+  `85%–90%`, as "percent" instead of dropping it, so `5%` no longer sounds
+  like a bare `5`; a range's dash is spoken as "to" ("85 percent to 90
+  percent"). Modulo, format codes, identifiers and paths are unchanged.
+  (PL-1603)
 
 - `vox doctor` now confirms each configured provider with an authenticated
   live call. A present but rejected ElevenLabs or OpenAI key, or expired AWS
@@ -244,6 +325,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is evicted from the speech cache. (PL-1191)
 
 ### Added
+
+- A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
+  real `voxd` subprocess places one scripted `vox call --script` call against
+  a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,
+  with no microphone, credentials or network. Three test-only daemon switches
+  make it possible: `VOX_CONVAI_BASE_URL` (exactly `http://127.0.0.1:<port>`
+  or `http://[::1]:<port>`, any other value fails the call by name, and the
+  daemon sends the placeholder key `test-override` instead of its real one),
+  `VOX_CALL_ALLOW_LOOPBACK=1` (plaintext `ws://` to those two loopback IPs)
+  and `VOX_PCM_OUTPUT=silent` (agent audio plays through a silent device, so
+  a host with no sound card still plays, cuts and plays out agent audio).
 
 - `vox worker allow <path>`, `vox worker disallow <path>` and `vox worker repos`
   edit and list the repositories workers may start in, through the daemon;

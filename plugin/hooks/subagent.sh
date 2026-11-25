@@ -4,13 +4,10 @@
 _stdin=$(cat)
 
 # Claude Code passes cwd and hook_event_name in JSON stdin, not as env vars.
-if command -v jq >/dev/null 2>&1; then
-  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null)
-  _event=$(printf '%s' "$_stdin" | jq -r '.hook_event_name // empty' 2>/dev/null)
-else
-  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
-  _event=$(printf '%s' "$_stdin" | grep -oE '"hook_event_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
-fi
+# shellcheck source=plugin/hooks/payload.sh
+source "$(dirname "${BASH_SOURCE[0]}")/payload.sh" || exit 0
+_cwd=$(printf '%s' "$_stdin" | vox_hook_payload_field cwd)
+_event=$(printf '%s' "$_stdin" | vox_hook_payload_field hook_event_name)
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 
 # Per-repo opt-in: silent unless this repo ran `vox enable` and vox is installed.

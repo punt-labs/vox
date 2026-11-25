@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox.voxd.voice_agent.agent import VoiceAgent
@@ -38,10 +37,7 @@ class CallConnector:
         return self
 
     def agent(self) -> AgentConnector:
-        """Return the persistent connector or report a missing credential."""
+        """Return the persistent connector; a missing credential is reported here."""
         if self._agent is None:
-            key = os.environ.get("ELEVENLABS_API_KEY", "")
-            if not key:
-                raise ValueError("voxd has no ELEVENLABS_API_KEY for a voice call")
-            self._agent = VoiceAgent(ConvAIControl(key))
+            self._agent = VoiceAgent(ConvAIControl.from_environment())
         return self._agent

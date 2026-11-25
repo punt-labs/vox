@@ -87,9 +87,11 @@ class DaemonBoot:
 
     def _compose(self, config: DaemonConfig) -> VoxDaemon:
         """Wire the subsystems and answer the daemon that owns them."""
+        # The playback queue validates every test-only call switch as it is
+        # built, so a malformed one stops the boot here, naming the variable.
+        playback = PlaybackQueue()
         auth_token = config.read_or_create_token()
         programs = VoxDaemon.build_programs()
-        playback = PlaybackQueue()
         synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
 
         # Health needs the router's client_count and the router needs health, so

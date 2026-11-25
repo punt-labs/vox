@@ -13,6 +13,7 @@ from punt_vox.cascade import Cascade, RosterError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
+from punt_vox.voice_target import VoiceTarget
 
 
 @final
@@ -42,16 +43,6 @@ class ModelCommand:
         """
         cfg = ctx.store.read()
         provider = cfg.provider
-        if not provider:
-            # Listing needs no provider; setting requires a valid model roster.
-            if name is None:
-                listing: SwitchList = SwitchList(names=(), current=cfg.model)
-                return CommandResult(
-                    text=listing.render("No models for this provider."),
-                    json_data=listing.payload(),
-                )
-            return CommandResult.failure(str(ProviderNotConfiguredError.for_cli()))
-
         if name is None:
             listing = SwitchList(
                 names=MODEL_TABLE.available(provider), current=cfg.model
@@ -60,13 +51,17 @@ class ModelCommand:
                 text=listing.render("No models for this provider."),
                 json_data=listing.payload(),
             )
+        if not provider:
+            return CommandResult.failure(str(ProviderNotConfiguredError.for_cli()))
 
         try:
             resolved = resolve_model(name, provider)
         except ValueError as exc:
             return CommandResult.failure(str(exc))
 
-        voice_default = Cascade.fetch_first_voice(ctx.client, provider)
+        voice_default = Cascade.fetch_first_voice(
+            ctx.client, VoiceTarget(provider, resolved)
+        )
         if isinstance(voice_default, RosterError):
             return CommandResult.failure(voice_default.message)
 

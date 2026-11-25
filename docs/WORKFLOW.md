@@ -880,7 +880,7 @@ itself.
     directly.** The daemon writes them; all state is reachable through the
     `mic` tools. Racing the files corrupts state. Read-only git (`git status`,
     `git diff`) is fine. The one sanctioned rewrite is the release step: when
-    `punt release` preflight reports `vox.md` dirty, run
+    `punt release run` preflight reports `vox.md` dirty, run
     `git stash push -- .punt-labs/vox/vox.md`, release, then
     `git stash pop --index`, with vox sessions stopped first (a daemon write
     between push and pop is lost or must be redone).

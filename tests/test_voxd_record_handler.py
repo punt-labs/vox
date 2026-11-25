@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -36,6 +37,69 @@ def _handler(
 
 def _store(tmp_path: Path) -> RecordStore:
     return RecordStore(tmp_path / "recordings")
+
+
+class OverlongNameProbe:
+    """Find the shortest multibyte name a directory's filesystem refuses.
+
+    ``PC_NAME_MAX`` is 255 on both ext4 and APFS, but ext4 counts bytes and
+    APFS counts characters, so a name of 128 two-byte characters overflows
+    the one and is legal on the other. Ask the filesystem rather than assume,
+    and refuse to guess: a candidate is returned only once the filesystem has
+    actually rejected it with ``ENAMETOOLONG``.
+    """
+
+    _CHAR = "\u00e9"
+    _directory: Path
+    _limit: int
+
+    def __new__(cls, directory: Path) -> Self:
+        self = super().__new__(cls)
+        self._directory = directory
+        self._limit = os.pathconf(directory, "PC_NAME_MAX")
+        return self
+
+    def shortest(self) -> str:
+        """Return the first candidate the filesystem refuses, or raise."""
+        for candidate in self._candidates():
+            if self._is_refused(candidate):
+                return candidate
+        msg = (
+            f"{self._directory} accepted every overlong name probed "
+            f"(PC_NAME_MAX={self._limit}); the too-long test cannot run here"
+        )
+        raise RuntimeError(msg)
+
+    def _candidates(self) -> tuple[str, str]:
+        by_bytes = self._CHAR * (self._limit // len(os.fsencode(self._CHAR)) + 1)
+        by_chars = self._CHAR * (self._limit + 1)
+        return by_bytes, by_chars
+
+    def _is_refused(self, name: str) -> bool:
+        path = self._directory / name
+        try:
+            path.touch()
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            return True
+        path.unlink()
+        return False
+
+
+class TestOverlongNameProbe:
+    def test_raises_when_the_filesystem_refuses_neither_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A probe that finds no refused name must fail loudly, not guess."""
+
+        def accept(path: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
+            """Stand in for touch and unlink on a filesystem that refuses nothing."""
+
+        monkeypatch.setattr(Path, "touch", accept)
+        monkeypatch.setattr(Path, "unlink", accept)
+        with pytest.raises(RuntimeError, match="accepted every overlong name"):
+            OverlongNameProbe(tmp_path).shortest()
 
 
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
@@ -167,6 +231,34 @@ class TestRecordHandler:
         audio = next(p for p in sent if p["type"] == "audio")
         assert "name" in audio and "path" in audio
         assert "data" not in audio  # no base64 audio frame crosses the wire
+
+    def test_nondefault_elevenlabs_rate_warns_without_changing_recording(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "source.mp3"
+        data = b"\xff\xfb\x90\x00" * 8
+        src.write_bytes(data)
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            _handler(store, src)(
+                {
+                    "id": "r1",
+                    "text": "hi",
+                    "provider": "elevenlabs",
+                    "rate": 120,
+                },
+                ws,
+            )
+        )
+
+        ack, audio = sent
+        assert "warning" not in ack
+        assert (
+            audio["warning"] == "ElevenLabs ignores the requested speech rate (120%)."
+        )
+        assert (store.root / str(audio["name"])).read_bytes() == data
 
     @pytest.mark.parametrize("mib", [1, 3, 5])
     def test_arbitrarily_long_record_has_no_ceiling(
@@ -360,6 +452,58 @@ class TestRecordHandler:
         assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
         synth.synthesize_to_file.assert_not_called()
 
+    def test_surrogate_is_rejected_before_recording_ack(self, tmp_path: Path) -> None:
+        synth = MagicMock(spec=SynthesisPipeline)
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            handler(
+                {
+                    "type": "record",
+                    "id": "r1",
+                    "text": "left\ud800right",
+                    "provider": "espeak",
+                },
+                ws,
+            )
+        )
+
+        assert sent == [
+            {"type": "error", "id": "r1", "message": "text must be valid UTF-8"}
+        ]
+        synth.synthesize_to_file.assert_not_called()
+
+    async def test_empty_normalized_text_rejects_after_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+        handler = RecordHandler(
+            synthesis=SynthesisPipeline(playback_mutex=asyncio.Lock()), store=store
+        )
+        cache_lookup = MagicMock(side_effect=AssertionError("unexpected cache lookup"))
+        provider_factory = MagicMock(
+            side_effect=AssertionError("unexpected provider call")
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.synthesis.SynthesisCache.for_request", cache_lookup
+        )
+        monkeypatch.setattr("punt_vox.voxd.synthesis.get_provider", provider_factory)
+
+        await handler(
+            {"type": "record", "id": "r1", "text": "[warm]", "provider": "openai"},
+            ws,
+        )
+
+        assert sent == [
+            {"type": "recording", "id": "r1"},
+            {"type": "error", "id": "r1", "message": "empty text after normalization"},
+        ]
+        cache_lookup.assert_not_called()
+        provider_factory.assert_not_called()
+        assert not store.root.exists()
+
     @pytest.mark.parametrize("rate", [0, -10])
     def test_nonpositive_rate_is_an_error(self, tmp_path: Path, rate: int) -> None:
         """A wire rate of 0 or below is rejected before the ack, so no provider
@@ -505,9 +649,7 @@ class TestRecordHandler:
         )
         handler = RecordHandler(synthesis=synth, store=store)
         ws, sent = _capturing_ws()
-        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
-        name = "é" * (limit // len(os.fsencode("é")) + 1)
-        assert len(name) <= limit < len(os.fsencode(name))
+        name = OverlongNameProbe(tmp_path).shortest()
 
         msg: dict[str, object] = {
             "type": "record",

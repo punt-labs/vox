@@ -21,6 +21,10 @@ from punt_vox.atomic_file import AtomicFile
 from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
+from punt_vox.dirs import (
+    find_config_dir as real_find_config_dir,
+    writable_config_dir as real_writable_config_dir,
+)
 from punt_vox.music_phrases import (
     GENERATING_NO_STYLE,
     GENERATING_WITH_STYLE,
@@ -41,6 +45,8 @@ from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
+from punt_vox.vibe import VibeChange
+from punt_vox.voice_target import VoiceTarget
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -150,10 +156,8 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     ``vox.md`` or ``vox.local.md`` inside tmp_path.
     """
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     return tmp_path
 
 
@@ -425,6 +429,20 @@ class TestUnmute:
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
+
+    def test_forwards_synthesis_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        client = MagicMock()
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        client.synthesize.side_effect = synthesize
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: client)
+
+        result = json.loads(unmute(text="hello", rate=120))
+
+        assert result[0]["warning"] == warning
 
     def test_unconfigured_provider_returns_error_envelope(
         self, monkeypatch: pytest.MonkeyPatch
@@ -832,6 +850,30 @@ class TestNotifyTool:
         assert result["notify"]["notify"] == "y"
         assert srv._session._notify == "y"
 
+    def test_nested_repo_write_lands_in_inner_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mic:notify in a repo inheriting a workspace config writes its own."""
+        workspace = tmp_path / "workspace"
+        (workspace / ".git").mkdir(parents=True)
+        outer = workspace / ".punt-labs" / "vox" / "vox.md"
+        outer.parent.mkdir(parents=True)
+        outer.write_text('---\nnotify: "n"\nvoice: "roger"\n---\n')
+        inner = workspace / "inner"
+        (inner / ".git").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.dirs.writable_config_dir", real_writable_config_dir
+        )
+
+        notify(mode="c")
+
+        assert outer.read_text() == '---\nnotify: "n"\nvoice: "roger"\n---\n'
+        inner_store = ConfigStore(inner / ".punt-labs" / "vox")
+        assert inner_store.read_field("notify") == "c"
+        assert inner_store.read_field("voice") == "roger"
+
     def test_speak_unset_c_inits_voice(self) -> None:
         """speak not yet set — mode=c should initialize it to y."""
         import punt_vox.server as srv
@@ -1133,7 +1175,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         import punt_vox.server as srv
 
         with pytest.raises(VoxdConnectionError):
-            srv._voxd_client().voices("elevenlabs")
+            srv._voxd_client().voices(VoiceTarget("elevenlabs"))
 
 
 # ---------------------------------------------------------------------------
@@ -1153,6 +1195,46 @@ class TestSessionConfig:
         a = SessionConfig()
         b = SessionConfig()
         assert a.session_id != b.session_id
+
+    def test_change_vibe_mode_only_keeps_omitted_fields(self) -> None:
+        state = SessionConfig(_vibe="", _vibe_tags="")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="manual"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == ("", "", "manual")
+
+    def test_change_vibe_clears_resolved_fields_to_none(self) -> None:
+        state = SessionConfig(_vibe="calm", _vibe_tags="[calm]")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="off"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == (None, None, "off")
+
+    def test_set_vibe_mood_keeps_tags(self) -> None:
+        state = SessionConfig(_vibe_tags="[calm]")
+        state.set_vibe(mood="focused")
+        assert (state.vibe, state.vibe_tags) == ("focused", "[calm]")
+
+    def test_set_voice_strips_sigil(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@aria") == "aria"
+        assert state.voice == "aria"
+
+    def test_set_voice_blank_leaves_voice(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@") is None
+        assert state.voice == "roger"
+
+    def test_summary_sentence_notifications_off(self) -> None:
+        state = SessionConfig(_notify="n")
+        assert "notifications off" in state.summary_sentence()
+
+    @pytest.mark.parametrize(
+        ("speak", "delivery"), [("n", "chimes only"), ("y", "spoken")]
+    )
+    def test_summary_sentence_delivery(self, speak: str, delivery: str) -> None:
+        state = SessionConfig(
+            _notify="c", _speak=speak, _voice="roger", _vibe_mode="auto"
+        )
+        assert (
+            state.summary_sentence() == f"ready -- voice roger, {delivery}, auto vibe"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1857,11 +1939,9 @@ class TestStatusProviderStatus:
 def _refresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # pyright: ignore[reportUnusedFunction]
     """Patch _find_config_dir and DEFAULT_CONFIG_DIR for refresh tests."""
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
     import punt_vox.server as srv
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(srv, "_find_config_dir", lambda: tmp_path)
     return tmp_path
 
@@ -1991,6 +2071,35 @@ class TestRefreshFromConfig:
         srv._session.refresh_from_config()
 
         assert srv._session._vibe == "should-survive"
+
+    def test_provider_switch_clears_the_previous_model(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        srv._session.model = "gpt-4o-mini-tts"
+        ConfigStore(_refresh_config).write_fields(
+            {"provider": "polly", "model": "", "voice": "Joanna"}
+        )
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "polly"
+        assert srv._session.model is None
+
+    def test_model_loads_when_provider_is_a_session_override(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        ConfigStore(_refresh_config).write_field("model", "gpt-4o-mini-tts")
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "openai"
+        assert srv._session.model == "gpt-4o-mini-tts"
 
 
 class TestRefreshIntegrationWithTools:

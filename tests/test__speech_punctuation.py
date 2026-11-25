@@ -55,3 +55,47 @@ def test_split_keeps_language_name_marks(token: str, core: str, suffix: str) -> 
 )
 def test_split_leaves_other_marks_alone(token: str, core: str) -> None:
     assert SpeechPunctuation.split(token) == (core, "")
+
+
+@pytest.mark.parametrize(
+    ("token", "core", "suffix"),
+    [
+        ("5%", "5 percent", ""),
+        ("5%.", "5 percent", "."),
+        ("(5.5%),", "5.5 percent", ","),
+        ("-3%", "-3 percent", ""),
+        ("5\u201310%!", "5 to 10 percent", "!"),
+        ("5-10%", "5 to 10 percent", ""),
+        ("-5\u2013-3%", "-5 to -3 percent", ""),
+        ("`100%`", "100 percent", ""),
+        ("1,000%", "1,000 percent", ""),
+        ("\u22122%", "\u22122 percent", ""),
+        (".5%", ".5 percent", ""),
+        ("1.234,5%", "1.234,5 percent", ""),
+        ("1.234.567%", "1.234.567 percent", ""),
+        ("-.5%", "-.5 percent", ""),
+        ("85%\u201390%,", "85 percent to 90 percent", ","),
+    ],
+)
+def test_split_speaks_percent_after_number(token: str, core: str, suffix: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, suffix)
+
+
+@pytest.mark.parametrize(
+    ("token", "core"),
+    [
+        ("a%b", "a%b"),
+        ("%d", "d"),
+        ("n%", "n"),
+        ("%", ""),
+        ("10%3", "10%3"),
+        ("$5%", "5 dollars"),
+        ("/tmp/5%", "/tmp/5"),
+        ("foo5%", "foo5"),
+        ("v1.2%", "v1.2"),
+        ("5%%", "5"),
+        ("192.168.1.1%", "192.168.1.1"),
+    ],
+)
+def test_split_leaves_other_percent_signs_alone(token: str, core: str) -> None:
+    assert SpeechPunctuation.split(token) == (core, "")

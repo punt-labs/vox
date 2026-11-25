@@ -23,6 +23,7 @@ from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.polly import PollyProvider, VoiceConfig
 from punt_vox.providers.say import SayProvider, SayVoiceConfig
 from punt_vox.voxd.record_store import RecordStore
+from punt_vox.voxd.workers.contracts import HarnessProfile
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -39,6 +40,14 @@ def recording_socket() -> tuple[WebSocket, list[dict[str, object]]]:
             sent.append(payload)
 
     return cast("WebSocket", _WS()), sent
+
+
+@pytest.fixture
+def harness_profile() -> MagicMock:
+    """Mock a HarnessProfile with the integer input limit the protocol promises."""
+    profile = MagicMock(spec=HarnessProfile)
+    profile.input_limit = 1000
+    return profile
 
 
 @pytest.fixture
@@ -114,10 +123,11 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     * ``ConfigStore(None)`` and the module-level ``read_config`` /
       ``read_field`` / ``write_field`` / ``write_fields`` wrappers, which fall
       back to ``config.DEFAULT_CONFIG_DIR``;
-    * ``server._find_config_dir()``, which re-imports ``find_config_dir`` from
+    * ``server._find_config_dir()`` and ``server._writable_config_dir()``,
+      which re-import ``find_config_dir`` / ``writable_config_dir`` from
       ``dirs`` at call time;
     * the ``/vibe`` / ``notify`` / ``voice`` CLI commands, which read
-      ``__main__.find_config_dir``.
+      ``__main__.find_config_dir`` / ``__main__.writable_config_dir``.
 
     ``hooks.find_config_dir`` is *not* redirected: hooks always pass an explicit
     ``cwd``, so they resolve relative to isolated payload directories and never
@@ -146,9 +156,8 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
         return config_dir
 
     monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", config_dir)
-    monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
-    monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _resolve)
     # SessionSpec.for_repo() is the config-lookup path shared by vox say,
     # vox rec new, and vox call. Patch the binding in session_spec itself.
     monkeypatch.setattr("punt_vox.session_spec.find_config_dir", _resolve)

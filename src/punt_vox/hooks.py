@@ -25,6 +25,7 @@ import logging
 import os
 import random
 import select
+import subprocess
 import sys
 from pathlib import Path
 
@@ -165,25 +166,30 @@ def _chime_via_voxd(signal: str, *, wait: bool = True) -> None:
     missing or misbehaving daemon never crashes a hook.
     """
     if not wait:
-        # Fire-and-forget: spawn a detached process so the hook returns
-        # immediately -- a side-effect hook must not block the event it observes.
-        import subprocess as _sp
-
-        try:
-            _sp.Popen(
-                [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
-                stdout=_sp.DEVNULL,
-                stderr=_sp.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as e:
-            logger.warning("Could not spawn chime subprocess: %s", e)
+        _spawn_chime(signal)
         return
     try:
         client = _make_client()
         client.chime(signal)
     except (VoxdConnectionError, VoxdProtocolError):
         logger.warning("voxd not running, skipping chime")
+
+
+def _spawn_chime(signal: str) -> None:
+    """Play a chime from a detached ``vox hook _chime`` process.
+
+    Fire-and-forget so the hook returns immediately -- a side-effect hook must
+    not block the event it observes.
+    """
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "punt_vox", "hook", "_chime", signal],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as e:
+        logger.warning("Could not spawn chime subprocess: %s", e)
 
 
 # Stop handler — decision-block pattern
@@ -378,30 +384,21 @@ def handle_subagent_stop(config: VoxConfig) -> None:
 # SessionEnd — farewell speech
 
 
-def _reset_nudge_cadence(config_dir: Path) -> None:
-    """Reset the nudge cadence counter, warning instead of raising on failure."""
-    try:
-        ConfigStore(config_dir).write_field("vibe_nudge_turns", "0")
-    except (OSError, UnicodeDecodeError) as exc:
-        logger.warning("session-end: cannot reset cadence in %s: %s", config_dir, exc)
-
-
 def handle_session_end(config: VoxConfig, config_dir: Path) -> None:
     """Speak a farewell and clean up session state.
 
-    Fires when notify != 'n' (both on-demand and continuous).
-    Resets the nudge cadence so the counter never leaks into the next session.
+    The farewell fires when notify != 'n' (both on-demand and continuous).
+    The nudge cadence resets whatever notify is: the vibe-nudge hook advances
+    it regardless, so a skipped reset would leak the count into the next session.
     """
     if config.notify == "n":
-        logger.info("SessionEnd hook: skip (notify=n)")
-        return
+        logger.info("SessionEnd hook: farewell skipped (notify=n)")
+    else:
+        logger.info("SessionEnd hook: farewell")
+        _speak_phrase(FAREWELL_PHRASES, config, chime_signal="farewell")
 
-    logger.info("SessionEnd hook: farewell")
-    _speak_phrase(FAREWELL_PHRASES, config, chime_signal="farewell")
-
-    # Clean slate for next session
     if config.vibe_nudge_turns:
-        _reset_nudge_cadence(config_dir)
+        NudgeHook(config_dir).persist(0)
 
 
 # CLI commands

@@ -13,7 +13,7 @@ class TestToDict:
         control = ModelControl(
             models=("eleven_v3", "eleven_flash_v2_5"), current="eleven_flash_v2_5"
         )
-        wire = control.to_dict()
+        wire = control.to_dict(element_id="vox.panel.model")
         assert wire["kind"] == "combo"
         assert wire["id"] == "vox.panel.model"
         assert wire["label"] == "Model"
@@ -25,17 +25,17 @@ class TestToDict:
 
     def test_none_current_selects_first_index(self) -> None:
         control = ModelControl(models=("eleven_v3",), current=None)
-        wire = control.to_dict()
+        wire = control.to_dict(element_id="vox.panel.model")
         assert wire["selected"] == 0
 
     def test_unknown_current_selects_first_index(self) -> None:
         control = ModelControl(models=("eleven_v3",), current="mystery")
-        wire = control.to_dict()
+        wire = control.to_dict(element_id="vox.panel.model")
         assert wire["selected"] == 0
 
     def test_modelless_provider_renders_a_sentinel_with_no_handler(self) -> None:
         control = ModelControl(models=(), current=None)
-        wire = control.to_dict()
+        wire = control.to_dict(element_id="vox.panel.model")
         assert wire["kind"] == "combo"
         assert wire["items"] == ["(no models)"]
         assert wire["selected"] == 0

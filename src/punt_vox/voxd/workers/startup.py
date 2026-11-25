@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, final
 
+from punt_vox.voxd.workers.discard import WorkerDiscard
 from punt_vox.voxd.workers.lifecycle import WorkerLifecycle, WorkerLiveness
 from punt_vox.voxd.workers.reaper import WorkerReaper
 from punt_vox.voxd.workers.recovery import WorkerRecovery
@@ -67,7 +68,7 @@ class WorkerStartup:
     @staticmethod
     def _retire(record: WorkerRecord, records: WorkerRecords) -> WorkerRecord:
         try:
-            retired = record.retire()
+            retired = WorkerDiscard.retire(record)
             records.save(retired)
             return retired
         except (OSError, ValueError) as exc:

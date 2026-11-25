@@ -25,7 +25,6 @@ from punt_vox.panel.topics import PanelTopic
 
 __all__ = ["ModelControl"]
 
-_COMBO_ID: Final = "vox.panel.model"
 _EMPTY_LABEL: Final = "(no models)"
 
 
@@ -37,12 +36,12 @@ class ModelControl:
     models: tuple[str, ...]
     current: str | None
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self, *, element_id: str) -> dict[str, object]:
         """Return the combo's wire dict; a modelless provider renders inert."""
         choices = self._choices()
         combo: dict[str, object] = {
             "kind": "combo",
-            "id": _COMBO_ID,
+            "id": element_id,
             "label": "Model",
             "items": choices.wire_items(),
             "selected": choices.selected_index(),

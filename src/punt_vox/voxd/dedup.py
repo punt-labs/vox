@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Self
 
@@ -119,10 +120,8 @@ class OnceDedup:
     seconds" semantic.
 
     Concurrency: ``check_and_record`` is atomic under voxd's
-    single-threaded asyncio event loop. A failed synthesis path MUST
-    call ``rollback`` to remove the zombie entry; otherwise the next
-    identical call would be incorrectly deduped against a playback
-    that never happened.
+    single-threaded asyncio event loop. Capture ``rollback_for`` before
+    yielding so a failed request can release its own entry.
     """
 
     __slots__ = ("_seen",)
@@ -147,9 +146,8 @@ class OnceDedup:
 
         Returns:
             ``None`` if no duplicate exists within the window --- the
-            caller should proceed with synthesis + playback and call
-            ``rollback(text)`` on failure so the zombie entry is
-            removed.
+            caller should capture ``rollback_for(text)``, proceed with
+            synthesis + playback, and invoke the action on failure.
             ``DedupHit(...)`` if a duplicate was found --- the caller
             should skip the play and return the hit to its client so
             the client can render an observable "deduped" response.
@@ -189,7 +187,7 @@ class OnceDedup:
         # Opportunistic time-based prune: drop entries older than the
         # cap so we never accumulate entries beyond the cap horizon.
         cutoff = now_mono - _ONCE_DEDUP_MAX_TTL_SECONDS
-        self._seen = {k: (m, w) for k, (m, w) in self._seen.items() if m > cutoff}
+        self._seen = {k: entry for k, entry in self._seen.items() if entry[0] > cutoff}
 
         # Hard cap on dict size. If somehow the time prune left us with
         # more than _ONCE_DEDUP_MAX_ENTRIES, evict oldest-first. This is
@@ -202,14 +200,13 @@ class OnceDedup:
 
         return None
 
-    def rollback(self, text: str) -> None:
-        """Remove a recorded entry for *text*, if present.
-
-        Used when synthesis or playback fails after
-        ``check_and_record`` returned None: without a rollback, the
-        zombie entry would incorrectly dedup subsequent retries
-        against a playback that never happened. Idempotent --- safe
-        to call when no entry exists.
-        """
+    def rollback_for(self, text: str) -> Callable[[], None]:
+        """Capture a release action for the current entry, not its replacement."""
         key = hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
-        self._seen.pop(key, None)
+        entry = self._seen.get(key)
+
+        def release() -> None:
+            if self._seen.get(key) is entry:
+                self._seen.pop(key, None)
+
+        return release

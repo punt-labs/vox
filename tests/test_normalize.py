@@ -196,6 +196,7 @@ class TestIdempotency:
             "The eof_received handler uses stderr",
             "normal sentence",
             "/usr/local/bin",
+            "`prefix[draft](/help)suffix`",
         ],
     )
     def test_idempotent(self, text: str) -> None:
@@ -383,6 +384,21 @@ class TestSymbolStripping:
             ("$1million", "1 million dollars"),
             ("$1billion", "1 billion dollars"),
             ("$1trillion", "1 trillion dollars"),
+            ("We saved $1 million", "We saved 1 million dollars"),
+            ("$1 million\u2019s worth", "1 million\u2019s worth"),
+            (
+                "We saved $1 million—enough to retire",
+                "We saved 1 million—enough to retire",
+            ),
+            ("$2.5 billion,", "2.5 billion dollars,"),
+            ("$10 thousand", "10 thousand dollars"),
+            ("$1 trillion", "1 trillion dollars"),
+            ("(-€1,50 MILLION)", "minus 1.50 million euros"),
+            ("£2\N{NO-BREAK SPACE}million/month", "2 million pounds per month"),
+            ("$1 millionth", "1 dollar millionth"),
+            ("$1 million-dollar plan", "1 dollar million-dollar plan"),
+            ("$1\nmillion", "1 dollar million"),
+            ("$5 m", "5 dollars m"),
             ("$5-$10", "5 dollars to 10 dollars"),
             ("$5\u201310", "5 to 10 dollars"),
             ("$5k\u201310", "5 thousand to 10 thousand dollars"),
@@ -393,6 +409,8 @@ class TestSymbolStripping:
             ("$10k/month", "10 thousand dollars per month"),
             ("$5-$10/month", "5 dollars to 10 dollars per month"),
             ("$5k-$10k", "5 thousand dollars to 10 thousand dollars"),
+            ("$1 million-$2 million", "1 million dollars to 2 million dollars"),
+            ("$5\u201310 million", "5 to 10 million dollars"),
             ("(+€1/day),", "plus 1 euro per day,"),
             ("\u2212£1.5K", "minus 1.5 thousand pounds"),
             ("-$10\u2013-$5", "minus 10 dollars to minus 5 dollars"),
@@ -411,6 +429,10 @@ class TestSymbolStripping:
         ("text", "expected"),
         [
             ("Use `$1` then pay $5", "Use dollar sign 1 then pay 5 dollars"),
+            (
+                "Use `$1 million` then pay $1 million",
+                "Use dollar sign 1 million then pay 1 million dollars",
+            ),
             (
                 "Use `$1suffix prefix$2` then pay $5",
                 "Use dollar sign 1 suffix prefix dollar sign 2 then pay 5 dollars",
@@ -656,4 +678,27 @@ class TestLanguageNames:
 
     def test_language_names_are_idempotent(self) -> None:
         once = normalize_for_speech("Port the C# tool to C++.")
+        assert normalize_for_speech(once) == once
+
+
+class TestPercentages:
+    def test_percentage_keeps_its_unit(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") == "Error rate is 5 percent."
+
+    def test_percentage_differs_from_bare_count(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") != normalize_for_speech(
+            "Error rate is 5."
+        )
+
+    def test_code_modulo_is_unchanged(self) -> None:
+        assert normalize_for_speech("x %= 2 and a%b") == "x 2 and a%b"
+
+    def test_percentage_range_says_to(self) -> None:
+        assert (
+            normalize_for_speech("Coverage held at 85%\u201390% this week.")
+            == "Coverage held at 85 percent to 90 percent this week."
+        )
+
+    def test_percentages_are_idempotent(self) -> None:
+        once = normalize_for_speech("Coverage rose from 85% to 92.5%.")
         assert normalize_for_speech(once) == once

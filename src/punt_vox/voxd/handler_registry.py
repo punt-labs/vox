@@ -12,7 +12,7 @@ from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 from punt_vox.voxd.recording_handlers import RecordingHandlers
-from punt_vox.voxd.speech_handlers import SynthesizeHandler
+from punt_vox.voxd.synthesize_handler import SynthesizeHandler
 from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
 from punt_vox.voxd.workers.context import WorkerContext
 

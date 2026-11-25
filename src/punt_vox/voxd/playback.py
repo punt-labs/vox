@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Self
 
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
-from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
+from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
+from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 
 logger = logging.getLogger(__name__)
 
@@ -28,21 +29,16 @@ logger = logging.getLogger(__name__)
 
 _PLAYBACK_TIMEOUT_DEFAULT_S = 120.0
 _PLAYBACK_TIMEOUT_PADDING_S = 10.0
-
-
-# ---------------------------------------------------------------------------
-# PlaybackItem dataclass
-# ---------------------------------------------------------------------------
+_PLAYBACK_INTERRUPTED = "playback interrupted (daemon shutting down)"
 
 
 @dataclass(frozen=True, slots=True)
 class PlaybackItem:
-    """An item in the playback queue.
+    """A queued file and the resources to release when playback settles.
 
-    ``outcome``, when set, is resolved by the consumer with this item's
-    :class:`PlaybackResult` the moment its playback finishes -- letting a
-    user-invoked ``play`` await the real host-side result rather than returning
-    at enqueue. Fire-and-forget callers (say/chime/music) leave it ``None``.
+    ``outcome`` lets ``play`` await the host-side result. Fire-and-forget
+    callers (say/chime) leave it unset. ``on_failure`` runs before waiters
+    are notified, even if the enqueueing client has disconnected.
     """
 
     path: Path
@@ -50,17 +46,27 @@ class PlaybackItem:
     notify: asyncio.Event
     outcome: asyncio.Future[PlaybackResult] | None = None
     discard: Callable[[], None] | None = None
+    on_failure: Callable[[], None] | None = None
 
-    def resolve(self, result: PlaybackResult | str) -> None:
-        """Complete a waiting client with a result or an interruption reason."""
-        future = self.outcome
-        if future is None or future.done():
-            return
+    def finish(self, result: PlaybackResult | str) -> None:
+        """Release the item and complete any waiters."""
+        try:
+            self._resolve(result)
+        finally:
+            try:
+                if self.discard is not None:
+                    self.discard()
+            finally:
+                self.notify.set()
+
+    def _resolve(self, result: PlaybackResult | str) -> None:
+        """Publish a playback outcome or an interruption reason."""
         if isinstance(result, str):
-            result = PlaybackResult(
-                path=self.path, rc=-1, elapsed_s=0.0, stderr=result, ts=time.time()
-            )
-        future.set_result(result)
+            result = PlaybackResult(self.path, -1, 0.0, result, time.time())
+        if not result.ok and self.on_failure is not None:
+            self.on_failure()
+        if self.outcome is not None and not self.outcome.done():
+            self.outcome.set_result(result)
 
 
 # ---------------------------------------------------------------------------
@@ -92,14 +98,21 @@ class PlaybackQueue:
     _queue: asyncio.Queue[PlaybackItem]
 
     def __new__(
-        cls, output_stream: OutputStreamFactory = sounddevice_output_stream
+        cls,
+        output_stream: OutputStreamFactory | None = None,  # None: the default.
     ) -> Self:
-        """Create a playback queue that opens PCM streams with *output_stream*."""
+        """Create a playback queue that opens PCM streams with *output_stream*.
+
+        The default is PortAudio, unless the test-only ``VOX_PCM_OUTPUT``
+        switch names the silent device; a device passed explicitly is kept
+        whatever the switch says. The queue is built once at daemon boot,
+        so this is where every test-only call switch is validated.
+        """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
         self._mutex = asyncio.Lock()
         self._last_result = None
-        self._output_stream = output_stream
+        self._output_stream = CallOverrides.check(output_stream)
         return self
 
     # -- Properties ----------------------------------------------------------
@@ -238,10 +251,13 @@ class PlaybackQueue:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-        except FileNotFoundError as exc:
-            elapsed = _monotonic() - start
+        except OSError as exc:
+            # A missing player binary is the common case; any other OSError
+            # at spawn is reported the same way, under its own type name.
+            what = "binary not found" if isinstance(exc, FileNotFoundError) else "spawn"
             logger.error(
-                "Playback FAILED: binary not found: %s (%s) cmd=%s audio_env=%s",
+                "Playback FAILED: %s: %s (%s) cmd=%s audio_env=%s",
+                what,
                 cmd[0],
                 exc,
                 cmd,
@@ -250,20 +266,8 @@ class PlaybackQueue:
             self.record_result(
                 path=path,
                 rc=-1,
-                elapsed=elapsed,
-                stderr=f"FileNotFoundError: {exc}",
-            )
-            return None
-        except OSError as exc:
-            elapsed = _monotonic() - start
-            logger.error(
-                "Playback FAILED: OSError spawning %s: %s audio_env=%s",
-                cmd[0],
-                exc,
-                env_snapshot,
-            )
-            self.record_result(
-                path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
+                elapsed=_monotonic() - start,
+                stderr=f"{type(exc).__name__}: {exc}",
             )
             return None
 
@@ -316,25 +320,27 @@ class PlaybackQueue:
     async def _play_item(self, item: PlaybackItem) -> None:
         """Resolve this item's outcome before dequeuing the next one."""
         logger.debug("Playback start: %s", item.path.name)
+        result: PlaybackResult | str = _PLAYBACK_INTERRUPTED
         try:
             async with self._mutex:
                 await self.play_audio(item.path)
+                result = self._last_result or "no playback result recorded"
             logger.debug("Playback done: %s", item.path.name)
-            item.resolve(self._last_result or "no playback result recorded")
         except Exception:
             logger.exception("Playback consumer error for %s", item.path.name)
-            item.resolve("playback failed unexpectedly")
+            result = "playback failed unexpectedly"
         finally:
-            self._finish_item(item)
+            self._finish_item(item, result)
 
-    def _finish_item(self, item: PlaybackItem) -> None:
+    def _finish_item(
+        self,
+        item: PlaybackItem,
+        result: PlaybackResult | str = _PLAYBACK_INTERRUPTED,
+    ) -> None:
         """Settle and release an item even if playback did not finish."""
-        item.resolve("playback interrupted (daemon shutting down)")
         try:
-            if item.discard is not None:
-                item.discard()
+            item.finish(result)
         finally:
-            item.notify.set()
             self._queue.task_done()
 
     def record_result(

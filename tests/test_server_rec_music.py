@@ -250,6 +250,20 @@ def test_rec_new_name_passthrough_to_client() -> None:
     assert name == "greeting.mp3"
 
 
+def test_rec_new_forwards_record_warning() -> None:
+    warning = "ElevenLabs ignores the requested speech rate (120%)."
+    client = MagicMock()
+
+    def record(*_args: object, **_kwargs: object) -> RecordResult:
+        return RecordResult("r1", "r1", Path("recordings/r1"), 100, warning=warning)
+
+    client.record.side_effect = record
+
+    result = json.loads(_rec_tool(lambda: client).new(text="hello", rate=120))
+
+    assert result == [{"id": "r1", "bytes": 100, "cached": False, "warning": warning}]
+
+
 def test_rec_new_no_input_returns_error() -> None:
     result = json.loads(_rec(_FakeClient()).new())
     assert "error" in result

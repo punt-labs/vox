@@ -46,7 +46,7 @@ from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.vibe_trace import VibeTraceLog
 
 if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from mcp.types import ContentBlock
 
@@ -117,7 +117,7 @@ mcp = _LoggingFastMCP(
         "Do NOT read or edit the content of .punt-labs/vox/vox.md or "
         "vox.local.md with Read, Write, Edit, or shell commands; use MCP tools "
         "or hook context. Read-only git (status, diff) is fine. The one "
-        "sanctioned rewrite: when punt release preflight reports vox.md dirty, "
+        "sanctioned rewrite: when punt release run preflight reports vox.md dirty, "
         "run git stash push -- .punt-labs/vox/vox.md, release, then git stash "
         "pop --index, with vox sessions stopped first."
     ),
@@ -296,12 +296,10 @@ class SessionConfig:
         the field back to ``None``).  Raises ``ValueError`` for a bad mode.
         """
         updates = change.resolve()
-        if "vibe" in updates:
-            self._vibe = updates["vibe"] or None
-        if "vibe_tags" in updates:
-            self._vibe_tags = updates["vibe_tags"] or None
-        if "vibe_mode" in updates:
-            self._vibe_mode = updates["vibe_mode"]
+        cleared = {field: value or None for field, value in updates.items()}
+        self._vibe = cleared.get("vibe", self._vibe)
+        self._vibe_tags = cleared.get("vibe_tags", self._vibe_tags)
+        self._vibe_mode = updates.get("vibe_mode", self._vibe_mode)
         return updates
 
     @classmethod
@@ -310,7 +308,8 @@ class SessionConfig:
         if config_dir is None:
             return cls()
 
-        cfg = ConfigStore(config_dir).read()
+        store = ConfigStore(config_dir)
+        cfg = store.read()
         return cls(
             _notify=cfg.notify,
             _speak=cfg.speak,
@@ -320,6 +319,7 @@ class SessionConfig:
             _vibe_mode=cfg.vibe_mode,
             _vibe=cfg.vibe,
             _vibe_tags=cfg.vibe_tags,
+            _speak_explicit=store.read_field("speak") is not None,
         )
 
     def refresh_from_config(self) -> None:
@@ -329,16 +329,16 @@ class SessionConfig:
         always take the config value -- the config file is the source of
         truth since CLI and hooks write there directly.
 
-        For voice, provider, and model the MCP tool may have set a value
-        that was not persisted to config (e.g. an in-tool override).  Only
-        overwrite self when config has a non-None value so those
-        overrides survive.
+        A configured provider owns its model, including an unset model.
+        With no configured provider, preserve in-tool overrides unless
+        config supplies a value.
         """
         config_dir = _find_config_dir()
         if config_dir is None:
             return
 
-        cfg = ConfigStore(config_dir).read()
+        store = ConfigStore(config_dir)
+        cfg = store.read()
 
         self._vibe = cfg.vibe
         self._vibe_tags = cfg.vibe_tags
@@ -346,14 +346,14 @@ class SessionConfig:
         self._notify = cfg.notify
         self._speak = cfg.speak
 
-        if ConfigStore(config_dir).read_field("speak") is not None:
+        if store.read_field("speak") is not None:
             self._speak_explicit = True
 
         if cfg.voice is not None:
             self._voice = cfg.voice
         if cfg.provider is not None:
-            self._provider = cfg.provider
-        if cfg.model is not None:
+            self._provider, self._model = cfg.provider, cfg.model
+        elif cfg.model is not None:
             self._model = cfg.model
 
 
@@ -379,14 +379,20 @@ def _find_config_dir() -> Path | None:
     return find_config_dir()
 
 
+def _writable_config_dir() -> Path | None:
+    """Return the per-repo config dir a setting write from cwd lands in."""
+    from punt_vox.dirs import writable_config_dir
+
+    return writable_config_dir()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _voxd_client() -> VoxClientSync:
-    """Create a VoxClientSync instance."""
-    return VoxClientSync()
+# The daemon client factory; tests replace it with one returning a mock.
+_voxd_client: Callable[[], VoxClientSync] = VoxClientSync
 
 
 # The daemon-facing seam the music/status tools drive. A module-level value (not
@@ -518,13 +524,10 @@ def unmute(
             "voice": seg_spec.voice,
             "provider": seg_spec.provider,
             "cached": result.cached,
+            **result.dedup_fields(),
         }
-        if result.deduped:
-            entry["deduped"] = True
-            if result.original_played_at is not None:
-                entry["original_played_at"] = result.original_played_at
-            if result.ttl_seconds_remaining is not None:
-                entry["ttl_seconds_remaining"] = result.ttl_seconds_remaining
+        if result.warning is not None:
+            entry["warning"] = result.warning
         return entry
 
     return batch.render(defaults, handler=_synth_handler, error_label="Synthesis")
@@ -570,9 +573,9 @@ def vibe(
         you to re-pool the music to the new mood (see the ``/vibe`` skill).
     """
     _session.refresh_from_config()
-    return VibeCommand(_session, _program_tools, _find_config_dir(), _music_pref).apply(
-        mood, tags, mode
-    )
+    return VibeCommand(
+        _session, _program_tools, _writable_config_dir(), _music_pref
+    ).apply(mood, tags, mode)
 
 
 # The single `music` tool: one subcommand-dispatched verb (on/off/play/next/
@@ -607,9 +610,9 @@ mcp.tool(name=usage.McpTool.enablement.value)(_enablement_tool.dispatch)
 # honoured on the next call, and each writes through the same
 # ``ConfigStore.write_field`` choke-point the CLI uses. ``mic:voice`` lists voices
 # when called without an argument.
-_model_tool = ModelTool(lambda: _session, _find_config_dir, _voxd_client)
-_provider_tool = ProviderTool(lambda: _session, _find_config_dir, _voxd_client)
-_voice_tool = VoiceTool(lambda: _session, _find_config_dir, _voxd_client)
+_model_tool = ModelTool(lambda: _session, _writable_config_dir, _voxd_client)
+_provider_tool = ProviderTool(lambda: _session, _writable_config_dir, _voxd_client)
+_voice_tool = VoiceTool(lambda: _session, _writable_config_dir, _voxd_client)
 
 mcp.tool(name=usage.McpTool.model.value)(_model_tool.dispatch)
 mcp.tool(name=usage.McpTool.provider.value)(_provider_tool.dispatch)
@@ -649,7 +652,7 @@ def notify(
         _session.set_speak("y", explicit=False)
 
     # Persist to disk so hooks (which read config independently) see the change
-    ConfigStore(_find_config_dir()).write_fields(updates)
+    ConfigStore(_writable_config_dir()).write_fields(updates)
 
     return json.dumps({"notify": updates})
 
@@ -678,7 +681,7 @@ def speak(
     _session.set_speak(mode)
 
     # Persist to disk so hooks (which read config independently) see the change
-    ConfigStore(_find_config_dir()).write_fields(updates)
+    ConfigStore(_writable_config_dir()).write_fields(updates)
 
     return json.dumps(updates)
 
@@ -795,15 +798,7 @@ def run_server() -> None:
     logger.info("Starting vox MCP server (mic)")
 
     # Seed session config from per-repo config if it exists.
-    config_dir = _find_config_dir()
-    _session = SessionConfig.from_config(config_dir)
-
-    # Mark speak as explicitly set if the config file had it.
-    if (
-        config_dir is not None
-        and ConfigStore(config_dir).read_field("speak") is not None
-    ):
-        _session.set_speak(_session.speak)
+    _session = SessionConfig.from_config(_find_config_dir())
 
     logger.info("%s", _session.summary_sentence())
 

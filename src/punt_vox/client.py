@@ -15,11 +15,13 @@ import tempfile
 import uuid
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 if TYPE_CHECKING:
     from types import TracebackType
     from typing import IO
+
+    from punt_vox.voice_target import VoiceTarget
 
 from punt_vox.album_export import AlbumExport as AlbumExport, ExportManifest
 from punt_vox.client_errors import (
@@ -525,8 +527,8 @@ class VoxClient:
             tmp.unlink(missing_ok=True)
             raise
 
-    async def voices(self, provider: str) -> list[str]:
-        """List *provider*'s voice roster; a missing ``voices`` key is a protocol error.
+    async def voices(self, target: VoiceTarget) -> list[str]:
+        """List the target's voices, using its default model if unspecified.
 
         State is the sole authority on which provider voxd runs, so the
         caller names it explicitly on every roster fetch: the wire never
@@ -539,12 +541,11 @@ class VoxClient:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
             VoxdRejectionError: If the daemon rejects the request.
         """
-        msg: dict[str, object] = {"type": "voices", "provider": provider}
+        msg = target.request()
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_PROVIDER)
         if "voices" not in resp:
             raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")
-        voice_list: list[str] = resp["voices"]
-        return voice_list
+        return cast("list[str]", resp["voices"])
 
     async def health(self, *, output_dirs: bool = False) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version).

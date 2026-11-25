@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, final
 
 from websockets.exceptions import WebSocketException
 
@@ -20,11 +20,14 @@ from punt_vox.client_errors import (
     VoxdRejectionError,
 )
 from punt_vox.models import MODEL_TABLE
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["Cascade", "RosterClient", "RosterError", "RosterRejectedError"]
+    from punt_vox.voice_target import RosterClient
+
+__all__ = ["Cascade", "RosterError", "RosterRejectedError"]
 
 logger = logging.getLogger(__name__)
 
@@ -37,25 +40,6 @@ logger = logging.getLogger(__name__)
 # malformed response) log with .exception() before wrapping so a real bug
 # leaves a diagnostic trail.
 _VOICES_FAULT_ERRORS = (VoxdProtocolError, WebSocketException, OSError, ValueError)
-
-
-@runtime_checkable
-class RosterClient(Protocol):
-    """The one method the cascade helpers need from a voxd client.
-
-    Both :class:`~punt_vox.client_sync.VoxClientSync` and the panel's
-    :class:`~punt_vox.panel.ports.PanelDaemonClient` protocol satisfy this
-    structurally, so the cascade helpers accept either without a concrete
-    import.
-    """
-
-    def voices(self, provider: str) -> list[str]:
-        """Return the named provider's voice roster.
-
-        State is the sole authority on which provider voxd runs, so the
-        caller names it on every fetch -- the daemon never guesses.
-        """
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,27 +92,28 @@ class Cascade:
         Deterministic "first from list" default per the cascade contract.
         Used for both the model default
         (``MODEL_TABLE.available(provider)[0]``) and the voice default
-        (``client.voices(provider)[0]``).
+        (``client.voices(target)[0]``).
         """
         return seq[0] if seq else ""
 
     @staticmethod
-    def default_model(provider: str) -> str:
-        """Return the first model in *provider*'s list, ``""`` when modelless.
+    def default_target(provider: str) -> VoiceTarget:
+        """Select the first model in *provider*'s list, if it has one.
 
         A modelless provider (say, espeak, polly) has an empty
         :data:`MODEL_TABLE.available` list; the cascade rule writes ``""``
         in that case, which the frontmatter store treats as absent.
         """
-        return Cascade.first_or_empty(MODEL_TABLE.available(provider))
+        model = next(iter(MODEL_TABLE.available(provider)), None)
+        return VoiceTarget(provider, model)
 
     @staticmethod
-    def fetch_roster(client: RosterClient, provider: str) -> list[str] | RosterError:
-        """Return *provider*'s voice roster, or a :class:`RosterError` on fault.
+    def fetch_roster(
+        client: RosterClient, target: VoiceTarget
+    ) -> list[str] | RosterError:
+        """Return the target's voice roster, or a :class:`RosterError`.
 
-        Fetches ``client.voices(provider=provider)``. The provider is
-        required: state is the sole authority on which one voxd runs,
-        so the caller must name it -- ``mic:model``, ``mic:voice``, and
+        The target always names a provider: ``mic:model``, ``mic:voice``, and
         the panel each refuse when their session has no provider yet
         rather than pass ``None`` and let the daemon substitute.
 
@@ -140,24 +125,26 @@ class Cascade:
         error envelope.
         """
         try:
-            return client.voices(provider=provider)
+            return client.voices(target)
         except VoxdRejectionError as exc:
             return RosterRejectedError(str(exc))
         except VoxdConnectionError as exc:
             return RosterError(str(exc))
         except _VOICES_FAULT_ERRORS as exc:
-            logger.exception("Voice roster fetch failed (provider=%r)", provider)
+            logger.exception("Voice roster fetch failed for %r", target)
             return RosterError(str(exc))
 
     @staticmethod
-    def fetch_first_voice(client: RosterClient, provider: str) -> str | RosterError:
+    def fetch_first_voice(
+        client: RosterClient, target: VoiceTarget
+    ) -> str | RosterError:
         """Return the provider's first voice, or a :class:`RosterError` on fault.
 
         Thin wrapper: :meth:`fetch_roster` then :meth:`first_or_empty`. The
         empty-string return for an empty roster matches the cascade rule --
         the frontmatter store treats ``""`` as absent.
         """
-        roster = Cascade.fetch_roster(client, provider)
+        roster = Cascade.fetch_roster(client, target)
         if isinstance(roster, RosterError):
             return roster
         return Cascade.first_or_empty(roster)
