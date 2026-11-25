@@ -591,7 +591,7 @@ class TestSymbolStripping:
         ),
         ("`(x) < 3`", "x less than 3"),
         ("**x** > 3", "x greater than 3"),
-        ("50% < x", "50 less than x"),
+        ("50% < x", "50 percent less than x"),
         ("-3 < x < 3", "-3 less than x less than 3"),
         ("x < y and x > 1.5", "x less than y and x greater than 1.5"),
         ("$5 < 10", "5 dollars less than 10"),
@@ -731,4 +731,27 @@ class TestLanguageNames:
 
     def test_language_names_are_idempotent(self) -> None:
         once = normalize_for_speech("Port the C# tool to C++.")
+        assert normalize_for_speech(once) == once
+
+
+class TestPercentages:
+    def test_percentage_keeps_its_unit(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") == "Error rate is 5 percent."
+
+    def test_percentage_differs_from_bare_count(self) -> None:
+        assert normalize_for_speech("Error rate is 5%.") != normalize_for_speech(
+            "Error rate is 5."
+        )
+
+    def test_code_modulo_is_unchanged(self) -> None:
+        assert normalize_for_speech("x %= 2 and a%b") == "x 2 and a%b"
+
+    def test_percentage_range_says_to(self) -> None:
+        assert (
+            normalize_for_speech("Coverage held at 85%\u201390% this week.")
+            == "Coverage held at 85 percent to 90 percent this week."
+        )
+
+    def test_percentages_are_idempotent(self) -> None:
+        once = normalize_for_speech("Coverage rose from 85% to 92.5%.")
         assert normalize_for_speech(once) == once
