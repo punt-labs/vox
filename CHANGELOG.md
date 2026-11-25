@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A vox call now uses the system's current default microphone and output
+  device, not the ones voxd saw when it started. Headphones connected after
+  the daemon came up are used for both legs without a restart; the daemon
+  logs the input device, the output device, and a warning when the two are
+  different hardware, the configuration that feeds the agent its own voice.
+  (PL-1619)
+
 - Speak standalone comparisons such as `x < 3` and `x != y`. Bare `<`
   and `>` require a number and only accept numbers or single-letter
   operands, leaving word breadcrumbs such as `Settings > Voice` alone. (PL-1610)
