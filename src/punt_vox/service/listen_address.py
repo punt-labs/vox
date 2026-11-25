@@ -15,7 +15,6 @@ against ``lsof -Fnt`` records on macOS and ``/proc/net/tcp`` rows on Linux.
 from __future__ import annotations
 
 import ipaddress
-import socket
 import struct
 from typing import Self, final
 
@@ -39,9 +38,18 @@ class ListenAddress:
     _port: int
 
     def __new__(cls, host: str, port: int) -> Self:
-        """Create the address for *host* (an IP literal) on *port*."""
+        """Create the address for *host* (an IP literal) on *port*.
+
+        A scoped IPv6 literal (``::1%1``, as a Linux bind may carry) keeps
+        its zone for the connection target only; here the zone is dropped,
+        because the kernel's tables and ``lsof``'s names carry address bytes
+        alone.
+
+        Raises:
+            ValueError: If *host* is not an IPv4 or IPv6 literal.
+        """
         self = super().__new__(cls)
-        self._host = ipaddress.ip_address(host)
+        self._host = ipaddress.ip_address(ipaddress.ip_address(host).packed)
         self._port = port
         return self
 
@@ -91,11 +99,15 @@ class ListenAddress:
     @staticmethod
     def _hex4(host: ipaddress.IPv4Address) -> str:
         """Return *host* as ``/proc/net/tcp`` prints it: one little-endian word."""
-        (word,) = struct.unpack("<I", socket.inet_pton(socket.AF_INET, str(host)))
+        (word,) = struct.unpack("<I", host.packed)
         return f"{word:08X}"
 
     @staticmethod
     def _hex6(host: ipaddress.IPv6Address) -> str:
-        """Return *host* as ``/proc/net/tcp6`` prints it: four little-endian words."""
-        words = struct.unpack("<IIII", socket.inet_pton(socket.AF_INET6, str(host)))
+        """Return *host* as ``/proc/net/tcp6`` prints it: four little-endian words.
+
+        From the packed bytes, never the text: a zone suffix would make
+        ``inet_pton`` raise, and the kernel column has no zone.
+        """
+        words = struct.unpack("<IIII", host.packed)
         return "".join(f"{word:08X}" for word in words)

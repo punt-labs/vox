@@ -490,6 +490,39 @@ def test_holds_port_linux_an_fd_closed_mid_scan_is_skipped(
 
 
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_scoped_ipv6_target_is_held(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``::1%1`` from the installed bind: no OSError, the tcp6 row is matched."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(
+        tmp_path, 123, "777", local="00000000000000000000000001000000", table="tcp6"
+    )
+    assert ProcessManager().holds_port(123, "::1%1", 8421) is True
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_scoped_ipv6_target_is_held(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "p123\nf5\ntIPv6\nn[::1]:8421\n")
+    assert ProcessManager().holds_port(123, "::1%1", 8421) is True
+
+
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
+def test_holds_port_with_an_unformable_host_is_a_failed_probe(
+    system: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gates catch PortProbeError only: a host that is not an IP literal
+    must close the door as a failed probe, never escape as a bare error."""
+    monkeypatch.setattr("punt_vox.service.process.platform.system", lambda: system)
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    with pytest.raises(PortProbeError, match="cannot form the listener address"):
+        ProcessManager().holds_port(123, "localhost", 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
 def test_holds_port_linux_another_process_socket_is_not_held(
     _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

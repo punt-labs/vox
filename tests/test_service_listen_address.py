@@ -66,3 +66,12 @@ def test_a_hostname_is_refused() -> None:
     """Only an IP literal: a name could resolve anywhere, and the forms are bytes."""
     with pytest.raises(ValueError, match="does not appear to be an IPv4 or IPv6"):
         ListenAddress("localhost", 8421)
+
+
+def test_a_scoped_ipv6_host_matches_without_its_zone() -> None:
+    """A Linux bind may carry a zone (``::1%1``); the kernel's tables and
+    lsof's names carry the address bytes alone, so the zone is dropped here."""
+    address = ListenAddress("::1%1", 8421)
+    assert address.proc_forms("tcp6") == {f"{V6_LOOP}:20E5", f"{V6_ANY}:20E5"}
+    assert address.lsof_matches("IPv6", "[::1]:8421") is True
+    assert address.lsof_matches("IPv6", "*:8421") is True

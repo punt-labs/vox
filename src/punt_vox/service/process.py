@@ -152,7 +152,13 @@ class ProcessManager:
         Raises:
             PortProbeError: If the process or the port table cannot be inspected.
         """
-        address = ListenAddress(host, port)
+        try:
+            address = ListenAddress(host, port)
+        except ValueError as exc:
+            # The gates catch PortProbeError only: an address that cannot be
+            # formed must close the door, never escape as a bare error.
+            msg = f"cannot form the listener address for {host}:{port}: {exc}"
+            raise PortProbeError(msg) from exc
         if platform.system() == "Darwin":
             return self._lsof_holds_port(pid, address)
         self._deadline.cap(
