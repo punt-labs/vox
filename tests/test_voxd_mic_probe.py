@@ -384,3 +384,39 @@ def test_capture_counts_the_callbacks_that_overflowed(
     assert report.overflows == 1
     assert report.samples == 2
     assert report.peak == 5
+
+
+class _RefusingFinder:
+    """A finder that raises for ``sounddevice``, as a failed Pa_Initialize does.
+
+    sounddevice initializes PortAudio at import and raises its own
+    ``PortAudioError`` (an ``Exception``, not an ``OSError``) when that fails,
+    so the exception reaches the importer before the module exists.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def find_spec(self, name: str, *_args: object) -> None:
+        if name == "sounddevice":
+            raise self._error
+
+
+@pytest.mark.asyncio
+async def test_an_import_that_fails_to_initialize_portaudio_is_an_error_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PortAudio that will not initialize is the probe's error, not a teardown."""
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    finder = _RefusingFinder(RuntimeError("Error initializing PortAudio: no host API"))
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=SoundDeviceCapture(_RecordingBackend([])))(
+        {"type": "mic_probe", "id": "m6"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert frame["id"] == "m6"
+    assert "no host API" in str(frame["message"])
+    assert "punt-vox[call]" not in str(frame["message"])

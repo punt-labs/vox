@@ -70,18 +70,24 @@ class SoundDeviceCapture:
         """Record *seconds* from the default input device and summarise it.
 
         Raises:
-            MicProbeError: If the extra is absent, the backend has no default
-                input device or cannot describe it, or the device refuses
-                the stream or will not release it.
+            MicProbeError: If the extra is absent or PortAudio will not
+                initialize, the backend has no default input device or
+                cannot describe it, or the device refuses the stream or
+                will not release it.
         """
+        # The import is a boundary: sounddevice initializes PortAudio as it
+        # imports and raises its own PortAudioError (an Exception, not an
+        # OSError) when that fails, before the class can be named here.
         try:
             from sounddevice import PortAudioError, sleep
-        except (ImportError, OSError) as exc:
+        except ImportError as exc:
             msg = (
                 "microphone capture needs the `call` extra and PortAudio: "
                 "install punt-vox[call] and libportaudio2"
             )
             raise MicProbeError(msg) from exc
+        except Exception as exc:
+            raise MicProbeError(f"PortAudio could not initialize: {exc}") from exc
 
         blocks: list[bytes] = []
         overflows = 0
