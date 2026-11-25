@@ -59,3 +59,29 @@ class TestSegmentFile:
             == f"Cannot read --from file: {error.strerror or str(error)}."
         )
         assert raised.value.__cause__ is error
+
+    @pytest.mark.parametrize(
+        ("raw", "index"),
+        [
+            ('["before", "\\ud800", "after"]', 1),
+            ('[{"text": "ok"}, {"text": "x\\udfff"}]', 1),
+            ('["\\udc80 lone low"]', 0),
+        ],
+        ids=["string", "object", "first"],
+    )
+    def test_unencodable_text_is_usage_error(
+        self, tmp_path: Path, raw: str, index: int
+    ) -> None:
+        path = tmp_path / "segments.json"
+        path.write_text(raw, encoding="utf-8")
+        with pytest.raises(typer.BadParameter) as raised:
+            SegmentFile(path).segments()
+        assert str(raised.value).startswith(
+            f"Element {index} text is not valid UTF-8: unpaired surrogate"
+        )
+        assert isinstance(raised.value.__cause__, UnicodeEncodeError)
+
+    def test_paired_surrogate_escape_is_text(self, tmp_path: Path) -> None:
+        path = tmp_path / "segments.json"
+        path.write_text('["\\ud83d\\ude00 smile"]', encoding="utf-8")
+        assert SegmentFile(path).segments() == ["\N{GRINNING FACE} smile"]
