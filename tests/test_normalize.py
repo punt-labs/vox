@@ -671,6 +671,12 @@ class TestPercentages:
     def test_code_modulo_is_unchanged(self) -> None:
         assert normalize_for_speech("x %= 2 and a%b") == "x 2 and a%b"
 
+    def test_percentage_range_says_to(self) -> None:
+        assert (
+            normalize_for_speech("Coverage held at 85%\u201390% this week.")
+            == "Coverage held at 85 percent to 90 percent this week."
+        )
+
     def test_percentages_are_idempotent(self) -> None:
         once = normalize_for_speech("Coverage rose from 85% to 92.5%.")
         assert normalize_for_speech(once) == once

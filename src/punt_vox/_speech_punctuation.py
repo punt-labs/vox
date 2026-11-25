@@ -51,9 +51,12 @@ class SpeechPunctuation:
 
     @staticmethod
     def _spell_percent(core_candidate: str) -> str:
-        """Spell each ``%`` of a bare number or range as the word "percent"."""
+        """Say a number or range's ``%`` as "percent" and its range dash as "to"."""
         return _NUMERIC_PERCENT_RE.sub(
-            lambda amount: amount[0].replace("%", " percent"), core_candidate
+            lambda amount: re.sub(
+                r"(?<=[\d%])[-\u2013](?=[-\u2212]?[\d.])", " to ", amount[0]
+            ).replace("%", " percent"),
+            core_candidate,
         )
 
     @staticmethod
