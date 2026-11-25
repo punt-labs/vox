@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.block_queue import BlockQueue
-from punt_vox.voxd.log_text import LogText
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -58,23 +57,21 @@ class MicCapture:
     def open(
         cls, backend: CaptureBackend, *, sample_rate_hz: int, chunk_s: float
     ) -> Self:
-        """Query the default device and open a started stream on it, or raise.
+        """Query the current default devices and open a started stream, or raise.
 
-        The backend owns opening and starting the stream, so a device that
-        refuses either step is one :class:`OSError` and nothing is held.
+        The backend reports the system's defaults as they stand now and both
+        are logged, with the echo configuration when they are different
+        hardware. The backend owns opening and starting the stream, so a
+        device that refuses either step is one :class:`OSError` and nothing
+        is held.
 
         Raises:
-            OSError: When the backend has no default input device, or the
-                device refuses the stream.
+            OSError: When the backend has no default input or output device,
+                or the input device refuses the stream.
         """
         block_frames = max(1, round(chunk_s * sample_rate_hz))
-        device = backend.device()
-        logger.info(  # The device names itself: its text may not forge a line.
-            "Call input device: %s (default %.0f Hz), capturing at %d Hz",
-            LogText.reason(device.name),
-            device.default_samplerate_hz,
-            sample_rate_hz,
-        )
+        devices = backend.devices()
+        devices.log(sample_rate_hz=sample_rate_hz)
         loop = asyncio.get_running_loop()
         queue = BlockQueue(max(1, round(cls.BUFFER_S / chunk_s)))
 
@@ -86,7 +83,10 @@ class MicCapture:
             loop.call_soon_threadsafe(queue.put, bytes(indata))
 
         stream = backend.open(
-            samplerate=float(sample_rate_hz), blocksize=block_frames, callback=_callback
+            devices.input,
+            samplerate=float(sample_rate_hz),
+            blocksize=block_frames,
+            callback=_callback,
         )
         return cls(stream, queue, chunk_s)
 

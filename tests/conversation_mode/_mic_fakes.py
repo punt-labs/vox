@@ -12,10 +12,13 @@ import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.conversation_mode.device_pair import DevicePair
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
+from punt_vox.voxd.conversation_mode.output_device import OutputDevice
 
 __all__ = [
     "FAKE_DEVICE",
+    "FAKE_OUTPUT",
     "FakeBackend",
     "FakeCallbackFlags",
     "FakeInputStream",
@@ -30,6 +33,7 @@ if TYPE_CHECKING:
     from sounddevice import DeviceInfo
 
 FAKE_DEVICE = InputDevice("Fake Microphone", 48_000.0)
+FAKE_OUTPUT = OutputDevice("Fake Speakers", 44_100.0)
 
 
 @final
@@ -142,7 +146,15 @@ class FakeBackend:
     def device(self) -> InputDevice:
         return FAKE_DEVICE
 
-    def open(self, **kwargs: object) -> FakeInputStream:
+    def devices(self) -> DevicePair:
+        return DevicePair(FAKE_DEVICE, FAKE_OUTPUT)
+
+    def open(self, device: InputDevice, **kwargs: object) -> FakeInputStream:
+        assert device == FAKE_DEVICE, device
+        return self.raw_input_stream(**kwargs)
+
+    def raw_input_stream(self, **kwargs: object) -> FakeInputStream:
+        """Stand in for ``sounddevice.RawInputStream``: construct and record."""
         stream = self._open(**kwargs)
         self._created.append(stream)
         return stream
@@ -159,17 +171,33 @@ def fake_sounddevice(
     """Install a ``sounddevice`` module whose streams are ``backend``'s fakes."""
     backend = backend if backend is not None else FakeBackend()
 
-    def query_devices(kind: str) -> DeviceInfo:
-        del kind
-        return {
+    devices: list[DeviceInfo] = [
+        {
             "name": FAKE_DEVICE.name,
+            "index": 0,
             "default_samplerate": FAKE_DEVICE.default_samplerate_hz,
-        }
+        },
+        {
+            "name": FAKE_OUTPUT.name,
+            "index": 1,
+            "default_samplerate": FAKE_OUTPUT.default_samplerate_hz,
+        },
+    ]
+
+    def query_devices(kind: str | None = None) -> DeviceInfo | list[DeviceInfo]:
+        if kind is None:
+            return devices
+        return devices[1] if kind == "output" else devices[0]
+
+    def reenumerate() -> None:  # The fake's table is fixed; nothing to re-read.
+        pass
 
     module = SimpleNamespace(
-        RawInputStream=backend.open,
+        RawInputStream=backend.raw_input_stream,
         PortAudioError=FakePortAudioError,
         query_devices=query_devices,
+        _terminate=reenumerate,
+        _initialize=reenumerate,
     )
     monkeypatch.setitem(sys.modules, "sounddevice", module)
     return backend

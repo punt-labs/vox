@@ -14,8 +14,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from conversation_mode._fake_sounddevice import FakeSoundDevice
 from conversation_mode._mic_fakes import FakeInputStream
+from punt_vox.voxd.conversation_mode.device_pair import DevicePair
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
+from punt_vox.voxd.conversation_mode.output_device import OutputDevice
 from punt_vox.voxd.conversation_mode.portaudio import PortAudio
 
 if TYPE_CHECKING:
@@ -33,10 +37,17 @@ class _FakePortAudioError(Exception):
 
 def _device_info(name: str, default_samplerate: float) -> Callable[[str], DeviceInfo]:
     def query_devices(kind: str) -> DeviceInfo:
-        assert kind == "input"
+        assert kind in {"input", "output"}
         return {"name": name, "default_samplerate": default_samplerate}
 
     return query_devices
+
+
+USB = InputDevice("USB Audio", 48000.0)
+
+
+def _ignore(*_args: object) -> None:
+    pass
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, **members: object) -> None:
@@ -103,18 +114,34 @@ def test_a_device_reported_without_a_name_or_rate_is_an_oserror(
 def test_open_requests_a_raw_mono_int16_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    created: list[FakeInputStream] = []
+
+    def construct(**kwargs: object) -> FakeInputStream:
+        stream = FakeInputStream(**kwargs)
+        created.append(stream)
+        return stream
+
     _install(
         monkeypatch,
-        RawInputStream=FakeInputStream,
+        RawInputStream=construct,
         query_devices=_device_info("USB Audio", 48000.0),
     )
 
     def callback(*_args: object) -> None:
         pass
 
-    stream = PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
-    assert isinstance(stream, FakeInputStream)
-    assert stream.kwargs == {
+    table = DeviceTable()
+    stream = PortAudio(table).open(
+        USB, samplerate=16000.0, blocksize=320, callback=callback
+    )
+    assert table.open_streams == 1
+    stream.__exit__(None, None, None)
+    assert table.open_streams == 0
+    stream.__exit__(None, None, None)  # Idempotent, like the stream itself.
+    assert table.open_streams == 0
+    (opened,) = created
+    assert opened.closed
+    assert opened.kwargs == {
         "samplerate": 16000.0,
         "blocksize": 320,
         "channels": 1,
@@ -143,7 +170,9 @@ def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy
         pass
 
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+        PortAudio(DeviceTable()).open(
+            USB, samplerate=16000.0, blocksize=320, callback=callback
+        )
     message = str(failure.value)
     assert "Invalid number of channels" in message
     assert "another application" in message
@@ -177,7 +206,9 @@ def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
         pass
 
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+        PortAudio(DeviceTable()).open(
+            USB, samplerate=16000.0, blocksize=320, callback=callback
+        )
     assert "Device unavailable" in str(failure.value)
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
     (stream,) = created
@@ -212,7 +243,9 @@ def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
         pass
 
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+        PortAudio(DeviceTable()).open(
+            USB, samplerate=16000.0, blocksize=320, callback=callback
+        )
     assert "Device unavailable" in str(failure.value)
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
     assert "starting stream" in str(failure.value.__cause__)
@@ -226,7 +259,7 @@ def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(
 def test_a_device_query_that_fails_after_the_open_does_not_hide_the_start_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The device is read once, before the stream; the error path never asks.
+    """The device is passed in, read before the stream; the error path never asks.
 
     A device that was unplugged or grabbed is exactly when a second query
     fails, and the caller would otherwise be told "no default input device"
@@ -251,7 +284,73 @@ def test_a_device_query_that_fails_after_the_open_does_not_hide_the_start_error(
         pass
 
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio().open(samplerate=16000.0, blocksize=320, callback=callback)
+        PortAudio(DeviceTable()).open(
+            USB, samplerate=16000.0, blocksize=320, callback=callback
+        )
     assert "start failed" in str(failure.value)
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
     assert str(failure.value.__cause__) == "start failed"
+
+
+def test_devices_re_reads_the_table_and_reports_both_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeSoundDevice(
+        input_name="MacBook Air Microphone", output_name="MacBook Air Speakers"
+    ).install(monkeypatch)
+    fake.connect("J's AirPods #1")
+    assert PortAudio(DeviceTable()).devices() == DevicePair(
+        InputDevice("J's AirPods #1", 48_000.0),
+        OutputDevice("J's AirPods #1", 48_000.0),
+    )
+    assert fake.terminated == 1
+    assert fake.initialized == 1
+
+
+def test_devices_keeps_the_table_while_a_stream_is_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminating PortAudio would close the open stream; the table waits."""
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    backend = PortAudio(table)
+    held = backend.open(
+        InputDevice("Built-in", 48_000.0),
+        samplerate=16000.0,
+        blocksize=320,
+        callback=_ignore,
+    )
+    fake.connect("Headset")
+    assert backend.devices() == DevicePair(
+        InputDevice("Built-in", 48_000.0), OutputDevice("Built-in", 48_000.0)
+    )
+    assert fake.terminated == 0
+    (stream,) = fake.streams
+    assert not stream.killed
+    held.__exit__(None, None, None)
+    assert backend.devices().output == OutputDevice("Headset", 48_000.0)
+
+
+def test_no_default_output_device_is_an_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def query_devices(kind: str) -> DeviceInfo:
+        if kind == "output":
+            raise _FakePortAudioError("Error querying device output")
+        return {"name": "USB Audio", "default_samplerate": 48000.0}
+
+    _install(monkeypatch, query_devices=query_devices)
+    with pytest.raises(OSError, match="no default output device") as failure:
+        PortAudio.output_device()
+    assert isinstance(failure.value.__cause__, _FakePortAudioError)
+
+
+def test_an_output_device_reported_without_a_name_is_an_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install(monkeypatch, query_devices=_device_info("", 48000.0))
+    with pytest.raises(OSError, match="no usable default output device") as failure:
+        PortAudio.output_device()
+    assert isinstance(failure.value.__cause__, ValueError)

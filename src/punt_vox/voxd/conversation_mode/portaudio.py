@@ -14,9 +14,13 @@ when a call opens the microphone.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.conversation_mode.counted_stream import CountedStream
+from punt_vox.voxd.conversation_mode.device_pair import DevicePair
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
+from punt_vox.voxd.conversation_mode.output_device import OutputDevice
 
 if TYPE_CHECKING:
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
@@ -30,13 +34,35 @@ __all__ = ["PortAudio"]
 
 @final
 class PortAudio:
-    """The system microphone through PortAudio's default input device."""
+    """The system microphone through PortAudio's default input device.
 
-    __slots__ = ()
+    Every stream it opens is counted on the :class:`DeviceTable`, and
+    :meth:`devices` re-reads that table first, so a call that starts after
+    the person connects a headset finds the headset (PL-1619).
+    """
+
+    __slots__ = ("_table",)
+    _table: DeviceTable
+
+    def __new__(cls, table: DeviceTable | None = None) -> Self:  # None: the process's.
+        """Create the backend over *table*, the process's shared one by default."""
+        self = super().__new__(cls)
+        self._table = table if table is not None else DeviceTable.shared()
+        return self
+
+    def devices(self) -> DevicePair:
+        """Re-read the device table and report the current default devices.
+
+        Raises:
+            OSError: When PortAudio has no default input or output device,
+                or reports one it cannot describe (:meth:`device`).
+        """
+        self._table.refresh()
+        return DevicePair(self.device(), self.output_device())
 
     @staticmethod
     def device() -> InputDevice:
-        """Ask PortAudio for the default input device.
+        """Ask PortAudio for the default input device, as its table stands.
 
         A device PortAudio reports with no name or a sample rate that is not
         positive is as unusable as no device: the caller releases the call
@@ -55,6 +81,34 @@ class PortAudio:
             raise OSError(f"no default input device: {exc}") from exc
 
     @staticmethod
+    def output_device() -> OutputDevice:
+        """Ask PortAudio for the default output device, as its table stands.
+
+        Raises:
+            OSError: When PortAudio has no default output device, or reports
+                one with no name.
+        """
+        from sounddevice import PortAudioError, query_devices
+
+        try:
+            return PortAudio._reported_output(query_devices(kind="output"))
+        except PortAudioError as exc:
+            raise OSError(f"no default output device: {exc}") from exc
+
+    @staticmethod
+    def _reported_output(info: DeviceInfo) -> OutputDevice:
+        """Build the output device PortAudio reported, refusing a nameless one.
+
+        Raises:
+            OSError: When the reported name is empty or the sample rate is
+                not positive.
+        """
+        try:
+            return OutputDevice(str(info["name"]), float(info["default_samplerate"]))
+        except ValueError as exc:
+            raise OSError(f"no usable default output device: {exc}") from exc
+
+    @staticmethod
     def _reported(info: DeviceInfo) -> InputDevice:
         """Build the device PortAudio reported, refusing one it cannot describe.
 
@@ -67,32 +121,35 @@ class PortAudio:
         except ValueError as exc:
             raise OSError(f"no usable default input device: {exc}") from exc
 
-    @staticmethod
     def open(
-        *, samplerate: float, blocksize: int, callback: RawInputCallback
+        self,
+        device: InputDevice,
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
     ) -> InputStreamHandle:
         """Open and start a raw mono int16 stream on the default input device.
 
         ``sounddevice`` opens the native stream in the constructor and starts
         it on entry, and either step can fail with its own
         :class:`~sounddevice.PortAudioError`. Both are one refusal here: the
-        caller sees the same device-naming :class:`OSError`, and a stream
+        caller sees the same :class:`OSError` naming *device*, and a stream
         that opened but would not start is closed before it is raised, so
         no device handle outlives the failure.
 
-        The device is named before the stream is opened: a device that was
-        unplugged or grabbed is exactly one a later query would fail on,
-        and that failure would replace the open or start error the caller
-        must see.
+        *device* is the one :meth:`devices` reported, so the refusal names
+        the device PortAudio was asked for even when a later query would
+        fail (the device was unplugged or grabbed meanwhile). The started
+        stream is counted on the table until it is left.
 
         Raises:
-            OSError: When PortAudio has no default input device, or refuses
-                the stream: the device is busy, has no input channels,
-                rejects the sample rate, or will not start.
+            OSError: When PortAudio refuses the stream: the device is busy,
+                has no input channels, rejects the sample rate, or will not
+                start.
         """
         from sounddevice import PortAudioError, RawInputStream
 
-        device = PortAudio.device()
         try:
             stream = RawInputStream(
                 samplerate=samplerate,
@@ -103,4 +160,4 @@ class PortAudio:
             )
         except PortAudioError as exc:
             raise device.refused(exc) from exc
-        return device.started(stream)
+        return CountedStream(device.started(stream), self._table)

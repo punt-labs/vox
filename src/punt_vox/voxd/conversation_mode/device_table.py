@@ -1,0 +1,129 @@
+"""PortAudio's device table, re-read before a stream opens when none is open.
+
+PortAudio enumerates the system's audio devices once, in ``Pa_Initialize``,
+and answers every later query -- including which device is the default --
+from that copy. ``import sounddevice`` initializes it, so a long-running
+voxd keeps the table it read at startup: a headset connected after that
+is invisible to a call, which captures from the built-in microphone and
+plays through the speakers while every fresh player process (music through
+mpv) correctly follows the headset. The speakers then feed the microphone
+and the agent interrupts itself (PL-1619).
+
+The only way to re-read the table is ``Pa_Terminate`` then ``Pa_Initialize``,
+and ``Pa_Terminate`` closes every stream still open. So the table is one
+object per process, it counts the streams open on it, and :meth:`refresh`
+re-reads only when that count is zero. A call opens its microphone first
+and its output streams later, so one refresh at the microphone serves both
+legs; a scripted call, with no microphone, refreshes at each output open.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+import threading
+from typing import ClassVar, Literal, Self, final
+
+__all__ = ["DeviceTable"]
+
+logger = logging.getLogger(__name__)
+
+
+@final
+class DeviceTable:
+    """The process-wide PortAudio device table and the streams open on it."""
+
+    __slots__ = ("_lock", "_open_streams")
+    _lock: threading.Lock
+    _open_streams: int
+    _shared: ClassVar[DeviceTable | None] = None  # None: not asked for yet.
+
+    def __new__(cls) -> Self:
+        """Create a table with no stream open on it."""
+        self = super().__new__(cls)
+        self._lock = threading.Lock()
+        self._open_streams = 0
+        return self
+
+    @classmethod
+    def shared(cls) -> DeviceTable:
+        """Return the one table this process's PortAudio library has."""
+        if cls._shared is None:
+            cls._shared = cls()
+        return cls._shared
+
+    @property
+    def open_streams(self) -> int:
+        """How many streams are open on the current table."""
+        return self._open_streams
+
+    def refresh(self) -> bool:
+        """Re-read the device table from the system; return whether it was.
+
+        Nothing is done when ``sounddevice`` has not been imported yet --
+        the import that follows will enumerate the devices as they are now,
+        so there is no stale table to replace -- or when a stream is open,
+        because terminating PortAudio would close it.
+
+        Raises:
+            sounddevice.PortAudioError: When PortAudio refuses to terminate
+                or to initialize again; the device the caller is about to
+                open would fail in the same way.
+        """
+        with self._lock:
+            if "sounddevice" not in sys.modules:
+                return False
+            if self._open_streams:
+                logger.debug(
+                    "PortAudio device table kept: %d stream(s) open",
+                    self._open_streams,
+                )
+                return False
+            # sounddevice exposes no public re-enumeration; these two wrap
+            # Pa_Terminate and Pa_Initialize and are declared in the stub.
+            from sounddevice import _initialize, _terminate
+
+            _terminate()
+            _initialize()
+            logger.info(
+                "PortAudio device table re-read from the system: %s", self._summary()
+            )
+            return True
+
+    @staticmethod
+    def _summary() -> str:
+        """Describe the table just read: device count and the default indices.
+
+        A missing default is reported as such rather than failing the
+        refresh; the open that follows raises the error the caller handles.
+        """
+        from sounddevice import PortAudioError, query_devices
+
+        def default(kind: Literal["input", "output"]) -> str:
+            try:
+                index = query_devices(kind=kind).get("index")
+            except PortAudioError:
+                return "none"
+            return "none" if index is None else f"#{index}"
+
+        return (
+            f"{len(query_devices())} devices, default input {default('input')}, "
+            f"default output {default('output')}"
+        )
+
+    def stream_opened(self) -> None:
+        """Record one more stream open on the current table."""
+        with self._lock:
+            self._open_streams += 1
+
+    def stream_closed(self) -> None:
+        """Record one stream closed; closing more than were opened is a bug.
+
+        Raises:
+            ValueError: When no stream is open.
+        """
+        with self._lock:
+            if self._open_streams == 0:
+                msg = "no PortAudio stream is open to close"
+                raise ValueError(msg)
+            self._open_streams -= 1

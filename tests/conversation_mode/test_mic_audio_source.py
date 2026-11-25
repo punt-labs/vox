@@ -14,21 +14,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-from types import SimpleNamespace
-from typing import TYPE_CHECKING
 
 import pytest
 
-from conversation_mode._mic_fakes import FAKE_DEVICE, FakeBackend, FakeInputStream
+from conversation_mode._fake_sounddevice import FakeSoundDevice
+from conversation_mode._mic_fakes import (
+    FAKE_DEVICE,
+    FAKE_OUTPUT,
+    FakeBackend,
+    FakeInputStream,
+)
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
+from punt_vox.voxd.conversation_mode.device_pair import DevicePair
 from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from sounddevice import DeviceInfo
 
 
 async def _advance_to_first_await() -> None:
@@ -146,21 +145,11 @@ class TestMicAudioSourceChunks:
         await gen.aclose()
 
 
-class _FakePortAudioError(Exception):
-    pass
-
-
-def _device_info(name: str, default_samplerate: float) -> Callable[[str], DeviceInfo]:
-    def query_devices(kind: str) -> DeviceInfo:
-        assert kind == "input"
-        return {"name": name, "default_samplerate": default_samplerate}
-
-    return query_devices
-
-
-def test_the_fake_backend_reports_the_fake_device() -> None:
+def test_the_fake_backend_reports_the_fake_devices() -> None:
     assert FakeBackend().device() == FAKE_DEVICE
-    assert FakeBackend().device() == InputDevice("Fake Microphone", 48_000.0)
+    assert FakeBackend().devices() == DevicePair(
+        InputDevice("Fake Microphone", 48_000.0), FAKE_OUTPUT
+    )
 
 
 async def test_opening_the_stream_logs_the_device_name_and_rates(
@@ -192,20 +181,13 @@ async def test_a_device_open_failure_propagates_out_of_chunks() -> None:
 async def test_default_source_opens_and_closes_a_portaudio_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    created: list[FakeInputStream] = []
-    monkeypatch.setitem(
-        sys.modules,
-        "sounddevice",
-        SimpleNamespace(
-            RawInputStream=FakeBackend(created).open,
-            PortAudioError=_FakePortAudioError,
-            query_devices=_device_info("Built-in", 44100.0),
-        ),
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
     )
     gen = MicAudioSource.with_portaudio().chunks()
     next_chunk = asyncio.create_task(anext(gen))
     await _advance_to_first_await()
-    (stream,) = created
+    (stream,) = fake.streams
     stream.feed(b"\x01\x00" * 320)
     chunk = await next_chunk
     await gen.aclose()

@@ -15,9 +15,15 @@ from collections.abc import Callable
 from typing import Self, final
 
 import pytest
+from conversation_mode._fake_sounddevice import FakeSoundDevice
 
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
-from punt_vox.voxd.pcm_output import OutputCallback, OutputDeviceLostError
+from punt_vox.voxd.pcm_output import (
+    OutputCallback,
+    OutputDeviceLostError,
+    sounddevice_output_stream,
+)
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback import PlaybackQueue
 
@@ -815,3 +821,35 @@ class TestPlaybackQueueOwnership:
 async def _enter_and_exit(playback: PlaybackQueue) -> None:
     async with playback.stream_pcm():
         pass
+
+
+class TestOutputDeviceFollowsTheSystem:
+    async def test_a_stream_opened_after_a_headset_connects_plays_through_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PL-1619: the output leg must follow the system's current default too."""
+        fake = FakeSoundDevice(
+            input_name="MacBook Air Microphone", output_name="MacBook Air Speakers"
+        ).install(monkeypatch)
+        fake.connect("J's AirPods #1")
+        playback = PlaybackQueue(sounddevice_output_stream, DeviceTable())
+        async with playback.stream_pcm():
+            pass
+        (stream,) = fake.streams
+        assert stream.device_name == "J's AirPods #1"
+        assert stream.closed
+
+    async def test_the_table_is_kept_while_the_microphone_is_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A live call holds its microphone; terminating PortAudio would kill it."""
+        fake = FakeSoundDevice(input_name="Headset", output_name="Headset").install(
+            monkeypatch
+        )
+        table = DeviceTable()
+        table.stream_opened()  # The call's microphone, counted by its backend.
+        playback = PlaybackQueue(sounddevice_output_stream, table)
+        async with playback.stream_pcm():
+            assert fake.terminated == 0
+            assert table.open_streams == 2
+        assert table.open_streams == 1

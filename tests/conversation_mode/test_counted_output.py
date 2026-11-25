@@ -1,0 +1,144 @@
+"""Tests for :mod:`punt_vox.voxd.conversation_mode.counted_output`."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, final
+
+import pytest
+
+from conversation_mode._fake_sounddevice import FakeSoundDevice
+from punt_vox.voxd.conversation_mode.counted_output import (
+    CountedOutput,
+    CountedOutputStream,
+)
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from punt_vox.voxd.pcm_output import OutputCallback
+
+
+@final
+class _Stream:
+    """An output stream recording the calls made on it."""
+
+    __slots__ = ("calls", "close_error", "start_error")
+
+    def __init__(
+        self,
+        start_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self.calls: list[str] = []
+        self.start_error = start_error
+        self.close_error = close_error
+
+    def start(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
+        self.calls.append("start")
+
+    def stop(self) -> None:
+        self.calls.append("stop")
+
+    def abort(self) -> None:
+        self.calls.append("abort")
+
+    def close(self) -> None:
+        if self.close_error is not None:
+            raise self.close_error
+        self.calls.append("close")
+
+
+@final
+class _Factory:
+    __slots__ = ("kwargs", "stream")
+
+    def __init__(self, stream: _Stream) -> None:
+        self.stream = stream
+        self.kwargs: dict[str, object] = {}
+
+    def __call__(
+        self,
+        *,
+        samplerate: int,
+        blocksize: int,
+        callback: OutputCallback,
+        finished_callback: Callable[[], None],
+    ) -> _Stream:
+        self.kwargs = {
+            "samplerate": samplerate,
+            "blocksize": blocksize,
+            "callback": callback,
+            "finished_callback": finished_callback,
+        }
+        return self.stream
+
+
+def _ignore(*_args: object) -> None:
+    pass
+
+
+def _open(factory: _Factory, table: DeviceTable) -> CountedOutputStream:
+    return CountedOutput(factory, table)(
+        samplerate=16_000, blocksize=320, callback=_ignore, finished_callback=_ignore
+    )
+
+
+def test_the_factory_receives_every_argument() -> None:
+    factory = _Factory(_Stream())
+    stream = _open(factory, DeviceTable())
+    assert isinstance(stream, CountedOutputStream)
+    assert factory.kwargs == {
+        "samplerate": 16_000,
+        "blocksize": 320,
+        "callback": _ignore,
+        "finished_callback": _ignore,
+    }
+
+
+def test_the_table_is_re_read_before_the_stream_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    fake.connect("Headset")
+    _open(_Factory(_Stream()), DeviceTable())
+    assert fake.terminated == 1
+    assert fake.query_devices("output")["name"] == "Headset"
+
+
+def test_a_started_stream_is_counted_until_closed() -> None:
+    inner = _Stream()
+    table = DeviceTable()
+    stream = _open(_Factory(inner), table)
+    assert table.open_streams == 0
+    stream.start()
+    assert table.open_streams == 1
+    stream.stop()
+    stream.abort()
+    stream.close()
+    assert table.open_streams == 0
+    stream.close()  # Idempotent, like the stream itself.
+    assert table.open_streams == 0
+    assert inner.calls == ["start", "stop", "abort", "close", "close"]
+
+
+def test_a_stream_that_fails_to_start_is_never_counted() -> None:
+    table = DeviceTable()
+    stream = _open(_Factory(_Stream(RuntimeError("device busy"))), table)
+    with pytest.raises(RuntimeError, match="device busy"):
+        stream.start()
+    stream.close()
+    assert table.open_streams == 0
+
+
+def test_the_count_is_released_even_when_close_fails() -> None:
+    table = DeviceTable()
+    stream = _open(_Factory(_Stream(close_error=RuntimeError("close failed"))), table)
+    stream.start()
+    with pytest.raises(RuntimeError, match="close failed"):
+        stream.close()
+    assert table.open_streams == 0
