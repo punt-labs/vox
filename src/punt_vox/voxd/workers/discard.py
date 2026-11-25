@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from typing import TYPE_CHECKING, ClassVar, final
 
+from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.markers import ReportMarkers
 
 if TYPE_CHECKING:
@@ -47,16 +49,32 @@ class WorkerDiscard:
             return cls.MARKERS.replace(
                 record, {"discard_skipped": "provider stop failed"}
             )
-        return cls.MARKERS.replace(record, {"discard_pending": True})
+        return cls._queue(record)
 
     @classmethod
     def retry(cls, record: WorkerRecord) -> WorkerRecord:
         """Queue a skipped or failed discard again once the worker is stopped."""
         if record.state == "stopped" and cls._UNSETTLED.present(record):
-            return cls.MARKERS.replace(record, {"discard_pending": True})
+            return cls._queue(record)
         return record
 
     @classmethod
+    def _queue(cls, record: WorkerRecord) -> WorkerRecord:
+        """Replace every discard marker with the one that says it is owed."""
+        return cls.MARKERS.replace(record, {"discard_pending": True})
+
+    @classmethod
     def run(cls, record: WorkerRecord, policy: WorkerRepoPolicy) -> WorkerRecord:
-        """Discard the worktree and replace the pending marker with the outcome."""
-        return policy.discard_recorded(cls.MARKERS.strip(record))
+        """Discard the worktree and replace the pending marker with the outcome.
+
+        The policy records a git or path failure itself. Anything else that
+        escapes it still lands on the record as ``discard_error``: the same
+        settlement job may have run harness cleanup, and an exception here
+        would lose that outcome with it.
+        """
+        try:
+            return policy.discard_recorded(cls.MARKERS.strip(record))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            failure = GitFailure(exc)
+            logger.warning("Worker %s worktree discard failed: %s", record.id, failure)
+            return cls.MARKERS.replace(record, {"discard_error": str(failure)})

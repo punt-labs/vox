@@ -419,3 +419,24 @@ def test_later_stop_retries_a_failed_discard(tmp_path: Path) -> None:
     assert not any(k.startswith("discard_") for k in retried.last_report)
     assert retried.last_report["worktree_discarded"] is True
     assert worktrees.discard.call_count == 2
+
+
+def test_unexpected_discard_error_keeps_the_cleanup_outcome(tmp_path: Path) -> None:
+    """A RuntimeError out of the discard lands as discard_error on the record.
+
+    The same settlement job ran harness cleanup first; an exception escaping
+    the discard would lose that outcome too, leaving cleanup_pending although
+    cleanup ran.
+    """
+    provider = FakeWorkerProvider()
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    worktrees.discard.side_effect = RuntimeError("policy exploded")
+    registry = _registry(tmp_path, provider, worktrees)
+    provider.fail = True
+    with pytest.raises(OSError, match="launch failed"):
+        registry.start("edit", str(tmp_path), provider="fake", harness="test")
+    _settled(registry)
+    record = registry.list()[0]
+    assert "cleanup_pending" not in record.last_report
+    assert "discard_pending" not in record.last_report
+    assert record.last_report["discard_error"] == "RuntimeError: policy exploded"
