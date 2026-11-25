@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self, final
 
 import uvicorn
@@ -11,7 +13,7 @@ import uvicorn
 from punt_vox.voxd.crash_logging import CrashLogger
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Generator
     from socket import socket
 
     from starlette.applications import Starlette
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 # fits the largest legitimate client->daemon frame (a music request) while
 # denying multi-MB frames that would burden the daemon's event loop.
 _WS_MAX_FRAME_BYTES = 256 * 1024
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+"""The signals uvicorn shuts down on and re-raises after its shutdown."""
 
 
 @final
@@ -67,7 +71,28 @@ class DaemonServer:
                 server.config.host,
             )
         server.startup = self._startup_and_publish  # type: ignore[method-assign]
-        await server.serve()
+        with self._stop_signals_end_normally():
+            await server.serve()
+
+    @staticmethod
+    @contextmanager
+    def _stop_signals_end_normally() -> Generator[None]:
+        """Make a stop signal end the process by a normal exit, not by itself.
+
+        uvicorn shuts down on SIGINT or SIGTERM, restores the handlers it
+        found, and then re-raises the signal so the process ends the way
+        the sender asked. With the default handlers in place that kills
+        the process after the shutdown already ran, and Python's own exit
+        (atexit hooks, the coverage save under the coverage runner) never
+        happens. Ignoring the re-raised signal lets the shutdown that
+        already completed stand and the process exit with status 0.
+        """
+        previous = {sig: signal.signal(sig, signal.SIG_IGN) for sig in _STOP_SIGNALS}
+        try:
+            yield
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
 
     async def _startup_and_publish(self, sockets: list[socket] | None = None) -> None:
         await self._startup(sockets)

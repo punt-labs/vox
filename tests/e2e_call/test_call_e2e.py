@@ -136,7 +136,12 @@ def _wait_for_port_file(
 
 @pytest.fixture
 def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Return a daemon environment rooted at ``tmp_path`` with no mic needed.
+    """Return a daemon environment rooted at ``tmp_path`` with no mic needed."""
+    return _daemon_env(tmp_path, monkeypatch)
+
+
+def _daemon_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Build the fixture's environment; callable directly by the fixture's tests.
 
     The environment is bare: nothing of the test process's own leaks in but
     the coverage runner's variables, so a daemon under ``make coverage`` is
@@ -211,6 +216,10 @@ def _daemon(env: dict[str, str]) -> Generator[Daemon]:
             process.kill()
             process.wait(timeout=10)
     assert exited is None, _exit_detail(exited, home, stderr_path)
+    # A stop signal ends the daemon by a normal exit, not by the signal:
+    # that is what lets Python's own shutdown (and the coverage save under
+    # the coverage runner) run after uvicorn's.
+    assert process.returncode == 0, _exit_detail(process.returncode, home, stderr_path)
 
 
 def _exit_detail(exited: int, home: Path, stderr: Path) -> str:
@@ -335,7 +344,7 @@ def test_the_daemon_env_carries_the_coverage_runner_variables(
     monkeypatch.setenv("COVERAGE_PROCESS_START", "/cfg/pyproject.toml")
     monkeypatch.setenv("COVERAGE_FILE", "/cfg/.coverage")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "must-not-leak")
-    env = voxd_env.__wrapped__(tmp_path, monkeypatch)
+    env = _daemon_env(tmp_path, monkeypatch)
     assert env["COVERAGE_PROCESS_START"] == "/cfg/pyproject.toml"
     assert env["COVERAGE_FILE"] == "/cfg/.coverage"
     assert "ELEVENLABS_API_KEY" not in env
@@ -346,7 +355,7 @@ def test_the_daemon_env_is_bare_without_the_coverage_runner(
 ) -> None:
     monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
-    env = voxd_env.__wrapped__(tmp_path, monkeypatch)
+    env = _daemon_env(tmp_path, monkeypatch)
     assert "COVERAGE_PROCESS_START" not in env
     assert "COVERAGE_FILE" not in env
 
@@ -390,6 +399,12 @@ def test_a_daemon_killed_mid_call_puts_its_detail_on_the_propagating_error(
     (note,) = failure.value.__notes__
     assert note.startswith(f"voxd exited with {-signal.SIGKILL} during the test\n")
     assert "--- vox.log ---" in note
+
+
+def test_a_terminated_daemon_exits_normally(voxd_env: dict[str, str]) -> None:
+    """SIGTERM runs the daemon's shutdown and then Python's; the exit status is 0."""
+    with _daemon(voxd_env) as voxd:
+        assert voxd.process.poll() is None
 
 
 def test_scripted_call_reaches_the_tool_result(
