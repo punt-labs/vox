@@ -78,8 +78,13 @@ def test_an_ack_with_a_non_string_tool_field_is_rejected(field: str) -> None:
         _ack(**{field: 3})
 
 
-def test_an_ack_without_the_called_flag_counts_as_a_tool_that_ran() -> None:
-    """Older acknowledgements omit is_called; only an explicit False withholds it."""
+def test_an_ack_with_the_called_flag_absent_is_a_tool_that_ran() -> None:
+    """An absent is_called reads as true: only an explicit false withholds it.
+
+    The field is optional in the provider's event; parsing the boundary
+    supplies the default so that an acknowledgement without it still means
+    what the provider means by sending one, a tool that ran.
+    """
     ack = EventDecoder.decode(
         "agent_tool_response",
         Message(

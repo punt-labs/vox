@@ -77,7 +77,7 @@ class Message:
         *,
         default: bool | None = None,  # None makes the field required.
     ) -> bool:
-        """Return a boolean field with an optional backwards-compatible default."""
+        """Return a boolean field; ``default`` stands in when the event omits it."""
         value = self._data.get(name, default)
         if not isinstance(value, bool):
             msg = f"ElevenLabs event requires boolean {name}"
@@ -85,7 +85,7 @@ class Message:
         return value
 
     def optional_number(self, name: str) -> int | None:  # Wire field can be absent.
-        """Allow older transcript and response events to omit their event ID."""
+        """Return an integer field when the event supplies it."""
         return self.number(name) if name in self._data else None
 
     def optional_text(self, name: str) -> str | None:  # Wire field can be absent.

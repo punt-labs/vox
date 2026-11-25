@@ -67,7 +67,7 @@ class AgentResponse:
 
     text: str
     event_id: int | None  # Some ElevenLabs response frames omit this ID.
-    response_id: str | None = None  # Older responses do not identify corrections.
+    response_id: str | None = None  # Absent, the response cannot be corrected.
 
 
 @dataclass(frozen=True, slots=True)
