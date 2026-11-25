@@ -18,11 +18,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.normalize import SpeechText
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.types import SynthesisRequest
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.speech_preparation import SpeechPreparation
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
@@ -1305,6 +1307,24 @@ class TestSynthesizeCacheObservability:
         assert infos == ["synthesized 5 chars"]
         assert not any("cached" in m for m in infos)
 
+    def test_repeated_hits_normalize_text_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A burst of hits for one long text reuses its normalized speech."""
+        text = "Run `myTool --dry_run` for [the guide](https://example.com). " * 200
+        spec = _default_spec(provider="openai")
+        with patch(
+            "punt_vox.voxd.speech_preparation.SpeechText.for_synthesis",
+            wraps=SpeechText.for_synthesis,
+        ) as normalize:
+            outcomes, synth_calls = self._run(
+                tmp_path, monkeypatch, [(text, spec)] * 16
+            )
+
+        assert [outcome.cached for outcome in outcomes] == [False] + [True] * 15
+        assert len(synth_calls) == 1
+        assert normalize.call_count == 1
+
 
 class TestModelSupportsExpressiveTags:
     """model_supports_expressive_tags lookup for vibe-tag gating."""
@@ -1312,7 +1332,7 @@ class TestModelSupportsExpressiveTags:
     def test_elevenlabs_v3_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert (
-            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", "eleven_v3")
+            SpeechPreparation.model_supports_expressive_tags("elevenlabs", "eleven_v3")
             is True
         )
 
@@ -1321,7 +1341,7 @@ class TestModelSupportsExpressiveTags:
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert (
-            SynthesisPipeline.model_supports_expressive_tags(
+            SpeechPreparation.model_supports_expressive_tags(
                 "elevenlabs", "eleven_flash_v2_5"
             )
             is False
@@ -1332,31 +1352,31 @@ class TestModelSupportsExpressiveTags:
     ) -> None:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert (
-            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", None) is True
+            SpeechPreparation.model_supports_expressive_tags("elevenlabs", None) is True
         )
 
     def test_polly_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("polly", None) is False
+        assert SpeechPreparation.model_supports_expressive_tags("polly", None) is False
         assert (
-            SynthesisPipeline.model_supports_expressive_tags("polly", "neural") is False
+            SpeechPreparation.model_supports_expressive_tags("polly", "neural") is False
         )
 
     def test_openai_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("openai", None) is False
+        assert SpeechPreparation.model_supports_expressive_tags("openai", None) is False
         assert (
-            SynthesisPipeline.model_supports_expressive_tags("openai", "tts-1-hd")
+            SpeechPreparation.model_supports_expressive_tags("openai", "tts-1-hd")
             is False
         )
 
     def test_say_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("say", None) is False
+        assert SpeechPreparation.model_supports_expressive_tags("say", None) is False
 
     def test_espeak_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("espeak", None) is False
+        assert SpeechPreparation.model_supports_expressive_tags("espeak", None) is False
 
     def test_unknown_provider_never_supports(self) -> None:
         assert (
-            SynthesisPipeline.model_supports_expressive_tags("future_provider", "any")
+            SpeechPreparation.model_supports_expressive_tags("future_provider", "any")
             is False
         )
 
@@ -1382,7 +1402,7 @@ class TestApplyVibeForSynthesis:
             "[whispering] Run [draft](https://example.com) now. "
             "Read [the guide](https://example.com/guide) next."
         )
-        request = SynthesisPipeline.prepare_audio_request(
+        request = SpeechPreparation.audio_request(
             text, SynthesisSpec(provider=provider, model=model)
         )
         assert request.text == expected
@@ -1402,14 +1422,14 @@ class TestApplyVibeForSynthesis:
     def test_markdown_labels_stay_prose(
         self, text: str, expected: str, provider: str, model: str | None
     ) -> None:
-        request = SynthesisPipeline.prepare_audio_request(
+        request = SpeechPreparation.audio_request(
             text, SynthesisSpec(provider=provider, model=model)
         )
         assert request.text == expected
 
     @staticmethod
     def _apply(raw: str, tags: str | None, provider: str, model: str | None) -> str:
-        body, vibe_tags = SynthesisPipeline._normalize_for_synthesis(
+        body, vibe_tags = SpeechPreparation._normalize(
             raw, SynthesisSpec(provider=provider, model=model, vibe_tags=tags)
         )
         return f"{vibe_tags} {body}" if vibe_tags and body else body
@@ -1728,7 +1748,7 @@ class TestApplyVibeForSynthesis:
             return True
 
         monkeypatch.setattr(
-            "punt_vox.voxd.synthesis.SynthesisPipeline.model_supports_expressive_tags",
+            "punt_vox.voxd.speech_preparation.SpeechPreparation.model_supports_expressive_tags",
             _always_expressive,
         )
 

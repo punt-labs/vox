@@ -14,12 +14,12 @@ from punt_vox.voxd._parse import (
     parse_optional_str,
     parse_required_str,
 )
-from punt_vox.voxd.speech_reply import SpeechReply
-from punt_vox.voxd.synthesis import (
-    _SYNTHESIS_REJECTIONS,  # pyright: ignore[reportPrivateUsage]
+from punt_vox.voxd.speech_preparation import (
+    SYNTHESIS_REJECTIONS,
     EmptyNormalizedTextError,
-    SynthesisPipeline,
+    SpeechPreparation,
 )
+from punt_vox.voxd.speech_reply import SpeechReply
 from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.dedup import DedupHit
+    from punt_vox.voxd.synthesis import SynthesisPipeline
     from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = ["SpeechRequest"]
@@ -72,7 +73,7 @@ class SpeechRequest:
             text.encode("utf-8")
         except UnicodeEncodeError:
             raise ValueError("text must be valid UTF-8") from None
-        speaker_boost_raw = msg.get("speaker_boost")
+        boost = msg.get("speaker_boost")
         # ``provider`` is required on the wire (design §3.7): every client
         # surface (MCP, hook, CLI, panel, record) fills it from state via
         # :class:`SessionSpec` before crossing the wire. A hand-rolled
@@ -88,9 +89,7 @@ class SpeechRequest:
             stability=parse_optional_float(msg, "stability"),
             similarity=parse_optional_float(msg, "similarity"),
             style=parse_optional_float(msg, "style"),
-            speaker_boost=(
-                bool(speaker_boost_raw) if speaker_boost_raw is not None else None
-            ),
+            speaker_boost=None if boost is None else bool(boost),
             api_key=_REQUEST_KEY.require(parse_optional_str(msg, "api_key")),
         )
         spec.validate()
@@ -115,7 +114,7 @@ class SpeechRequest:
         try:
             return await synthesis.synthesize_to_file(self.text, self.spec)
         except Exception as exc:
-            if not isinstance(exc, _SYNTHESIS_REJECTIONS):
+            if not isinstance(exc, SYNTHESIS_REJECTIONS):
                 logger.exception("Synthesis failed for id=%r", self.request_id)
             on_failure()
             await self.fail(exc)
@@ -130,7 +129,7 @@ class SpeechRequest:
         :meth:`fault` (design §3.5). Any other exception, or a nonzero exit
         code, is a daemon-side fault.
         """
-        if isinstance(result, _SYNTHESIS_REJECTIONS):
+        if isinstance(result, SYNTHESIS_REJECTIONS):
             await self._wire.error(result)
         elif isinstance(result, Exception):
             await self.fault(SafeFault.from_exception(result))
@@ -149,7 +148,7 @@ class SpeechRequest:
     async def reply_duplicate(self, hit: DedupHit) -> None:
         """Validate and acknowledge a duplicate without a synthesis advisory."""
         try:
-            SynthesisPipeline.prepare_audio_request(self.text, self.spec)
+            SpeechPreparation.audio_request(self.text, self.spec)
         except EmptyNormalizedTextError as exc:
             await self.fail(exc)
             return
