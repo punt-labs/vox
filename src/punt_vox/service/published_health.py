@@ -5,8 +5,11 @@ every open file. This request goes out first, under a gate made of
 what voxd itself publishes and what vox can check without ``lsof``: this
 user's own ``serve.port`` names the service port, the target host is
 loopback, and the port accepts a plain connection. A gate that does not open
-sends nothing and records why; a request that fails records its cause. The
-token goes out through no other unattributed door.
+sends nothing and records why; a check the gate cannot complete -- a
+``serve.port`` it cannot read, a connect it cannot finish -- closes this door
+and leaves attribution to decide, never the whole reading. A request that
+fails records its cause. The token goes out through no other unattributed
+door.
 """
 
 from __future__ import annotations
@@ -77,7 +80,12 @@ class PublishedHealth:
 
     def _gate(self) -> NotAskedError | None:
         """Return why the published port may not be asked; ``None`` to ask."""
-        unasked = PublishedPort.at(self._port_file).unasked(DEFAULT_PORT)
+        try:
+            unasked = PublishedPort.at(self._port_file).unasked(DEFAULT_PORT)
+        except PortProbeError as exc:
+            # A serve.port vox cannot read closes this door only: attribution
+            # still runs, and a voxd lsof finds is still asked.
+            return NotAskedError.unreadable(str(exc))
         if unasked is not None:
             return unasked
         host = self._target.host

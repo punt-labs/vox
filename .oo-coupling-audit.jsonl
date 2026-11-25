@@ -991,3 +991,4 @@
 {"ts":"2026-11-25T18:29:42Z","commit":"e1be8eee","source":"PL-1497","files_scored":606,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-11-25T18:29:47Z","commit":"e1be8eee","source":"PL-1497","files_scored":1,"files_improved":0,"files_regressed":0,"verdict":"rebaseline-files","reason":"PublishedPort builds the NotAskedError for each reading it cannot open the gate on, so it imports not_asked; one import, and the gate no longer rebuilds the reason from a bare port","deltas":{},"improved":{}}
 {"ts":"2026-11-25T18:29:50Z","commit":"e1be8eee","source":"PL-1497","files_scored":606,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
+{"ts":"2026-11-25T18:31:02Z","commit":"5c064227","source":"PL-1497","files_scored":606,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}

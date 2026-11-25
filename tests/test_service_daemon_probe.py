@@ -517,6 +517,25 @@ def test_published_health_sends_nothing_unless_our_file_names_the_service(
     assert why in str(probe.health_miss())
 
 
+def test_published_health_unreadable_port_file_is_a_miss_not_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A serve.port vox cannot read leaves attribution to decide, as the
+    listener check does: a voxd lsof would find must not read unknown."""
+    connect = _listening(monkeypatch)
+    (tmp_path / "serve.port").write_bytes(b"\xff\xfe")
+    mgr = MagicMock()
+    mgr.port_file = tmp_path / "serve.port"
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = _probe(mgr, target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    miss = probe.health_miss()
+    assert isinstance(miss, NotAskedError)
+    assert "invalid UTF-8" in str(miss)
+
+
 def test_published_health_sends_nothing_off_loopback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
