@@ -6,10 +6,10 @@ import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import final
 
+from punt_vox._code_currency import CodeCurrency
 from punt_vox._currency_prose import ProseCurrency
 from punt_vox._link_labels import VIBE_TAG_RE, LinkLabels, LinkSpan
 from punt_vox._speech_markdown import CodeSpan, SpeechMarkdown
-from punt_vox._speech_punctuation import SpeechPunctuation
 
 _WORD = re.compile(r"\S+")
 
@@ -37,9 +37,9 @@ class InlineCode:
         return cls._rewrite(
             text,
             cls._code(spans),
-            lambda body, in_path: SpeechPunctuation.spell_code_currency(
-                body, in_path=in_path
-            ).replace("](", "] ("),
+            lambda body, in_path: CodeCurrency.spell(body, in_path=in_path).replace(
+                "](", "] ("
+            ),
             lambda start, end: ProseCurrency.canonicalize(
                 labels.prose(text, start, end), tag=tag
             ),
@@ -79,5 +79,5 @@ class InlineCode:
                 word = next(words)
                 in_path = None
             if in_path is None:
-                in_path = SpeechPunctuation.is_code_path(text[word.start() : opening])
+                in_path = CodeCurrency.is_code_path(text[word.start() : opening])
             yield in_path, start, end
