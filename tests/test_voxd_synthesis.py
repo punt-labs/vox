@@ -1161,8 +1161,12 @@ class TestSynthesizeCacheObservability:
 
         Returns the ordered outcomes and the list of texts actually
         synthesized (one entry per real TTS call, so a cache hit adds none).
+        Outcome audio lands under ``tmp_path`` so pytest removes it.
         """
         monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+        audio_dir = tmp_path / "outcomes"
+        audio_dir.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(audio_dir))
         synth_calls: list[str] = []
         mp3 = _get_valid_mp3_bytes()
 
