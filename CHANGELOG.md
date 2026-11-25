@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Point agent guidance, rules, and docs at the punt noun-verb CLI
+  (`punt repo audit`, `punt repo scan-pii`, `punt release run`); needs the
+  punt-kit CLI cutover. (PL-1519)
+
 - Reuse the ElevenLabs voice catalog across syntheses with the same API key,
   so repeat voice-name lookups do not add a network request. (PL-1561)
 

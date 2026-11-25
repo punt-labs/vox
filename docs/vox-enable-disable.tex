@@ -45,7 +45,7 @@ exists, and whether the repo's \texttt{CLAUDE.md} carries the canonical
 (\texttt{tool-enable-disable.md}) fixes one load-bearing property over these
 three: the marker is present exactly when the import is present. This is the
 \emph{enabled $\iff$ import} biconditional of \S2.11, and it is what
-\texttt{punt audit} keys on and what every \texttt{enable}/\texttt{disable}
+\texttt{punt repo audit} keys on and what every \texttt{enable}/\texttt{disable}
 transition must preserve.
 
 This specification pins the machine so that the invariant is a property of the
@@ -334,7 +334,7 @@ is the \S2.11 ``no stale enabled tools'' behaviour at gate time.
 
 \subsection{AuditPass --- the \S2.11 checks the model covers}
 
-\texttt{punt audit} is clean when the biconditional holds, no import is an
+\texttt{punt repo audit} is clean when the biconditional holds, no import is an
 orphan, and no import line is duplicated. The guide file that the import points
 at is deposited into the directory by \texttt{enable} and left in place by
 \texttt{disable}, so it is present exactly when the directory is:
@@ -439,7 +439,7 @@ postconditions; they are the intended proof obligations for animation.
 \label{sec:modelcheck}
 
 The biconditional is the property worth exploring exhaustively, because it is
-the one \texttt{punt audit} keys on and the one a wrong transition could break
+the one \texttt{punt repo audit} keys on and the one a wrong transition could break
 silently. The state is tiny --- three booleans, hence eight raw configurations,
 of which the invariant admits three --- so the reachable state space of
 \texttt{Init} together with \texttt{Enable}, \texttt{Disable}, and \texttt{Purge}
