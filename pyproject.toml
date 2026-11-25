@@ -515,6 +515,7 @@ domain = [
     "punt_vox._audio",
     "punt_vox._inline_code",
     "punt_vox._speech_abbreviations",
+    "punt_vox._speech_input",
     "punt_vox._speech_punctuation",
     "punt_vox.bare_name",
     "punt_vox.catalog_gateway",

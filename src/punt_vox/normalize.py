@@ -11,9 +11,9 @@ import re
 import unicodedata
 from typing import final
 
-from punt_vox._inline_code import InlineCode
 from punt_vox._link_labels import VIBE_TAG_RE
 from punt_vox._speech_abbreviations import SpeechAbbreviations
+from punt_vox._speech_input import SpeechInput
 from punt_vox._speech_punctuation import SpeechPunctuation
 
 # ---------------------------------------------------------------------------
@@ -502,27 +502,22 @@ def strip_vibe_tags(text: str) -> str:
        support expressive tags at all (say, espeak) to sanitise the full
        text before passing it to a subprocess.
     """
-    result = VIBE_TAG_RE.sub("", text)
-    # Collapse runs of whitespace left behind by removal.
-    result = re.sub(r"  +", " ", result).strip()
-    # Guard: if stripping removed all content, return original text
-    # unchanged so providers don't receive an empty string.
-    if not result:
-        return text
-    return result
+    stripped = re.sub(r"  +", " ", VIBE_TAG_RE.sub("", text)).strip()
+    # Keep the original if removing tags would leave an empty provider request.
+    return stripped or text
 
 
 def normalize_for_speech(text: str) -> str:
     """Normalize programmer strings in *text* to natural spoken English.
 
-    Transforms applied per token (whitespace-delimited):
+    Currency amounts (money in prose, literal in code) and standalone
+    comparisons are spoken before these whitespace-delimited transforms:
 
-    1. **Currency amounts** — spoken as money in prose and literally in code.
-    2. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
-    3. **snake_case** — underscores replaced with spaces, parts processed
+    1. **File paths** (start with ``/``, ``~/``, ``./``) — skipped.
+    2. **snake_case** — underscores replaced with spaces, parts processed
        individually for abbreviation expansion.
-    4. **camelCase / PascalCase** — split on case boundaries.
-    5. **Known abbreviations** — expanded (case-insensitive whole-word).
+    3. **camelCase / PascalCase** — split on case boundaries.
+    4. **Known abbreviations** — expanded (case-insensitive whole-word).
 
     Idempotent: running twice produces the same result.
     """
@@ -536,12 +531,12 @@ class SpeechText:
     @classmethod
     def normalize(cls, text: str) -> str:
         """Normalize text without interpreting expressive tags."""
-        return cls._words(InlineCode.rewrite_currency(text))
+        return cls._words(SpeechInput.prepare(text))
 
     @classmethod
     def for_synthesis(cls, text: str, *, expressive: bool) -> str:
         """Normalize text, retaining expressive tags only for supported models."""
-        prepared = InlineCode.rewrite_currency(text, vibed=True)
+        prepared = SpeechInput.prepare(text, vibed=True)
         if not expressive:
             return cls._words(VIBE_TAG_RE.sub("", prepared))
         return " ".join(filter(None, cls._expressive_parts(prepared)))
