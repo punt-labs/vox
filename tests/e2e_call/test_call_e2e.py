@@ -263,7 +263,9 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
 
     The call's own outcome is primary: when it raised, a stop failure is
     attached to that exception as a note, never raised over it. When the
-    call returned, a stop failure is the error.
+    call returned, the daemon is given time to finish the call before the
+    cleanup stop, and a call it never finished, or a stop that failed, is
+    the error.
     """
     try:
         result = _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
@@ -271,9 +273,37 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
         if (failure := _stop_failure(env)) is not None:
             exc.add_note(failure)
         raise
-    if (failure := _stop_failure(env)) is not None:
+    unfinished = _unfinished_failure(env, _STOP_TIMEOUT_S)
+    unstopped = _stop_failure(env)
+    if (failure := unfinished or unstopped) is not None:
         raise AssertionError(failure)
     return result
+
+
+def _unfinished_failure(
+    env: dict[str, str], timeout_s: float
+) -> str | None:  # None: the daemon logged the call's end.
+    """Wait for the daemon's end line, written once the last reply has played.
+
+    The CLI returns when the status reads ended, which the daemon publishes
+    before the speaker drains the final reply; a stop sent then flushes the
+    audio a test measures. The end line follows the drain, so the cleanup
+    stop waits for it.
+    """
+    if _log_contains(_log_path(env), "Call ended: ", timeout_s=timeout_s):
+        return None
+    return f"voxd did not log the call's end within {timeout_s:.0f}s"
+
+
+def _log_contains(path: Path, text: str, *, timeout_s: float) -> bool:
+    """Poll a log file until it carries *text*; False once *timeout_s* passes."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if path.is_file() and text in path.read_text(errors="replace"):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 def _stop_failure(env: dict[str, str]) -> str | None:  # None: the stop was fine.
@@ -428,6 +458,32 @@ def test_a_hung_stop_after_a_timed_out_call_is_a_note_on_the_call_error(
     assert failure.value.__notes__ == [
         f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
     ]
+
+
+def test_a_call_the_daemon_never_finished_is_the_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no end line in the log, the cleanup names the unfinished call."""
+    stopped: list[str] = []
+
+    def stop(env: dict[str, str], *args: str, timeout: float) -> object:
+        del env, timeout
+        stopped.append(" ".join(args))
+        return subprocess.CompletedProcess(["vox", *args], 0, "", "")
+
+    monkeypatch.setattr(f"{__name__}._vox", stop)
+    monkeypatch.setattr(f"{__name__}._STOP_TIMEOUT_S", 0.1)
+    env = {"HOME": str(tmp_path)}
+    with pytest.raises(AssertionError, match="did not log the call's end within 0s"):
+        _vox_call(env, tmp_path / "turns.jsonl")
+    assert stopped == ["call --script " + str(tmp_path / "turns.jsonl"), "call stop"]
+
+
+def test_the_cleanup_waits_for_the_end_line_before_stopping(tmp_path: Path) -> None:
+    log = tmp_path / "vox.log"
+    assert not _log_contains(log, "Call ended: ", timeout_s=0.1)
+    log.write_text("Call live: conversation c\nCall ended: ended by agent\n")
+    assert _log_contains(log, "Call ended: ", timeout_s=0.1)
 
 
 def test_a_daemon_killed_mid_call_puts_its_detail_on_the_propagating_error(
