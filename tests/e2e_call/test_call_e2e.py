@@ -129,7 +129,6 @@ def voxd_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "HOME": str(home),
         "PATH": BarePath(tmp_path).value,
         "PUNT_TELEMETRY": "off",
-        "ELEVENLABS_API_KEY": "test",
         "VOX_CALL_ALLOW_LOOPBACK": "1",
         "VOX_PCM_OUTPUT": "silent",
     }

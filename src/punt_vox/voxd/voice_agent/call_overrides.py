@@ -12,7 +12,8 @@ sets them in the daemon's environment:
   fails the call with a :class:`ValueError` naming the variable, never a
   silent fall back to production. While it is in effect the daemon sends the
   placeholder ``test-override`` as its API key, so a listener on that port
-  never receives a real credential, and it keeps the agent registration
+  never receives a real credential and no ``ELEVENLABS_API_KEY`` need be
+  set, and it keeps the agent registration
   (the provisioned agent and tool ids) in a sibling file named for the
   override's port, so a fake call never reads or overwrites the live
   registration and a live call never finds a fake one.

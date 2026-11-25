@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -74,6 +75,22 @@ class ConvAIControl:
             base_url=base_url, headers={"xi-api-key": api_key}, timeout=10.0
         )
         return self
+
+    @classmethod
+    def from_environment(cls) -> Self:
+        """Construct from ``ELEVENLABS_API_KEY``, or from the REST override alone.
+
+        The override is resolved first: it supplies the placeholder key, so
+        with it in effect no key needs to be set. Without it, a missing key is
+        a :class:`ValueError` naming the variable.
+        """
+        base_url, api_key = CallOverrides.rest(
+            _API, os.environ.get("ELEVENLABS_API_KEY", "")
+        )
+        if not api_key:
+            msg = "voxd has no ELEVENLABS_API_KEY for a voice call"
+            raise ValueError(msg)
+        return cls(api_key, base_url=base_url)
 
     @property
     def credential_id(self) -> str:
