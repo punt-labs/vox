@@ -596,6 +596,7 @@ class TestSymbolStripping:
         ("\u201cx < 3\u201d", "x less than 3"),
         ("[x < 3](/limits)", "x less than 3"),
         ("[1. > 0](/limits)", "1. greater than 0"),
+        ("[![x < 3](limits.png)](/limits)", "x less than 3"),
         ("3 > 2 >[Chapter](/guide)", "3 greater than 2 Chapter"),
         ("[Chapter](/guide)> 3 > 2", "Chapter 3 greater than 2"),
         ("50% < x", "50 percent less than x"),
@@ -649,7 +650,7 @@ def test_link_label_brackets_are_not_expressive_tags() -> None:
 
 def test_nested_link_spans_keep_existing_markdown_speech() -> None:
     text = "[![read [policy](/policy)](/badge)](/guide)"
-    assert SpeechText.for_synthesis(text, expressive=True) == "read policy /badge"
+    assert SpeechText.for_synthesis(text, expressive=True) == "read policy"
 
 
 @pytest.mark.parametrize(

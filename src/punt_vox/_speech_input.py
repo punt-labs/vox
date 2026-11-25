@@ -87,7 +87,7 @@ class SpeechInput:
             for span in SpeechMarkdown.spans(text, vibed=vibed)
             if isinstance(span, LinkSpan)
             for edge in (
-                (span.opening, span.opening + 1, 1),
+                (*span.prefix, 1),
                 (span.label_end, span.end, -1),
             )
         )

@@ -246,6 +246,7 @@ ignore = [
 "src/punt_vox/playback.py" = ["S603", "S607"]
 # git check-ignore: the call agent's secret guard asks git what it ignores.
 "src/punt_vox/voxd/workers/policy.py" = ["S603", "S607"]
+"src/punt_vox/voxd/workers/worktrees.py" = ["S603", "S607"]
 "src/punt_vox/voxd/workers/command.py" = ["S603", "S607"]
 # The supervised harness argv is intentional; its environment is isolated.
 "src/punt_vox/voxd/workers/bootstrap.py" = ["S603"]
@@ -520,6 +521,8 @@ domain = [
     "punt_vox._inline_code",
     "punt_vox._speech_abbreviations",
     "punt_vox._speech_input",
+    "punt_vox._speech_label_rule",
+    "punt_vox._speech_parser",
     "punt_vox._speech_punctuation",
     "punt_vox.bare_name",
     "punt_vox.catalog_gateway",

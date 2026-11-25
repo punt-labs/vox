@@ -16,7 +16,7 @@ from punt_vox.voxd.hook_decisions import HookDecisions
 from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.workers.claude import ClaudeProfile
 from punt_vox.voxd.workers.codec import WorkerRecordCodec
-from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerInput, WorkerProvider
+from punt_vox.voxd.workers.contracts import WorkerInput, WorkerProvider
 from punt_vox.voxd.workers.model import WorkerRecord
 from punt_vox.voxd.workers.steer_delivery import SteerDelivery
 from punt_vox.voxd.workers.steering_types import DecisionChoice
@@ -160,10 +160,10 @@ def test_decision_receipt_heard_invariant_requires_question_at_delivery() -> Non
 
 @pytest.mark.parametrize("choice", ["approve", "deny"])
 def test_decision_delivery_invariant_permission_and_explicit_choice(
-    choice: DecisionChoice,
+    choice: DecisionChoice, harness_profile: MagicMock
 ) -> None:
     """DecisionDelivery sends a choice only when a permission dialog is pending."""
-    profile = MagicMock(spec=HarnessProfile)
+    profile = harness_profile
     provider = MagicMock(spec=WorkerProvider)
     record = MagicMock(spec=WorkerRecord)
     profile.last_input.return_value = WorkerInput(3, "", decision=True)
