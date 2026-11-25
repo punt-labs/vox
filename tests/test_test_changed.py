@@ -89,20 +89,9 @@ def test_git_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("selected", [[], None, ["tests/test_core.py"]])
 @pytest.mark.parametrize("status", [0, 1, 5])
-@pytest.mark.parametrize(
-    ("workers", "expected"), [(None, "auto"), ("", "auto"), ("2", "2")]
-)
 def test_cli_runs_only_selected_tests(
-    monkeypatch: pytest.MonkeyPatch,
-    selected: list[str] | None,
-    status: int,
-    workers: str | None,
-    expected: str,
+    monkeypatch: pytest.MonkeyPatch, selected: list[str] | None, status: int
 ) -> None:
-    if workers is None:
-        monkeypatch.delenv("VOX_PYTEST_WORKERS", raising=False)
-    else:
-        monkeypatch.setenv("VOX_PYTEST_WORKERS", workers)
     monkeypatch.setattr("sys.argv", ["test_changed", "--ref", "main"])
     changes = MagicMock(return_value=[])
     monkeypatch.setattr("tools.test_changed.changed_files", changes)
@@ -120,6 +109,6 @@ def test_cli_runs_only_selected_tests(
             "-m",
             "pytest",
             "-n",
-            expected,
+            "auto",
             *(selected or []),
         ]

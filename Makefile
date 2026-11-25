@@ -3,12 +3,14 @@
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
+PYTEST_WORKERS ?= 4
+
 test: ## Run the default tier in parallel
-	uv run pytest -n "$${VOX_PYTEST_WORKERS:-auto}"
+	uv run pytest -n $(PYTEST_WORKERS)
 
 .PHONY: test-push test-changed hooks
 test-push: ## Run all local credential-free tiers in parallel
-	uv run pytest -n "$${VOX_PYTEST_WORKERS:-auto}" -m "not integration and not sdk and not e2e and not roundtrip and not quarantine"
+	uv run pytest -n $(PYTEST_WORKERS) -m "not integration and not sdk and not e2e and not roundtrip and not quarantine"
 
 test-changed: ## Run default-tier tests importing staged Python modules (or REF)
 	uv run python tools/test_changed.py $(if $(REF),--ref "$(REF)")
@@ -160,7 +162,7 @@ metrics: ## Run ABC complexity metrics on src/
 	uv run python tools/run_metrics.py
 
 coverage: install ## Measure line and branch coverage across all credential-free tiers
-	uv run python tools/run_coverage.py --workers "$${VOX_PYTEST_WORKERS:-auto}"
+	uv run python tools/run_coverage.py
 
 COVERAGE_BASE ?=
 

@@ -384,9 +384,8 @@ ratchet-test breakdown and CPU-contention hypothesis do not establish the
 cause of the current runtime. Profile the current suite before attributing
 its cost to a particular component or to machine contention.
 
-Set `VOX_PYTEST_WORKERS=2` on developer machines to limit workers for `make test`,
-`make test-push`, `make test-changed`, and `make coverage`; CI leaves it unset to
-keep xdist's `auto`.
+`make test` and `make test-push` use four pytest-xdist workers by default.
+Override the count with `PYTEST_WORKERS`, for example `make test PYTEST_WORKERS=auto`.
 
 ## The MP3 Problem
 
