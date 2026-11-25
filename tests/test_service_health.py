@@ -150,10 +150,24 @@ def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
 def test_an_unreadable_token_file_names_itself_and_builds_no_client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """The refusal is faked at the read call, not with a mode-000 file, which
+    root can read: the test must hold whatever uid runs it."""
     _run_dir(monkeypatch, tmp_path)
     token = tmp_path / "serve.token"
     token.write_text("secret")
-    token.chmod(0)
+    real_read_text = Path.read_text
+
+    def denied(
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
+        if self.name == "serve.token":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read_text(self, encoding, errors, newline)
+
+    monkeypatch.setattr(Path, "read_text", denied)
     captured = _capture_clients(monkeypatch)
 
     with pytest.raises(DaemonNotUpError) as unreadable:
