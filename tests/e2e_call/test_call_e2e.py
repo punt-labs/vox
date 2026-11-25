@@ -342,11 +342,26 @@ def _flush_dropped_ms(daemon_log: str) -> float:
     return float(match.group(1))
 
 
-def _played_ms(daemon_log: str) -> int:
-    """Return the audio the closing stream report says the device played."""
-    match = re.search(r"PCM stream closed at .*?, played (\d+) ms", daemon_log)
-    assert match is not None, daemon_log
-    return int(match.group(1))
+@dataclass(frozen=True, slots=True)
+class _StreamClose:
+    """The sink's closing report for the last PCM stream the daemon played."""
+
+    played_ms: int
+    dropped_ms: int
+    interrupted: bool
+
+    _LINE = re.compile(
+        r"PCM stream closed at \d+ ms: fed \d+ ms, played (\d+) ms, "
+        r"dropped (\d+) ms, interrupted=(True|False)"
+    )
+
+    @classmethod
+    def last(cls, daemon_log: str) -> _StreamClose:
+        """Parse the newest closing report; the log must carry one."""
+        reports = cls._LINE.findall(daemon_log)
+        assert reports, daemon_log
+        played, dropped, interrupted = reports[-1]
+        return cls(int(played), int(dropped), interrupted == "True")
 
 
 def _trace_events(report: str) -> list[str]:
@@ -508,9 +523,10 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     # closing report counts audio played and the remainder dropped.
     daemon_log = _daemon_log(voxd_env)
     assert "PCM flush at" in daemon_log
-    assert "interrupted=True" in daemon_log
     assert daemon_log.index(_PLAYBACK_STARTED) < daemon_log.index("PCM flush at")
-    assert _played_ms(daemon_log) > 0
+    close = _StreamClose.last(daemon_log)
+    assert close.interrupted
+    assert close.played_ms > 0
     assert _flush_dropped_ms(daemon_log) > 0
 
 
@@ -522,7 +538,8 @@ def test_the_agent_ending_the_call_is_a_clean_end_by_the_agent(
     The daemon treats the agent's hang-up as a normal end: the CLI exits 0 and
     reports the call ended, the status names the agent as who ended it, the
     end line in the daemon log says so too, and the trace records the agent's
-    end_call acknowledgement.
+    end_call acknowledgement. The closing sentence plays to its end before
+    the hang-up: the sink's closing report shows the stream drained, not cut.
     """
     agent, rest, run = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _AGENT_ENDS_STEPS)
@@ -546,3 +563,8 @@ def test_the_agent_ending_the_call_is_a_clean_end_by_the_agent(
     events = _trace_events(report)
     assert "agent_tool_response" in events, events
     assert "agent_end_call" in events, events
+    assert "call ended by agent" in report
+    close = _StreamClose.last(daemon_log)
+    assert not close.interrupted, daemon_log
+    assert close.dropped_ms == 0, daemon_log
+    assert close.played_ms == 100, daemon_log
