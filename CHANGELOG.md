@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak inline Markdown images' alt text instead of their source filenames,
+  including images used as link labels.
+
 - `start_worker` gives up on `git worktree add` after 90 s with a spoken
   error instead of hanging the call. A launch that fails returns its error
   at once and discards its own worktree and branch in the background, off

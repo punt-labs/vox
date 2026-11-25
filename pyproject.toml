@@ -520,6 +520,8 @@ domain = [
     "punt_vox._code_currency",
     "punt_vox._inline_code",
     "punt_vox._speech_abbreviations",
+    "punt_vox._speech_label_rule",
+    "punt_vox._speech_parser",
     "punt_vox._speech_punctuation",
     "punt_vox.bare_name",
     "punt_vox.catalog_gateway",
