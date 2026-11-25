@@ -57,7 +57,8 @@ class ListenAddress:
             msg = (
                 f"{host} carries zone {cls._zone_of(parsed)} on a non-loopback "
                 "address: the listener tables carry no zone, so it cannot be "
-                "told from the same address on another interface"
+                "told from the same address on another interface; set VOXD_BIND "
+                "to a loopback or unscoped IP address and run `vox daemon install`"
             )
             raise ValueError(msg)
         self = super().__new__(cls)

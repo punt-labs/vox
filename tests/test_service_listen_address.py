@@ -84,4 +84,9 @@ def test_a_scoped_link_local_host_is_refused_naming_the_zone() -> None:
     definition, may carry a zone."""
     with pytest.raises(ValueError, match=r"fe80::1%2 .*zone") as refused:
         ListenAddress("fe80::1%2", 8421)
-    assert "zone 2" in str(refused.value)
+    assert str(refused.value) == (
+        "fe80::1%2 carries zone 2 on a non-loopback address: the listener tables "
+        "carry no zone, so it cannot be told from the same address on another "
+        "interface; set VOXD_BIND to a loopback or unscoped IP address and run "
+        "`vox daemon install`"
+    )

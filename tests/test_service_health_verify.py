@@ -274,3 +274,5 @@ def test_preflight_refuses_a_scoped_non_loopback_bind_before_anything_is_written
     with pytest.raises(PortProbeError) as refused:
         HealthVerifier.preflight({"VOXD_BIND": "fe80::1%2"})
     assert "fe80::1%2 carries zone 2 on a non-loopback address" in str(refused.value)
+    assert "set VOXD_BIND to a loopback or unscoped IP address" in str(refused.value)
+    assert "run `vox daemon install`" in str(refused.value)
