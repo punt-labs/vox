@@ -133,3 +133,85 @@ def test_status_sends_no_token_to_a_voxd_that_left_before_it_was_asked() -> None
     assert world.tokens_to == []
     assert reading.state is DaemonState.UNKNOWN
     assert "left port 8421" in reading.reason
+
+
+# ---------------------------------------------------------------------------
+# PL-1497: voxd is asked first, through the port serve.port publishes, before
+# lsof/fuser attribute the port. A slow lsof cannot hide a voxd that answers.
+# ---------------------------------------------------------------------------
+
+
+def test_status_asks_the_published_port_before_lsof_runs() -> None:
+    """A voxd that answers health is running, even when lsof times out."""
+    world = FakeWorld(
+        port_file=8421, probe_error="cannot run lsof: timed out after 1.81 seconds"
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert reading.health is not None
+    assert reading.health.pid == 100
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [], "no attributed request was needed"
+
+
+def test_status_published_port_health_gets_a_reserved_share() -> None:
+    """lsof gets only what the health reserve leaves; the reading stays bounded."""
+    world = FakeWorld(port_file=8421, probe_blocks_s=60.0)
+    world.run_unit(100)
+    clock = FakeClock()
+    reading = lifecycle(world, clock).status()
+    assert reading.state is DaemonState.RUNNING
+    assert clock.monotonic() <= StatusCheck.HEALTH_RESERVE_S
+
+
+def test_status_sends_no_published_token_without_serve_port() -> None:
+    """With no serve.port, the fast path sends nothing; attribution decides."""
+    world = FakeWorld()
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == []
+    assert world.tokens_to == [frozenset({100})]
+
+
+def test_status_sends_no_published_token_when_serve_port_names_another_port() -> None:
+    world = FakeWorld(port_file=9000)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.RUNNING
+    assert world.tokens_to_port == []
+
+
+def test_status_sends_no_published_token_to_an_empty_port() -> None:
+    """A stale serve.port naming 8421 with nothing listening sends no token."""
+    world = FakeWorld(port_file=8421)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.NOT_RUNNING
+    assert world.tokens_to_port == []
+
+
+def test_status_published_port_no_answer_falls_back_to_attribution() -> None:
+    """A rejected fast request is not the reading: lsof still names the holder."""
+    world = FakeWorld(
+        port_file=8421, token_written=False, health_error="auth rejected (4401)"
+    )
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert reading.pids == (100,)
+    assert world.tokens_to_port == [8421]
+
+
+def test_status_hung_published_health_leaves_time_for_attribution() -> None:
+    """A hung voxd spends only the reserve; attribution and the second ask fit."""
+    world = FakeWorld(
+        port_file=8421, health_blocks_s=60.0, health_error="no answer in time"
+    )
+    world.run_unit(100)
+    clock = FakeClock()
+    reading = lifecycle(world, clock).status()
+    assert reading.state is DaemonState.UNRESPONSIVE
+    assert clock.monotonic() <= DaemonLifecycle.STATUS_DEADLINE_S
+    assert world.tokens_to_port == [8421]
+    assert world.tokens_to == [frozenset({100})]

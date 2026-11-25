@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `vox daemon status` asks voxd for health first, through the port voxd
+  published in `serve.port`, with a reserved share of its deadline that the
+  `lsof`/`fuser` attribution probes cannot consume. On a loaded Mac, where
+  `lsof` walks every open file, a voxd that answers is now reported running
+  instead of `unknown (cannot run lsof: ... timed out)`. The token still
+  goes out only when this user's own `serve.port` names the service port,
+  the bind is loopback and the port accepts a connection. (PL-1497)
+
 - Tag radio skips saved albums deleted from disk while the daemon is running
   and plays the remaining matches. (PL-856)
 

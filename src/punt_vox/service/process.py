@@ -66,6 +66,11 @@ class ProcessManager:
     def _run_dir() -> Path:
         return _user_run_dir()
 
+    @property
+    def port_file(self) -> Path:
+        """Return the path of ``serve.port``, the port hint voxd publishes."""
+        return self._run_dir() / "serve.port"
+
     def read_port_file(self) -> int | None:
         """Read the daemon port from ``serve.port``.
 
@@ -78,7 +83,7 @@ class ProcessManager:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        return StalePortFile.read_hint(self._run_dir() / "serve.port")
+        return StalePortFile.read_hint(self.port_file)
 
     def discard_port_file(self, port: int) -> PortFileCleanup:
         """Remove ``serve.port`` when it names *port* or does not parse.
@@ -90,7 +95,7 @@ class ProcessManager:
         Raises:
             PortProbeError: If the port file cannot be locked, read, or removed safely.
         """
-        return StalePortFile.read(self._run_dir() / "serve.port").discard(port)
+        return StalePortFile.read(self.port_file).discard(port)
 
     def find_pid_on_port(self, port: int) -> list[int]:
         """Return all PIDs with connections to *port*.
@@ -226,7 +231,7 @@ class ProcessManager:
         manager respawning it while the old one dies -- keeps its own.
         """
         self._note = ""
-        stale = StalePortFile.read(self._run_dir() / "serve.port")
+        stale = StalePortFile.read(self.port_file)
         port = stale.port if stale.port is not None else DEFAULT_PORT
         pid = self._stale_voxd(port)
         if pid is None:

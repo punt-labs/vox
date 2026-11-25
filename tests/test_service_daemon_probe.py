@@ -16,12 +16,11 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import (
-    DaemonNotUpError,
-    HealthTarget,
-    NotAskedError,
-)
+from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
+from punt_vox.service.published_port import PublishedPort
+from punt_vox.service.service_cgroup import ServiceCgroup
 from punt_vox.types_health import HealthStatus
 
 
@@ -172,7 +171,7 @@ def test_service_owned_reads_the_cgroup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A pid in voxd.service's cgroup is the manager's, not unmanaged."""
-    monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
+    monkeypatch.setattr(ServiceCgroup, "_PROC", tmp_path)
     (tmp_path / "42").mkdir()
     (tmp_path / "42" / "cgroup").write_text("0::/system.slice/voxd.service\n")
     (tmp_path / "43").mkdir()
@@ -200,7 +199,7 @@ def test_service_owned_matches_the_system_unit_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, owned: bool
 ) -> None:
     """Only the system unit vox installs counts, not a user-scope voxd."""
-    monkeypatch.setattr(DaemonProbe, "_PROC", tmp_path)
+    monkeypatch.setattr(ServiceCgroup, "_PROC", tmp_path)
     (tmp_path / "42").mkdir()
     (tmp_path / "42" / "cgroup").write_text(line + "\n")
     assert _probe(MagicMock()).service_owned(42) is owned
@@ -427,3 +426,139 @@ def test_an_ip_bind_is_checked_without_any_lookup(
         target = MagicMock(host="127.0.0.1", port=server.getsockname()[1])
         assert _probe(MagicMock(), target).port_listening() is True
     assert looked_up == []
+
+
+# ---------------------------------------------------------------------------
+# PL-1497: health through the published port, before any attribution
+# ---------------------------------------------------------------------------
+
+
+def _published(
+    monkeypatch: pytest.MonkeyPatch, port: int | None, *, owned: bool = True
+) -> MagicMock:
+    """Return a process manager whose serve.port reads as *port*, ours or not."""
+    mgr = MagicMock()
+    mgr.port_file = Path("/nonexistent/serve.port")
+    reading = PublishedPort(port, owned=owned)
+
+    def at(path: Path) -> PublishedPort:
+        return reading
+
+    monkeypatch.setattr(PublishedPort, "at", staticmethod(at))
+    return mgr
+
+
+def _listening(monkeypatch: pytest.MonkeyPatch, *, accept: bool = True) -> MagicMock:
+    connect = MagicMock()
+    if not accept:
+        connect.side_effect = ConnectionRefusedError
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    return connect
+
+
+def test_published_health_asks_without_any_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Our serve.port names 8421, loopback listens: the token goes out, no lsof."""
+    _listening(monkeypatch)
+    target = MagicMock(host="127.0.0.1", port=8421)
+    status = HealthStatus(status="ok", pid=42)
+    target.client.return_value.health.return_value = status
+    mgr = _published(monkeypatch, 8421)
+    assert _probe(mgr, target).published_health(1.5) is status
+    mgr.find_pid_on_port.assert_not_called()
+    mgr.open_voxd.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("port", "owned", "why"),
+    [
+        (None, False, "publishes no port"),
+        (9000, True, "names port 9000"),
+        (8421, False, "not this user's voxd"),
+    ],
+)
+def test_published_health_sends_nothing_unless_our_file_names_the_service(
+    monkeypatch: pytest.MonkeyPatch, port: int | None, owned: bool, why: str
+) -> None:
+    connect = _listening(monkeypatch)
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = _probe(_published(monkeypatch, port, owned=owned), target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    assert isinstance(probe.health_miss(), NotAskedError)
+    assert why in str(probe.health_miss())
+
+
+def test_published_health_sends_nothing_off_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connect = _listening(monkeypatch)
+    target = MagicMock(host="192.168.1.5", port=8421)
+    probe = _probe(_published(monkeypatch, 8421), target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    assert "not loopback" in str(probe.health_miss())
+
+
+def test_published_health_sends_nothing_to_an_empty_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _listening(monkeypatch, accept=False)
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = _probe(_published(monkeypatch, 8421), target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    assert "nothing listens" in str(probe.health_miss())
+
+
+def test_published_health_connect_failure_is_a_miss_not_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connect vox cannot complete leaves attribution to decide."""
+    connect = MagicMock(side_effect=TimeoutError("timed out"))
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = _probe(_published(monkeypatch, 8421), target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    assert "cannot connect" in str(probe.health_miss())
+
+
+def test_published_health_request_gets_what_the_connect_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+
+    def connect(address: object, timeout: float) -> object:
+        clock.advance(0.25)
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "punt_vox.service.daemon_probe.socket.create_connection", connect
+    )
+    target = MagicMock(host="127.0.0.1", port=8421)
+    target.client.return_value.health.return_value = HealthStatus(status="ok")
+    probe = DaemonProbe(_published(monkeypatch, 8421), lambda: target, Poll(clock))
+    probe.published_health(1.5)
+    target.client.return_value.health.assert_called_once_with(
+        timeout=pytest.approx(1.25)
+    )
+
+
+def test_published_health_no_reply_is_none_and_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _listening(monkeypatch)
+    target = MagicMock(host="127.0.0.1", port=8421)
+    rejected = VoxdConnectionError("auth rejected (4401)")
+    target.client.return_value.health.side_effect = rejected
+    probe = _probe(_published(monkeypatch, 8421), target)
+    assert probe.published_health(1.5) is None
+    assert probe.health_miss() is rejected

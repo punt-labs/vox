@@ -27,10 +27,10 @@ from punt_vox.service.backend import (
 )
 from punt_vox.service.clock import Poll
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import NotAskedError
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
 from punt_vox.service.lifecycle_system import LifecycleSystem
+from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.port_file_cleanup import PortFileCleanup
 from punt_vox.service.termination import Termination
 from punt_vox.types_health import HealthStatus
@@ -245,6 +245,8 @@ class FakeWorld:
     alive_at_start: list[int] = field(default_factory=list)
     signalled: list[int] = field(default_factory=list)
     tokens_to: list[frozenset[int]] = field(default_factory=list)
+    # the ports an unattributed, published-port health request went to
+    tokens_to_port: list[int] = field(default_factory=list)
 
     def spawn(
         self,
@@ -442,6 +444,21 @@ class FakeProbe:
         self._fail("port_listening")
         return self._world.foreign_listener or self._world.holder() is not None
 
+    def published_health(self, within_s: float) -> HealthStatus | None:
+        """The real probe's gate: our serve.port names 8421 and a listener answers."""
+        world = self._world
+        if world.port_file_stale or world.port_file != 8421:
+            self._miss = NotAskedError.unpublished(world.port_file)
+            return None
+        # A TCP connect is not slowed by lsof's load (``probe_blocks_s``
+        # models fuser/lsof/ps), so the listener is read without blocking.
+        self._fail("port_listening")
+        if not (world.foreign_listener or world.holder() is not None):
+            self._miss = NotAskedError.nothing_listens()
+            return None
+        world.tokens_to_port.append(8421)
+        return self._answer(within_s)
+
     def health(
         self, holders: frozenset[ProcessHandle], within_s: float
     ) -> HealthStatus | None:
@@ -458,6 +475,10 @@ class FakeProbe:
             self._miss = NotAskedError.left_port(h.pid for h in holders - current)
             return None
         self._world.tokens_to.append(frozenset(h.pid for h in holders))
+        return self._answer(within_s)
+
+    def _answer(self, within_s: float) -> HealthStatus | None:
+        """What the voxd on the port answers to a token-bearing request."""
         if self._world.health_blocks_s:
             assert self._world.clock is not None
             self._world.clock.advance(min(self._world.health_blocks_s, within_s))

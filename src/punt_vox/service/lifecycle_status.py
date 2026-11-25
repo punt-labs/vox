@@ -4,9 +4,21 @@ voxd is found the way ``stop`` and ``start`` find it -- the installed bind,
 port 8421, a token only from ``serve.token``, sent only to a visible voxd on
 the port. One :class:`Deadline`, started when the reading starts, bounds the
 whole of it: every port and process probe, the listener check, and the health
-request each get only what is left. What the probe sees decides the state:
+request each get only what is left.
 
-- a visible voxd answered health: ``running``;
+voxd is asked first, before ``lsof``/``fuser`` attribute the port, through
+the port voxd itself published: when this user's own ``serve.port`` names the
+service port, the bind is loopback and the port accepts a connection, one
+health request goes out with a reserved share of the deadline
+(``HEALTH_RESERVE_S``) that the attribution probes cannot consume. An answer
+is ``running`` whatever ``lsof`` would have said later (PL-1497: on a loaded
+Mac ``lsof`` walks every open file and spent the whole deadline). With no
+answer, attribution runs within what is left and decides as before. The
+token never goes out through any other door; the gate is stated in
+:mod:`punt_vox.service.daemon_probe`. What the probe sees decides the state:
+
+- a voxd answered health, through the published port or as a visible
+  holder: ``running``;
 - a visible voxd did not answer (timeout, no token, rejected, socket error):
   ``unresponsive``, naming the pids and the cause;
 - no visible voxd, but something accepts a connection on the port: ``unknown``
@@ -25,7 +37,7 @@ from typing import TYPE_CHECKING, ClassVar, Self, final
 from punt_vox.service.backend import BackendCommandError, PortProbeError
 from punt_vox.service.daemon_status import DaemonStatus
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import NotAskedError
+from punt_vox.service.not_asked import NotAskedError
 
 if TYPE_CHECKING:
     from punt_vox.service.backend import LifecycleProbe, ProcessHandle
@@ -43,6 +55,9 @@ class StatusCheck:
     # The least a health request is given. With less left, a timeout would
     # measure vox's own probing, not voxd, so voxd is not asked at all.
     MIN_HEALTH_S: ClassVar[float] = 0.5
+    # The share of the deadline the published-port health request is given
+    # before any attribution probe runs. lsof/fuser get only the rest.
+    HEALTH_RESERVE_S: ClassVar[float] = 1.5
 
     _deadline: Deadline
     _probe: LifecycleProbe
@@ -64,8 +79,13 @@ class StatusCheck:
             return DaemonStatus.unknown(str(exc))
 
     def _read(self) -> DaemonStatus:
-        """Classify the port by who holds it, and who answers."""
+        """Ask the published port first; then classify the port by its holders."""
         probe = self._probe
+        health = probe.published_health(
+            min(self.HEALTH_RESERVE_S, self._deadline.remaining())
+        )
+        if health is not None:
+            return DaemonStatus.running(health)
         holders = probe.voxd_processes()
         if holders:
             return self._ask(holders)
