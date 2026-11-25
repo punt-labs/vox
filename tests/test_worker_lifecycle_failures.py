@@ -292,10 +292,14 @@ def test_failed_launch_records_a_discard_failure(tmp_path: Path) -> None:
 
 
 class _StopRefusingProvider(FakeWorkerProvider):
-    """A provider whose launch fails and whose pane then refuses to stop."""
+    """A provider whose launch fails and whose pane refuses to stop until told."""
+
+    refuses: bool = True
 
     def stop(self, handle: str) -> None:
-        raise RuntimeError("tmux kill-session refused")
+        if self.refuses:
+            raise RuntimeError("tmux kill-session refused")
+        super().stop(handle)
 
 
 def test_failed_stop_keeps_the_worktree_and_says_why(
@@ -492,12 +496,15 @@ def test_unexpected_discard_error_keeps_the_cleanup_outcome(tmp_path: Path) -> N
 def test_a_restart_that_retires_a_launch_whose_discard_was_skipped_queues_it(
     tmp_path: Path,
 ) -> None:
-    """DiscardRetryOnStopOfStopped (Z): a dead pane confirms the provider is gone.
+    """DiscardRetryOnStopOfStopped (Z): a confirmed stop makes the discard owed.
 
     A rollback that could not stop the provider recorded discard_skipped and
     left the worker starting. A later daemon start that finds the pane dead
-    retires the record to exited; that confirmation makes the discard owed
-    again, or the worktree and branch would stay behind for good.
+    retires the record to exited with the session stop still pending; the
+    retire alone does not queue the discard, because a dead pane does not
+    prove the session is gone. The terminate that runs the pending stop
+    does, so the worktree and branch never stay behind for good and are
+    never removed under a session the daemon has not confirmed stopped.
     """
     provider = _StopRefusingProvider()
     provider.fail = True
@@ -515,9 +522,16 @@ def test_a_restart_that_retires_a_launch_whose_discard_was_skipped_queues_it(
     [saved] = records.load()
     retired = WorkerStartup._retire(saved, records)
     assert retired.state == "exited"
-    assert retired.last_report["discard_pending"] is True
-    assert "discard_skipped" not in retired.last_report
+    assert retired.last_report["discard_skipped"] == "provider stop failed"
+    assert retired.last_report["pane_stop_pending"] is True
+    assert "discard_pending" not in retired.last_report
     restored = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(RuntimeError, match="kill-session refused"):
+        restored.stop(retired.id)  # the session still will not stop: kept
+    assert restored.list()[0].last_report["discard_skipped"] == "provider stop failed"
+    worktrees.discard.assert_not_called()
+    provider.refuses = False
+    restored.stop(retired.id)
     _settled(restored)
     done = restored.list()[0]
     assert done.last_report["worktree_discarded"] is True

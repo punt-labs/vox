@@ -65,15 +65,17 @@ class WorkerDiscard:
             return cls._queue(record)
         return record
 
-    @classmethod
-    def retire(cls, record: WorkerRecord) -> WorkerRecord:
-        """Record a confirmed exit and queue any discard it makes owed again.
+    @staticmethod
+    def retire(record: WorkerRecord) -> WorkerRecord:
+        """Record a confirmed exit; the discard stays owed until the stop lands.
 
-        A dead pane confirms the provider is gone, which is what a rollback
-        that could not stop it was waiting for; a skipped or failed discard
-        is queued with the exit so the worktree does not stay behind.
+        A dead pane says the worker's own process is gone, not that the
+        session was torn down: the retired record carries ``pane_stop_pending``
+        and the next terminate runs that stop first, then queues a skipped or
+        failed discard through ``retry``. Queueing it here would delete the
+        checkout before the stop was confirmed.
         """
-        return cls.retry(record.retire())
+        return record.retire()
 
     @classmethod
     def _queue(cls, record: WorkerRecord) -> WorkerRecord:

@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, final
 from uuid import UUID
 
-from punt_vox.voxd.workers.git_failure import DiscardError, GitFailure
+from punt_vox.voxd.workers.git_failure import (
+    DiscardError,
+    GitFailure,
+    WorktreeInUseError,
+)
 from punt_vox.voxd.workers.types import WorkerDeadlines
 
 if TYPE_CHECKING:
@@ -125,6 +129,9 @@ class WorkerWorktrees:
         note: dict[str, object] = {"worktree_discarded": True}
         try:
             self.discard(Path(record.project), Path(record.worktree), record.id)
+        except WorktreeInUseError as exc:
+            logger.warning("Worker %s worktree kept: %s", record.id, exc)
+            note = {"discard_skipped": "worktree has changes"}
         except (ValueError, DiscardError) as exc:
             # ValueError: the path guard refused before any step ran.
             detail = exc if isinstance(exc, DiscardError) else GitFailure(exc)
@@ -147,6 +154,10 @@ class WorkerWorktrees:
         owner = str(UUID(worker_id))
         if worktree.name != _WORKTREE_LEAF or worktree.parent.name != owner:
             raise ValueError(f"not the worker's own worktree: {worktree}")
+        if self._has_changes(worktree):
+            # A checkout someone edited after the launch failed is their
+            # work now; stop stays non-destructive and the discard waits.
+            raise WorktreeInUseError(worktree)
         failures = DiscardError()
         failures.attempt("remove", lambda: self._unregister(project, worktree))
         failures.attempt("rmtree", lambda: self._remove_tree(worktree))
@@ -211,6 +222,12 @@ class WorkerWorktrees:
     def _remove_empty_parent(worktree: Path) -> None:
         if worktree.parent.is_dir() and not any(worktree.parent.iterdir()):
             worktree.parent.rmdir()
+
+    def _has_changes(self, worktree: Path) -> bool:
+        """Say whether the checkout holds edits the launch did not make."""
+        if not (worktree / ".git").exists():
+            return False
+        return bool(self._git(worktree, "status", "--porcelain").strip())
 
     def _registered(self, project: Path, worktree: Path) -> bool:
         listing = self._git(project, "worktree", "list", "--porcelain")

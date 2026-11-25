@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from punt_vox.voxd.workers.git_failure import WorktreeInUseError
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 pytestmark = pytest.mark.subprocess
@@ -209,3 +210,21 @@ def test_discard_removes_a_worktree_whose_git_file_vanished(
         text=True,
     )
     assert probe.returncode == 1
+
+
+def test_discard_keeps_a_worktree_with_uncommitted_changes(
+    repo: Path, tmp_path: Path
+) -> None:
+    """A checkout edited after the launch failed is the operator's work.
+
+    Stop promises to keep the checkout and branch, so a retried discard
+    refuses one that holds changes and records the worktree as kept.
+    """
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    WorkerWorktrees().create(repo, worktree, f"vox-worker/{worker_id}")
+    (worktree / "patch.txt").write_text("a fix in progress\n")
+    with pytest.raises(WorktreeInUseError, match="uncommitted changes"):
+        WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert (worktree / "patch.txt").is_file()
+    assert _git(repo, "branch", "--list", f"vox-worker/{worker_id}") != ""

@@ -95,6 +95,16 @@ class GitFailure:
 
 
 @final
+class WorktreeInUseError(ValueError):
+    """The checkout holds edits made since the launch failed; it is kept.
+
+    Constructed with the worktree path as its single argument.
+    """
+
+    def __str__(self) -> str:
+        return f"worktree has uncommitted changes: {self.args[0]}"
+
+
 class DiscardError(Exception):
     """Every step of a discard that failed, each named and scrubbed.
 
