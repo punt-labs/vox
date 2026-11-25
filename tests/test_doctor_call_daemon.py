@@ -141,7 +141,8 @@ def test_repos_check_warns_when_nothing_is_allowlisted() -> None:
     assert result.status_kind == "warn"
     assert not result.required
     assert result.message == (
-        "Worker repositories: none allowlisted; run vox worker allow <path>"
+        "Worker repositories: worker_repos is empty: no repository is allowlisted;"
+        " run vox worker allow <path>"
     )
 
 

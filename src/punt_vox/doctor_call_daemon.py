@@ -128,7 +128,10 @@ class WorkerReposCheck:
         except ValueError as exc:
             return self._warn(str(exc))
         if not repos:
-            return self._warn("none allowlisted; run vox worker allow <path>")
+            return self._warn(
+                "worker_repos is empty: no repository is allowlisted;"
+                " run vox worker allow <path>"
+            )
         names = ", ".join(PurePath(repo).name or repo for repo in repos)
         return CheckResult.of(
             OK,
