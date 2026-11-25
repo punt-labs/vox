@@ -24,6 +24,8 @@ import sys
 import threading
 from typing import ClassVar, Literal, Self, final
 
+from punt_vox.voxd.log_text import LogText
+
 __all__ = ["DeviceTable"]
 
 logger = logging.getLogger(__name__)
@@ -94,8 +96,13 @@ class DeviceTable:
     def _summary() -> str:
         """Describe the table just read: device count and the default indices.
 
-        A missing default is reported as such rather than failing the
-        refresh; the open that follows raises the error the caller handles.
+        The description is for the log and never fails the refresh. A missing
+        default is reported as such; the open that follows raises the error
+        the caller handles. Counting the devices makes ``sounddevice``
+        describe every one of them, names included, and a device it cannot
+        describe -- a name in an encoding it does not expect, an entry
+        PortAudio will not report -- is unrelated to the call being placed,
+        so the count is reported as unavailable instead.
         """
         from sounddevice import PortAudioError, query_devices
 
@@ -106,8 +113,12 @@ class DeviceTable:
                 return "none"
             return "none" if index is None else f"#{index}"
 
+        try:
+            count = f"{len(query_devices())} devices"
+        except (PortAudioError, UnicodeDecodeError) as exc:
+            count = f"device count unavailable ({LogText.failure(exc)})"
         return (
-            f"{len(query_devices())} devices, default input {default('input')}, "
+            f"{count}, default input {default('input')}, "
             f"default output {default('output')}"
         )
 

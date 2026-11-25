@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
+
+if TYPE_CHECKING:
+    from sounddevice import DeviceInfo
+
+    from conversation_mode._fake_sounddevice import Kind
 
 
 def test_refresh_re_reads_the_table_when_no_stream_is_open(
@@ -26,6 +32,37 @@ def test_refresh_re_reads_the_table_when_no_stream_is_open(
     assert line == (
         "PortAudio device table re-read from the system: 2 devices, "
         "default input #0, default output #1"
+    )
+
+
+def test_refresh_reports_a_device_it_cannot_describe_and_still_re_reads(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A device the library cannot describe is unrelated to the call placed.
+
+    Counting the devices decodes every name; one it cannot decode must not
+    keep the call from the devices it can use.
+    """
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    module = sys.modules["sounddevice"]
+
+    def query_devices(kind: Kind | None = None) -> DeviceInfo | list[DeviceInfo]:
+        if kind is None:  # Describing the whole table reaches the bad name.
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return fake.query_devices(kind)
+
+    monkeypatch.setattr(module, "query_devices", query_devices)
+    fake.connect("Headset")
+    with caplog.at_level(logging.INFO):
+        assert DeviceTable().refresh() is True
+    assert fake.query_devices("output")["name"] == "Headset"
+    (line,) = caplog.messages
+    assert line == (
+        "PortAudio device table re-read from the system: device count unavailable "
+        "(UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: "
+        "invalid start byte), default input #0, default output #1"
     )
 
 
