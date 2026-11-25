@@ -306,8 +306,12 @@ class FakeConvAIAgent:
             ):
                 return
             if asyncio.get_running_loop().time() >= deadline:
-                msg = f"{step.path.name} did not contain {step.text!r} within "
-                msg += f"{step.timeout_s:.0f}s"
+                what = (
+                    f"did not contain {step.text!r}"
+                    if step.path.is_file()
+                    else "did not exist"
+                )
+                msg = f"{step.path.name} {what} within {step.timeout_s:.0f}s"
                 raise TimeoutError(msg)
             await asyncio.sleep(0.05)
         self._cut(step)

@@ -311,8 +311,9 @@ async def test_a_log_line_that_never_comes_is_a_fault_naming_it(
 ) -> None:
     """Past its timeout the wait fails the test with the missing text."""
     log = tmp_path / "vox.log"
+    log.write_text("PCM stream open in 3 ms\n")
     agent = FakeConvAIAgent((WaitForLogLine(log, "never written", 0.2), HangUp()))
-    with pytest.raises(TimeoutError, match="'never written' within 0s"):
+    with pytest.raises(TimeoutError, match="did not contain 'never written' within 0s"):
         async with asyncio.timeout(2), agent:
             socket = await _open(agent)
             await _recv(socket)
@@ -333,3 +334,19 @@ async def test_a_client_close_during_a_log_line_wait_is_cut_short(
         await socket.close()
         await asyncio.sleep(0.1)
     assert agent.cut_short == WaitForLogLine(tmp_path / "vox.log", "x")
+
+
+async def test_a_log_file_that_never_appears_is_a_fault_saying_so(
+    tmp_path: Path,
+) -> None:
+    """A missing file is named as missing, not as lacking the text."""
+    missing = tmp_path / "never-written.log"
+    agent = FakeConvAIAgent((WaitForLogLine(missing, "anything", 0.2), HangUp()))
+    with pytest.raises(
+        TimeoutError, match=r"never-written\.log did not exist within 0s"
+    ):
+        async with asyncio.timeout(2), agent:
+            socket = await _open(agent)
+            await _recv(socket)
+            with pytest.raises(ConnectionClosed):
+                await socket.recv()
