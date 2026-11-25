@@ -194,6 +194,42 @@ def test_port_owner_and_pid_come_from_the_files_that_were_read(
     assert PublishedPort.at(path).publisher(8421) == os.getpid()
 
 
+def test_a_port_replaced_mid_read_is_never_paired_with_the_old_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restart lands between the port read and the pid read: the old pid is
+    dead, the new daemon has published, and the reading must not say "gone"."""
+    path = _publish(tmp_path, pid=str(_dead_pid()))
+    real = PublishedPort._owned_text  # pyright: ignore[reportPrivateUsage]
+
+    def restart_during_the_pid_read(file: Path) -> tuple[str, int, object] | None:
+        if file.name == "serve.pid":
+            fresh = tmp_path / ".serve.port.new"
+            fresh.write_text("8421")
+            fresh.replace(tmp_path / "serve.port")  # the new daemon's port file
+        return real(file)
+
+    monkeypatch.setattr(PublishedPort, "_owned_text", restart_during_the_pid_read)
+    assert _why(path) == (
+        "serve.port was replaced while it was being read; no token sent unattributed"
+    )
+
+
+def test_a_port_file_unpublished_mid_read_closes_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _publish(tmp_path)
+    real = PublishedPort._owned_text  # pyright: ignore[reportPrivateUsage]
+
+    def shutdown_during_the_pid_read(file: Path) -> tuple[str, int, object] | None:
+        if file.name == "serve.pid":
+            (tmp_path / "serve.port").unlink()
+        return real(file)
+
+    monkeypatch.setattr(PublishedPort, "_owned_text", shutdown_during_the_pid_read)
+    assert "replaced while it was being read" in _why(path)
+
+
 def test_an_unreadable_file_raises(tmp_path: Path) -> None:
     (tmp_path / "serve.port").write_bytes(b"\xff\xfe")
     with pytest.raises(PortProbeError, match="invalid UTF-8"):

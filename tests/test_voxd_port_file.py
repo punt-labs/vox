@@ -36,6 +36,22 @@ def test_write_publishes_this_process_as_the_publisher(tmp_path: Path) -> None:
     assert pid_file.stat().st_mode & 0o777 == 0o600
 
 
+def test_write_publishes_the_pid_before_the_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader that sees this daemon's port never pairs it with an older pid."""
+    real_replace = Path.replace
+    landed: list[str] = []
+
+    def record(self: Path, target: Path) -> Path:
+        landed.append(target.name)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", record)
+    PortFile(tmp_path).write(8421)
+    assert landed == ["serve.pid", "serve.port"]
+
+
 def test_shutdown_removes_its_own_pid_file(tmp_path: Path) -> None:
     a = PortFile(tmp_path)
     a.write(8421)

@@ -54,6 +54,13 @@ SENT_NOTHING = "no token sent"
             "cannot stat /run/serve.port: denied; no token sent unattributed",
         ),
         (
+            NotAskedError.republished(),
+            (
+                "serve.port was replaced while it was being read; "
+                "no token sent unattributed"
+            ),
+        ),
+        (
             NotAskedError.no_pid(),
             "serve.pid publishes no pid; no token sent unattributed",
         ),

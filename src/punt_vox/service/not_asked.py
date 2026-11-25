@@ -84,6 +84,14 @@ class NotAskedError(RuntimeError):
         return cls(f"{why}; no token sent unattributed")
 
     @classmethod
+    def republished(cls) -> Self:
+        """Return the miss for a ``serve.port`` replaced while the pair was read."""
+        return cls(
+            "serve.port was replaced while it was being read; "
+            "no token sent unattributed"
+        )
+
+    @classmethod
     def no_pid(cls) -> Self:
         """Return the miss for no ``serve.pid`` beside ``serve.port``."""
         return cls("serve.pid publishes no pid; no token sent unattributed")

@@ -12,7 +12,12 @@ never sent the token. When the gate closes it says which reading closed it.
 Each file's text and owner come from one open descriptor: the bytes read and
 the ``fstat`` of the file they were read from. A separate ``stat`` of the
 path could describe a file voxd renamed into place after the read, and then
-the uid trusted would not be the uid of the bytes trusted. The reader never
+the uid trusted would not be the uid of the bytes trusted. The two files are
+replaced by separate renames, so the pair is checked too: voxd publishes
+``serve.pid`` before ``serve.port``, and the reader reads the port, then the
+pid, then the port again and trusts the pair only when the port file is
+still the one it read first. A restart that lands mid-read is therefore
+never a new port paired with the previous daemon's pid. The reader never
 takes voxd's lock and never changes a file.
 """
 
@@ -23,6 +28,7 @@ import os
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from punt_vox.client_port import PortText
+from punt_vox.file_identity import FileIdentity
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.not_asked import NotAskedError
 
@@ -75,7 +81,7 @@ class PublishedPort:
         read = cls._owned_text(port_file)
         if read is None:
             return cls(None, refusal=NotAskedError.unpublished())
-        text, uid = read
+        text, uid, seen = read
         try:
             port = PortText.parse(text)
         except ValueError as exc:
@@ -84,7 +90,8 @@ class PublishedPort:
         refusal = cls._foreign(port_file.name, uid)
         if refusal is not None:
             return cls(port, refusal=refusal)
-        return cls._with_pid(port, port_file.with_name(cls.PID_FILE))
+        reading = cls._with_pid(port, port_file.with_name(cls.PID_FILE))
+        return reading if cls._still(port_file, seen) else cls._republished(port)
 
     @classmethod
     def _with_pid(cls, port: int, pid_file: Path) -> Self:
@@ -92,10 +99,21 @@ class PublishedPort:
         read = cls._owned_text(pid_file)
         if read is None:
             return cls(port, refusal=NotAskedError.no_pid())
-        text, uid = read
+        text, uid, _ = read
         if not cls._is_pid(text):
             return cls(port, refusal=NotAskedError.pid_unparseable())
         return cls(port, int(text), refusal=cls._foreign(pid_file.name, uid))
+
+    @classmethod
+    def _still(cls, port_file: Path, seen: FileIdentity) -> bool:
+        """Return True when *port_file* is still the file read as *seen*."""
+        again = cls._owned_text(port_file)
+        return again is not None and again[2] == seen
+
+    @classmethod
+    def _republished(cls, port: int) -> Self:
+        """Return the reading for a port file replaced while the pair was read."""
+        return cls(port, refusal=NotAskedError.republished())
 
     @classmethod
     def _is_pid(cls, text: str) -> bool:
@@ -112,8 +130,10 @@ class PublishedPort:
         return None if uid == os.getuid() else NotAskedError.not_owned(name, uid)
 
     @staticmethod
-    def _owned_text(path: Path) -> tuple[str, int] | None:
-        """Return *path*'s text and owner uid from one open file; ``None`` if absent.
+    def _owned_text(path: Path) -> tuple[str, int, FileIdentity] | None:
+        """Return *path*'s text, owner uid and identity from one open file.
+
+        ``None`` is the documented answer when no file is there.
 
         Raises:
             PortProbeError: If the file is there but cannot be read or statted.
@@ -121,7 +141,7 @@ class PublishedPort:
         try:
             with path.open("rb") as handle:
                 try:
-                    uid = os.fstat(handle.fileno()).st_uid
+                    st = os.fstat(handle.fileno())
                 except OSError as exc:
                     msg = f"cannot stat {path}: {exc}"
                     raise PortProbeError(msg) from exc
@@ -134,7 +154,7 @@ class PublishedPort:
         except OSError as exc:
             msg = f"cannot read {path}: {exc}"
             raise PortProbeError(msg) from exc
-        return text, uid
+        return text, st.st_uid, FileIdentity.of(st)
 
     @property
     def port(self) -> int | None:

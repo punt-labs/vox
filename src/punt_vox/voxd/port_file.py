@@ -74,8 +74,10 @@ class PortFile:
         """
         pid = os.getpid()
         with self._lock.held():
-            self._mine = self._publish(self._path, str(port))
+            # The pid first: a reader that sees this daemon's serve.port then
+            # never pairs it with a previous daemon's serve.pid.
             self._mine_pid = self._publish(self._pid_path, str(pid))
+            self._mine = self._publish(self._path, str(port))
         logger.info("Wrote port file: %s (port %d, pid %d)", self._path, port, pid)
 
     @classmethod
