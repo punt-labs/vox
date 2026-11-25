@@ -195,6 +195,138 @@ stop can still remove that session once without changing the exited phase.
   worker? \notin pending
 \end{schema}
 
+\section{Worktree discard}
+
+A launch that fails owes the discard of its worktree and branch. The discard
+runs git and removes directories, so it never runs under the actor lock: the
+rollback only records that it is owed, and the cleanup queue runs it later.
+A checkout is deleted only after the provider's termination is confirmed; a
+pane that may still be live keeps its checkout. A skipped or failed discard
+is owed again on a later stop. The free type is prefixed so its names cannot
+collide with B keywords under ProB.
+
+\begin{zed}
+  Discard ::= dNone | dPending | dSkipped | dError | dDone
+\end{zed}
+
+\begin{schema}{WorkerDiscards}
+  Workers \\
+  discard : WORKER \pfun Discard \\
+  providerStopped : \power WORKER
+\where
+  \dom discard = \dom phase \\
+  providerStopped \subseteq \dom phase \\
+  \forall w : \dom discard @ discard~w = dDone \implies
+    phase~w \in \{exited, stopped\} \land w \in providerStopped \\
+  \forall w : \dom discard @ discard~w = dPending \implies
+    phase~w \in \{exited, stopped\} \land w \in providerStopped
+\end{schema}
+
+Named invariants checked by implementation tests are:
+\textbf{discard after confirmed stop} (a worktree is gone only when the
+provider stopped and the phase is terminal), \textbf{discard off the lock}
+(the launch error returns while the discard is still pending), and
+\textbf{discard retried on stop} (a skipped or failed discard is owed again
+once a later stop leaves the worker stopped).
+
+\begin{schema}{InitWorkerDiscards}
+  WorkerDiscards
+\where
+  InitWorkers \\
+  discard = \emptyset \\
+  providerStopped = \emptyset
+\end{schema}
+
+\begin{schema}{Rollback}
+  \Delta WorkerDiscards \\
+  FailedLaunch
+\where
+  discard~worker? = dNone \\
+  next? = stopped \implies
+    discard' = discard \oplus \{worker? \mapsto dPending\} \land
+    providerStopped' = providerStopped \cup \{worker?\} \\
+  next? = starting \implies
+    discard' = discard \oplus \{worker? \mapsto dSkipped\} \land
+    providerStopped' = providerStopped
+\end{schema}
+
+Rollback is \textit{FailedLaunch} with the discard recorded: the provider
+stopped, so the discard is pending; or it did not, so the checkout is kept
+and the record says why. Neither branch runs git.
+
+\begin{schema}{DiscardComplete}
+  \Delta WorkerDiscards \\
+  worker? : WORKER \\
+  outcome? : Discard \\
+  result? : REPORT
+\where
+  worker? \in \dom discard \\
+  discard~worker? = dPending \\
+  outcome? \in \{dDone, dError, dSkipped\} \\
+  discard' = discard \oplus \{worker? \mapsto outcome?\} \\
+  report' = report \oplus \{worker? \mapsto result?\} \\
+  phase' = phase \\
+  readySeen' = readySeen \\
+  pending' = pending \\
+  providerStopped' = providerStopped
+\end{schema}
+
+The cleanup queue runs a pending discard and records done, the error, or
+skipped when the checkout holds edits made since the launch failed (the
+operator's work is kept and a later stop owes the discard again), folding
+only the discard markers onto a record that may carry a later worker
+report. A pending discard already has a stopped phase and a stopped
+provider, so done never contradicts the state invariant.
+
+\begin{schema}{DiscardRetryOnStopOfStarting}
+  \Delta WorkerDiscards \\
+  worker? : WORKER
+\where
+  worker? \in \dom discard \\
+  discard~worker? = dSkipped \\
+  phase~worker? = starting \\
+  phase' = phase \oplus \{worker? \mapsto stopped\} \\
+  providerStopped' = providerStopped \cup \{worker?\} \\
+  discard' = discard \oplus \{worker? \mapsto dPending\} \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending \cup \{worker?\}
+\end{schema}
+
+\begin{schema}{DiscardRetryOnStopOfStopped}
+  \Delta WorkerDiscards \\
+  worker? : WORKER
+\where
+  worker? \in \dom discard \\
+  discard~worker? \in \{dSkipped, dError\} \\
+  phase~worker? \in \{exited, stopped\} \\
+  worker? \in providerStopped \\
+  discard' = discard \oplus \{worker? \mapsto dPending\} \\
+  phase' = phase \\
+  providerStopped' = providerStopped \\
+  report' = report \\
+  readySeen' = readySeen \\
+  pending' = pending
+\end{schema}
+
+\begin{zed}
+  DiscardRetryOnStop \defs
+    DiscardRetryOnStopOfStarting \lor DiscardRetryOnStopOfStopped
+\end{zed}
+
+An explicit stop retries a skipped or failed discard in one of two ways,
+by the phase it finds. A worker still \textit{starting} (its rollback
+could not stop the provider, so the discard was skipped) is stopped now:
+the provider stops, harness cleanup is owed, and the discard is queued. A
+worker already terminal, \textit{stopped} or \textit{exited} (its provider
+is confirmed gone: a stop succeeded and the discard failed, or startup
+observed the pane dead and retired a record whose rollback had skipped the
+discard), owes no harness cleanup and no provider stop; only the discard is
+queued again.
+Either way the queue then takes \textit{DiscardComplete}. A stop of a
+starting worker whose provider refuses again leaves the discard skipped
+and the checkout in place.
+
 \section{Steering state and invariants}
 
 Steering observes input or a pending dialog's next hook, not turn completion.

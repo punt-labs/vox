@@ -19,10 +19,19 @@ if TYPE_CHECKING:
 class WorkerInventory:
     """Own the in-process inventory, persistence and hook identity."""
 
-    __slots__ = ("_exited", "_records", "_unconfirmed", "_updates", "_workers")
+    __slots__ = (
+        "_exited",
+        "_records",
+        "_unconfirmed",
+        "_unsaved",
+        "_updates",
+        "_workers",
+    )
     _exited: set[str]
     _records: WorkerRecords
     _unconfirmed: set[str]
+    # Workers whose in-memory record is newer than the disk: a save failed.
+    _unsaved: set[str]
     _updates: RLock
     _workers: dict[str, WorkerRecord]
 
@@ -33,6 +42,7 @@ class WorkerInventory:
         self._workers = {}
         self._exited = set()
         self._unconfirmed = set()
+        self._unsaved = set()
         self._updates = RLock()
         return self
 
@@ -73,16 +83,66 @@ class WorkerInventory:
             raise ValueError(f"no worker {worker_id}") from None
 
     def save(self, record: WorkerRecord) -> WorkerRecord:
-        """Persist a changed record before exposing it to other operations."""
-        if self._workers.get(record.id) != record:
-            self._records.save(record)
-            self.remember(record)
+        """Persist a changed record before exposing it to other operations.
+
+        Memory may already hold *record* because an earlier save of it
+        failed and the failure path remembered it; the disk is then behind
+        memory, and the write must happen even though nothing in memory
+        changes. Otherwise a retried checkpoint reports success while the
+        disk lacks it and a restart loses it.
+        """
+        with self._updates:
+            if self._workers.get(record.id) != record or record.id in self._unsaved:
+                self._persist(record)
         return record
+
+    def _persist(self, record: WorkerRecord) -> None:
+        """Write the record and mark memory and disk as agreeing; lock held.
+
+        A failed write of a record already registered leaves memory newer
+        than the disk: the record stays in memory and its id is marked
+        unsaved, so the next save writes even when nothing in memory
+        changes. A record whose first save fails was never registered and
+        leaves nothing behind.
+        """
+        try:
+            self._records.save(record)
+        except (OSError, ValueError):
+            if record.id in self._workers:
+                self._unsaved.add(record.id)
+                self.remember(record)
+            raise
+        self._unsaved.discard(record.id)
+        self.remember(record)
+
+    def acknowledged(self, record: WorkerRecord, sequence: int) -> bool:
+        """Say whether a redelivered event is already safe to acknowledge.
+
+        The durable gap checkpoint shows which sequences were saved. Memory
+        may show one received while the disk does not, because that save
+        failed; such a delivery is projected again so the retried save lands
+        it. Only a sequence the disk agrees on is acknowledged from memory.
+        """
+        gaps = record.last_report.get("gaps")
+        with self._updates:
+            return (
+                "worker_seq" in record.last_report
+                and isinstance(gaps, dict)
+                and HookGaps.received(cast("HookGapReport", gaps), sequence)
+                and record.id not in self._unsaved
+            )
 
     def update(
         self, worker_id: str, transform: Callable[[WorkerRecord], WorkerRecord]
     ) -> WorkerRecord:
-        """Serialize updates that can race with retirement cleanup completion."""
+        """Serialize updates that can race with retirement cleanup completion.
+
+        The read, the transform and the write happen under one lock, so a
+        concurrent update is never overwritten by a stale copy. A save that
+        fails still leaves the transformed record in memory, marked unsaved,
+        before the error propagates: an outcome such as a finished discard is
+        irreversible, and memory must carry it even when the disk does not.
+        """
         with self._updates:
             return self.save(transform(self.get(worker_id)))
 
@@ -145,14 +205,3 @@ class WorkerInventory:
             return None
         path = Path(cwd)
         return str(path.resolve()) if path.is_absolute() else None
-
-    @staticmethod
-    def received(record: WorkerRecord, sequence: int) -> bool:
-        """Recognize an event already saved in the durable gap checkpoint."""
-        report = record.last_report
-        gaps = report.get("gaps")
-        return (
-            "worker_seq" in report
-            and isinstance(gaps, dict)
-            and HookGaps.received(cast("HookGapReport", gaps), sequence)
-        )
