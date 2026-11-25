@@ -192,3 +192,27 @@ def test_repos_check_warns_when_the_daemon_cannot_answer(
     assert result.status_kind == "warn"
     assert result.message.startswith("Worker repositories:")
     assert expected in result.message
+
+
+def test_mic_check_warns_on_a_reply_that_is_not_a_report() -> None:
+    """A daemon answer without the report's fields is a warning, not a crash."""
+    with patch.object(DaemonControl, "request", return_value={"device": "mic"}):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert result.message == (
+        "Microphone (voxd): mic probe reply is missing a report field"
+    )
+
+
+@pytest.mark.parametrize("reply", ["not a list", ["/srv/vox", 7]])
+def test_repos_check_warns_on_a_reply_that_is_not_a_list_of_paths(
+    reply: object,
+) -> None:
+    with patch.object(DaemonControl, "request", return_value=reply):
+        result = WorkerReposCheck().run()
+
+    assert result.status_kind == "warn"
+    assert result.message == (
+        "Worker repositories: worker_repos reply is not a list of paths"
+    )

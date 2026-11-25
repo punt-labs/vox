@@ -779,3 +779,39 @@ def test_devices_reads_both_defaults_under_a_reservation(
     assert outcomes == [(1, False)]
     assert pair.input.name == "Fake input"
     assert table.open_streams == 0
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _FakePortAudioError("Error querying device 3"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ],
+)
+def test_open_refuses_when_the_selected_index_cannot_be_described_after_the_open(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """An index the table no longer describes is a refusal; the stream is closed."""
+    created: list[FakeInputStream] = []
+
+    def query_devices(kind: str | int) -> DeviceInfo:
+        if kind == 3:
+            raise error
+        return {"name": "USB Audio", "index": 3, "default_samplerate": 48000.0}
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(monkeypatch, query_devices=query_devices, RawInputStream=raw_input_stream)
+    table = DeviceTable()
+    with pytest.raises(OSError, match="cannot open input device USB Audio"):
+        PortAudio(table).open(
+            InputDevice("USB Audio", 48000.0, index=3),
+            samplerate=16000.0,
+            blocksize=0,
+            callback=_ignore,
+        )
+
+    assert created[0].closed
+    assert table.open_streams == 0
