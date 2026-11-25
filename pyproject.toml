@@ -385,6 +385,7 @@ adapters = [
     "punt_vox.private_state",
     "punt_vox.providers",
     "punt_vox.providers.*",
+    "punt_vox.segment_array",
     "punt_vox.segment_file",
     "punt_vox.settings_registration",
     "punt_vox.sibling_lock",

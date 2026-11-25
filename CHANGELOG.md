@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Speak spaced currency scales such as `$1 million` as “1 million dollars.”
 
+- `vox say --from` and `vox rec new --from` reject a segment whose text has an
+  escaped lone surrogate (such as `"\ud800"`) as an invalid segments file:
+  one usage error, exit 2, before any segment is spoken or recorded. (PL-1611)
+
 - The first setting written from a Git repo's subdirectory now goes to the
   repo root's `.punt-labs/vox/` when no config exists yet. (PL-1601)
 
