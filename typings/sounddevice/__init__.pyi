@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Buffer, Callable
+from collections.abc import Buffer, Callable, Mapping
 from typing import Self
+
+class PortAudioError(Exception):
+    """Raised when PortAudio refuses an operation, such as opening a device."""
+
+# Only the ``kind="input"`` form this project calls is declared; the real
+# function also takes a device index or name and returns a list for ``kind=None``.
+def query_devices(*, kind: str) -> Mapping[str, object]: ...
+def sleep(msec: int) -> None: ...
 
 # The subset of PortAudio's ``CallbackFlags`` this project inspects: whether
 # capture overran the buffer between two callback invocations, which is a

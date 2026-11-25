@@ -7,13 +7,12 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.cache import cache_clear, cache_status
 from punt_vox.logging_config import apply_log_level
 from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
-from punt_vox.voxd.chimes import ChimeResolver
-from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
+from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 from punt_vox.voxd.recording_handlers import RecordingHandlers
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
-from punt_vox.voxd.system_handlers import ChimeHandler, HealthHandler, VoicesHandler
+from punt_vox.voxd.system_routes import SystemRoutes
 from punt_vox.voxd.workers.context import WorkerContext
 
 if TYPE_CHECKING:
@@ -33,8 +32,8 @@ class HandlerRegistry:
     """Assemble the ``{message type -> handler}`` dispatch table.
 
     Extracted from the daemon composition root so wiring the concrete handlers
-    (and the dedup/chime collaborators they need) lives in one focused module
-    rather than fanning every handler import into the daemon.
+    lives in one focused module rather than fanning every handler import into
+    the daemon; the subsystem-free routes come from :class:`SystemRoutes`.
     """
 
     __slots__ = ("_health", "_playback", "_programs", "_synthesis")
@@ -78,13 +77,7 @@ class HandlerRegistry:
             "cache_status": CacheStatusHandler(cache_status),
             "cache_clear": CacheClearHandler(cache_clear),
             "set_log_level": LogLevelHandler(apply_log_level),
-            "chime": ChimeHandler(
-                chimes=ChimeResolver(),
-                chime_dedup=ChimeDedup(),
-                playback=self._playback,
-            ),
-            "voices": VoicesHandler(),
-            "health": HealthHandler(health=self._health),
+            **SystemRoutes.build(playback=self._playback, health=self._health),
             "provider_status": ProviderStatusHandler(env_lock=self._synthesis.env_lock),
             **WorkerContext.handlers(
                 self._playback,

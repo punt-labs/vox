@@ -26,6 +26,7 @@ from punt_vox.client_errors import (
     VoxdRefusedError,
     VoxdRejectionError,
 )
+from punt_vox.daemon_control import DaemonControl
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -1572,6 +1573,9 @@ class TestDoctorCommand:
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
             patch("punt_vox.doctor_call_workers.Path") as worker_path,
+            # The mic probe and the allowlist are daemon answers; a healthy
+            # daemon hears signal and allowlists one repository.
+            patch.object(DaemonControl, "request", side_effect=self._daemon_answer),
             # Isolate the config-path helper from the real filesystem.
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
@@ -1583,6 +1587,17 @@ class TestDoctorCommand:
             worker_path.return_value.is_dir.return_value = False
             return runner.invoke(app, ["doctor"])
 
+    @staticmethod
+    async def _daemon_answer(operation: str, **_fields: object) -> object:
+        if operation == "probe":
+            return {
+                "device": "Built-in Microphone",
+                "sample_rate_hz": 16_000,
+                "peak": 900,
+                "samples": 16_000,
+            }
+        return ["/Users/me/vox-demo"]
+
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)
         assert result.exit_code == 0
@@ -1592,6 +1607,8 @@ class TestDoctorCommand:
         assert "ElevenLabs convai_write" in result.output
         assert "Claude login:" in result.output
         assert "tmux:" in result.output
+        assert "\u2713 Microphone (voxd): Built-in Microphone" in result.output
+        assert "\u2713 Worker repositories: 1 allowlisted (vox-demo)" in result.output
         assert "Echo cancellation: not built in" in result.output
 
     def test_ffmpeg_missing_fails(self, tmp_path: Path) -> None:

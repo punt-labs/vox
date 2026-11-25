@@ -24,6 +24,12 @@
     "added_at": "2026-08-25T08:01:32Z"
   },
   {
+    "file": "src/punt_vox/voxd/mic_probe.py",
+    "ceiling": 1,
+    "justify": "PLC0415 per-file-ignore: sounddevice is the optional call extra, imported inside sounddevice_capture so every voxd start can import this module without PortAudio -- the same allowance pcm_output.py and mic_audio_source.py carry",
+    "added_at": "2026-11-24T07:11:36.517586Z"
+  },
+  {
     "file": "src/punt_vox/voxd/pcm_output.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.",

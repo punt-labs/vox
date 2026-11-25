@@ -1,0 +1,126 @@
+"""Doctor checks that ask the running daemon about its microphone and allowlist."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRefusedError,
+)
+from punt_vox.daemon_control import DaemonControl
+from punt_vox.doctor_call_daemon import MicCaptureCheck, WorkerReposCheck
+from punt_vox.types_mic import MicProbeReport
+
+
+def _reply(peak: int) -> dict[str, object]:
+    return MicProbeReport(
+        device="MacBook Pro Microphone",
+        sample_rate_hz=16_000,
+        peak=peak,
+        samples=16_000,
+    ).to_wire()
+
+
+def test_mic_check_passes_when_the_daemon_hears_signal() -> None:
+    with patch.object(DaemonControl, "request", return_value=_reply(812)) as rpc:
+        result = MicCaptureCheck().run()
+
+    rpc.assert_awaited_once()
+    assert rpc.call_args.args == ("probe",)
+    assert result.status_kind == "pass"
+    assert not result.required
+    assert result.message.startswith("Microphone (voxd):")
+    assert "MacBook Pro Microphone" in result.message
+    assert "16000 Hz" in result.message
+    assert "peak 812" in result.message
+
+
+def test_mic_check_warns_and_names_the_grant_when_every_sample_is_zero() -> None:
+    with patch.object(DaemonControl, "request", return_value=_reply(0)):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert not result.required
+    assert "MacBook Pro Microphone" in result.message
+    assert "silence" in result.message
+    assert "Privacy & Security" in result.message
+    assert "Microphone" in result.message
+    assert "terminal" in result.message
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (VoxdRefusedError("refused"), "daemon not running"),
+        (VoxdConnectionError("timed out"), "timed out"),
+        (
+            VoxdProtocolError("Error opening RawInputStream: no default input"),
+            "no default input",
+        ),
+    ],
+)
+def test_mic_check_warns_when_the_daemon_cannot_answer(
+    error: Exception, expected: str
+) -> None:
+    with patch.object(DaemonControl, "request", side_effect=error):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert not result.required
+    assert result.message.startswith("Microphone (voxd):")
+    assert expected in result.message
+
+
+def test_mic_check_never_captures_in_the_doctor_process() -> None:
+    """The check talks to the daemon only; no capture backend is imported here."""
+    with (
+        patch.object(DaemonControl, "request", return_value=_reply(5)),
+        patch("punt_vox.voxd.mic_probe.sounddevice_capture") as local_capture,
+    ):
+        MicCaptureCheck().run()
+    local_capture.assert_not_called()
+
+
+def test_repos_check_reports_the_count_and_last_path_segments() -> None:
+    repos = ["/Users/me/Coding/punt-labs/vox-demo", "/srv/lux"]
+    with patch.object(DaemonControl, "request", return_value=repos) as rpc:
+        result = WorkerReposCheck().run()
+
+    assert rpc.call_args.args == ("repos",)
+    assert result.status_kind == "pass"
+    assert not result.required
+    assert result.message == "Worker repositories: 2 allowlisted (vox-demo, lux)"
+
+
+def test_repos_check_warns_when_nothing_is_allowlisted() -> None:
+    with patch.object(DaemonControl, "request", return_value=[]):
+        result = WorkerReposCheck().run()
+
+    assert result.status_kind == "warn"
+    assert not result.required
+    assert result.message == (
+        "Worker repositories: none allowlisted; run vox worker allow <path>"
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (VoxdRefusedError("refused"), "daemon not running"),
+        (VoxdConnectionError("timed out"), "timed out"),
+        (VoxdProtocolError("Worker startup recovery failed"), "recovery failed"),
+    ],
+)
+def test_repos_check_warns_when_the_daemon_cannot_answer(
+    error: Exception, expected: str
+) -> None:
+    with patch.object(DaemonControl, "request", side_effect=error):
+        result = WorkerReposCheck().run()
+
+    assert result.status_kind == "warn"
+    assert result.message.startswith("Worker repositories:")
+    assert expected in result.message

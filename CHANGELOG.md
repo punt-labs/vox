@@ -140,6 +140,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vox doctor` asks the running daemon to open its default microphone for one
+  second (`mic_probe`) and reports the device, sample rate and peak level,
+  warning with the privacy-grant fix when the daemon hears only silence. It
+  also reads the worker repository allowlist from the daemon (`worker_repos`)
+  and warns when nothing is allowlisted. (PL-1492)
+
 - `vox doctor` reports call prerequisites: the local ElevenLabs key's
   `convai_write` scope, Claude login expiry, tmux, and echo cancellation.
   Live calls require `--headset` or `--aec` (a system echo-cancelled
