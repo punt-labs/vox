@@ -3419,7 +3419,7 @@ class TestDaemonStatusCommand:
         assert world.tokens_to == []
 
     def test_status_unresponsive_text_exits_nonzero(self) -> None:
-        world = FakeWorld(rejects=True, health_error="connection reset")
+        world = FakeWorld(token_written=False)
         world.run_unit(100)
         with patch(
             f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
@@ -3428,7 +3428,7 @@ class TestDaemonStatusCommand:
             result = CliRunner().invoke(app, ["daemon", "status"])
         assert result.exit_code == 1
         assert "Daemon: unresponsive" in result.output
-        assert "connection reset" in result.output
+        assert "serve.token is absent" in result.output
 
     def test_a_broken_probe_is_unknown_not_not_running(self) -> None:
         world = FakeWorld(probe_error="cannot run fuser: not found (install psmisc)")
@@ -3636,12 +3636,12 @@ class TestDaemonStatusCommand:
 
     def test_json_unresponsive_carries_the_refusal(self) -> None:
         """A visible voxd that refuses the request is unresponsive, with the cause."""
-        world = FakeWorld(rejects=True, health_error="connection refused")
+        world = FakeWorld(token_written=False)
         world.run_unit(100)
         result, payload = self._status(world)
         assert result.exit_code == 1, result.output
         assert payload["status"] == "unresponsive"
-        assert "connection refused" in str(payload["reason"])
+        assert "serve.token is absent" in str(payload["reason"])
 
 
 # ---------------------------------------------------------------------------
