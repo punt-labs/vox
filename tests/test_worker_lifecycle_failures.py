@@ -300,7 +300,11 @@ class _StopRefusingProvider(FakeWorkerProvider):
 def test_failed_stop_keeps_the_worktree_and_says_why(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Rollback (Z): a pane that may still be live keeps its checkout."""
+    """Rollback (Z): a pane that may still be live keeps its checkout.
+
+    Invariant "discard after confirmed stop": a worktree is gone only when
+    the provider stopped and the phase is terminal.
+    """
     provider = _StopRefusingProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
@@ -381,7 +385,11 @@ def test_tmux_kill_failure_on_rollback_keeps_the_worktree(tmp_path: Path) -> Non
 def test_failed_launch_discards_its_worktree_in_the_background(
     tmp_path: Path,
 ) -> None:
-    """Rollback (Z): the launch error returns before the discard runs."""
+    """Rollback (Z): the launch error returns before the discard runs.
+
+    Invariant "discard off the lock": the launch error returns while the
+    discard is still pending.
+    """
     provider = FakeWorkerProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
@@ -409,7 +417,11 @@ def test_failed_launch_discards_its_worktree_in_the_background(
 
 
 def test_later_stop_retries_a_skipped_discard(tmp_path: Path) -> None:
-    """DiscardRetryOnStop (Z): a clean stop re-queues the discard and runs it."""
+    """DiscardRetryOnStop (Z): a clean stop re-queues the discard and runs it.
+
+    Invariant "discard retried on stop": a skipped discard is owed again once
+    a later stop leaves the worker stopped.
+    """
     provider = _StopRefusingProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
@@ -430,7 +442,11 @@ def test_later_stop_retries_a_skipped_discard(tmp_path: Path) -> None:
 
 
 def test_later_stop_retries_a_failed_discard(tmp_path: Path) -> None:
-    """DiscardRetryOnStop (Z): a transient discard error is retried on stop."""
+    """DiscardRetryOnStop (Z): a transient discard error is retried on stop.
+
+    Invariant "discard retried on stop": a failed discard is owed again once
+    a later stop leaves the worker stopped.
+    """
     provider = FakeWorkerProvider()
     provider.fail = True
     worktrees = MagicMock(spec=WorkerWorktrees)
