@@ -86,10 +86,10 @@ class SoundDeviceCapture:
         Raises:
             MicProbeError: If the extra is absent, the backend has no default
                 input device or cannot describe it, or the device refuses
-                the stream.
+                the stream or will not release it.
         """
         try:
-            from sounddevice import sleep
+            from sounddevice import PortAudioError, sleep
         except (ImportError, OSError) as exc:
             msg = (
                 "microphone capture needs the `call` extra and PortAudio: "
@@ -112,10 +112,18 @@ class SoundDeviceCapture:
             )
         except (OSError, UnicodeDecodeError) as exc:
             raise MicProbeError(str(exc)) from exc
+        # The close is the last PortAudio call; a failure there is the device's
+        # error too, and must reach the doctor as one rather than as a dropped
+        # connection from the router's catch-all.
         try:
             sleep(round(seconds * 1000))
         finally:
-            stream.__exit__(None, None, None)
+            try:
+                stream.__exit__(None, None, None)
+            except (OSError, PortAudioError) as exc:
+                raise MicProbeError(
+                    f"cannot release input device {device.name}: {exc}"
+                ) from exc
         return self._summarise(device.name, b"".join(blocks))
 
     @staticmethod

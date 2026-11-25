@@ -276,3 +276,30 @@ def test_capture_reports_the_device_it_captured_from_when_the_default_moves(
 
     assert report.device == fake.streams[-1].device_name == "Built-in"
     assert report.peak == 5
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FakePortAudioError("Error closing stream: Internal PortAudio error"),
+        OSError("cannot release input device Fake Microphone"),
+    ],
+)
+def test_a_stream_that_will_not_close_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A close that fails is the device's error, not a lost connection."""
+
+    class _Unclosable(_RecordingStream):
+        def __exit__(self, *exc_info: object) -> None:
+            raise error
+
+    class _Backend(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            return FAKE_DEVICE, _Unclosable(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    with pytest.raises(MicProbeError, match=str(error)):
+        SoundDeviceCapture(_Backend([]))(0.01)
