@@ -601,6 +601,9 @@ class TestSymbolStripping:
         ("3 > 2 > 1", "3 greater than 2 greater than 1"),
         ("x < 1.5 and 3 > y", "x less than 1.5 and 3 greater than y"),
         ("$5 < 10", "5 dollars less than 10"),
+        ("5€ < 10", "5 euros less than 10"),
+        ("$1 million < x", "1 million dollars less than x"),
+        ("a == $1 million", "a equal to 1 million dollars"),
         ("0x10 < 0x20", "0 x 10 less than 0 x 20"),
     ],
 )

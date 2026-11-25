@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import final
+from typing import NamedTuple, final
 
-from punt_vox._currency_grammar import CurrencyGrammar
+from punt_vox._currency_grammar import SCALES, UNITS, CurrencyGrammar
+from punt_vox._currency_prose import ProseCurrency
 from punt_vox._inline_code import InlineCode
 from punt_vox._link_labels import VIBE_TAG_RE, LinkSpan
 from punt_vox._speech_markdown import SpeechMarkdown
@@ -31,6 +32,13 @@ _OPERAND_RE = re.compile(r"[^\s<>!=]+")
 _WRAPPERS = """'"`()[]{}*.,;:?!"""
 _NUMBER_RE = re.compile(r"[-+\u2212]?(?:\d+(?:[.,]\d+)*|[.,]\d+)(?:[eE][+-]?\d+)?%?")
 _RADIX_RE = re.compile(r"0(?:[xX][\da-fA-F]+|[bB][01]+|[oO][0-7]+)")
+_CURRENCY_RE = re.compile(f"[{''.join(UNITS)}]")
+
+
+class _Word(NamedTuple):
+    value: str
+    start: int
+    end: int
 
 
 @final
@@ -78,20 +86,34 @@ class SpeechInput:
         words = cls._word_matches(line, vibed=vibed)
         parts: list[str] = []
         cursor = 0
-        for index in cls._operators([word[0] for word in words]):
+        for index in cls._operators([word.value for word in words]):
             word = words[index]
-            parts.extend((line[cursor : word.start()], _SPOKEN[word[0]]))
-            cursor = word.end()
+            parts.extend((line[cursor : word.start], _SPOKEN[word.value]))
+            cursor = word.end
         return "".join(parts) + line[cursor:]
 
-    @staticmethod
-    def _word_matches(line: str, *, vibed: bool) -> list[re.Match[str]]:
+    @classmethod
+    def _word_matches(cls, line: str, *, vibed: bool) -> list[_Word]:
         quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
-        return [
-            word
-            for word in _WORD_RE.finditer(line, quote.end() if quote else 0)
-            if not (vibed and VIBE_TAG_RE.fullmatch(word[0]))
-        ]
+        words: list[_Word] = []
+        for word in _WORD_RE.finditer(line, quote.end() if quote else 0):
+            if vibed and VIBE_TAG_RE.fullmatch(word[0]):
+                continue
+            if words and cls._extends_amount(words[-1].value, word[0]):
+                previous = words.pop()
+                words.append(
+                    _Word(f"{previous.value} {word[0]}", previous.start, word.end())
+                )
+            else:
+                words.append(_Word(word[0], word.start(), word.end()))
+        return words
+
+    @classmethod
+    def _extends_amount(cls, amount: str, word: str) -> bool:
+        scale = word.strip(_WRAPPERS).lower()
+        return (
+            len(scale) > 1 and scale in SCALES and cls._is_currency(f"{amount} {word}")
+        )
 
     @classmethod
     def _operators(cls, words: list[str]) -> Iterator[int]:
@@ -148,16 +170,25 @@ class SpeechInput:
                 return False
         return has_number
 
-    @staticmethod
-    def _is_numeric(value: str) -> bool:
+    @classmethod
+    def _is_numeric(cls, value: str) -> bool:
         return bool(
             _NUMBER_RE.fullmatch(value)
             or _RADIX_RE.fullmatch(value)
-            or CurrencyGrammar.CODE_AMOUNT.fullmatch(value)
+            or cls._is_currency(value)
         )
 
     @staticmethod
-    def _is_operand(value: str) -> bool:
+    def _is_currency(value: str) -> bool:
+        if _CURRENCY_RE.search(value) is None:
+            return False
+        amount = ProseCurrency.canonicalize(value.strip(_WRAPPERS), tag=None)
+        return CurrencyGrammar.prose_pattern(amount).fullmatch(amount) is not None
+
+    @classmethod
+    def _is_operand(cls, value: str) -> bool:
+        if " " in value:
+            return cls._is_currency(value)
         return (
             _OPERAND_RE.fullmatch(value.rstrip(_WRAPPERS)) is not None
             and VIBE_TAG_RE.fullmatch(value) is None
