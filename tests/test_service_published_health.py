@@ -21,6 +21,7 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.health import HealthTarget
+from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.published_port import PublishedPort
 from punt_vox.types_health import HealthStatus
@@ -195,19 +196,83 @@ def test_a_ps_that_cannot_run_is_a_miss_not_an_error(
     )
 
 
-def test_the_ps_and_the_holder_check_are_cut_to_the_request_bound(
+def test_the_ps_is_cut_to_the_request_bound_and_the_holder_check_to_its_own(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The holder check gets its own slice; it can never spend the request floor."""
     _listening(monkeypatch)
     mgr = _published(monkeypatch, _ours())
     target = MagicMock(host="127.0.0.1", port=8421)
     target.client.return_value.health.return_value = HealthStatus(status="ok")
     probe_over(mgr, target).published_health(1.5)
-    for call in mgr.within.call_args_list:
-        (bound,) = call.args
-        assert bound.remaining() == pytest.approx(1.5)
+    ps_bound, holder_bound = (call.args[0] for call in mgr.within.call_args_list)
+    assert ps_bound.remaining() == pytest.approx(1.5)
+    assert holder_bound.remaining() == pytest.approx(DaemonProbe.HOLDER_CHECK_S)
     mgr.within.return_value.holds_port.assert_called_once_with(
         os.getpid(), "127.0.0.1", 8421
+    )
+
+
+def test_a_holder_check_that_takes_its_whole_bound_leaves_the_request_its_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow lsof -p spends only its own slice: the request still goes out
+    within the share, with at least the floor."""
+    _listening(monkeypatch)
+    clock = FakeClock()
+    bounds: list[float] = []
+
+    def within(bound: object) -> MagicMock:
+        remaining = bound.remaining()  # type: ignore[attr-defined]
+        bounded = MagicMock()
+        bounded.identity.return_value.is_voxd.return_value = True
+
+        def slow_holder_check(pid: int, host: str, port: int) -> bool:
+            bounds.append(remaining)
+            clock.advance(remaining)  # the check takes everything it was given
+            return True
+
+        bounded.holds_port.side_effect = slow_holder_check
+        return bounded
+
+    mgr = _published(monkeypatch, _ours())
+    mgr.within.side_effect = within
+    target = MagicMock(host="127.0.0.1", port=8421)
+    target.client.return_value.health.return_value = HealthStatus(status="ok")
+    probe = DaemonProbe(mgr, lambda: target, Poll(clock))
+    assert probe.published_health(1.5) is not None
+    assert bounds == [pytest.approx(DaemonProbe.HOLDER_CHECK_S)]
+    (request_timeout,) = (
+        c.kwargs["timeout"] for c in target.client.return_value.health.mock_calls
+    )
+    assert request_timeout == pytest.approx(1.5 - DaemonProbe.HOLDER_CHECK_S)
+    assert request_timeout >= HealthRequest.MIN_S
+    assert clock.monotonic() <= 1.5
+
+
+def test_a_holder_check_with_no_slice_left_before_the_floor_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With only the floor left after the ps, there is no slice for the check."""
+    connect = _listening(monkeypatch)
+    clock = FakeClock()
+    mgr = _published(monkeypatch, _ours())
+
+    def slow_ps(pid: int) -> MagicMock:
+        clock.advance(1.0)  # 0.5 s left of 1.5: exactly the request floor
+        seen = MagicMock()
+        seen.is_voxd.return_value = True
+        return seen
+
+    mgr.within.return_value.identity.side_effect = slow_ps
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = DaemonProbe(mgr, lambda: target, Poll(clock))
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    mgr.within.return_value.holds_port.assert_not_called()
+    assert "cannot tell whether the publisher holds port 8421" in str(
+        probe.health_miss()
     )
 
 

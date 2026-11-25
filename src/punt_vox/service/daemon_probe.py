@@ -42,8 +42,10 @@ from punt_vox.service.service_cgroup import ServiceCgroup
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from punt_vox.service.backend import ProcessHandle, ServiceBackend
+    from punt_vox.service.process_identity import ProcessIdentity
     from punt_vox.types_health import HealthStatus
 
 __all__ = ["DaemonProbe"]
@@ -56,6 +58,10 @@ class DaemonProbe:
     __slots__ = ("_deadline", "_miss", "_poll", "_process_mgr", "_target")
 
     _CONNECT_TIMEOUT_S: ClassVar[float] = 0.5
+    # The holder check's own slice of a request's bound. It never reaches
+    # into the request's floor, so a slow per-pid lsof cannot stop the
+    # request from going out.
+    HOLDER_CHECK_S: ClassVar[float] = 0.5
 
     _process_mgr: ProcessManager
     _target: Callable[[], HealthTarget]
@@ -190,7 +196,7 @@ class DaemonProbe:
         check and the request all spend from *within_s*.
         """
         request = PublishedHealth(
-            self._process_mgr,
+            self,
             self._target,
             self._listening_at,
             Deadline(self._poll.now, within_s),
@@ -217,16 +223,37 @@ class DaemonProbe:
         self._miss = request.miss
         return health
 
+    @property
+    def port_file(self) -> Path:
+        """Return the path of ``serve.port``, the hint voxd publishes."""
+        return self._process_mgr.port_file
+
+    def identity_within(self, pid: int, bound: Deadline) -> ProcessIdentity | None:
+        """Return *pid*'s identity from a ``ps`` cut to *bound*; ``None`` once gone.
+
+        Raises:
+            PortProbeError: If ``ps`` could not run in time.
+        """
+        return self._process_mgr.within(bound).identity(pid)
+
     def holds_port(self, pid: int, host: str, bound: Deadline) -> bool:
         """Return True when *pid* itself holds the listener a request to *host* reaches.
 
-        One bounded per-pid check (:meth:`ProcessManager.holds_port`), cut to
-        *bound* so a request's budget covers it.
+        One per-pid check (:meth:`ProcessManager.holds_port`) on its own
+        slice of *bound*: at most ``HOLDER_CHECK_S``, and never the part a
+        request needs (``HealthRequest.MIN_S``), so the request keeps its
+        floor however slow the check is. With no slice left the check is not
+        made.
 
         Raises:
-            PortProbeError: If the check cannot be made.
+            PortProbeError: If the check cannot be made, or has no time.
         """
-        return self._process_mgr.within(bound).holds_port(pid, host, DEFAULT_PORT)
+        slice_s = min(self.HOLDER_CHECK_S, bound.remaining() - HealthRequest.MIN_S)
+        if slice_s <= 0:
+            msg = "no time left for the holder check before the request floor"
+            raise PortProbeError(msg)
+        check = Deadline(self._poll.now, slice_s)
+        return self._process_mgr.within(check).holds_port(pid, host, DEFAULT_PORT)
 
     def health_miss(self) -> Exception | None:
         """Return the last health failure; ``None`` when none has failed."""

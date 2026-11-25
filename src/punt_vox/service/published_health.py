@@ -24,12 +24,13 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.not_asked import NotAskedError
-from punt_vox.service.process import DEFAULT_PORT, ProcessManager
+from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.published_port import PublishedPort
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_vox.service.daemon_probe import DaemonProbe
     from punt_vox.service.deadline import Deadline
     from punt_vox.service.health import HealthTarget
     from punt_vox.types_health import HealthStatus
@@ -41,9 +42,9 @@ __all__ = ["PublishedHealth"]
 class PublishedHealth:
     """One gated, unattributed health request to the published port."""
 
-    __slots__ = ("_bound", "_listening", "_miss", "_processes", "_target")
+    __slots__ = ("_bound", "_listening", "_miss", "_probe", "_target")
 
-    _processes: ProcessManager
+    _probe: DaemonProbe
     _target: Callable[[], HealthTarget]
     _listening: Callable[[HealthTarget, Deadline], bool]
     _bound: Deadline
@@ -51,18 +52,19 @@ class PublishedHealth:
 
     def __new__(
         cls,
-        processes: ProcessManager,
+        probe: DaemonProbe,
         target: Callable[[], HealthTarget],
         listening: Callable[[HealthTarget, Deadline], bool],
         bound: Deadline,
     ) -> Self:
-        """Create the request over *processes*' run files and ``ps``.
+        """Create the request over *probe*'s run files, ``ps`` and holder check.
 
         *target* is resolved, and *listening* checked, inside *bound*; the
-        ``ps`` that names the publisher's command is cut to it as well.
+        ``ps`` that names the publisher's command is cut to it as well, and
+        the holder check to its own slice of it.
         """
         self = super().__new__(cls)
-        self._processes = processes
+        self._probe = probe
         self._target = target
         self._listening = listening
         self._bound = bound
@@ -115,7 +117,7 @@ class PublishedHealth:
             NotAskedError: If the run files do not name this user's live voxd.
         """
         try:
-            return PublishedPort.at(self._processes.port_file).publisher(DEFAULT_PORT)
+            return PublishedPort.at(self._probe.port_file).publisher(DEFAULT_PORT)
         except PortProbeError as exc:
             raise NotAskedError.uncheckable(str(exc)) from exc
 
@@ -126,7 +128,7 @@ class PublishedHealth:
             NotAskedError: If *pid* is gone, is not voxd, or ``ps`` could not run.
         """
         try:
-            seen = self._processes.within(self._bound).identity(pid)
+            seen = self._probe.identity_within(pid, self._bound)
         except PortProbeError as exc:
             raise NotAskedError.uncheckable(str(exc)) from exc
         if seen is None:
@@ -138,16 +140,15 @@ class PublishedHealth:
         """Raise unless *pid* holds the listener the request to *target* reaches.
 
         The address counts: a listener on the port at another address than
-        the target's host is not the one the token would reach.
+        the target's host is not the one the token would reach. The check
+        runs on its own slice of the bound (:meth:`DaemonProbe.holds_port`).
 
         Raises:
             NotAskedError: If *pid* does not hold the port at that address, or
                 the check could not be made in time.
         """
         try:
-            holds = self._processes.within(self._bound).holds_port(
-                pid, target.host, DEFAULT_PORT
-            )
+            holds = self._probe.holds_port(pid, target.host, self._bound)
         except PortProbeError as exc:
             raise NotAskedError.holder_uncheckable(str(exc)) from exc
         if not holds:

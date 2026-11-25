@@ -69,9 +69,21 @@ def _slow_scan(scan_s: float) -> tuple[DaemonProbe, MagicMock, MagicMock]:
 
 
 def test_health_is_handed_only_what_the_rescan_left_of_its_budget() -> None:
-    probe, target, held = _slow_scan(0.75)
+    """The rescan spends 0.5 of 1.25; the holder check gets a slice of what is
+    left above the floor (0.25), and the request the rest (0.75)."""
+    probe, target, held = _slow_scan(0.5)
     probe.health(frozenset({held}), 1.25)
-    target.client.return_value.health.assert_called_once_with(timeout=0.5)
+    target.client.return_value.health.assert_called_once_with(timeout=0.75)
+
+
+def test_a_rescan_that_leaves_only_the_floor_has_no_slice_for_the_holder_check() -> (
+    None
+):
+    """Exactly the floor left: no holder check can be afforded, so no token."""
+    probe, target, held = _slow_scan(0.75)
+    assert probe.health(frozenset({held}), 1.25) is None
+    target.client.assert_not_called()
+    assert "no time left for the holder check" in str(probe.health_miss())
 
 
 @pytest.mark.parametrize("scan_s", [2.0, 1.24])
