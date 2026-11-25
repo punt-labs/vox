@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `make test` and `make test-push` default to four pytest workers. Override
+  the count with `PYTEST_WORKERS`, e.g. `make test PYTEST_WORKERS=auto`. (PL-1627)
+
 - Point agent guidance, rules, and docs at the punt noun-verb CLI
   (`punt repo audit`, `punt repo scan-pii`, `punt release run`); needs the
   punt-kit CLI cutover. (PL-1519)
