@@ -145,10 +145,10 @@ class WorkerRetirement:
     def _settle_all(self, record: WorkerRecord) -> None:
         """Settle the owed debts, and any a stop queued while they ran.
 
-        The queue holds one job per worker, so a stop that marks a debt
-        pending during this job cannot queue its own; the job settles it
-        before it ends. Only a debt this job did not run repeats the loop,
-        never one it ran and recorded as failed.
+        The queue holds one job per worker; a stop that marks a debt pending
+        during this job has its request rerun by the queue once this job
+        ends. Only a debt this job did not run repeats the loop here, never
+        one it ran and recorded as failed.
         """
         while self._settlement.owed(record):
             settled = self._settlement.settle(record)

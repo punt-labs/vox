@@ -301,3 +301,45 @@ def test_unsaved_settlement_outcome_log_names_the_worker(
     [warning] = caplog.records
     assert record.id in warning.getMessage()
     assert "OSError: disk full" in warning.getMessage()
+
+
+def test_discard_retried_while_a_job_winds_down_is_not_dropped(
+    tmp_path: Path,
+) -> None:
+    """A retry between a job's last owed() check and its release still runs.
+
+    The queue marks the worker active until the job's operation returns. A
+    stop that re-queues the discard in that window used to have schedule()
+    refused, leaving discard_pending on the record with no job to run it.
+    """
+    provider = FakeWorkerProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    busy = DiscardError()
+    busy.attempt("rmtree", lambda: _raise(OSError("busy")))
+    worktrees.discard.side_effect = busy
+    settled_once, release = Event(), Event()
+    original = WorkerRetirement._settle_all
+
+    def settle_then_linger(self: WorkerRetirement, record: WorkerRecord) -> None:
+        original(self, record)
+        settled_once.set()
+        assert release.wait(3)
+
+    with patch.object(WorkerRetirement, "_settle_all", settle_then_linger):
+        registry = _registry(tmp_path, provider, worktrees)
+        with pytest.raises(OSError, match="launch failed"):
+            registry.start("edit", str(tmp_path), provider="fake", harness="test")
+        try:
+            assert settled_once.wait(1)
+            worktrees.discard.side_effect = None
+            retried, job = registry.request_stop(registry.list()[0].id)
+            assert retried.last_report["discard_pending"] is True
+            assert job is None
+        finally:
+            release.set()
+        _settled(registry)
+    done = registry.list()[0]
+    assert done.last_report["worktree_discarded"] is True
+    assert "discard_pending" not in done.last_report
+    assert worktrees.discard.call_count == 2
