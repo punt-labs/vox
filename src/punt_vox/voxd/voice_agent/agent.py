@@ -32,11 +32,10 @@ class VoiceAgent:
     a stable tool catalog; explicitly tear the agent down to replace that catalog.
     """
 
-    __slots__ = ("_control", "_file", "_lock", "_transient")
+    __slots__ = ("_control", "_file", "_lock")
     _control: ConvAIControl
     _file: AtomicFile
     _lock: SiblingLock
-    _transient: bool  # A fake endpoint's registration, removed whole on teardown.
 
     def __new__(
         cls,
@@ -55,7 +54,6 @@ class VoiceAgent:
         default = control.registration_path(live)
         self._file = AtomicFile(path if path is not None else default)
         self._lock = SiblingLock(self._file.path)
-        self._transient = path is None and default != live
         return self
 
     def connection(self, tools: tuple[ClientTool, ...]) -> tuple[str, tuple[str, ...]]:
@@ -86,16 +84,16 @@ class VoiceAgent:
     def teardown(self) -> None:
         """Delete managed resources; retain the config if deletion must be retried.
 
-        A fake endpoint's registration is one of many a test tier may leave
-        under a real HOME, one per port, so its lock goes with it once the
-        delete is through. The live registration's lock stays: other vox
-        processes serialize on it.
+        The registration file goes under the lock; the lock file itself
+        stays, for a fake endpoint as for the live one. Unlinking a flock
+        path is unsafe: a waiter that already opened the old inode would
+        hold a lock on it while a newcomer created a fresh file at the same
+        path, and both would believe they held the lock. One small lock
+        file per fake port is the price of that safety.
         """
         with self._locked():
             if (stored := self._read()) is not None:
                 self._delete(stored)
-        if self._transient:
-            self._lock.path.unlink(missing_ok=True)
 
     @contextmanager
     def _locked(self) -> Generator[None]:
