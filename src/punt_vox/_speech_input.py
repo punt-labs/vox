@@ -20,8 +20,6 @@ _SPOKEN = {
     "==": "equal to",
     "!=": "not equal to",
 }
-_BARE_ANGLES = frozenset("<>")
-_ORDERED = _BARE_ANGLES | {"<=", ">="}
 _WORD_RE = re.compile(r"\S+")
 _STANDALONE_RE = re.compile(rf"(?<!\S)(?:{'|'.join(map(re.escape, _SPOKEN))})(?!\S)")
 _VIBED_WORD_RE = re.compile(
@@ -131,45 +129,36 @@ class SpeechInput:
     def _operators(cls, words: list[str]) -> Iterator[int]:
         index = 1
         while index < len(words) - 1:
-            token = words[index]
-            if token in _ORDERED:
-                end = cls._ordered_chain_end(words, index + 2)
-                yield from cls._ordered_operators(words, index, end)
+            if words[index] in _SPOKEN:
+                end = cls._chain_end(words, index + 2)
+                yield from cls._chain_operators(words, index, end)
                 index = end - 1
-            elif cls._suffixed_comparison(words, index):
-                yield index
             index += 1
 
     @staticmethod
-    def _ordered_chain_end(words: list[str], index: int) -> int:
-        while index < len(words) - 1 and words[index] in _ORDERED:
+    def _chain_end(words: list[str], index: int) -> int:
+        while index < len(words) - 1 and words[index] in _SPOKEN:
             index += 2
         return index
 
     @classmethod
-    def _ordered_operators(
-        cls, words: list[str], start: int, end: int
-    ) -> Iterator[int]:
+    def _chain_operators(cls, words: list[str], start: int, end: int) -> Iterator[int]:
         indices = range(start, end, 2)
-        if cls._ordered_operands(words[start - 1 : end : 2]):
+        if cls._anchored_operands(words[start - 1 : end : 2]):
             yield from indices
         else:
             yield from (
-                index for index in indices if cls._suffixed_comparison(words, index)
+                index for index in indices if cls._compound_comparison(words, index)
             )
 
     @classmethod
-    def _suffixed_comparison(cls, words: list[str], index: int) -> bool:
-        return (
-            len(words[index]) == 2
-            and words[index] in _SPOKEN
-            and all(
-                cls._is_operand(value) for value in (words[index - 1], words[index + 1])
-            )
+    def _compound_comparison(cls, words: list[str], index: int) -> bool:
+        return len(words[index]) == 2 and all(
+            cls._is_operand(value) for value in (words[index - 1], words[index + 1])
         )
 
     @classmethod
-    def _ordered_operands(cls, operands: list[str]) -> bool:
+    def _anchored_operands(cls, operands: list[str]) -> bool:
         # A bare angle chain needs a numeric anchor and no prose-like operands.
         has_number = False
         for operand in operands:
