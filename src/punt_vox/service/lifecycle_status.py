@@ -7,15 +7,16 @@ whole of it: every port and process probe, the listener check, and the health
 request each get only what is left.
 
 voxd is asked first, before ``lsof``/``fuser`` attribute the port, through
-the port voxd itself published: when this user's own ``serve.port`` names the
-service port, the bind is loopback and the port accepts a connection, one
-health request goes out with a reserved share of the deadline
-(``HEALTH_RESERVE_S``) that the attribution probes cannot consume. An answer
-is ``running`` whatever ``lsof`` would have said later: on a loaded Mac
-``lsof`` walks every open file and can spend the whole deadline by itself.
-With no answer, attribution runs within what is left and decides as before.
-The token never goes out through any other door; the gate is stated in
-:mod:`punt_vox.service.daemon_probe`. What the probe sees decides the state:
+what voxd itself published: one health request goes out with a reserved
+share of the deadline (``HEALTH_RESERVE_S``) that the attribution probes
+cannot consume, under the gate :mod:`punt_vox.service.published_health`
+states (this user's own ``serve.port`` and ``serve.pid``, a live voxd of
+this user that holds the port, loopback, a listener). An answer is
+``running`` whatever ``lsof`` would have said later: on a loaded Mac ``lsof``
+walks every open file and can spend the whole deadline by itself. With no
+answer, attribution runs within what is left and decides as before. The
+token never goes out through any other door. What the probe sees decides
+the state:
 
 - a voxd answered health, through the published port or as a visible
   holder: ``running``;
