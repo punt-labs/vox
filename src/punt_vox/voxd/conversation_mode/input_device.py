@@ -30,13 +30,20 @@ logger = logging.getLogger(__name__)
 class InputDevice:
     """The input device PortAudio opens by default, as it reports itself."""
 
-    __slots__ = ("_default_samplerate_hz", "_name")
+    __slots__ = ("_default_samplerate_hz", "_index", "_name")
 
     _name: str
     _default_samplerate_hz: float
+    _index: int | None  # None: described by name alone; opens the current default.
 
-    def __new__(cls, name: str, default_samplerate_hz: float) -> Self:
-        """Build a device from the name and default sample rate PortAudio reports.
+    def __new__(
+        cls,
+        name: str,
+        default_samplerate_hz: float,
+        *,
+        index: int | None = None,  # None: no table index known for this device.
+    ) -> Self:
+        """Build a device from the name, sample rate and index PortAudio reports.
 
         Raises:
             ValueError: When the name is empty or the sample rate is not positive.
@@ -44,6 +51,7 @@ class InputDevice:
         self = super().__new__(cls)
         self._name = cls._named(name)
         self._default_samplerate_hz = cls._positive_rate(default_samplerate_hz)
+        self._index = index
         return self
 
     @property
@@ -56,6 +64,11 @@ class InputDevice:
         """The device's default sample rate, in hertz."""
         return self._default_samplerate_hz
 
+    @property
+    def index(self) -> int | None:
+        """PortAudio's index for this device, or None when described by name alone."""
+        return self._index
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, InputDevice):
             return NotImplemented
@@ -65,12 +78,20 @@ class InputDevice:
         return hash((InputDevice, *self._key()))
 
     def __repr__(self) -> str:
-        return f"InputDevice({self._name!r}, {self._default_samplerate_hz!r})"
+        index = "" if self._index is None else f", index={self._index!r}"
+        return f"InputDevice({self._name!r}, {self._default_samplerate_hz!r}{index})"
 
     def opened(
         self, *, samplerate: float, blocksize: int, callback: RawInputCallback
     ) -> InputStreamHandle:
         """Create and start a raw mono int16 stream on this device, or refuse.
+
+        A device with an index is opened by that index, so the stream is
+        bound to this device and not to whatever the table calls the
+        default by the time it opens. A table re-read in between can give
+        the index to another device; the name at the index is checked
+        after the open and a mismatch is a refusal naming both, with the
+        stream closed. A device without an index opens the current default.
 
         ``sounddevice`` opens the native stream in the constructor and starts
         it on entry, and either step can fail with its own
@@ -81,11 +102,12 @@ class InputDevice:
 
         Raises:
             OSError: When PortAudio refuses the stream: the device is busy,
-                has no input channels, rejects the sample rate, or will not
-                start.
+                has no input channels, rejects the sample rate, will not
+                start, or its index now names another device.
         """
         from sounddevice import PortAudioError, RawInputStream
 
+        bound = {} if self._index is None else {"device": self._index}
         try:
             stream = RawInputStream(
                 samplerate=samplerate,
@@ -93,10 +115,31 @@ class InputDevice:
                 channels=1,
                 dtype="int16",
                 callback=callback,
+                **bound,
             )
         except PortAudioError as exc:
             raise self.refused(exc) from exc
+        self._still_named(stream)
         return self.started(stream)
+
+    def _still_named(self, stream: RawInputStream) -> None:
+        """Refuse a stream whose index the table has given to another device.
+
+        Raises:
+            OSError: When the device at this index is now named differently.
+        """
+        from sounddevice import PortAudioError, query_devices
+
+        if self._index is None:
+            return
+        try:
+            now = str(query_devices(self._index)["name"])
+        except (PortAudioError, UnicodeDecodeError) as exc:
+            self._close_unstarted(stream)
+            raise self.refused(exc) from exc
+        if now != self._name:
+            self._close_unstarted(stream)
+            raise self.refused(f"device {self._index} is now {now}")
 
     def started(self, stream: RawInputStream) -> InputStreamHandle:
         """Start a stream opened on this device; one that will not start is closed.
@@ -112,14 +155,17 @@ class InputDevice:
             self._close_unstarted(stream)
             raise self.refused(exc) from exc
 
-    def refused(self, exc: Exception) -> OSError:
+    def refused(self, cause: Exception | str) -> OSError:
         """Name this device as the one PortAudio refused, with a remedy."""
         return OSError(
-            f"cannot open input device {self._name}: {exc}. Close another application "
-            "holding the microphone, or choose a device with an input channel"
+            f"cannot open input device {self._name}: {cause}. Close another "
+            "application holding the microphone, or choose a device with an "
+            "input channel"
         )
 
     def _key(self) -> tuple[str, float]:
+        # The index is how the device is opened, not what it is: the same
+        # device keeps its identity across a table re-read that renumbers it.
         return (self._name, self._default_samplerate_hz)
 
     @staticmethod

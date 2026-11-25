@@ -184,9 +184,13 @@ def fake_sounddevice(
         },
     ]
 
-    def query_devices(kind: str | None = None) -> DeviceInfo | list[DeviceInfo]:
+    def query_devices(
+        kind: str | int | None = None,
+    ) -> DeviceInfo | list[DeviceInfo]:
         if kind is None:
             return devices
+        if isinstance(kind, int):
+            return devices[kind]
         return devices[1] if kind == "output" else devices[0]
 
     def reenumerate() -> None:  # The fake's table is fixed; nothing to re-read.

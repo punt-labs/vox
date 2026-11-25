@@ -33,11 +33,14 @@ class DeviceInfo(TypedDict):
     default_samplerate: float
 
 # Without arguments: every device PortAudio enumerated (a ``DeviceList``,
-# a list subclass). With ``kind``: the default device of that kind.
+# a list subclass). With ``kind``: the default device of that kind. With an
+# index: that one device, as the current table describes it.
 @overload
 def query_devices() -> Sequence[DeviceInfo]: ...
 @overload
 def query_devices(kind: Literal["input", "output"]) -> DeviceInfo: ...
+@overload
+def query_devices(device: int) -> DeviceInfo: ...
 
 # PortAudio enumerates devices in Pa_Initialize and never again; sounddevice
 # wraps the two calls as these private functions and offers no public way to
@@ -70,6 +73,8 @@ class RawInputStream:
     (finished_callback, clip_off, ...) that this project never passes.
     """
 
+    # ``device`` binds the stream to one device index; omitted, PortAudio
+    # opens whatever its table calls the default input at that moment.
     def __init__(
         self,
         *,
@@ -78,6 +83,7 @@ class RawInputStream:
         channels: int,
         dtype: str,
         callback: RawInputCallback,
+        device: int | None = None,
     ) -> None: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc_info: object) -> None: ...

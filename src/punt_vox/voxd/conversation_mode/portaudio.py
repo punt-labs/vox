@@ -144,7 +144,11 @@ class PortAudio:
                 not positive.
         """
         try:
-            return InputDevice(str(info["name"]), float(info["default_samplerate"]))
+            return InputDevice(
+                str(info["name"]),
+                float(info["default_samplerate"]),
+                index=info.get("index"),
+            )
         except ValueError as exc:
             raise OSError(f"no usable default input device: {exc}") from exc
 

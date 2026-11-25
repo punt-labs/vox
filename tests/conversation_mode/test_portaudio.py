@@ -472,12 +472,14 @@ def test_open_default_input_selects_and_opens_under_one_reservation(
     real_query = fake.query_devices
 
     def query_then_reconnect(
-        kind: Literal["input", "output"] | None = None,  # None: the whole table
+        kind: Literal["input", "output"] | int | None = None,  # None: the whole table
     ) -> DeviceInfo | list[DeviceInfo]:
         if kind is None:  # the refresh's log summary counts every device
             return real_query()
         info = real_query(kind)
-        if table.open_streams == 0:  # the refresh's own summary, under its lock
+        if isinstance(kind, int) or table.open_streams == 0:
+            # The opened stream's name check, or the refresh's own summary
+            # under its lock: neither is the pick.
             return info
         # Another thread's call starts after the headset appears: its refresh
         # must find the probe's reservation and keep the table.
@@ -579,3 +581,84 @@ def test_an_open_that_fails_for_any_reason_releases_the_reservation(
         PortAudio(table).open(USB, samplerate=16000.0, blocksize=0, callback=_ignore)
 
     assert table.open_streams == 0
+
+
+def test_open_binds_the_stream_to_the_selected_device_not_the_current_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A default that moves after the selection does not change what is captured."""
+    created: list[FakeInputStream] = []
+    usb: DeviceInfo = {"name": "USB Audio", "index": 3, "default_samplerate": 48000.0}
+    headset: DeviceInfo = {"name": "Headset", "index": 5, "default_samplerate": 48000.0}
+
+    def query_devices(kind: str | int) -> DeviceInfo:
+        if kind == 3:
+            return usb
+        return headset  # the default has moved to the headset since the pick
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(monkeypatch, query_devices=query_devices, RawInputStream=raw_input_stream)
+    selected = InputDevice("USB Audio", 48000.0, index=3)
+    PortAudio(DeviceTable()).open(
+        selected, samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+
+    assert created[0].kwargs["device"] == 3
+    assert not created[0].closed
+
+
+def test_open_refuses_when_the_selected_index_now_names_another_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-read table that reused the index is a refusal naming both devices."""
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Speakers").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    backend = PortAudio(table)
+    selected = backend.devices().input
+    assert selected.index == 0
+    fake.set_system_default("input", "Headset")
+    assert table.refresh()  # another call's refresh, before this one opened
+
+    with pytest.raises(OSError, match=r"Built-in.*now Headset") as refused:
+        backend.open(selected, samplerate=16000.0, blocksize=0, callback=_ignore)
+
+    assert "cannot open input device Built-in" in str(refused.value)
+    assert fake.streams[-1].closed
+    assert table.open_streams == 0
+
+
+def test_a_device_without_an_index_opens_the_current_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[FakeInputStream] = []
+
+    def raw_input_stream(**kwargs: object) -> FakeInputStream:
+        created.append(stream := FakeInputStream(**kwargs))
+        return stream
+
+    _install(
+        monkeypatch,
+        query_devices=_device_info("USB Audio", 48000.0),
+        RawInputStream=raw_input_stream,
+    )
+    PortAudio(DeviceTable()).open(
+        USB, samplerate=16000.0, blocksize=0, callback=_ignore
+    )
+
+    assert "device" not in created[0].kwargs
+
+
+def test_the_reported_default_carries_its_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def query_devices(kind: str) -> DeviceInfo:
+        del kind
+        return {"name": "Built-in", "index": 2, "default_samplerate": 44100.0}
+
+    _install(monkeypatch, query_devices=query_devices)
+    assert PortAudio().device() == InputDevice("Built-in", 44100.0, index=2)

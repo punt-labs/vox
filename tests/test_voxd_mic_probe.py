@@ -282,12 +282,14 @@ def test_capture_reports_the_device_it_captured_from_when_the_default_moves(
     real_query = fake.query_devices
 
     def query_then_reconnect(
-        kind: Literal["input", "output"] | None = None,  # None: the whole table
+        kind: Literal["input", "output"] | int | None = None,  # None: the whole table
     ) -> DeviceInfo | list[DeviceInfo]:
         if kind is None:  # the refresh's log summary counts every device
             return real_query()
         info = real_query(kind)
-        if table.open_streams == 0:  # the refresh's own summary, under its lock
+        if isinstance(kind, int) or table.open_streams == 0:
+            # The opened stream's name check, or the refresh's own summary
+            # under its lock: neither is the pick.
             return info
         fake.set_system_default("input", "Headset")
         table.refresh()
