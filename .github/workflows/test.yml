@@ -358,8 +358,11 @@ jobs:
       # daemon and CLI it spawns report through the subprocess coverage hook),
       # so this step adds no coverage. It runs again on its own, from the uv
       # venv, so a call-path break is reported as this step and never buried
-      # in the coverage run.
-      - run: make test-call-e2e
+      # in the coverage run. It runs whether or not the coverage step passed:
+      # a regression the tier catches also fails coverage, and this step is
+      # the one that names it. Only a cancelled job skips it.
+      - if: ${{ !cancelled() }}
+        run: make test-call-e2e
       - name: Save main coverage baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
