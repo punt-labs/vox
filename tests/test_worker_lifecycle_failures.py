@@ -40,6 +40,7 @@ def test_corrupt_worker_record_does_not_block_healthy_workers(tmp_path: Path) ->
     with patch("punt_vox.voxd.workers.wiring.user_state_dir", return_value=tmp_path):
         routes = WorkerContext.handlers(PlaybackQueue())
     assert "worker_list" in routes
+    assert "worker_repos" in routes
     assert "hook_event" in routes
 
 

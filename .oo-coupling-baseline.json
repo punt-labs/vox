@@ -83,6 +83,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/_speech_input.py": {
+    "efferent_coupling": 5.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/_speech_label_rule.py": {
     "efferent_coupling": 1.0,
     "public_names": 4.0,
@@ -658,7 +665,7 @@
     "avg_lcom": 0.955
   },
   "src/punt_vox/doctor_call.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 5.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -667,6 +674,13 @@
   "src/punt_vox/doctor_call_claude.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/doctor_call_daemon.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -1987,6 +2001,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/types_mic.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/types_programs/__init__.py": {
     "efferent_coupling": 10.0,
     "public_names": 21.0,
@@ -2281,6 +2302,34 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/conversation_mode/counted_output.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/conversation_mode/counted_stream.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/conversation_mode/device_pair.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.028,
+    "avg_lcom": 0.028
+  },
+  "src/punt_vox/voxd/conversation_mode/device_table.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.2,
+    "avg_lcom": 0.1
+  },
   "src/punt_vox/voxd/conversation_mode/input_device.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
@@ -2301,6 +2350,13 @@
     "circular_imports": 0.0,
     "max_lcom": 0.333,
     "avg_lcom": 0.333
+  },
+  "src/punt_vox/voxd/conversation_mode/output_device.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.571,
+    "avg_lcom": 0.571
   },
   "src/punt_vox/voxd/conversation_mode/portaudio.py": {
     "efferent_coupling": 5.0,
@@ -2366,7 +2422,7 @@
     "avg_lcom": 0.833
   },
   "src/punt_vox/voxd/handler_registry.py": {
-    "efferent_coupling": 11.0,
+    "efferent_coupling": 10.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -2480,6 +2536,13 @@
   "src/punt_vox/voxd/log_text.py": {
     "efferent_coupling": 0.0,
     "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/mic_probe.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -3471,6 +3534,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/system_routes.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/temp_synthesis.py": {
     "efferent_coupling": 2.0,
     "public_names": 1.0,
@@ -3695,6 +3765,13 @@
     "max_lcom": 0.2,
     "avg_lcom": 0.2
   },
+  "src/punt_vox/voxd/voice_call/greeting.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/voice_call/handlers.py": {
     "efferent_coupling": 12.0,
     "public_names": 1.0,
@@ -3723,6 +3800,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/voice_call/opening.py": {
+    "efferent_coupling": 3.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/voice_call/progress.py": {
     "efferent_coupling": 1.0,
     "public_names": 2.0,
@@ -3732,6 +3816,13 @@
   },
   "src/punt_vox/voxd/voice_call/progress_types.py": {
     "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/voice_call/repository_names.py": {
+    "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -3765,6 +3856,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/voice_call/spoken_path.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/voice_call/steering.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
@@ -3781,6 +3879,13 @@
   },
   "src/punt_vox/voxd/voice_call/tool_reply.py": {
     "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/voice_call/transcript.py": {
+    "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,

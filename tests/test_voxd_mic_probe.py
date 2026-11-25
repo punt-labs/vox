@@ -1,0 +1,522 @@
+"""Tests for punt_vox.voxd.mic_probe -- the daemon-side microphone probe RPC.
+
+No test opens an audio device: the handler takes an injectable capture
+function and every test supplies a fake.
+"""
+
+from __future__ import annotations
+
+import sys
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Literal, NoReturn, Self, cast, final
+
+import pytest
+from conversation_mode._fake_sounddevice import FakeSoundDevice
+from conversation_mode._mic_fakes import (
+    FAKE_DEVICE,
+    FakeBackend,
+    FakeCallbackFlags,
+    FakeInputStream,
+    FakePortAudioError,
+    fake_sounddevice,
+)
+
+from punt_vox.types_mic import MicProbeReport
+from punt_vox.voxd.conversation_mode.device_table import DeviceTable
+from punt_vox.voxd.conversation_mode.portaudio import PortAudio
+from punt_vox.voxd.mic_probe import MicProbeError, MicProbeHandler, SoundDeviceCapture
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sounddevice import DeviceInfo
+    from starlette.websockets import WebSocket
+
+    from punt_vox.voxd.conversation_mode.input_device import InputDevice
+
+
+@final
+class _CollectingWs:
+    """A fake websocket that records the frames the handler sends."""
+
+    __slots__ = ("_sent",)
+    _sent: list[dict[str, object]]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._sent = []
+        return self
+
+    @property
+    def sent(self) -> list[dict[str, object]]:
+        """The frames sent so far, in order."""
+        return self._sent
+
+    async def send_json(self, data: dict[str, object]) -> None:
+        self._sent.append(data)
+
+
+def _report(peak: int) -> MicProbeReport:
+    return MicProbeReport(
+        device="Fake Mic",
+        sample_rate_hz=16_000,
+        peak=peak,
+        samples=16_000,
+        overflows=0,
+        platform=sys.platform,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("peak", [0, 812])
+async def test_probe_replies_with_the_capture_report(peak: int) -> None:
+    """Silence and signal both cross as a ``mic_result`` carrying the report."""
+    seconds_seen: list[float] = []
+
+    def capture(seconds: float) -> MicProbeReport:
+        seconds_seen.append(seconds)
+        return _report(peak)
+
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=capture)(
+        {"type": "mic_probe", "id": "m1"}, cast("WebSocket", ws)
+    )
+
+    assert seconds_seen == [1.0]
+    (frame,) = ws.sent
+    assert frame["type"] == "mic_result"
+    assert frame["id"] == "m1"
+    report = MicProbeReport.from_wire(frame["result"])
+    assert report == _report(peak)
+    assert report.signal == (peak > 0)
+    assert report.platform == sys.platform  # the daemon's, for the doctor
+
+
+@pytest.mark.asyncio
+async def test_unopenable_device_crosses_as_an_error_frame() -> None:
+    """A device the daemon cannot open answers with the error text, not a teardown."""
+
+    def capture(_seconds: float) -> MicProbeReport:
+        raise MicProbeError("Error opening RawInputStream: Internal PortAudio error")
+
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=capture)(
+        {"type": "mic_probe", "id": "m2"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert frame["id"] == "m2"
+    assert "Internal PortAudio error" in str(frame["message"])
+
+
+@pytest.mark.asyncio
+async def test_missing_call_extra_names_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without sounddevice the default capture names the extra instead of crashing."""
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
+    with pytest.raises(MicProbeError, match=r"punt-vox\[call\]"):
+        SoundDeviceCapture()(0.01)
+
+
+class _RecordingStream:
+    """A started stream handle that records when it is left."""
+
+    __slots__ = ("_events",)
+    _events: list[str]
+
+    def __new__(cls, events: list[str]) -> Self:
+        self = super().__new__(cls)
+        self._events = events
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._events.append("exit")
+
+
+class _RecordingBackend:
+    """A probe backend that records the order of its calls."""
+
+    __slots__ = ("_events", "_kwargs")
+    _events: list[str]
+    _kwargs: dict[str, object]
+
+    def __new__(cls, events: list[str]) -> Self:
+        self = super().__new__(cls)
+        self._events = events
+        self._kwargs = {}
+        return self
+
+    @property
+    def events(self) -> list[str]:
+        """The calls recorded so far, shared with the streams it opens."""
+        return self._events
+
+    @property
+    def kwargs(self) -> dict[str, object]:
+        """The keyword arguments of the last open."""
+        return self._kwargs
+
+    def open_default_input(
+        self, **kwargs: object
+    ) -> tuple[InputDevice, _RecordingStream]:
+        self._events.append("open_default_input")
+        self._kwargs = kwargs
+        return FAKE_DEVICE, _RecordingStream(self._events)
+
+
+def _install_sleep(
+    monkeypatch: pytest.MonkeyPatch, on_sleep: Callable[[int], None]
+) -> None:
+    """Install a ``sounddevice`` module whose ``sleep`` is *on_sleep*."""
+    module = SimpleNamespace(sleep=on_sleep, PortAudioError=FakePortAudioError)
+    monkeypatch.setitem(sys.modules, "sounddevice", module)
+
+
+def test_capture_refreshes_the_device_table_then_holds_the_stream_while_sleeping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe opens the current default input in one backend call, then holds it."""
+    events: list[str] = []
+    backend = _RecordingBackend(events)
+
+    def sleep(msec: int) -> None:
+        events.append(f"sleep {msec}")
+
+    _install_sleep(monkeypatch, sleep)
+    report = SoundDeviceCapture(backend)(0.25)
+
+    assert events == ["open_default_input", "sleep 250", "exit"]
+    assert backend.kwargs["samplerate"] == 16_000.0
+    assert backend.kwargs["blocksize"] == 0
+    assert report.device == FAKE_DEVICE.name
+    assert report.samples == 0
+
+
+def test_capture_reserves_the_stream_on_the_device_table_for_its_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real backend, a refresh cannot terminate under the probe."""
+    table = DeviceTable()
+    backend = fake_sounddevice(monkeypatch)
+    seen: list[int] = []
+
+    def sleep(_msec: int) -> None:
+        seen.append(table.open_streams)
+        backend.created[-1].feed(b"\x10\x00\x00\x00")
+
+    sys.modules["sounddevice"].sleep = sleep  # type: ignore[attr-defined]  # the fake module is a namespace
+    report = SoundDeviceCapture(PortAudio(table))(1.0)
+
+    assert seen == [1]
+    assert table.open_streams == 0
+    assert backend.created[-1].closed
+    assert report == MicProbeReport(
+        device=FAKE_DEVICE.name,
+        sample_rate_hz=16_000,
+        peak=16,
+        samples=2,
+        overflows=0,
+        platform=sys.platform,
+    )
+
+
+def test_a_backend_refusal_becomes_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device the backend refuses is a probe error carrying its text."""
+
+    class _Refusing(_RecordingBackend):
+        def open_default_input(self, **_kwargs: object) -> NoReturn:
+            raise OSError("cannot open input device Fake Microphone: busy")
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    with pytest.raises(MicProbeError, match="Fake Microphone: busy"):
+        SoundDeviceCapture(_Refusing([]))(0.01)
+
+
+def _undecodable_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install a sounddevice whose default input has a name it cannot decode."""
+
+    def query_devices(
+        kind: str | None = None,  # None: the whole table, for the refresh's summary
+    ) -> DeviceInfo | list[DeviceInfo]:
+        if kind == "input":
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return [] if kind is None else {"name": "Speakers", "default_samplerate": 1.0}
+
+    def ignore(*_args: object) -> None:
+        pass
+
+    module = SimpleNamespace(
+        PortAudioError=FakePortAudioError,
+        query_devices=query_devices,
+        sleep=ignore,
+        _terminate=ignore,
+        _initialize=ignore,
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", module)
+
+
+def test_an_undecodable_device_name_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real backend, a name sounddevice cannot decode is a probe error."""
+    _undecodable_default_input(monkeypatch)
+    table = DeviceTable()
+    with pytest.raises(MicProbeError, match="invalid start byte"):
+        SoundDeviceCapture(PortAudio(table))(0.01)
+    assert table.open_streams == 0
+
+
+@pytest.mark.asyncio
+async def test_decode_error_in_the_default_capture_is_an_error_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real backend, a decode error is an error frame, not a teardown."""
+    _undecodable_default_input(monkeypatch)
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=SoundDeviceCapture(PortAudio(DeviceTable())))(
+        {"type": "mic_probe", "id": "m3"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert "invalid start byte" in str(frame["message"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("peak", "samples", "level"),
+    [(812, 16_000, "INFO"), (0, 16_000, "WARNING"), (0, 0, "WARNING")],
+)
+async def test_probe_logs_a_silent_or_empty_capture_as_a_warning(
+    caplog: pytest.LogCaptureFixture, peak: int, samples: int, level: str
+) -> None:
+    """A healthy probe is INFO; one that heard nothing is a WARNING in vox.log."""
+
+    def capture(_seconds: float) -> MicProbeReport:
+        return MicProbeReport(
+            device="Fake Mic",
+            sample_rate_hz=16_000,
+            peak=peak,
+            samples=samples,
+            overflows=0,
+            platform=sys.platform,
+        )
+
+    with caplog.at_level("INFO", logger="punt_vox.voxd.mic_probe"):
+        await MicProbeHandler(capture=capture)(
+            {"type": "mic_probe", "id": "m4"}, cast("WebSocket", _CollectingWs())
+        )
+
+    (record,) = [r for r in caplog.records if r.name == "punt_vox.voxd.mic_probe"]
+    assert record.levelname == level
+    assert f"peak={peak}" in record.getMessage()
+    assert f"samples={samples}" in record.getMessage()
+
+
+def test_capture_reports_the_device_it_captured_from_when_the_default_moves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A default that changes while the probe runs cannot split name from stream."""
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Speakers").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    real_query = fake.query_devices
+
+    def query_then_reconnect(
+        kind: Literal["input", "output"] | int | None = None,  # None: the whole table
+    ) -> DeviceInfo | list[DeviceInfo]:
+        if kind is None:  # the refresh's log summary counts every device
+            return real_query()
+        info = real_query(kind)
+        if isinstance(kind, int) or table.open_streams == 0:
+            # The opened stream's name check, or the refresh's own summary
+            # under its lock: neither is the pick.
+            return info
+        fake.set_system_default("input", "Headset")
+        table.refresh()
+        return info
+
+    def sleep(_msec: int) -> None:
+        fake.streams[-1].feed(b"\x05\x00")
+
+    module = sys.modules["sounddevice"]
+    monkeypatch.setattr(module, "query_devices", query_then_reconnect)
+    monkeypatch.setattr(module, "sleep", sleep, raising=False)
+    report = SoundDeviceCapture(PortAudio(table))(1.0)
+
+    assert report.device == fake.streams[-1].device_name == "Built-in"
+    assert report.peak == 5
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FakePortAudioError("Error closing stream: Internal PortAudio error"),
+        OSError("cannot release input device Fake Microphone"),
+    ],
+)
+def test_a_stream_that_will_not_close_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A close that fails is the device's error, not a lost connection."""
+
+    class _Unclosable(_RecordingStream):
+        def __exit__(self, *exc_info: object) -> None:
+            raise error
+
+    class _Backend(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            return FAKE_DEVICE, _Unclosable(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    with pytest.raises(MicProbeError, match=str(error)):
+        SoundDeviceCapture(_Backend([]))(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_will_not_close_crosses_as_an_error_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the handler, a close that fails is an error frame, not a teardown."""
+
+    class _Unplugged(_RecordingStream):
+        def __exit__(self, *exc_info: object) -> None:
+            raise OSError("Error stopping stream: device unavailable")
+
+    class _Backend(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            return FAKE_DEVICE, _Unplugged(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=SoundDeviceCapture(_Backend([])))(
+        {"type": "mic_probe", "id": "m5"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert frame["id"] == "m5"
+    assert "device unavailable" in str(frame["message"])
+    assert "Fake Microphone" in str(frame["message"])
+
+
+def test_capture_counts_the_callbacks_that_overflowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A late callback drops audio; the report carries how many did."""
+
+    class _Overflowing(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            callback = kwargs["callback"]
+            assert callable(callback)
+            callback(b"\x05\x00", 1, None, FakeCallbackFlags(input_overflow=True))
+            callback(b"\x02\x00", 1, None, FakeCallbackFlags())
+            return FAKE_DEVICE, _RecordingStream(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    report = SoundDeviceCapture(_Overflowing([]))(0.01)
+
+    assert report.overflows == 1
+    assert report.samples == 2
+    assert report.peak == 5
+
+
+class _RefusingFinder:
+    """A finder that raises for ``sounddevice``, as a failed Pa_Initialize does.
+
+    sounddevice initializes PortAudio at import and raises its own
+    ``PortAudioError`` (an ``Exception``, not an ``OSError``) when that fails,
+    so the exception reaches the importer before the module exists.
+    """
+
+    __slots__ = ("_error",)
+    _error: Exception
+
+    def __new__(cls, error: Exception) -> Self:
+        self = super().__new__(cls)
+        self._error = error
+        return self
+
+    def find_spec(self, name: str, *_args: object) -> None:
+        if name == "sounddevice":
+            raise self._error
+
+
+@pytest.mark.asyncio
+async def test_an_import_that_fails_to_initialize_portaudio_is_an_error_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PortAudio that will not initialize is the probe's error, not a teardown."""
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    finder = _RefusingFinder(RuntimeError("Error initializing PortAudio: no host API"))
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=SoundDeviceCapture(_RecordingBackend([])))(
+        {"type": "mic_probe", "id": "m6"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert frame["id"] == "m6"
+    assert "no host API" in str(frame["message"])
+    assert "punt-vox[call]" not in str(frame["message"])
+
+
+def test_a_teardown_error_through_the_real_adapter_is_a_mic_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sounddevice hides teardown errors by default; the adapter asks for them."""
+    table = DeviceTable()
+
+    def failing(**kwargs: object) -> FakeInputStream:
+        return FakeInputStream.failing_teardown(
+            kwargs, close_error=FakePortAudioError("Error closing stream: device gone")
+        )
+
+    def no_wait(_msec: int) -> None:
+        pass
+
+    backend = fake_sounddevice(monkeypatch, FakeBackend(open_stream=failing))
+    monkeypatch.setattr(sys.modules["sounddevice"], "sleep", no_wait, raising=False)
+    with pytest.raises(MicProbeError, match="device gone"):
+        SoundDeviceCapture(PortAudio(table))(0.01)
+
+    assert backend.created[-1].closed
+    assert table.open_streams == 0
+
+
+def test_capture_starts_the_stream_on_the_default_at_index_zero_and_is_fed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real sequence: default input at index 0, opened, started, delivering.
+
+    A stream that is opened but never started, or bound to a device other
+    than the one captured from, would report no samples; this is the guard.
+    """
+    table = DeviceTable()
+    backend = fake_sounddevice(monkeypatch)
+
+    def deliver(_msec: int) -> None:
+        stream = backend.created[-1]
+        assert stream.started, "the stream must be started before the wait"
+        assert stream.kwargs["device"] == 0
+        stream.feed(b"\x20\x00\x10\x00")
+
+    monkeypatch.setattr(sys.modules["sounddevice"], "sleep", deliver, raising=False)
+    report = SoundDeviceCapture(PortAudio(table))(1.0)
+
+    assert report.device == FAKE_DEVICE.name
+    assert (report.samples, report.peak) == (2, 32)
+    assert backend.created[-1].stopped
+    assert backend.created[-1].closed

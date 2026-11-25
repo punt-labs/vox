@@ -257,6 +257,7 @@ ignore = [
 "src/punt_vox/voxd/conversation_mode/portaudio.py" = ["PLC0415"]
 "src/punt_vox/voxd/conversation_mode/device_table.py" = ["PLC0415"]
 "src/punt_vox/voxd/pcm_output.py" = ["PLC0415"]
+"src/punt_vox/voxd/mic_probe.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
 "src/punt_vox/providers/polly.py" = ["PLC0415"]

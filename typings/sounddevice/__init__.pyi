@@ -17,6 +17,7 @@ __all__ = [
     "_initialize",
     "_terminate",
     "query_devices",
+    "sleep",
 ]
 
 class PortAudioError(Exception):
@@ -32,17 +33,24 @@ class DeviceInfo(TypedDict):
     default_samplerate: float
 
 # Without arguments: every device PortAudio enumerated (a ``DeviceList``,
-# a list subclass). With ``kind``: the default device of that kind.
+# a list subclass). With ``kind``: the default device of that kind. With an
+# index: that one device, as the current table describes it.
 @overload
 def query_devices() -> Sequence[DeviceInfo]: ...
 @overload
 def query_devices(kind: Literal["input", "output"]) -> DeviceInfo: ...
+@overload
+def query_devices(device: int) -> DeviceInfo: ...
 
 # PortAudio enumerates devices in Pa_Initialize and never again; sounddevice
 # wraps the two calls as these private functions and offers no public way to
 # re-read the table, so the daemon's DeviceTable calls them in this order.
 def _terminate() -> None: ...
 def _initialize() -> None: ...
+
+# Block the calling thread for *msec* milliseconds while a stream's callback
+# keeps running; the mic probe uses it to hold its input stream open.
+def sleep(msec: int) -> None: ...
 
 # The subset of PortAudio's ``CallbackFlags`` this project inspects: whether
 # capture overran the buffer between two callback invocations, which is a
@@ -65,6 +73,8 @@ class RawInputStream:
     (finished_callback, clip_off, ...) that this project never passes.
     """
 
+    # ``device`` binds the stream to one device index; omitted, PortAudio
+    # opens whatever its table calls the default input at that moment.
     def __init__(
         self,
         *,
@@ -73,10 +83,14 @@ class RawInputStream:
         channels: int,
         dtype: str,
         callback: RawInputCallback,
+        device: int | None = None,
     ) -> None: ...
     def __enter__(self) -> Self: ...
+    # Leaving stops then closes with ``ignore_errors=True``, so PortAudio's
+    # teardown errors vanish; a caller that wants them calls these itself.
     def __exit__(self, *exc_info: object) -> None: ...
-    def close(self) -> None: ...
+    def stop(self, ignore_errors: bool = True) -> None: ...
+    def close(self, ignore_errors: bool = True) -> None: ...
 
 # The CFFI buffer ``RawOutputStream``'s callback fills as *outdata* is writable
 # and satisfies the buffer protocol; the sink writes it through ``memoryview``.

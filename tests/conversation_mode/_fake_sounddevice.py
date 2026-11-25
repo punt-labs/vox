@@ -84,7 +84,8 @@ class FakeDeviceStream:
     def start(self) -> None:
         self._started = True
 
-    def stop(self) -> None:
+    def stop(self, ignore_errors: bool = True) -> None:
+        del ignore_errors  # this fake's stop never fails
         self._started = False
 
     def abort(self) -> None:
@@ -95,9 +96,11 @@ class FakeDeviceStream:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        self.stop()
         self.close()
 
-    def close(self) -> None:
+    def close(self, ignore_errors: bool = True) -> None:
+        del ignore_errors  # this fake's close never fails
         self._closed = True
 
 
@@ -174,11 +177,35 @@ class FakeSoundDevice:
     def query_devices(self) -> list[DeviceInfo]: ...
     @overload
     def query_devices(self, kind: Kind) -> DeviceInfo: ...
-    def query_devices(self, kind: Kind | None = None) -> DeviceInfo | list[DeviceInfo]:
-        """The table's default of *kind*, or every enumerated device (input, output)."""
+    @overload
+    def query_devices(self, kind: int) -> DeviceInfo: ...
+    def query_devices(
+        self, kind: Kind | int | None = None
+    ) -> DeviceInfo | list[DeviceInfo]:
+        """The table's default of *kind*, the device at an index, or every device.
+
+        The table holds two devices: the default input at index 0 and the
+        default output at index 1, so an index names whichever device the
+        table's defaults currently are, as a re-read table's indices do.
+        """
         if kind is None:
             return [self._info("input"), self._info("output")]
+        if isinstance(kind, int):
+            return self._info(self._kind_at(kind))
         return self._info(kind)
+
+    @staticmethod
+    def _kind_at(index: int) -> Kind:
+        """Return which default lives at *index*; another index is no device.
+
+        Raises:
+            FakePortAudioError: When no device has that index.
+        """
+        if index == 0:
+            return "input"
+        if index == 1:
+            return "output"
+        raise FakePortAudioError(f"Error querying device {index}")
 
     def _info(self, kind: Kind) -> DeviceInfo:
         return {
@@ -215,6 +242,10 @@ class FakeSoundDevice:
         self._initialized += 1
 
     def _open(self, kind: Kind, **kwargs: object) -> FakeDeviceStream:
+        """Bind a stream to the device at ``device`` if given, else the default."""
+        device = kwargs.get("device")
+        if isinstance(device, int):
+            kind = self._kind_at(device)
         stream = FakeDeviceStream(self._table[kind], **kwargs)
         self._streams.append(stream)
         return stream

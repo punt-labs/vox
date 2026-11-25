@@ -245,6 +245,30 @@ async def test_call_side_refuses_unallowlisted_project(tmp_path: Path) -> None:
     assert registry.list() == []
 
 
+@pytest.mark.asyncio
+async def test_worker_repos_rpc_reads_the_allowlist(tmp_path: Path) -> None:
+    """``worker_repos`` returns the policy's sorted allowlist without resolving."""
+    config = ConfigStore(tmp_path / "config")
+    handlers = AllowlistHandlers(WorkerRepoPolicy(config)).handlers()
+    ws = AsyncMock(spec=WebSocket)
+
+    async def repos() -> object:
+        await handlers["worker_repos"]({"type": "worker_repos", "id": "r"}, ws)
+        return ws.send_json.call_args.args[0]
+
+    assert await repos() == {"type": "worker_result", "id": "r", "result": []}
+    config.write_field("worker_repos", repr([str(tmp_path)]))
+    assert await repos() == {
+        "type": "worker_result",
+        "id": "r",
+        "result": [str(tmp_path.resolve())],
+    }
+    config.write_field("worker_repos", "not a list")
+    reply = cast("dict[str, object]", await repos())
+    assert reply["type"] == "error"
+    assert "worker_repos must be a list" in str(reply["message"])
+
+
 def test_profile_argv_env_and_hook_readiness() -> None:
     store = HookContextStore()
     profile = ClaudeProfile(store)

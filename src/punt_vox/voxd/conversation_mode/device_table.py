@@ -128,7 +128,8 @@ class DeviceTable:
         describe every one of them, names included, and a device it cannot
         describe -- a name in an encoding it does not expect, an entry
         PortAudio will not report -- is unrelated to the call being placed,
-        so the count is reported as unavailable instead.
+        so the count is reported as unavailable instead; a default whose
+        own name cannot be decoded is reported as undescribable.
         """
         from sounddevice import PortAudioError, query_devices
 
@@ -137,6 +138,8 @@ class DeviceTable:
                 index = query_devices(kind=kind).get("index")
             except PortAudioError:
                 return "none"
+            except UnicodeDecodeError:  # a default name the library cannot decode
+                return "undescribable"
             return "none" if index is None else f"#{index}"
 
         try:

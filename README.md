@@ -689,9 +689,15 @@ vox doctor
 ```
 
 The call checks report the local ElevenLabs key's Agents Write scope,
-Claude login and tmux availability. Doctor shows an echo-cancellation
-advisory; it does not test microphone capture. A separately configured
-daemon may use different credentials. Put on a headset and run:
+Claude login and tmux availability. Doctor then asks the running daemon to
+open its default microphone for one second and reports the device, sample
+rate and peak level: silence means the daemon's process lacks the microphone
+grant (System Settings, Privacy & Security, Microphone), which a shell
+terminal may hold while a launchd-started `voxd` does not. Doctor also reads
+the daemon's worker repository allowlist and warns when it is empty, since a
+call can then start no worker. Doctor shows an echo-cancellation advisory. A
+separately configured daemon may use different credentials. Put on a headset
+and run:
 
 ```bash
 vox call --headset

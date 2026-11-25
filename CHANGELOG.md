@@ -349,6 +349,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vox doctor` asks the running daemon to open its default microphone for one
+  second (`mic_probe`) and reports the device, sample rate and peak level,
+  warning with the privacy-grant fix when the daemon hears only silence. It
+  also reads the worker repository allowlist from the daemon (`worker_repos`)
+  and warns when nothing is allowlisted. (PL-1492)
+
 - A voice-call end-to-end tier (`make test-call-e2e`, marker `call_e2e`): a
   real `voxd` subprocess places one scripted `vox call --script` call against
   a fake ElevenLabs Conversational AI agent and REST endpoint on loopback,

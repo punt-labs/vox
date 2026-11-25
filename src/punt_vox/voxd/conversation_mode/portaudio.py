@@ -23,6 +23,8 @@ from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.output_device import OutputDevice
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     # Type-only: the name is declared in ``typings/sounddevice/__init__.pyi``
     # for the type checkers; the stub-free runtime module has no such attribute.
     from sounddevice import DeviceInfo, RawInputCallback
@@ -58,18 +60,36 @@ class PortAudio:
         so the library's own error is converted here rather than escaping
         as one.
 
+        Both defaults are read under a reservation on the table: sounddevice
+        reads PortAudio's device record after obtaining its pointer, valid
+        only until a terminate, so a probe's refresh on another thread is
+        kept while the read is in progress rather than terminating under it.
+
         Raises:
             OSError: When PortAudio refuses to re-read its device table, has
                 no default input or output device, or reports one it cannot
                 describe (:meth:`device`).
         """
+        self._refreshed(self._table)
+        reservation = self._table.reserve()
+        try:
+            return DevicePair(self.device(), self.output_device())
+        finally:
+            reservation.release()
+
+    @staticmethod
+    def _refreshed(table: DeviceTable) -> None:
+        """Re-read *table*, converting PortAudio's refusal to OSError.
+
+        Raises:
+            OSError: When PortAudio refuses to re-read its device table.
+        """
         from sounddevice import PortAudioError
 
         try:
-            self._table.refresh()
+            table.refresh()
         except PortAudioError as exc:
             raise OSError(f"cannot re-read the audio device table: {exc}") from exc
-        return DevicePair(self.device(), self.output_device())
 
     @staticmethod
     def device() -> InputDevice:
@@ -78,11 +98,14 @@ class PortAudio:
         A device PortAudio reports with no name or a sample rate that is not
         positive is as unusable as no device: the caller releases the call
         ID on an :class:`OSError`, so the :class:`ValueError` the device's
-        validation raises is converted here rather than escaping as one.
+        validation raises is converted here rather than escaping as one. So
+        is a name ``sounddevice`` cannot decode, a :class:`UnicodeDecodeError`
+        it raises while describing the device.
 
         Raises:
             OSError: When PortAudio has no default input device, or reports
-                one with no name or a non-positive sample rate.
+                one with no name, a non-positive sample rate, or a name
+                that cannot be decoded.
         """
         from sounddevice import PortAudioError, query_devices
 
@@ -90,6 +113,8 @@ class PortAudio:
             return PortAudio._reported(query_devices(kind="input"))
         except PortAudioError as exc:
             raise OSError(f"no default input device: {exc}") from exc
+        except UnicodeDecodeError as exc:
+            raise OSError(f"no usable default input device: {exc}") from exc
 
     @staticmethod
     def output_device() -> OutputDevice:
@@ -128,7 +153,11 @@ class PortAudio:
                 not positive.
         """
         try:
-            return InputDevice(str(info["name"]), float(info["default_samplerate"]))
+            return InputDevice(
+                str(info["name"]),
+                float(info["default_samplerate"]),
+                index=info.get("index"),
+            )
         except ValueError as exc:
             raise OSError(f"no usable default input device: {exc}") from exc
 
@@ -152,12 +181,69 @@ class PortAudio:
         Raises:
             OSError: When PortAudio refuses the stream (:meth:`InputDevice.opened`).
         """
-        reservation = self._table.reserve()
+        return self._opened_counted(
+            self._table,
+            lambda: device,
+            samplerate=samplerate,
+            blocksize=blocksize,
+            callback=callback,
+        )[1]
+
+    def open_default_input(
+        self,
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
+    ) -> tuple[InputDevice, InputStreamHandle]:
+        """Re-read the table, then select and open the default input as one step.
+
+        For a caller that needs the microphone alone -- the doctor's probe --
+        and no output device: a host whose default output PortAudio cannot
+        describe still captures. The device is selected under the stream's
+        reservation, so no refresh on another thread can move the default
+        between the selection and the open; the device returned is the one
+        the stream captures from.
+
+        Raises:
+            OSError: When PortAudio refuses to re-read its table, has no
+                usable default input device, or refuses the stream.
+        """
+        self._refreshed(self._table)
+        return self._opened_counted(
+            self._table,
+            self.device,
+            samplerate=samplerate,
+            blocksize=blocksize,
+            callback=callback,
+        )
+
+    @staticmethod
+    def _opened_counted(
+        table: DeviceTable,
+        select: Callable[[], InputDevice],
+        *,
+        samplerate: float,
+        blocksize: int,
+        callback: RawInputCallback,
+    ) -> tuple[InputDevice, InputStreamHandle]:
+        """Select a device and open its stream under one reservation on *table*.
+
+        The reservation is taken before *select* runs, so the table cannot
+        be re-read between selecting the device and binding the stream to
+        it. Whatever fails at either step gives the count back: a count left
+        held would keep the table from ever refreshing again.
+
+        Raises:
+            OSError: When *select* or the open refuses.
+        """
+        reservation = table.reserve()
         try:
+            device = select()
             stream = device.opened(
                 samplerate=samplerate, blocksize=blocksize, callback=callback
             )
-        except OSError:
+        except BaseException:
             reservation.release()
             raise
-        return CountedStream(stream, reservation)
+        return device, CountedStream(device, stream, reservation)
