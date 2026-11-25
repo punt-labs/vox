@@ -59,33 +59,65 @@ class SpeechInput:
             return cls._spell_text(text, vibed=vibed)
         parts: list[str] = []
         cursor = 0
-        for span in SpeechMarkdown.spans(text, vibed=vibed):
-            if isinstance(span, LinkSpan):
-                opening, label_end, end = span
-                parts.extend(
-                    (
-                        cls._spell_text(text[cursor:opening], vibed=vibed),
-                        "[",
-                        cls._spell_text(text[opening + 1 : label_end], vibed=vibed),
-                        text[label_end:end],
-                    )
+        depth = 0
+        for start, end, change in cls._link_edges(text, vibed=vibed):
+            parts.append(
+                cls._spell_segment(
+                    text[cursor:start],
+                    vibed=vibed,
+                    label=depth > 0,
+                    follows_link=cursor > 0,
+                    precedes_link=True,
                 )
-                cursor = end
-        parts.append(cls._spell_text(text[cursor:], vibed=vibed))
+            )
+            parts.append(text[start:end])
+            cursor = end
+            depth += change
+        parts.append(
+            cls._spell_segment(text[cursor:], vibed=vibed, follows_link=cursor > 0)
+        )
         return "".join(parts)
 
+    @staticmethod
+    def _link_edges(text: str, *, vibed: bool) -> list[tuple[int, int, int]]:
+        return sorted(
+            edge
+            for span in SpeechMarkdown.spans(text, vibed=vibed)
+            if isinstance(span, LinkSpan)
+            for edge in (
+                (span.opening, span.opening + 1, 1),
+                (span.label_end, span.end, -1),
+            )
+        )
+
     @classmethod
-    def _spell_text(cls, text: str, *, vibed: bool) -> str:
+    def _spell_segment(
+        cls,
+        text: str,
+        *,
+        vibed: bool,
+        follows_link: bool,
+        label: bool = False,
+        precedes_link: bool = False,
+    ) -> str:
+        # A link boundary is not an operand but must break a chain like a word.
+        prefix = "... " if follows_link else ""
+        suffix = " ..." if precedes_link else ""
+        spelled = cls._spell_text(f"{prefix}{text}{suffix}", vibed=vibed, label=label)
+        return spelled[len(prefix) : len(spelled) - len(suffix)]
+
+    @classmethod
+    def _spell_text(cls, text: str, *, vibed: bool, label: bool = False) -> str:
         return "".join(
-            cls._spell_line(line, vibed=vibed)
+            cls._spell_line(line, vibed=vibed, label=label)
             for line in text.splitlines(keepends=True)
         )
 
     @classmethod
-    def _spell_line(cls, line: str, *, vibed: bool) -> str:
+    def _spell_line(cls, line: str, *, vibed: bool, label: bool) -> str:
         if not any(mark in line for mark in "<>=!"):
             return line
-        words = cls._word_matches(line, vibed=vibed)
+        words = cls._word_matches(line, vibed=vibed and not label, label=label)
         parts: list[str] = []
         cursor = 0
         for index in cls._operators([word.value for word in words]):
@@ -95,7 +127,7 @@ class SpeechInput:
         return "".join(parts) + line[cursor:]
 
     @classmethod
-    def _word_matches(cls, line: str, *, vibed: bool) -> list[_Word]:
+    def _word_matches(cls, line: str, *, vibed: bool, label: bool) -> list[_Word]:
         quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
         pattern = _VIBED_WORD_RE if vibed else _WORD_RE
         words: list[_Word] = []
@@ -108,13 +140,15 @@ class SpeechInput:
                     _Word(f"{previous.value} {word[0]}", previous.start, word.end())
                 )
             else:
-                words.append(cls._comparison_word(line, word))
+                words.append(cls._comparison_word(line, word, label=label))
         return words
 
     @staticmethod
-    def _comparison_word(line: str, word: re.Match[str]) -> _Word:
+    def _comparison_word(line: str, word: re.Match[str], *, label: bool) -> _Word:
         value = word[0]
-        if value in _SPOKEN and _STANDALONE_RE.match(line, word.start()) is None:
+        if label and (bracketed := VIBE_TAG_RE.fullmatch(value)):
+            value = bracketed[1]
+        elif value in _SPOKEN and _STANDALONE_RE.match(line, word.start()) is None:
             value = ""
         return _Word(value, word.start(), word.end())
 

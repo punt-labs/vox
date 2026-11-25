@@ -635,6 +635,16 @@ def test_comparison_before_an_attached_expressive_tag() -> None:
     assert SpeechText.for_synthesis("x < 3[sighs]", expressive=False) == "x less than 3"
 
 
+def test_link_label_brackets_are_not_expressive_tags() -> None:
+    text = "[x == [expected]](/tests)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "x equal to expected"
+
+
+def test_nested_link_spans_keep_existing_markdown_speech() -> None:
+    text = "[![read [policy](/policy)](/badge)](/guide)"
+    assert SpeechText.for_synthesis(text, expressive=True) == "read policy /badge"
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -642,6 +652,8 @@ def test_comparison_before_an_attached_expressive_tag() -> None:
         ("Chapter 2 > Section 3", "Chapter 2 Section 3"),
         ("Menu > A > B and Home > 2 > 3", "Menu A B and Home 2 3"),
         ("[A](/guide) > [B](/settings)", "A B"),
+        ("[Chapter](/guide) > 2 > 3", "Chapter 2 3"),
+        ("3 > 2 > [Chapter](/guide)", "3 2 Chapter"),
         ("[label](<foo 3 > 'a')", "label"),
         ("echo 3 > out", "echo 3 out"),
         ("cat a > b", "cat a b"),
