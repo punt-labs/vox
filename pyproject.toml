@@ -232,9 +232,8 @@ ignore = [
 "src/punt_vox/doctor_mpv.py" = ["S603"]
 "src/punt_vox/server.py" = ["PLC0415", "C901"]
 "src/punt_vox/voxd/daemon.py" = ["PLC0415"]
-"src/punt_vox/voxd/synthesis.py" = ["PLC0415"]
+"src/punt_vox/voxd/speech_preparation.py" = ["PLC0415"]
 "src/punt_vox/voxd/health.py" = ["PLC0415"]
-"src/punt_vox/voxd/speech_handlers.py" = ["C901"]
 "src/punt_vox/client.py" = ["PLC0415", "C901"]
 "src/punt_vox/hooks.py" = ["T20", "PLC0415", "S603", "S607", "S311"]
 "src/punt_vox/types_synthesis.py" = ["C901"]
@@ -254,7 +253,8 @@ ignore = [
 "src/punt_vox/voices.py" = ["S311"]
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
-"src/punt_vox/voxd/conversation_mode/mic_audio_source.py" = ["PLC0415"]
+"src/punt_vox/voxd/conversation_mode/input_device.py" = ["PLC0415"]
+"src/punt_vox/voxd/conversation_mode/portaudio.py" = ["PLC0415"]
 "src/punt_vox/voxd/pcm_output.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
@@ -339,6 +339,7 @@ entry = [
     "punt_vox.voxd.boot",
     "punt_vox.voxd.daemon",
     "punt_vox.voxd.programs.wiring",
+    "punt_vox.voxd.voice_call.launcher",
     "punt_vox.voxd.music_player.composition",
     "punt_vox.hook_context_relay",
 ]
@@ -385,6 +386,7 @@ adapters = [
     "punt_vox.private_state",
     "punt_vox.providers",
     "punt_vox.providers.*",
+    "punt_vox.segment_array",
     "punt_vox.segment_file",
     "punt_vox.settings_registration",
     "punt_vox.sibling_lock",
@@ -427,7 +429,15 @@ adapters = [
     "punt_vox.voxd.wire_fault",
     "punt_vox.voxd.wire_reply",
     "punt_vox.voxd.wire_text",
+    "punt_vox.voxd.voice_call.tool_reply",
+    "punt_vox.voxd.conversation_mode.input_device",
+    "punt_vox.voxd.conversation_mode.portaudio",
+    "punt_vox.voxd.voice_call.call_log",
+    "punt_vox.voxd.voice_call.call_trace",
+    "punt_vox.voxd.voice_call.mic_input",
     "punt_vox.voxd.conversation_mode.mic_audio_source",
+    "punt_vox.voxd.conversation_mode.mic_capture",
+    "punt_vox.voxd.conversation_mode.block_queue",
     "punt_vox.voxd.programs.album_manifest_file",
     "punt_vox.voxd.programs.edge_trim",
     "punt_vox.voxd.programs.filesystem_store",
@@ -477,6 +487,7 @@ application = [
     "punt_vox.voxd.handler_registry",
     "punt_vox.voxd.health",
     "punt_vox.voxd.playback",
+    "punt_vox.voxd.speech_preparation",
     "punt_vox.voxd.synthesis",
     "punt_vox.voxd.temp_synthesis",
     "punt_vox.voxd.router",
@@ -505,6 +516,7 @@ application = [
 ]
 domain = [
     "punt_vox._audio",
+    "punt_vox._code_currency",
     "punt_vox._inline_code",
     "punt_vox._speech_abbreviations",
     "punt_vox._speech_punctuation",
@@ -555,6 +567,7 @@ domain = [
     "punt_vox.service.voxd_bind",
     "punt_vox.voxd.audit_log_level",
     "punt_vox.voxd.dedup",
+    "punt_vox.voxd.log_text",
     "punt_vox.voxd.pcm_audio",
     "punt_vox.voxd.playback_result",
     "punt_vox.voxd.rejection_reason",
@@ -562,6 +575,10 @@ domain = [
     "punt_vox.voxd.types",
     "punt_vox.voxd.conversation_mode.audio_chunk",
     "punt_vox.voxd.conversation_mode.stt_provider",
+    "punt_vox.voxd.voice_call.call_id",
+    "punt_vox.voxd.voice_call.call_outcome",
+    "punt_vox.voxd.voice_call.capture_level",
+    "punt_vox.voxd.voice_call.capture_probe",
     "punt_vox.voxd.programs",
     "punt_vox.voxd.programs.active_context",
     "punt_vox.voxd.programs.album_contents",

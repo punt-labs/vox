@@ -20,6 +20,12 @@ def test_code_does_not_consume_comma_decimal() -> None:
     assert match["amount"] == "1"
 
 
+def test_prose_fields_canonicalize_dotted_euro_groups() -> None:
+    match = re.fullmatch(CurrencyPatterns.prose_amount("$€"), "-€1.234.567,89")
+    assert match is not None
+    assert CurrencyPatterns.prose_fields(match, "") == ("€", "1,234,567.89", "-")
+
+
 @pytest.mark.parametrize(("text", "eligible"), [("1,50€", True), ("1,50$", False)])
 def test_suffix_decimal_requires_euro(text: str, eligible: bool) -> None:
     assert (re.fullmatch(CurrencyPatterns.suffix_amount("$€"), text) is not None) == (

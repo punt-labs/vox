@@ -24,6 +24,12 @@
     "added_at": "2026-08-25T08:01:32Z"
   },
   {
+    "file": "src/punt_vox/voxd/conversation_mode/portaudio.py",
+    "ceiling": 1,
+    "justify": "PortAudio moved out of input_device.py into its own module; it keeps the same per-file PLC0415 lazy-import ignore because sounddevice is loaded only when a stream is opened, so voxd starts without the call extra (the pattern every PortAudio-touching module follows)",
+    "added_at": "2026-11-24T22:24:20.963851Z"
+  },
+  {
     "file": "src/punt_vox/voxd/pcm_output.py",
     "ceiling": 1,
     "justify": "Lazy sounddevice import for the optional call extra (PortAudio), same as mic_audio_source.py: a top-level import would break every voxd start on a host without PortAudio.",

@@ -1,4 +1,4 @@
-"""Translate CommonMark inline backtick offsets into speech source offsets."""
+"""Translate CommonMark inline offsets into speech source offsets."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, final
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_TICK = re.compile("`")
+_MARK = re.compile(r"`|\[|\]|\)")
 _LINE_END = re.compile(r"\r\n?|\n")
 
 
 @final
-class BacktickOffsets:
+class MarkdownOffsets:
     """Align parsed inline content with its original Markdown lines."""
 
     @staticmethod
@@ -24,8 +24,8 @@ class BacktickOffsets:
 
     @staticmethod
     def from_content(text: str, lines: Sequence[int], content: str) -> dict[int, int]:
-        """Map inline backticks to the raw text, skipping block prefixes."""
-        ticks: dict[int, int] = {}
+        """Map inline syntax marks to the raw text, skipping block prefixes."""
+        offsets: dict[int, int] = {}
         position = 0
         raw_lines = (
             (start, text[start:end].replace("\0", "\ufffd"))
@@ -39,9 +39,9 @@ class BacktickOffsets:
             column = raw.find(piece)
             if column >= 0:
                 padding = len(line) - len(piece)
-                ticks.update(
-                    (position + padding + tick.start(), start + column + tick.start())
-                    for tick in _TICK.finditer(piece)
+                offsets.update(
+                    (position + padding + mark.start(), start + column + mark.start())
+                    for mark in _MARK.finditer(piece)
                 )
             position += len(line) + 1
-        return ticks
+        return offsets

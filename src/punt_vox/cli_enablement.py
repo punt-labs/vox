@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Self, final
 import typer
 
 from punt_vox.config import ConfigStore
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.dirs import writable_config_dir
 from punt_vox.enablement import EnableOutcome, RepoEnablement
 
 if TYPE_CHECKING:
@@ -183,7 +183,7 @@ class EnablementCli:
             raise typer.BadParameter("mode must be normal or continuous")
         value = self._NOTIFY_VALUES[mode]
 
-        store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
+        store = ConfigStore(writable_config_dir())
         first_init = store.read_field("notify") is None
         updates: dict[str, str] = {"notify": value}
         # Continuous always speaks; normal defaults to voice only on first init,

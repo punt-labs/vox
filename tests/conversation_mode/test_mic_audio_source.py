@@ -2,7 +2,7 @@
 
 No real audio hardware, no ``sounddevice`` C extension calls -- every test
 drives :class:`MicAudioSource` through
-:func:`conversation_mode._mic_fakes.fake_input_stream_factory`. Two-step
+:class:`conversation_mode._mic_fakes.FakeBackend`. Two-step
 timing pattern used throughout: schedule the generator's first ``__anext__``
 as a task, ``await asyncio.sleep(0)`` once to let it run synchronously up to
 its first suspension point (``await queue.get()``), then feed the fake
@@ -16,22 +16,40 @@ import asyncio
 import logging
 import sys
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
-from conversation_mode._mic_fakes import FakeInputStream, fake_input_stream_factory
+from conversation_mode._mic_fakes import FAKE_DEVICE, FakeBackend, FakeInputStream
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
+from punt_vox.voxd.conversation_mode.input_device import InputDevice
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sounddevice import DeviceInfo
 
 
 async def _advance_to_first_await() -> None:
     await asyncio.sleep(0)
 
 
+def _source(
+    created: list[FakeInputStream],
+    *,
+    sample_rate_hz: int = SAMPLE_RATE_HZ,
+    chunk_s: float = 0.02,
+) -> MicAudioSource:
+    return MicAudioSource(
+        FakeBackend(created), sample_rate_hz=sample_rate_hz, chunk_s=chunk_s
+    )
+
+
 class TestMicAudioSourceChunks:
     async def test_yields_the_fed_pcm(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        source = _source(created)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -45,9 +63,7 @@ class TestMicAudioSourceChunks:
 
     async def test_every_chunk_carries_the_configured_duration(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(
-            chunk_s=0.05, input_stream_factory=fake_input_stream_factory(created)
-        )
+        source = _source(created, chunk_s=0.05)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -58,10 +74,7 @@ class TestMicAudioSourceChunks:
 
     async def test_requests_the_configured_sample_rate(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(
-            sample_rate_hz=22_050,
-            input_stream_factory=fake_input_stream_factory(created),
-        )
+        source = _source(created, sample_rate_hz=22_050)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -74,7 +87,7 @@ class TestMicAudioSourceChunks:
 
     async def test_default_sample_rate_matches_the_shared_constant(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        source = _source(created)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -86,7 +99,7 @@ class TestMicAudioSourceChunks:
 
     async def test_closing_the_generator_releases_the_stream(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        source = _source(created)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -101,7 +114,7 @@ class TestMicAudioSourceChunks:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        source = _source(created)
         gen = source.chunks()
         task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -116,7 +129,7 @@ class TestMicAudioSourceChunks:
 
     async def test_multiple_feeds_yield_multiple_chunks_in_order(self) -> None:
         created: list[FakeInputStream] = []
-        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        source = _source(created)
         gen = source.chunks()
         first_task = asyncio.ensure_future(gen.__anext__())
         await _advance_to_first_await()
@@ -133,11 +146,45 @@ class TestMicAudioSourceChunks:
         await gen.aclose()
 
 
+class _FakePortAudioError(Exception):
+    pass
+
+
+def _device_info(name: str, default_samplerate: float) -> Callable[[str], DeviceInfo]:
+    def query_devices(kind: str) -> DeviceInfo:
+        assert kind == "input"
+        return {"name": name, "default_samplerate": default_samplerate}
+
+    return query_devices
+
+
+def test_the_fake_backend_reports_the_fake_device() -> None:
+    assert FakeBackend().device() == FAKE_DEVICE
+    assert FakeBackend().device() == InputDevice("Fake Microphone", 48_000.0)
+
+
+async def test_opening_the_stream_logs_the_device_name_and_rates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created: list[FakeInputStream] = []
+    gen = _source(created, sample_rate_hz=16_000).chunks()
+    with caplog.at_level(logging.INFO):
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x00\x00")
+        await task
+    await gen.aclose()
+    (line,) = [r.message for r in caplog.records if "input device" in r.message]
+    assert line == (
+        "Call input device: Fake Microphone (default 48000 Hz), capturing at 16000 Hz"
+    )
+
+
 async def test_a_device_open_failure_propagates_out_of_chunks() -> None:
-    def factory(**_kwargs: object) -> FakeInputStream:
+    def refuse(**_kwargs: object) -> FakeInputStream:
         raise OSError("no default input device available")
 
-    source = MicAudioSource(input_stream_factory=factory)
+    source = MicAudioSource(FakeBackend(open_stream=refuse))
     with pytest.raises(OSError, match="no default input device available"):
         await anext(source.chunks())
 
@@ -149,9 +196,13 @@ async def test_default_source_opens_and_closes_a_portaudio_stream(
     monkeypatch.setitem(
         sys.modules,
         "sounddevice",
-        SimpleNamespace(RawInputStream=fake_input_stream_factory(created)),
+        SimpleNamespace(
+            RawInputStream=FakeBackend(created).open,
+            PortAudioError=_FakePortAudioError,
+            query_devices=_device_info("Built-in", 44100.0),
+        ),
     )
-    gen = MicAudioSource().chunks()
+    gen = MicAudioSource.with_portaudio().chunks()
     next_chunk = asyncio.create_task(anext(gen))
     await _advance_to_first_await()
     (stream,) = created
@@ -164,3 +215,10 @@ async def test_default_source_opens_and_closes_a_portaudio_stream(
     assert stream.kwargs["dtype"] == "int16"
     assert chunk.pcm == b"\x01\x00" * 320
     assert stream.closed
+
+
+@pytest.mark.parametrize("chunk_s", [0.0, -0.02])
+def test_a_non_positive_chunk_duration_is_refused(chunk_s: float) -> None:
+    """A zero-length chunk would never advance the silence probe."""
+    with pytest.raises(ValueError, match="chunk_s must be positive"):
+        MicAudioSource(FakeBackend(), chunk_s=chunk_s)
