@@ -60,21 +60,23 @@ class SpeechInput:
         parts: list[str] = []
         cursor = 0
         depth = 0
+        follows_link = False
         for start, end, change in cls._link_edges(text, vibed=vibed):
             parts.append(
                 cls._spell_segment(
                     text[cursor:start],
                     vibed=vibed,
                     label=depth > 0,
-                    follows_link=cursor > 0,
-                    precedes_link=True,
+                    follows_link=follows_link,
+                    precedes_link=change > 0,
                 )
             )
             parts.append(text[start:end])
             cursor = end
             depth += change
+            follows_link = change < 0
         parts.append(
-            cls._spell_segment(text[cursor:], vibed=vibed, follows_link=cursor > 0)
+            cls._spell_segment(text[cursor:], vibed=vibed, follows_link=follows_link)
         )
         return "".join(parts)
 
@@ -100,9 +102,9 @@ class SpeechInput:
         label: bool = False,
         precedes_link: bool = False,
     ) -> str:
-        # A link boundary is not an operand but must break a chain like a word.
-        prefix = "... " if follows_link else ""
-        suffix = " ..." if precedes_link else ""
+        # Mark link boundaries without adding whitespace around attached operators.
+        prefix = "..." if follows_link else ""
+        suffix = "..." if precedes_link else ""
         spelled = cls._spell_text(f"{prefix}{text}{suffix}", vibed=vibed, label=label)
         return spelled[len(prefix) : len(spelled) - len(suffix)]
 

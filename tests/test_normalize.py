@@ -595,6 +595,8 @@ class TestSymbolStripping:
         ("_x_ < 3", "x less than 3"),
         ("\u201cx < 3\u201d", "x less than 3"),
         ("[x < 3](/limits)", "x less than 3"),
+        ("3 > 2 >[Chapter](/guide)", "3 greater than 2 Chapter"),
+        ("[Chapter](/guide)> 3 > 2", "Chapter 3 greater than 2"),
         ("50% < x", "50 percent less than x"),
         ("-3 < x < 3", "-3 less than x less than 3"),
         ("0 <= x < y", "0 less than or equal to x less than y"),
