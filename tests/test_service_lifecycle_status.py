@@ -283,13 +283,28 @@ def test_status_deadline_spent_after_a_hung_first_ask_names_both() -> None:
     assert world.tokens_to == []
 
 
-def test_status_unattributed_listener_names_the_first_ask() -> None:
-    """A listener vox cannot attribute was asked through serve.port first."""
+def test_status_unattributed_listener_names_the_sent_request() -> None:
+    """The token did go to the published port: the reading must not deny it."""
     world = FakeWorld(
         port_file=8421, foreign_listener=True, published_health_error="connection reset"
     )
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
-    assert reading.reason.startswith("something listens on port 8421")
-    assert "voxd was asked first and gave no answer: connection reset" in reading.reason
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "the token went to the published port and got no answer: connection reset"
+    )
+    assert world.tokens_to_port == [8421]
     assert world.tokens_to == []
+
+
+def test_status_unattributed_listener_that_was_not_asked_says_so() -> None:
+    """With the published door closed, no token went out at all."""
+    world = FakeWorld(foreign_listener=True)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert reading.reason == (
+        "something listens on port 8421 but no visible voxd process holds it; "
+        "vox sent it no token; voxd was not asked first: serve.port publishes "
+        "no port; no token sent unattributed"
+    )

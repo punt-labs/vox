@@ -22,8 +22,8 @@ The token never goes out through any other door; the gate is stated in
 - a visible voxd did not answer (timeout, no token, rejected, socket error):
   ``unresponsive``, naming the pids and the cause;
 - no visible voxd, but something accepts a connection on the port: ``unknown``
-  -- an owner vox cannot see (another user's process) holds it, and no token
-  is sent to it;
+  -- an owner vox cannot see (another user's process) holds it; the reading
+  says whether the published door already sent it the token;
 - no voxd and no listener: ``not_running``, naming any voxd on the port
   ``serve.port`` names, as ``stop`` does;
 - a port, process or unit vox cannot inspect, or a deadline spent on vox's
@@ -100,12 +100,7 @@ class StatusCheck:
         if holders:
             return self._ask(holders)
         if probe.port_listening():
-            return DaemonStatus.unknown(
-                self._after_first_ask(
-                    f"something listens on port {self._port} but no visible "
-                    "voxd process holds it; vox sent it no token"
-                )
-            )
+            return DaemonStatus.unknown(self._unattributed_listener())
         return DaemonStatus.not_running(
             f"no voxd process holds port {self._port} and nothing listens on it",
             probe.off_port_voxd(),
@@ -137,6 +132,24 @@ class StatusCheck:
         if isinstance(why, NotAskedError):
             return DaemonStatus.unknown(self._after_first_ask(str(why)))
         return DaemonStatus.unresponsive((h.pid for h in holders), str(why))
+
+    def _unattributed_listener(self) -> str:
+        """Say what reached a listener no visible voxd holds.
+
+        The published door may already have sent the token there and got no
+        answer; the reading then says so rather than "no token", which would
+        be false.
+        """
+        seen = (
+            f"something listens on port {self._port} but no visible voxd "
+            "process holds it"
+        )
+        first = self._first
+        if first is None or isinstance(first, NotAskedError):
+            return self._after_first_ask(f"{seen}; vox sent it no token")
+        return (
+            f"{seen}; the token went to the published port and got no answer: {first}"
+        )
 
     def _after_first_ask(self, what: str) -> str:
         """Return *what* with what the published-port request before it came to.
