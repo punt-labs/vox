@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Speak standalone comparisons such as `x < 3` and `x != y`. Bare `<`
+  and `>` require a number and only accept numbers or single-letter
+  operands, leaving word breadcrumbs such as `Settings > Voice` alone. (PL-1610)
+
 - Speak inline Markdown images' alt text instead of their source filenames,
   including images used as link labels.
 
