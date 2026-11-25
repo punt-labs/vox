@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import threading
 from pathlib import Path
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,6 +37,69 @@ def _handler(
 
 def _store(tmp_path: Path) -> RecordStore:
     return RecordStore(tmp_path / "recordings")
+
+
+class OverlongNameProbe:
+    """Find the shortest multibyte name a directory's filesystem refuses.
+
+    ``PC_NAME_MAX`` is 255 on both ext4 and APFS, but ext4 counts bytes and
+    APFS counts characters, so a name of 128 two-byte characters overflows
+    the one and is legal on the other. Ask the filesystem rather than assume,
+    and refuse to guess: a candidate is returned only once the filesystem has
+    actually rejected it with ``ENAMETOOLONG``.
+    """
+
+    _CHAR = "\u00e9"
+    _directory: Path
+    _limit: int
+
+    def __new__(cls, directory: Path) -> Self:
+        self = super().__new__(cls)
+        self._directory = directory
+        self._limit = os.pathconf(directory, "PC_NAME_MAX")
+        return self
+
+    def shortest(self) -> str:
+        """Return the first candidate the filesystem refuses, or raise."""
+        for candidate in self._candidates():
+            if self._is_refused(candidate):
+                return candidate
+        msg = (
+            f"{self._directory} accepted every overlong name probed "
+            f"(PC_NAME_MAX={self._limit}); the too-long test cannot run here"
+        )
+        raise RuntimeError(msg)
+
+    def _candidates(self) -> tuple[str, str]:
+        by_bytes = self._CHAR * (self._limit // len(os.fsencode(self._CHAR)) + 1)
+        by_chars = self._CHAR * (self._limit + 1)
+        return by_bytes, by_chars
+
+    def _is_refused(self, name: str) -> bool:
+        path = self._directory / name
+        try:
+            path.touch()
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            return True
+        path.unlink()
+        return False
+
+
+class TestOverlongNameProbe:
+    def test_raises_when_the_filesystem_refuses_neither_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A probe that finds no refused name must fail loudly, not guess."""
+
+        def accept(path: Path, mode: int = 0o666, exist_ok: bool = True) -> None:
+            """Stand in for touch and unlink on a filesystem that refuses nothing."""
+
+        monkeypatch.setattr(Path, "touch", accept)
+        monkeypatch.setattr(Path, "unlink", accept)
+        with pytest.raises(RuntimeError, match="accepted every overlong name"):
+            OverlongNameProbe(tmp_path).shortest()
 
 
 def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
@@ -166,6 +231,34 @@ class TestRecordHandler:
         audio = next(p for p in sent if p["type"] == "audio")
         assert "name" in audio and "path" in audio
         assert "data" not in audio  # no base64 audio frame crosses the wire
+
+    def test_nondefault_elevenlabs_rate_warns_without_changing_recording(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "source.mp3"
+        data = b"\xff\xfb\x90\x00" * 8
+        src.write_bytes(data)
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            _handler(store, src)(
+                {
+                    "id": "r1",
+                    "text": "hi",
+                    "provider": "elevenlabs",
+                    "rate": 120,
+                },
+                ws,
+            )
+        )
+
+        ack, audio = sent
+        assert "warning" not in ack
+        assert (
+            audio["warning"] == "ElevenLabs ignores the requested speech rate (120%)."
+        )
+        assert (store.root / str(audio["name"])).read_bytes() == data
 
     @pytest.mark.parametrize("mib", [1, 3, 5])
     def test_arbitrarily_long_record_has_no_ceiling(
@@ -335,16 +428,110 @@ class TestRecordHandler:
 
         assert sent[-1] == {"type": "error", "id": "r1", "message": str(rejection)}
 
-    def test_empty_text_is_an_error(self, tmp_path: Path) -> None:
-        src = tmp_path / "src.mp3"
-        src.write_bytes(b"\x00")
+    @pytest.mark.parametrize(
+        "text", ["", "  ", "\t\n"], ids=["empty", "spaces", "tab-nl"]
+    )
+    def test_blank_text_is_an_error(self, tmp_path: Path, text: str) -> None:
+        """Whitespace-only text is rejected before the ack like "", so no
+        provider call is made and nothing lands in the store."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock(
+            side_effect=RuntimeError("provider rejected blank text")
+        )
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
         ws, sent = _capturing_ws()
 
-        msg: dict[str, object] = {"type": "record", "id": "r1", "text": ""}
-        asyncio.run(_handler(_store(tmp_path), src)(msg, ws))
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": text,
+            "provider": "elevenlabs",
+        }
+        asyncio.run(handler(msg, ws))
 
-        assert sent[-1]["type"] == "error"
-        assert "empty text" in str(sent[-1]["message"])
+        assert sent == [{"type": "error", "id": "r1", "message": "empty text"}]
+        synth.synthesize_to_file.assert_not_called()
+
+    def test_surrogate_is_rejected_before_recording_ack(self, tmp_path: Path) -> None:
+        synth = MagicMock(spec=SynthesisPipeline)
+        handler = RecordHandler(synthesis=synth, store=_store(tmp_path))
+        ws, sent = _capturing_ws()
+
+        asyncio.run(
+            handler(
+                {
+                    "type": "record",
+                    "id": "r1",
+                    "text": "left\ud800right",
+                    "provider": "espeak",
+                },
+                ws,
+            )
+        )
+
+        assert sent == [
+            {"type": "error", "id": "r1", "message": "text must be valid UTF-8"}
+        ]
+        synth.synthesize_to_file.assert_not_called()
+
+    async def test_empty_normalized_text_rejects_after_ack(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+        handler = RecordHandler(
+            synthesis=SynthesisPipeline(playback_mutex=asyncio.Lock()), store=store
+        )
+        cache_lookup = MagicMock(side_effect=AssertionError("unexpected cache lookup"))
+        provider_factory = MagicMock(
+            side_effect=AssertionError("unexpected provider call")
+        )
+        monkeypatch.setattr(
+            "punt_vox.voxd.synthesis.SynthesisCache.for_request", cache_lookup
+        )
+        monkeypatch.setattr("punt_vox.voxd.synthesis.get_provider", provider_factory)
+
+        await handler(
+            {"type": "record", "id": "r1", "text": "[warm]", "provider": "openai"},
+            ws,
+        )
+
+        assert sent == [
+            {"type": "recording", "id": "r1"},
+            {"type": "error", "id": "r1", "message": "empty text after normalization"},
+        ]
+        cache_lookup.assert_not_called()
+        provider_factory.assert_not_called()
+        assert not store.root.exists()
+
+    @pytest.mark.parametrize("rate", [0, -10])
+    def test_nonpositive_rate_is_an_error(self, tmp_path: Path, rate: int) -> None:
+        """A wire rate of 0 or below is rejected before the ack, so no provider
+        call is made and nothing lands in the store."""
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock()
+        store = _store(tmp_path)
+        handler = RecordHandler(synthesis=synth, store=store)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "provider": "elevenlabs",
+            "rate": rate,
+        }
+        asyncio.run(handler(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": f"rate must be greater than 0, got {rate}",
+            }
+        ]
+        synth.synthesize_to_file.assert_not_called()
+        assert not store.root.exists() or not any(store.root.iterdir())
 
     def test_non_string_voice_is_a_clean_error(self, tmp_path: Path) -> None:
         """A non-string typed field yields an error frame before the ack; the
@@ -422,6 +609,93 @@ class TestRecordHandler:
         assert sent[-1]["type"] == "error"
         assert "empty" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
+
+    def test_whitespace_wire_name_rejected_before_ack(self, tmp_path: Path) -> None:
+        """A whitespace-only wire name is refused, so no blank-id take lands."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": "  ",
+        }
+        asyncio.run(_handler(store, src)(msg, ws))
+
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": "recording name must not be empty or whitespace",
+            }
+        ]
+        assert not store.root.exists() or not any(store.root.iterdir())
+
+    @pytest.mark.parametrize("root_exists", [True, False])
+    def test_overlong_wire_name_rejected_before_synthesis(
+        self, tmp_path: Path, *, root_exists: bool
+    ) -> None:
+        store = _store(tmp_path)
+        if root_exists:
+            store.root.mkdir()
+        synth = MagicMock()
+        source = tmp_path / "source.mp3"
+        source.write_bytes(b"audio")
+        synth.synthesize_to_file = AsyncMock(
+            return_value=SynthesisOutcome(path=source, cached=False)
+        )
+        handler = RecordHandler(synthesis=synth, store=store)
+        ws, sent = _capturing_ws()
+        name = OverlongNameProbe(tmp_path).shortest()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": name,
+        }
+        asyncio.run(handler(msg, ws))
+
+        synth.synthesize_to_file.assert_not_called()
+        assert sent == [
+            {
+                "type": "error",
+                "id": "r1",
+                "message": "recording name is too long for the recordings filesystem",
+            }
+        ]
+        assert not any(store.root.iterdir())
+
+    def test_record_name_probe_permission_error_is_a_safe_fault(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        dest = store.root / "take.mp3"
+        real_stat = Path.stat
+
+        def denied(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+            if path == dest:
+                raise PermissionError(errno.EACCES, "permission denied", str(path))
+            return real_stat(path, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        synth = MagicMock()
+        synth.synthesize_to_file = AsyncMock()
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": dest.name,
+        }
+
+        asyncio.run(RecordHandler(synthesis=synth, store=store)(msg, ws))
+
+        synth.synthesize_to_file.assert_not_called()
+        assert sent == [{"type": "error", "id": "r1", "message": "operation failed"}]
 
     def test_absolute_name_rejected_before_ack(self, tmp_path: Path) -> None:
         """An absolute name over the wire is refused before the ack (P1)."""

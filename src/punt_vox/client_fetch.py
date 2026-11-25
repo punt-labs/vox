@@ -1,8 +1,8 @@
-"""One chunked voxd fetch, reassembled and verified frame by frame.
+"""Verify one chunked voxd fetch without retaining its contents.
 
 voxd streams a stored file as ``fetch_begin`` -> ordered ``chunk``* ->
-``fetch_end``. :class:`FetchAssembly` owns what that stream promised -- the
-byte count, the chunk count, the sha256 -- and the bytes received so far, and
+``fetch_end``. :class:`FetchVerifier` owns what that stream promised -- the
+byte count, the chunk count, the sha256 -- and checks each frame as it arrives. It
 raises ``VoxdProtocolError`` the moment a frame breaks the promise: a frame out
 of order, bad base64, a short or long stream, a digest mismatch.
 """
@@ -11,36 +11,43 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from typing import Any, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_errors import VoxdProtocolError
 
-__all__ = ["FetchAssembly"]
+if TYPE_CHECKING:
+    from _hashlib import HASH
+
+__all__ = ["FetchVerifier"]
 
 
 @final
-class FetchAssembly:
-    """The bytes of one fetch, checked against its ``fetch_begin`` frame."""
+class FetchVerifier:
+    """Check one fetch against its ``fetch_begin`` frame."""
 
-    __slots__ = ("_buffer", "_chunks", "_declared", "_digest")
+    __slots__ = ("_chunks", "_declared", "_digest", "_hash", "_received")
 
     _declared: int
     _chunks: int
     _digest: str
-    _buffer: bytearray
+    _hash: HASH
+    _received: int
 
     def __new__(cls, declared: int, chunks: int, digest: str) -> Self:
-        """Create a fetch assembly."""
+        """Start counting and hashing a fetch with the declared metadata."""
+        if declared < 0 or chunks < 0:
+            raise VoxdProtocolError("negative byte or chunk count in 'fetch_begin'")
         self = super().__new__(cls)
         self._declared = declared
         self._chunks = chunks
         self._digest = digest
-        self._buffer = bytearray()
+        self._hash = hashlib.sha256()
+        self._received = 0
         return self
 
     @classmethod
-    def begin(cls, frame: dict[str, Any]) -> Self:  # a decoded wire frame
-        """Return the assembly a ``fetch_begin`` frame announces.
+    def begin(cls, frame: dict[str, object]) -> Self:  # a decoded wire frame
+        """Return a verifier for the stream a ``fetch_begin`` frame announces.
 
         Raises:
             VoxdProtocolError: If the opening frame or its metadata is invalid.
@@ -49,7 +56,7 @@ class FetchAssembly:
             got = frame.get("type")
             raise VoxdProtocolError(f"expected 'fetch_begin', got {got!r}")
         try:
-            declared, chunks = int(frame["bytes"]), int(frame["chunks"])
+            declared, chunks = int(str(frame["bytes"])), int(str(frame["chunks"]))
             digest = str(frame["sha256"])
         except (KeyError, TypeError, ValueError) as exc:
             raise VoxdProtocolError(f"malformed 'fetch_begin': {exc}") from exc
@@ -60,37 +67,50 @@ class FetchAssembly:
         """Return how many ``chunk`` frames the stream announced."""
         return self._chunks
 
-    def append(self, frame: dict[str, Any], seq: int) -> None:  # a decoded frame
-        """Check chunk *seq*'s order and append its decoded bytes.
+    def decode_chunk(self, frame: dict[str, object], seq: int) -> bytes:
+        """Check chunk *seq* and return its decoded bytes.
 
         Raises:
             VoxdProtocolError: If the chunk frame, sequence number, or encoded data is
-                invalid.
+                invalid, or the bytes exceed the announced size.
         """
+        data = self._chunk_bytes(frame, seq)
+        self._received += len(data)
+        if self._received > self._declared:
+            raise self._size_mismatch()
+        self._hash.update(data)
+        return data
+
+    @staticmethod
+    def _chunk_bytes(frame: dict[str, object], seq: int) -> bytes:
+        """Decode the payload only after validating frame type and sequence."""
         if frame.get("type") != "chunk" or frame.get("seq") != seq:
             raise VoxdProtocolError(
                 f"expected chunk seq {seq}, got "
                 f"{frame.get('type')!r} seq {frame.get('seq')!r}"
             )
         try:
-            data = base64.b64decode(str(frame["data"]), validate=True)
+            return base64.b64decode(str(frame["data"]), validate=True)
         except (KeyError, ValueError, TypeError) as exc:
             raise VoxdProtocolError(f"chunk {seq} has invalid base64: {exc}") from exc
-        self._buffer.extend(data)
 
-    def finish(self, frame: dict[str, Any]) -> bytes:  # a decoded wire frame
-        """Return the file once ``fetch_end`` arrives and the stream checks out.
+    def finish(self, frame: dict[str, object]) -> int:  # a decoded wire frame
+        """Return the byte count once ``fetch_end`` arrives and the stream checks out.
 
         Raises:
             VoxdProtocolError: If the terminal frame, byte count, or digest is invalid.
         """
         if frame.get("type") != "fetch_end":
             raise VoxdProtocolError(f"expected 'fetch_end', got {frame.get('type')!r}")
-        got = len(self._buffer)
-        if got != self._declared:
-            raise VoxdProtocolError(
-                f"fetch byte-count mismatch: got {got}, declared {self._declared}"
-            )
-        if hashlib.sha256(self._buffer).hexdigest() != self._digest:
+        if self._received != self._declared:
+            raise self._size_mismatch()
+        if self._hash.hexdigest() != self._digest:
             raise VoxdProtocolError("fetch sha256 mismatch: stream corrupted")
-        return bytes(self._buffer)
+        return self._received
+
+    def _size_mismatch(self) -> VoxdProtocolError:
+        """Report a stream that disagrees with the announced size."""
+        return VoxdProtocolError(
+            f"fetch byte-count mismatch: got {self._received}, "
+            f"declared {self._declared}"
+        )

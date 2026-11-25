@@ -1,4 +1,4 @@
-"""Caller audio for a voice call: the microphone, or a scripted injection."""
+"""Scripted caller audio for a voice call: recorded turns paced in real time."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Self, cast, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ
-from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
-__all__ = ["MicInput", "ScriptInput", "ScriptTurn"]
+__all__ = ["ScriptInput", "ScriptTurn"]
 
 _FRAME_S: Final = 0.02
 _FRAME_BYTES: Final = round(SAMPLE_RATE_HZ * _FRAME_S) * 2  # S16LE mono
@@ -21,39 +20,6 @@ _SILENCE: Final = bytes(_FRAME_BYTES)
 _MAX_TURN_BYTES: Final = 60 * SAMPLE_RATE_HZ * 2  # one minute of speech
 _MAX_PAUSE_S: Final = 120.0
 _MAX_TURNS: Final = 20
-
-
-@final
-class MicInput:
-    """Stream the system microphone for as long as the call consumes it."""
-
-    __slots__ = ("_source",)
-    _source: MicAudioSource
-
-    def __new__(
-        cls,
-        source: MicAudioSource | None = None,  # None: the default device.
-    ) -> Self:
-        """Bind a microphone source; None selects the default input device."""
-        self = super().__new__(cls)
-        self._source = source if source is not None else MicAudioSource()
-        return self
-
-    @classmethod
-    def with_echo_control(cls, declaration: object) -> Self:
-        """Create live input only after the caller declares echo protection."""
-        if declaration not in ("headset", "aec"):
-            raise ValueError(
-                "Live calls require echo protection: wear a headset and use "
-                "'vox call --headset', or configure system echo cancellation "
-                "and use 'vox call --aec'"
-            )
-        return cls()
-
-    async def chunks(self) -> AsyncIterator[bytes]:
-        """Yield each captured block's PCM."""
-        async for chunk in self._source.chunks():
-            yield chunk.pcm
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,28 +61,36 @@ class ScriptInput:
             raise ValueError("each script turn must be an object")
         turn = cast("dict[str, object]", item)
         path, pause = turn.get("pcm_path"), turn.get("pause_s", 0.0)
-        if not isinstance(path, str) or not Path(path).is_absolute():
+        if not isinstance(path, str) or not (file := Path(path)).is_absolute():
             raise ValueError("pcm_path must be an absolute path")
         if not isinstance(pause, int | float) or not 0 <= pause <= _MAX_PAUSE_S:
             raise ValueError(f"pause_s must be between 0 and {_MAX_PAUSE_S:.0f}")
-        file = Path(path)
         if not file.is_file():
             raise ValueError("pcm_path must name a regular file")
         if file.stat().st_size > _MAX_TURN_BYTES:
             raise ValueError("a script turn holds at most one minute of PCM")
         return ScriptTurn(file.read_bytes(), float(pause))
 
+    @staticmethod
+    def open() -> None:
+        """Open nothing: a script's turns were read at construction."""
+
+    @staticmethod
+    def close() -> None:
+        """Release nothing: a script holds no device."""
+
     async def chunks(self) -> AsyncIterator[bytes]:
         """Yield 20 ms frames on a real-time schedule that does not drift."""
         loop = asyncio.get_running_loop()
         due = loop.time()
-        for frame in self._frames():
+        for frame in self._frames(self._turns):
             yield frame
             due += _FRAME_S
             await asyncio.sleep(max(0.0, due - loop.time()))
 
-    def _frames(self) -> Iterator[bytes]:
-        for turn in self._turns:
+    @staticmethod
+    def _frames(turns: tuple[ScriptTurn, ...]) -> Iterator[bytes]:
+        for turn in turns:
             for start in range(0, len(turn.pcm), _FRAME_BYTES):
                 yield turn.pcm[start : start + _FRAME_BYTES].ljust(_FRAME_BYTES, b"\0")
             yield from (_SILENCE for _ in range(round(turn.pause_s / _FRAME_S)))

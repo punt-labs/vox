@@ -90,7 +90,13 @@ class WorkerHandlers:
         return await operation(msg)
 
     async def handle(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Return clear transport errors without exposing subprocess output."""
+        """Reply with the result, a rejection, or a path-free fault.
+
+        A daemon-side failure -- the policy file unreadable, not UTF-8, or
+        without a closing fence -- is a fault: the wire frame carries no
+        path, and the daemon log keeps the detail. A refused request stays
+        an error, without exposing subprocess output.
+        """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             result = await self._dispatch(msg)
@@ -101,6 +107,6 @@ class WorkerHandlers:
             RuntimeError,
             subprocess.SubprocessError,
         ) as exc:
-            await reply.error(str(exc))
+            await reply.reject_or_fault(exc)
             return
         await reply.send({"type": "worker_result", "result": result})

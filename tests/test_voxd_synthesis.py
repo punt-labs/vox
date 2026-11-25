@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -16,13 +18,136 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import _get_valid_mp3_bytes  # pyright: ignore[reportPrivateUsage]
 
+from punt_vox.normalize import SpeechText
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.types import SynthesisRequest
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.api_key_env import ApiKeyEnv
 from punt_vox.voxd.playback import PlaybackQueue
+from punt_vox.voxd.speech_preparation import SpeechPreparation
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "limit", "tags", "vibe_prefix", "inline_prefix"),
+    [
+        ("eleven_v3", 5_000, "[whispers]", "[whispers] ", "[sighs] "),
+        ("eleven_v3", 5_000, None, "", "[sighs] "),
+        ("eleven_multilingual_v2", 10_000, "[whispers]", "", ""),
+    ],
+    ids=["v3-session", "v3-inline", "non-expressive"],
+)
+async def test_session_vibe_at_elevenlabs_chunk_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+    model: str,
+    limit: int,
+    tags: str | None,
+    vibe_prefix: str,
+    inline_prefix: str,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path / "cache")
+    sentence = "The last train is waiting."
+    body = " ".join([sentence] * 410)
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(
+            f"[sighs] {body}",
+            SynthesisSpec(provider="elevenlabs", model=model, vibe_tags=tags),
+        )
+    outcome.path.unlink()
+    chunks: list[str] = [
+        call.kwargs["text"]
+        for call in mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    ]
+    assert len(chunks) > 1
+    assert all(0 < len(chunk) <= limit for chunk in chunks)
+    if vibe_prefix:
+        assert [chunk.startswith(vibe_prefix) for chunk in chunks] == [True] * len(
+            chunks
+        )
+    assert " ".join(chunk.removeprefix(vibe_prefix) for chunk in chunks) == (
+        inline_prefix + body
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_reuse_literal_or_legacy_audio(
+    tmp_path: Path, mock_elevenlabs_client: MagicMock
+) -> None:
+    pipeline = _make_pipeline()
+    spec = SynthesisSpec(provider="elevenlabs", model="eleven_v3")
+    with (
+        patch("punt_vox.cache.CACHE_DIR", tmp_path),
+        patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-elevenlabs"}),
+        patch(
+            "punt_vox.providers.elevenlabs_client.ElevenLabs",
+            return_value=mock_elevenlabs_client,
+        ),
+    ):
+        old_take = await pipeline.synthesize_to_file("[whispers] Come closer.", spec)
+        assert not old_take.cached
+        old_take.path.unlink()
+        vibed_spec = replace(spec, vibe_tags=" [whispers] ")
+        new_take = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert not new_take.cached
+        new_take.path.unlink()
+        repeat = await pipeline.synthesize_to_file("Come closer.", vibed_spec)
+        assert repeat.cached
+        repeat.path.unlink()
+    calls = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert [call.kwargs["text"] for call in calls] == ["[whispers] Come closer."] * 2
+
+
+@pytest.mark.asyncio
+async def test_session_vibe_does_not_replay_pre_upgrade_cache_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_elevenlabs_client: MagicMock,
+) -> None:
+    prefix = "[whispers] "
+    body = " ".join(["The last train is waiting."] * 210)
+    legacy_payload = json.dumps(
+        {
+            "version": 3,
+            "text": prefix + body,
+            "voice": "",
+            "provider": "elevenlabs",
+            "model": "eleven_v3",
+            "rate": None,
+            "language": None,
+            "stability": None,
+            "similarity": None,
+            "style": None,
+            "speaker_boost": None,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    legacy_digest = hashlib.md5(legacy_payload, usedforsecurity=False).hexdigest()
+    (tmp_path / f"{legacy_digest}.mp3").write_bytes(_get_valid_mp3_bytes())
+    monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-elevenlabs")
+    spec = SynthesisSpec(
+        provider="elevenlabs", model="eleven_v3", vibe_tags=prefix.strip()
+    )
+    with patch(
+        "punt_vox.providers.elevenlabs_client.ElevenLabs",
+        return_value=mock_elevenlabs_client,
+    ):
+        outcome = await _make_pipeline().synthesize_to_file(body, spec)
+    outcome.path.unlink()
+
+    assert not outcome.cached
+    chunks = mock_elevenlabs_client.text_to_speech.stream.call_args_list
+    assert len(chunks) > 1
+    assert all(call.kwargs["text"].startswith(prefix) for call in chunks)
 
 
 @pytest.mark.parametrize(
@@ -1036,8 +1161,12 @@ class TestSynthesizeCacheObservability:
 
         Returns the ordered outcomes and the list of texts actually
         synthesized (one entry per real TTS call, so a cache hit adds none).
+        Outcome audio lands under ``tmp_path`` so pytest removes it.
         """
         monkeypatch.setattr("punt_vox.cache.CACHE_DIR", tmp_path)
+        audio_dir = tmp_path / "outcomes"
+        audio_dir.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(audio_dir))
         synth_calls: list[str] = []
         mp3 = _get_valid_mp3_bytes()
 
@@ -1182,262 +1311,24 @@ class TestSynthesizeCacheObservability:
         assert infos == ["synthesized 5 chars"]
         assert not any("cached" in m for m in infos)
 
-
-class TestModelSupportsExpressiveTags:
-    """model_supports_expressive_tags lookup for vibe-tag gating."""
-
-    def test_elevenlabs_v3_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", "eleven_v3")
-            is True
-        )
-
-    def test_elevenlabs_flash_does_not_support(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_repeated_hits_normalize_text_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags(
-                "elevenlabs", "eleven_flash_v2_5"
+        """A burst of hits for one long text reuses its normalized speech."""
+        SpeechPreparation._speech_body.cache_clear()
+        text = "Run `myTool --dry_run` for [the guide](https://example.com). " * 200
+        spec = _default_spec(provider="openai")
+        with patch(
+            "punt_vox.voxd.speech_preparation.SpeechText.for_synthesis",
+            wraps=SpeechText.for_synthesis,
+        ) as normalize:
+            outcomes, synth_calls = self._run(
+                tmp_path, monkeypatch, [(text, spec)] * 16
             )
-            is False
-        )
 
-    def test_elevenlabs_default_supported(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags("elevenlabs", None) is True
-        )
-
-    def test_polly_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("polly", None) is False
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags("polly", "neural") is False
-        )
-
-    def test_openai_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("openai", None) is False
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags("openai", "tts-1-hd")
-            is False
-        )
-
-    def test_say_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("say", None) is False
-
-    def test_espeak_never_supports(self) -> None:
-        assert SynthesisPipeline.model_supports_expressive_tags("espeak", None) is False
-
-    def test_unknown_provider_never_supports(self) -> None:
-        assert (
-            SynthesisPipeline.model_supports_expressive_tags("future_provider", "any")
-            is False
-        )
-
-
-class TestApplyVibeForSynthesis:
-    """apply_vibe_for_synthesis gates vibe-tag handling on capability."""
-
-    _apply = staticmethod(SynthesisPipeline.apply_vibe_for_synthesis)
-
-    def test_v3_preserves_vibe_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("Hello world", "[excited]", "elevenlabs", "eleven_v3")
-        assert result == "[excited] Hello world"
-
-    def test_expressive_model_passthrough_when_no_vibe_tags(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("Hello world", None, "elevenlabs", "eleven_v3")
-        assert result == "Hello world"
-
-    def test_v3_preserves_user_tags_in_text(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("[whisper] Quiet message", None, "elevenlabs", "eleven_v3")
-        assert result == "[whisper] Quiet message"
-
-    def test_non_expressive_model_drops_vibe_tags(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply(
-            "Hello world", "[serious]", "elevenlabs", "eleven_flash_v2_5"
-        )
-        assert result == "Hello world"
-        assert "[serious]" not in result
-        assert "serious" not in result
-
-    def test_non_expressive_model_strips_user_tags_from_text(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply(
-            "[serious] Hello world", None, "elevenlabs", "eleven_flash_v2_5"
-        )
-        assert result == "Hello world"
-        assert "serious" not in result
-
-    def test_non_expressive_model_strips_user_tags_even_with_vibe_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply(
-            "[whisper] Quiet message",
-            "[excited]",
-            "elevenlabs",
-            "eleven_flash_v2_5",
-        )
-        assert result == "Quiet message"
-        assert "whisper" not in result
-        assert "excited" not in result
-
-    def test_polly_strips_user_tags(self) -> None:
-        result = self._apply("[serious] Important", "[calm]", "polly", None)
-        assert result == "Important"
-
-    def test_openai_strips_user_tags(self) -> None:
-        result = self._apply("[whisper] Hello", None, "openai", "tts-1")
-        assert result == "Hello"
-
-    def test_say_strips_user_tags(self) -> None:
-        result = self._apply("[excited] Greetings", "[happy]", "say", None)
-        assert result == "Greetings"
-
-    def test_espeak_strips_user_tags(self) -> None:
-        result = self._apply("[serious] Notice", None, "espeak", None)
-        assert result == "Notice"
-
-    def test_degenerate_text_only_tags_non_expressive_returns_empty(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("[serious]", None, "elevenlabs", "eleven_flash_v2_5")
-        assert result == ""
-
-    def test_degenerate_text_only_tags_v3_preserves(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("[sighs]", None, "elevenlabs", "eleven_v3")
-        assert result == "[sighs]"
-
-    def test_normalizes_body_through_production_call_path(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply("[serious] my_function works", None, "polly", None)
-        assert result == "my function works"
-        assert "serious" not in result
-        assert "[" not in result
-        assert "_" not in result
-
-    def test_v3_normalizes_body_and_preserves_tags(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        result = self._apply(
-            "[whisper] my_function works", None, "elevenlabs", "eleven_v3"
-        )
-        assert result == "[whisper] my function works"
-
-    def test_trailing_tags_stripped_non_expressive(self) -> None:
-        result = self._apply("hello [alert] [serious]", None, "polly", None)
-        assert result == "hello"
-        assert "alert" not in result
-        assert "serious" not in result
-
-    def test_inline_tags_stripped_non_expressive(self) -> None:
-        result = self._apply("hello [serious] world", None, "polly", None)
-        assert result == "hello world"
-        assert "serious" not in result
-
-    def test_leading_tags_still_stripped_non_expressive(self) -> None:
-        result = self._apply("[serious] hello", None, "polly", None)
-        assert result == "hello"
-        assert "serious" not in result
-
-    def _patch_expressive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Force model_supports_expressive_tags to return True."""
-
-        def _always_expressive(_provider: str, _model: str | None) -> bool:
-            return True
-
-        monkeypatch.setattr(
-            "punt_vox.voxd.synthesis.SynthesisPipeline.model_supports_expressive_tags",
-            _always_expressive,
-        )
-
-    def test_trailing_tags_preserved_expressive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._patch_expressive(monkeypatch)
-        result = self._apply("hello [serious]", None, "elevenlabs", "eleven_v3")
-        assert "[serious]" in result
-        assert "hello" in result
-
-    def test_inline_tags_preserved_expressive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._patch_expressive(monkeypatch)
-        result = self._apply("hello [serious] world", None, "elevenlabs", "eleven_v3")
-        assert "[serious]" in result
-        assert "hello" in result
-        assert "world" in result
-
-    def test_session_vibe_tags_prepended_expressive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        self._patch_expressive(monkeypatch)
-        result = self._apply("hello", "[warm]", "elevenlabs", "eleven_v3")
-        assert result == "[warm] hello"
-
-    @pytest.mark.parametrize(
-        ("model", "expected"),
-        [
-            (
-                "eleven_v3",
-                "Run dollar sign 1 [warm] dollar sign 2 then pay 5 dollars",
-            ),
-            (
-                "eleven_flash_v2_5",
-                "Run dollar sign 1 dollar sign 2 then pay 5 dollars",
-            ),
-        ],
-    )
-    def test_code_currency_span_survives_tag_handling(
-        self, model: str, expected: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("TTS_MODEL", raising=False)
-        raw = "Run `$1 [warm] $2` then pay $5"
-        assert self._apply(raw, None, "elevenlabs", model) == expected
-
-    @pytest.mark.parametrize(
-        ("model", "prefix"),
-        [("eleven_v3", "[warm] "), ("eleven_flash_v2_5", "")],
-    )
-    def test_tag_before_fence_does_not_hide_following_code_span(
-        self, model: str, prefix: str
-    ) -> None:
-        raw = "[warm] ```sh\necho\n```\nUse `$1` then pay $5"
-        assert self._apply(raw, None, "elevenlabs", model) == (
-            f"{prefix}sh echo Use dollar sign 1 then pay 5 dollars"
-        )
-
-    def test_tagged_fence_marker_inside_code_is_not_a_closer(self) -> None:
-        raw = "```sh\n[warm] ```\nInside `$1`\n[warm] ```\n```\n\nOutside `$2`"
-        assert self._apply(raw, None, "elevenlabs", "eleven_flash_v2_5") == (
-            "sh Inside 1 dollar Outside dollar sign 2"
-        )
+        assert [outcome.cached for outcome in outcomes] == [False] + [True] * 15
+        assert len(synth_calls) == 1
+        assert normalize.call_count == 1
 
 
 class TestOpenAIProviderKeyCapture:

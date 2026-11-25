@@ -214,7 +214,13 @@ class Conversation:
                     ),
                 }
             case AgentToolResponse():
-                return {"tool_call_id": event.tool_call_id, "is_error": event.is_error}
+                return {
+                    "tool_call_id": event.tool_call_id,
+                    "is_error": event.is_error,
+                    "tool_name": event.tool_name,
+                    "tool_type": event.tool_type,
+                    "is_called": event.is_called,
+                }
             case Metadata():
                 return {"conversation_id": event.conversation_id}
             case _:

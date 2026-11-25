@@ -19,9 +19,10 @@ import asyncio
 import concurrent.futures
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from punt_vox.client import (
+    AlbumExport,
     CacheStatus,
     RecordingSummary,
     RecordResult,
@@ -39,6 +40,11 @@ from punt_vox.types_programs import (
 )
 from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_synthesis import SynthesisSpec
+
+if TYPE_CHECKING:
+    from typing import IO
+
+    from punt_vox.voice_target import VoiceTarget
 
 __all__ = ["VoxClientSync"]
 
@@ -223,8 +229,12 @@ class VoxClientSync:
         """
         return self._drive(lambda c: c.fetch(ref))
 
-    def voices(self, provider: str) -> list[str]:
-        """List *provider*'s voice roster; the wire always carries a provider.
+    def fetch_into(self, ref: str, sink: IO[bytes]) -> int:
+        """Copy a recording into a caller-owned sink and return its verified size."""
+        return self._drive(lambda c: c.fetch_into(ref, sink))
+
+    def voices(self, target: VoiceTarget) -> list[str]:
+        """List the target's voices, using its default model if unspecified.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -232,14 +242,17 @@ class VoxClientSync:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        return self._drive(lambda c: c.voices(provider))
+        return self._drive(lambda c: c.voices(target))
 
-    def health(self, *, timeout: float | None = None) -> HealthStatus:
+    def health(
+        self, *, timeout: float | None = None, output_dirs: bool = False
+    ) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version).
 
         *timeout* bounds the whole call, connect included, in seconds; a
         bounded poll passes what is left of its wait. Absent (``None``), the
         client's own per-step timeouts apply, as for every other call.
+        Set *output_dirs* to also probe the daemon's album output directory.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.
@@ -247,7 +260,9 @@ class VoxClientSync:
             VoxdProtocolError: If the reply is not a JSON object, fields fail
                 validation, or the response deadline expires.
         """
-        return self._drive(lambda c: c.health(), within_s=timeout)
+        return self._drive(
+            lambda c: c.health(output_dirs=output_dirs), within_s=timeout
+        )
 
     def provider_status(
         self, provider: str | None = None, *, verify: bool = False
@@ -470,8 +485,8 @@ class VoxClientSync:
         """
         return self._drive(lambda c: c.music_new(prompts, name))
 
-    def music_get(self, album_id: str, dest_dir: Path) -> Path:
-        """Copy an album into *dest_dir* as a directory of its parts.
+    def music_get(self, album_id: str, dest_dir: Path) -> AlbumExport:
+        """Copy an album into *dest_dir* as a directory of its surviving parts.
 
         Raises:
             VoxdConnectionError: If the daemon is unreachable or the connection is lost.

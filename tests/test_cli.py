@@ -10,11 +10,13 @@ import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import click
 import pytest
 import typer
 from _cli_introspect import command_opts, option_help
+from _config_resolvers import resolver_at
 from _lifecycle_fakes import FakeWorld, lifecycle
 from typer.testing import CliRunner
 
@@ -26,6 +28,13 @@ from punt_vox.client_errors import (
     VoxdRefusedError,
     VoxdRejectionError,
 )
+from punt_vox.client_results import RecordResult, SynthesizeResult
+from punt_vox.config import ConfigStore
+from punt_vox.daemon_control import DaemonControl
+from punt_vox.dirs import (
+    find_config_dir as real_find_config_dir,
+    writable_config_dir as real_writable_config_dir,
+)
 from punt_vox.service.lifecycle_report import (
     LifecycleOutcome,
     LifecycleRefusedError,
@@ -33,14 +42,51 @@ from punt_vox.service.lifecycle_report import (
     LifecycleVerb,
 )
 from punt_vox.types_health import HealthStatus
+from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voice_target import VoiceTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from typer.testing import Result
 
 
 _CLI = "punt_vox.__main__"
 _CLI_DAEMON = "punt_vox.cli_daemon"
 _CLI_DESKTOP = "punt_vox.cli_desktop"
+
+
+@pytest.mark.parametrize("command", [("say",), ("rec", "new")])
+@pytest.mark.parametrize("rich", ["0", "1"])
+def test_batch_json_lines_help_preserves_shell_example(
+    command: tuple[str, ...], rich: str
+) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "punt_vox", *command, "--help"],
+        env={
+            **os.environ,
+            "TYPER_USE_RICH": rich,
+            "TERMINAL_WIDTH": "55",
+            "COLUMNS": "55",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "\b" not in result.stdout
+    stdout = click.unstyle(result.stdout)
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    assert "status=0" in lines, result.stdout
+    start = lines.index("status=0")
+    assert lines[start : start + 5] == [
+        "status=0",
+        f"vox {' '.join(command)} --from in.json --json >out.jsonl ||",
+        "status=$?",
+        "jq -c . out.jsonl",
+        'echo "Vox exit status: $status" >&2',
+    ]
 
 
 @pytest.mark.parametrize(
@@ -92,6 +138,186 @@ finally:
 
 
 class TestSayCommand:
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("quiet_position", [None, "global", "command"])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_ignored_rate_warning_goes_to_stderr_with_json_output(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        command: list[str],
+        quiet_position: str | None,
+    ) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult("r1", "r1", Path("recordings/r1"), 100, warning=warning)
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
+
+        args = [
+            *command,
+            "hello",
+            "--provider",
+            "elevenlabs",
+            "--rate",
+            "120",
+            "--json",
+        ]
+        if quiet_position == "global":
+            args.insert(0, "--quiet")
+        elif quiet_position == "command":
+            args.append("--quiet")
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, result.output
+        stdout = json.loads(result.stdout)
+        assert stdout["id"] == "r1"
+        assert "warning" not in stdout
+        if quiet_position is None:
+            assert result.stderr == f"Warning: {warning}\n"
+        else:
+            assert result.stderr == ""
+
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("rate", ["0", "-1"])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_nonpositive_rate_rejected_before_client(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        command: list[str],
+        rate: str,
+    ) -> None:
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc123")
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult(
+                "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+            )
+
+        say_client.return_value.synthesize.side_effect = synthesize
+        rec_client.return_value.record.side_effect = record
+        result = CliRunner().invoke(
+            app,
+            [*command, "hello", "--provider", "elevenlabs", "--rate", rate, "--json"],
+        )
+
+        assert result.exit_code == 2, result.output
+        assert json.loads(result.stdout) == {
+            "error": f"Invalid value: rate must be greater than 0, got {rate}"
+        }
+        say_client.assert_not_called()
+        rec_client.assert_not_called()
+
+    @pytest.mark.parametrize("command", [["say"], ["rec", "new"]])
+    @pytest.mark.parametrize("flags", [[], ["--json"]])
+    @pytest.mark.parametrize("text", ["positional speech", "-", ""])
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_text_and_from_are_mutually_exclusive(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        tmp_path: Path,
+        command: list[str],
+        flags: list[str],
+        text: str,
+    ) -> None:
+        source = tmp_path / "segments.json"
+        source.write_text('["file speech"]', encoding="utf-8")
+        say_client.return_value.synthesize.return_value = SynthesizeResult("abc123")
+        rec_client.return_value.record.return_value = RecordResult(
+            "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+        )
+
+        result = CliRunner().invoke(
+            app, [*flags, *command, text, "--from", str(source), "--provider", "espeak"]
+        )
+
+        message = "Invalid value: TEXT and --from are mutually exclusive."
+        assert result.exit_code == 2, result.output
+        if flags:
+            assert json.loads(result.stdout) == {"error": message}
+            assert result.stderr == ""
+        else:
+            assert result.stdout == ""
+            assert message in click.unstyle(result.stderr)
+        say_client.assert_not_called()
+        rec_client.assert_not_called()
+
+    @patch("punt_vox.cli_rec.VoxClientSync")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_and_rec_new_forward_the_same_segments_and_settings(
+        self,
+        say_client: MagicMock,
+        rec_client: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        segment_results: tuple[
+            Callable[[str, SynthesisSpec, int | None], SynthesizeResult],
+            Callable[[str, SynthesisSpec, str | None], RecordResult],
+        ] = (
+            lambda _text, _spec, once: SynthesizeResult(request_id="abc123"),
+            lambda _text, _spec, name: RecordResult(
+                "abc123", "abc123.mp3", Path("recordings/abc123.mp3"), 100
+            ),
+        )
+        say_call = say_client.return_value.synthesize
+        rec_call = rec_client.return_value.record
+        say_call.side_effect, rec_call.side_effect = segment_results
+        source = tmp_path / "segments.json"
+        source.write_text('["first", {"text": "second"}]', encoding="utf-8")
+        options = [
+            "--from",
+            str(source),
+            "--provider",
+            "elevenlabs",
+            "--model",
+            "eleven_v3",
+            "--voice",
+            "@adam",
+            "--lang",
+            "de",
+            "--rate",
+            "105",
+            "--stability",
+            "0.4",
+            "--similarity",
+            "0.6",
+            "--style",
+            "0.2",
+            "--speaker-boost",
+        ]
+
+        for command in (["say"], ["rec", "new"]):
+            result = CliRunner().invoke(app, [*command, *options])
+            assert result.exit_code == 0, result.output
+
+        spec = SynthesisSpec(
+            provider="elevenlabs",
+            model="eleven_v3",
+            voice="adam",
+            language="de",
+            rate=105,
+            stability=0.4,
+            similarity=0.6,
+            style=0.2,
+            speaker_boost=True,
+        )
+        expected = [("first", spec), ("second", spec)]
+        assert [call.args for call in say_call.call_args_list] == expected
+        assert [call.args for call in rec_call.call_args_list] == expected
+
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
@@ -221,6 +447,12 @@ class TestSayCommand:
         assert result.exit_code == 0
         assert "%%" not in result.output
 
+    @pytest.mark.parametrize("option", ["--language", "--rate"])
+    def test_say_and_rec_new_share_synthesis_help(self, option: str) -> None:
+        assert option_help("say", option=option) == option_help(
+            "rec", "new", option=option
+        )
+
     def test_say_once_help_documents_zero(self) -> None:
         assert "Use 0 or omit the option to play every time." in option_help(
             "say", option="--once"
@@ -253,6 +485,29 @@ class TestSayCommand:
         assert result.exit_code == 0, result.output
         synthesize.assert_called_once()
         assert synthesize.call_args.kwargs["once"] == expected_ttl
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_once_json_reports_deduplicated_playback(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.synthesize.return_value = SynthesizeResult(
+            request_id="abc123",
+            deduped=True,
+            original_played_at=1700000000.0,
+            ttl_seconds_remaining=42.0,
+        )
+
+        result = CliRunner().invoke(
+            app, ["say", "hello", "--provider", "espeak", "--once", "60", "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {
+            "id": "abc123",
+            "deduped": True,
+            "original_played_at": 1700000000.0,
+            "ttl_seconds_remaining": 42.0,
+        }
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
@@ -685,6 +940,31 @@ class TestApiKeyInputPaths:
         assert spec.api_key == "sk_stdin_test"
         assert "warning: --api-key on the command line" not in result.stderr
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_api_key_stdin_leaves_remaining_text_for_speech(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from punt_vox.client import SynthesizeResult
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VOX_API_KEY", raising=False)
+        synthesize = mock_client_cls.return_value.synthesize
+        synthesize.return_value = SynthesizeResult(request_id="abc")
+
+        result = CliRunner(charset="UTF-8").invoke(
+            app,
+            ["say", "--api-key-stdin", "-"],
+            input="sk_stdin_test\nhello world\nsecond line\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        text, spec = synthesize.call_args.args
+        assert text == "hello world\nsecond line"
+        assert spec.api_key == "sk_stdin_test"
+
     def test_api_key_stdin_rejects_tty(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -984,11 +1264,78 @@ class TestApiKeyInputPaths:
 
 
 class TestVibeCommand:
+    @pytest.mark.parametrize(
+        ("mood", "tag"),
+        [
+            ("whispering", "[whispering]"),
+            ("[telling   a secret]", "[telling a secret]"),
+        ],
+    )
+    def test_manual_vibe_reaches_synthesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, tag: str
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / ".punt-labs" / "vox"
+        ConfigStore(config_dir).write_fields(
+            {"provider": "elevenlabs", "model": "eleven_v3"}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["vibe", mood])
+        assert result.exit_code == 0, result.output
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="abc")
+
+        with patch("punt_vox.__main__.VoxClientSync") as client:
+            client.return_value.synthesize.side_effect = synthesize
+            result = runner.invoke(app, ["say", "Hello"])
+
+        assert result.exit_code == 0, result.output
+        assert client.return_value.synthesize.call_args.args[1].vibe_tags == tag
+
+    @pytest.mark.parametrize(
+        ("mood", "error"),
+        [
+            (" ", "Mood must contain a spoken delivery cue."),
+            ("[]", "Mood must contain a spoken delivery cue."),
+            ('say "hi"', "config values must not contain"),
+            ("say\nhi", "config values must not contain"),
+        ],
+    )
+    def test_vibe_rejects_invalid_cue(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mood: str, error: str
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+
+        result = CliRunner().invoke(app, ["vibe", mood])
+
+        assert result.exit_code == 2, result.output
+        assert error in click.unstyle(result.output)
+        assert not (tmp_path / "vox.local.md").exists()
+
+    def test_vibe_surfaces_unreadable_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        local = tmp_path / "vox.local.md"
+        local.write_bytes(b"\xff")
+
+        result = CliRunner().invoke(app, ["vibe", "whispering"])
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == f"Error: {local} is not valid UTF-8\n"
+        assert local.read_bytes() == b"\xff"
+
     def test_vibe_sets_mood(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "excited"])
@@ -1000,7 +1347,9 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "auto"])
@@ -1008,6 +1357,7 @@ class TestVibeCommand:
         assert "auto" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "auto"' in local
+        assert 'vibe_tags: ""' in local
         # A mode change resets the nudge cadence to a clean N-prompt runway.
         assert 'vibe_nudge_turns: "0"' in local
 
@@ -1015,7 +1365,9 @@ class TestVibeCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        ConfigStore(tmp_path).write_field("vibe_tags", "[excited]")
 
         runner = CliRunner()
         result = runner.invoke(app, ["vibe", "off"])
@@ -1023,12 +1375,45 @@ class TestVibeCommand:
         assert "off" in result.output
         local = (tmp_path / "vox.local.md").read_text()
         assert 'vibe_mode: "off"' in local
+        assert 'vibe_tags: ""' in local
         assert 'vibe_nudge_turns: "0"' in local
 
 
 # ---------------------------------------------------------------------------
 # notify/speak/voice tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "filename"),
+    [
+        (["notify", "normal", "--json"], "vox.md"),
+        (["--json", "speak", "n"], "vox.md"),
+        (["--json", "vibe", "whispering"], "vox.local.md"),
+        (["provider", "elevenlabs", "--json"], "vox.md"),
+    ],
+)
+def test_config_edit_invalid_utf8_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], filename: str
+) -> None:
+    monkeypatch.setattr("punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+
+    def voices(_target: VoiceTarget) -> list[str]:
+        return ["demo"]
+
+    client = MagicMock()
+    client.voices.side_effect = voices
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
+    config = tmp_path / filename
+    config.write_bytes(b"\xff\n")
+
+    result = CliRunner().invoke(app, args)
+
+    assert config.read_bytes() == b"\xff\n"
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {"error": f"{config} is not valid UTF-8"}
 
 
 class TestNotifyCommand:
@@ -1043,7 +1428,9 @@ class TestNotifyCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "normal"])
@@ -1055,13 +1442,96 @@ class TestNotifyCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "continuous"])
         assert result.exit_code == 0
         assert "continuous" in result.output.lower()
         assert 'notify: "c"' in (tmp_path / "vox.md").read_text()
+
+    def test_notify_in_nested_repo_writes_inner_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`vox notify` in a repo inheriting a workspace config writes its own.
+
+        The inner repo's new config carries the inherited values, so only
+        ``notify`` (and the ``speak`` it implies) differs; the workspace's
+        config is untouched.
+        """
+        workspace = tmp_path / "workspace"
+        (workspace / ".git").mkdir(parents=True)
+        outer_config = workspace / ".punt-labs" / "vox" / "vox.md"
+        outer_config.parent.mkdir(parents=True)
+        outer_config.write_text('---\nnotify: "n"\nvoice: "roger"\n---\n')
+        inner = workspace / "inner"
+        (inner / ".git").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", real_writable_config_dir
+        )
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+
+        result = CliRunner().invoke(app, ["notify", "continuous"])
+
+        assert result.exit_code == 0, result.output
+        assert outer_config.read_text() == '---\nnotify: "n"\nvoice: "roger"\n---\n'
+        inner_store = ConfigStore(inner / ".punt-labs" / "vox")
+        assert inner_store.read_field("notify") == "c"
+        assert inner_store.read_field("speak") == "y"
+        assert inner_store.read_field("voice") == "roger"
+
+    @pytest.mark.parametrize("in_repo", [True, False], ids=["git", "no-git"])
+    def test_first_notify_write_from_subdirectory(
+        self, no_config_dir: Path, monkeypatch: pytest.MonkeyPatch, *, in_repo: bool
+    ) -> None:
+        child = no_config_dir / "a" / "b"
+        child.mkdir(parents=True)
+        if in_repo:
+            (no_config_dir / ".git").mkdir()
+        else:
+            monkeypatch.setattr(
+                "punt_vox.dirs.find_repo_root", MagicMock(return_value=None)
+            )
+        relative_config = Path(".punt-labs") / "vox"
+        monkeypatch.chdir(child)
+        monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", relative_config)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", real_writable_config_dir
+        )
+
+        result = CliRunner().invoke(app, ["notify", "continuous", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == {"notify": "c", "speak": "y"}
+        expected = (no_config_dir if in_repo else child) / relative_config
+        assert list(no_config_dir.rglob("vox.md")) == [expected / "vox.md"]
+        assert ConfigStore(expected).read_field("notify") == "c"
+
+    def test_unchanged_provider_in_nested_repo_keeps_inheriting(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Re-selecting the current provider writes nothing, so seeds nothing."""
+        workspace = tmp_path / "workspace"
+        (workspace / ".git").mkdir(parents=True)
+        outer_config = workspace / ".punt-labs" / "vox" / "vox.md"
+        outer_config.parent.mkdir(parents=True)
+        outer_config.write_text('---\nprovider: "say"\n---\n')
+        inner = workspace / "inner"
+        (inner / ".git").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.dirs.writable_config_dir", real_writable_config_dir
+        )
+
+        result = CliRunner().invoke(app, ["provider", "say"])
+
+        assert result.exit_code == 0, result.output
+        assert not (inner / ".punt-labs").exists()
 
     def test_notify_continuous_always_enables_speak(
         self, tmp_path: Path, monkeypatch: MagicMock
@@ -1072,7 +1542,9 @@ class TestNotifyCommand:
         vox_md = tmp_path / "vox.md"
         vox_md.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "continuous"])
@@ -1082,7 +1554,9 @@ class TestNotifyCommand:
         assert 'notify: "c"' in text
 
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "punt_vox.cli_enablement.writable_config_dir", lambda: tmp_path
+        )
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "x"])
@@ -1095,7 +1569,8 @@ class TestSpeakCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "y"])
@@ -1106,7 +1581,8 @@ class TestSpeakCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
 
         runner = CliRunner()
         result = runner.invoke(app, ["speak", "n"])
@@ -1161,6 +1637,63 @@ class TestLogCommand:
         assert "refused" in result.output
 
 
+@pytest.mark.parametrize(
+    ("args", "message", "prefix"),
+    [
+        (
+            ["provider", "definitely-bogus"],
+            (
+                "unknown provider 'definitely-bogus'. "
+                "Allowed: elevenlabs, openai, polly, say, espeak"
+            ),
+            "Error: ",
+        ),
+        (
+            ["model", "definitely-bogus"],
+            "unknown model 'definitely-bogus' for provider 'elevenlabs'",
+            "Error: ",
+        ),
+        (["voice", "@"], "voice name is empty", ""),
+        (
+            ["voice", "matilda", "--provider", "openai"],
+            "Cannot set a voice for 'openai': the active provider is 'elevenlabs'.",
+            "Error: ",
+        ),
+    ],
+)
+def test_switch_errors_have_one_json_error_key(
+    args: list[str], message: str, prefix: str
+) -> None:
+    runner = CliRunner()
+    plain = runner.invoke(app, args)
+    assert plain.exit_code == 1
+    assert plain.stdout == ""
+    assert plain.stderr == f"{prefix}{message}\n"
+
+    machine = runner.invoke(app, [*args, "--json"])
+    assert machine.exit_code == 1
+    assert machine.stderr == ""
+    assert json.loads(machine.stdout) == {"error": message}
+
+
+@patch(f"{_CLI}.VoxClientSync")
+def test_model_roster_failure_has_one_json_error_key(
+    mock_client_cls: MagicMock, hermetic_config: Path
+) -> None:
+    config = hermetic_config / "vox.md"
+    original = config.read_text()
+    mock_client_cls.return_value.voices.side_effect = VoxdConnectionError(
+        "voice roster unavailable"
+    )
+
+    result = CliRunner().invoke(app, ["model", "v3", "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {"error": "voice roster unavailable"}
+    assert config.read_text() == original
+
+
 class TestVoiceCommand:
     """Tests for the extended ``vox voice`` switch command (.3).
 
@@ -1169,19 +1702,98 @@ class TestVoiceCommand:
     agree.
     """
 
-    def test_voice_set(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        import punt_vox.config as cfg
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_rejects_unknown_name(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        config = tmp_path / "vox.md"
+        original = '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+        config.write_text(original)
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        # Setting a voice with no provider configured refuses; seed
-        # provider so the set path exercises the write, not the refusal.
-        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
+        result = CliRunner().invoke(app, ["voice", "nobody"])
 
-        runner = CliRunner()
-        result = runner.invoke(app, ["voice", "matilda"])
-        assert result.exit_code == 0
-        assert "matilda" in result.output.lower()
+        assert result.exit_code == 1, result.output
+        assert "Error: Unknown voice 'nobody'. Available: ['matilda', 'roger']" in (
+            result.output
+        )
+        assert config.read_text() == original
+        mock_client_cls.return_value.voices.assert_called_once_with(
+            VoiceTarget("elevenlabs")
+        )
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        config = tmp_path / "vox.md"
+        config.write_text('---\nprovider: "elevenlabs"\n---\n')
+        mock_client_cls.return_value.voices.return_value = ["matilda"]
+
+        result = CliRunner().invoke(
+            app, ["voice", "@Matilda", "--provider", "ElevenLabs"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Matilda's here." in result.output
+        assert 'voice: "Matilda"' in config.read_text()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_rejects_provider_change_during_roster_fetch(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        config = tmp_path / "vox.md"
+        config.write_text('---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n')
+        switched = '---\nprovider: "openai"\nvoice: "alloy"\n---\n'
+
+        def switch_provider(provider: VoiceTarget) -> list[str]:
+            assert provider.provider == "elevenlabs"
+            config.write_text(switched)
+            return ["roger"]
+
+        mock_client_cls.return_value.voices.side_effect = switch_provider
+        result = CliRunner().invoke(app, ["voice", "roger"])
+
+        assert result.exit_code == 1, result.output
+        assert "the active provider is 'openai'" in result.output
+        assert config.read_text() == switched
+
+    @pytest.mark.parametrize("provider", ["elevenlabs", "openai"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_set_raw_id_only_for_elevenlabs(
+        self,
+        mock_client_cls: MagicMock,
+        provider: str,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+        config = tmp_path / "vox.md"
+        original = f'---\nprovider: "{provider}"\n---\n'
+        config.write_text(original)
+        mock_client_cls.return_value.voices.return_value = ["alloy"]
+        voice_id = "XrExE9yKIg1WjnnlVkGX"
+
+        result = CliRunner().invoke(app, ["voice", voice_id, "--json"])
+
+        if provider == "elevenlabs":
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output) == {"voice": voice_id}
+            assert f'voice: "{voice_id}"' in config.read_text()
+            mock_client_cls.return_value.voices.assert_not_called()
+        else:
+            assert result.exit_code == 1, result.output
+            assert json.loads(result.output) == {
+                "error": f"Unknown voice {voice_id!r}. Available: ['alloy']"
+            }
+            assert config.read_text() == original
 
     def test_voice_empty_name_is_bad_parameter(
         self, tmp_path: Path, monkeypatch: MagicMock
@@ -1190,7 +1802,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "@"])
@@ -1200,7 +1813,8 @@ class TestVoiceCommand:
     def test_voice_no_arg_lists_the_roster(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
         (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
@@ -1218,7 +1832,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
         (tmp_path / "vox.md").write_text(
             '---\nprovider: "elevenlabs"\nvoice: "roger"\n---\n'
         )
@@ -1233,7 +1848,10 @@ class TestVoiceCommand:
     @pytest.mark.usefixtures("conflicting_provider_environment")
     @pytest.mark.parametrize(
         ("provider_args", "expected"),
-        [([], "elevenlabs"), (["--provider", "polly"], "polly")],
+        [
+            ([], VoiceTarget("elevenlabs", "eleven_v3")),
+            (["--provider", "polly"], VoiceTarget("polly")),
+        ],
         ids=["repo-default", "explicit-flag"],
     )
     @patch(f"{_CLI}.VoxClientSync")
@@ -1241,7 +1859,7 @@ class TestVoiceCommand:
         self,
         mock_client_cls: MagicMock,
         provider_args: list[str],
-        expected: str,
+        expected: VoiceTarget,
     ) -> None:
         mock_client_cls.return_value.voices.return_value = ["joanna"]
 
@@ -1258,7 +1876,8 @@ class TestVoiceCommand:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
         (tmp_path / "vox.md").write_text(
             '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
         )
@@ -1278,7 +1897,10 @@ class TestVoiceCommand:
     ) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+
+        monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+
         (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
 
@@ -1435,6 +2057,118 @@ class TestStatusCommand:
         assert "Daemon:    unknown\n" in result.output
         assert "Log level: unknown (daemon health unavailable)\n" in result.output
 
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_names_the_allowlisted_worker_repos(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """Workers: is the daemon's allowlist, by last path segment."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        repos = ["/srv/lux", "/srv/vox-demo"]
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            return_value=repos,
+        ) as request:
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   lux, vox-demo\n" in result.output
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] == repos
+        assert "worker_repos_error" not in payload
+        assert request.await_args_list == [call("repos"), call("repos")]
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_says_how_to_allowlist_when_none_is(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (none allowlisted; run vox worker allow <path>)\n" in (
+            result.output
+        )
+        assert json.loads(as_json.output)["worker_repos"] == []
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_never_reads_the_allowlist_from_local_config(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """The daemon's view, never the CLI host's config file."""
+        mock_client_cls.return_value.health.side_effect = VoxdRefusedError("refused")
+        ConfigStore(ConfigStore.global_dir()).write_field(
+            "worker_repos", repr(["/srv/vox-demo"])
+        )
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=VoxdConnectionError("refused"),
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   unknown (daemon not reachable)\n" in result.output
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == "daemon not reachable"
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_reports_a_malformed_worker_allowlist(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """A daemon refusal is an error, never an empty allowlist."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=VoxdProtocolError(
+                "worker_repos must be a list of repository paths"
+            ),
+        ):
+            result = CliRunner().invoke(app, ["status"])
+            as_json = CliRunner().invoke(app, ["status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert "Workers:   (worker_repos must be a list of repository paths)\n" in (
+            result.output
+        )
+        payload = json.loads(as_json.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == (
+            "worker_repos must be a list of repository paths"
+        )
+
+    @patch("punt_vox.cli_daemon.VoxClientSync")
+    def test_status_renders_a_fault_reply_and_a_bad_shape_as_the_error_line(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        """M8: whatever the daemon answers short of a list is the error line."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
+        with patch(
+            "punt_vox.worker_client.WorkerClient.request",
+            new_callable=AsyncMock,
+            side_effect=[VoxdProtocolError("vox.md: Permission denied"), "/a"],
+        ):
+            fault = CliRunner().invoke(app, ["status", "--json"])
+            shape = CliRunner().invoke(app, ["status", "--json"])
+        assert fault.exit_code == 0, fault.output
+        assert json.loads(fault.output)["worker_repos_error"] == (
+            "vox.md: Permission denied"
+        )
+        assert shape.exit_code == 0, shape.output
+        payload = json.loads(shape.output)
+        assert payload["worker_repos"] is None
+        assert payload["worker_repos_error"] == "expected a list of paths"
+
 
 # ---------------------------------------------------------------------------
 # main group tests
@@ -1488,6 +2222,7 @@ class TestDoctorCommand:
         self,
         tmp_path: Path,
         *,
+        args: tuple[str, ...] = ("doctor",),
         ffmpeg_found: bool = True,
         mpv_found: bool = True,
         mpv_version: str = "0.38.0",
@@ -1533,17 +2268,13 @@ class TestDoctorCommand:
                 "provider": "elevenlabs",
                 "active_sessions": 2,
                 "port": 8421,
+                "output_dir": "writable",
             }
             if daemon_version is not None:
                 health_payload["daemon_version"] = daemon_version
             mock_client.health.return_value = HealthStatus.from_wire(health_payload)
         else:
             mock_client.health.side_effect = VoxdRefusedError("not running")
-
-        # Create Music dir so the Music-directory doctor check passes.
-        (tmp_path / "Music").mkdir(exist_ok=True)
-        # Create output dir so the output-directory doctor check passes.
-        (tmp_path / "Music" / "vox").mkdir(parents=True, exist_ok=True)
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
@@ -1565,23 +2296,31 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
             patch("punt_vox.doctor_call_workers.Path") as worker_path,
+            # The mic probe and the allowlist are daemon answers; a healthy
+            # daemon hears signal and allowlists one repository.
+            patch.object(DaemonControl, "request", side_effect=self._daemon_answer),
             # Isolate the config-path helper from the real filesystem.
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             worker_path.return_value.is_dir.return_value = False
-            return runner.invoke(app, ["doctor"])
+            return runner.invoke(app, args)
+
+    @staticmethod
+    async def _daemon_answer(operation: str, **_fields: object) -> object:
+        if operation == "probe":
+            return {
+                "device": "Built-in Microphone",
+                "sample_rate_hz": 16_000,
+                "peak": 900,
+                "samples": 16_000,
+                "overflows": 0,
+                "platform": "darwin",
+            }
+        return ["/Users/me/vox-demo"]
 
     def test_all_required_pass(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path)
@@ -1592,12 +2331,47 @@ class TestDoctorCommand:
         assert "ElevenLabs convai_write" in result.output
         assert "Claude login:" in result.output
         assert "tmux:" in result.output
+        assert "\u2713 Microphone (voxd): Built-in Microphone" in result.output
+        assert "\u2713 Worker repositories: 1 allowlisted (vox-demo)" in result.output
         assert "Echo cancellation: not built in" in result.output
 
     def test_ffmpeg_missing_fails(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
         assert "\u2717 ffmpeg" in result.output
+
+    @pytest.mark.parametrize("args", [("--json", "doctor"), ("doctor", "--json")])
+    def test_json_reports_failed_checks(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        payload = json.loads(result.stdout)
+        assert payload["failed"] == 1
+        assert any(
+            check["message"].startswith("ffmpeg:") and not check["passed"]
+            for check in payload["checks"]
+        )
+
+    @pytest.mark.parametrize("args", [("-q", "doctor"), ("doctor", "-q")])
+    def test_quiet_suppresses_text_but_preserves_failure(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        result = self._run_doctor(tmp_path, args=args, ffmpeg_found=False)
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert result.output == ""
+
+    def test_verbose_enables_debug_logging(self, tmp_path: Path) -> None:
+        with patch("punt_vox.cli_io.configure_client_logging") as configure:
+            result = self._run_doctor(tmp_path, args=("doctor", "--verbose"))
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        assert "Daemon: running" in result.stdout
+        configure.assert_called_with(role="cli", verbose=True)
+
+    def test_verbose_and_quiet_are_mutually_exclusive(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, args=("doctor", "--verbose", "--quiet"))
+        assert result.exit_code == 2
+        assert "mutually exclusive" in click.unstyle(result.stderr)
 
     def test_mpv_missing_fails(self, tmp_path: Path) -> None:
         # mpv is a hard dependency: absence is a red \u2717 and a non-zero exit.
@@ -1726,18 +2500,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1814,18 +2580,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -1888,18 +2646,10 @@ class TestDoctorCommand:
                 "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
-            patch(
-                "punt_vox.doctor_output.default_output_dir",
-                return_value=tmp_path / "Music" / "vox",
-            ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
             patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
             patch("punt_vox.doctor_guide.find_repo_root", return_value=None),
-            patch(
-                "punt_vox.doctor_output._resolve_music_dir",
-                return_value=tmp_path / "Music",
-            ),
         ):
             result = runner.invoke(app, ["--json", "doctor"])
 
@@ -2167,10 +2917,16 @@ class TestDesktopInstallCommand:
         data = json.loads(raw)
         server = data["mcpServers"]["vox"]
         assert server["command"] == _UVX
-        assert server["args"] == ["--from", "punt-vox", "vox", "mcp"]
+        assert server["args"] == [
+            "--directory",
+            str(config_path.parent / "vox"),
+            "--from",
+            "punt-vox",
+            "vox",
+            "mcp",
+        ]
         assert server["env"] == {
             "VOX_OUTPUT_DIR": str(audio_dir),
-            "TTS_PROVIDER": "say",
         }
         # PL-PP-4: no provider secret ever lands in the config.
         assert "ELEVENLABS_API_KEY" not in raw
@@ -2243,7 +2999,6 @@ class TestDesktopInstallCommand:
         server = json.loads(raw)["mcpServers"]["vox"]
         assert server["env"] == {
             "VOX_OUTPUT_DIR": str(audio_dir),
-            "TTS_PROVIDER": "elevenlabs",
         }
 
     def test_missing_key_warns_without_leaking(
@@ -2902,6 +3657,61 @@ class TestCacheCommands:
     client honors ``VOXD_HOST`` / ``VOXD_PORT`` /
     ``VOXD_TOKEN`` like ``vox status`` and ``vox voices``.
     """
+
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @pytest.mark.parametrize("flag", ["--json", "-q", "--quiet", "-v", "--verbose"])
+    @pytest.mark.parametrize("global_flag", [False, True])
+    @patch(f"{_CLI}.VoxClientSync")
+    @patch("punt_vox.cli_io.configure_client_logging")
+    def test_output_flags(
+        self,
+        mock_logging: MagicMock,
+        mock_client_cls: MagicMock,
+        command: str,
+        flag: str,
+        global_flag: bool,
+    ) -> None:
+        from punt_vox.client import CacheStatus
+
+        cache_path = Path("/daemon/cache")
+        mock_client_cls.return_value.cache_status.return_value = CacheStatus(
+            entries=4, size_bytes=8192, path=cache_path
+        )
+        mock_client_cls.return_value.cache_clear.return_value = 9
+        args = ["cache", command]
+        args.insert(0 if global_flag else len(args), flag)
+
+        result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, click.unstyle(result.stderr)
+        if flag == "--json":
+            expected = (
+                {"entries": 4, "size_bytes": 8192, "path": str(cache_path)}
+                if command == "status"
+                else {"cleared": 9}
+            )
+            assert json.loads(result.stdout) == expected
+        elif flag in ("-q", "--quiet"):
+            assert result.stdout == ""
+        else:
+            mock_logging.assert_called_with(role="cli", verbose=True)
+            expected_text = "Entries: 4" if command == "status" else "Cleared 9"
+            assert expected_text in result.stdout
+
+    @pytest.mark.parametrize("command", ["status", "clear"])
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_trailing_json_reports_daemon_connection_error(
+        self, mock_client_cls: MagicMock, command: str
+    ) -> None:
+        rpc = getattr(mock_client_cls.return_value, f"cache_{command}")
+        rpc.side_effect = VoxdConnectionError("refused")
+
+        result = CliRunner().invoke(app, ["cache", command, "--json"])
+
+        assert result.exit_code == 1, click.unstyle(result.stderr)
+        assert json.loads(result.stdout) == {"error": "refused"}
+        assert result.stderr == ""
+        rpc.assert_called_once_with()
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_status_routes_through_client(self, mock_client_cls: MagicMock) -> None:

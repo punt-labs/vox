@@ -118,14 +118,15 @@ class CatalogCli:
         """Copy an album out as a directory of its parts; print the written path.
 
         Exports into the current directory unless ``--dest`` names another,
-        matching the destination ``mic:music get`` takes.
+        matching the destination ``mic:music get`` takes. A part deleted from the
+        daemon's album directory is skipped and named rather than failing the export.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         target_dir = dest if dest is not None else str(Path.cwd())
-        target = self._guard.run(
+        export = self._guard.run(
             lambda: self._gateway_factory().get(album_id, target_dir)
         )
-        self._formatter.emit({"album_id": album_id, "path": target}, target)
+        self._formatter.emit(export.payload(album_id), export.summary())
 
     def remove(
         self,

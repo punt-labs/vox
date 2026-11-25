@@ -10,6 +10,8 @@ from typing import Self, final
 
 from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.contracts import HarnessProfile, WorkerProvider
+from punt_vox.voxd.workers.discard import WorkerDiscard
+from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.model import WorkerRecord
 
 logger = logging.getLogger(__name__)
@@ -95,28 +97,50 @@ class WorkerLifecycle:
         )
 
     def rollback(self, record: WorkerRecord, error: Exception) -> WorkerRecord:
-        """Preserve launch failure while attempting termination and trust cleanup."""
-        report = {**record.last_report, "launch_error": type(error).__name__}
+        """Preserve launch failure while attempting termination and trust cleanup.
+
+        The launch error is recorded as ``"<type>: <message>"``, paths
+        scrubbed, so a deadline and an empty task (both ``ValueError``) stay
+        distinguishable on the record. The worktree discard is only marked
+        here; it runs later, off the actor lock.
+        """
+        report = {**record.last_report, "launch_error": str(GitFailure(error))}
         try:
             self._providers[record.provider].stop(record.session)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             report["stop_error"] = type(exc).__name__
             logger.warning(
-                "Worker rollback termination failed (%s)", type(exc).__name__
+                "Worker %s rollback termination failed: %s",
+                record.id,
+                GitFailure(exc),
             )
         else:
             record = replace(record, state="stopped")
-        return WorkerCleanup.run(replace(record, last_report=report), self._profiles)
+        cleaned = WorkerCleanup.run(replace(record, last_report=report), self._profiles)
+        return WorkerDiscard.mark(cleaned)
+
+    @staticmethod
+    def failure_text(exc: Exception) -> str:
+        """Return ``"<type>: <message>"`` for a log line, paths scrubbed."""
+        return str(GitFailure(exc))
 
     def terminate(self, record: WorkerRecord) -> WorkerRecord:
-        """Stop the provider without performing harness cleanup."""
+        """Stop the provider without performing harness cleanup.
+
+        A discard the rollback skipped or that failed is queued again once
+        the stop leaves the worker stopped.
+        """
         if record.last_report.get("pane_stop_pending") is True:
             self._providers[record.provider].stop(record.session)
             report = dict(record.last_report)
             del report["pane_stop_pending"]
             record = replace(record, last_report=report)
-        if record.state in ("stopped", "exited"):
-            return record
+        if record.state not in ("stopped", "exited"):
+            record = self._stop(record)
+        return WorkerDiscard.retry(record)
+
+    def _stop(self, record: WorkerRecord) -> WorkerRecord:
+        """Stop a live or starting worker and checkpoint its terminal phase."""
         dead = (
             "launch_error" not in record.last_report
             and self.probe(record, self._providers[record.provider])

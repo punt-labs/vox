@@ -26,7 +26,7 @@ class RejectionReason(StrEnum):
     PROVIDER_CONFIG = "provider_config"
 
     @classmethod
-    def for_exception(cls, cause: str | ValueError) -> RejectionReason:
+    def for_exception(cls, cause: str | Exception) -> RejectionReason:
         """Classify by exception type without inspecting its message."""
         for exception_type, reason in _REASONS:
             if isinstance(cause, exception_type):

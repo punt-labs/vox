@@ -177,7 +177,10 @@ class RecTool:
             JSON string: a list of ``{"id", "bytes", "cached"}`` for ``new``,
             ``{"recordings": [...]}`` for ``list``, ``{"played"}``/
             ``{"id", "bytes", "base64"}``/``{"removed"}`` for the ref verbs, and
-            an ``{"error": ...}`` envelope on a bad input or daemon fault.
+            an ``{"error": ...}`` envelope on invalid options or daemon faults.
+
+        Raises:
+            ValueError: The synthesis segment batch is malformed.
         """
         self._session_provider().refresh_from_config()
         args = RecArgs(
@@ -202,10 +205,16 @@ class RecTool:
     def _new(self, args: RecArgs) -> str:
         """Synthesize speech into the store; return a bare id per segment."""
         session = self._session_provider()
-        # Reject bad voice settings before any round-trip as a clean {"error"}
-        # envelope (the sibling verbs' contract), not a bare exception.
+        # Reject a bad rate or voice setting before any round-trip as a clean
+        # {"error"} envelope (the sibling verbs' contract), not a bare exception.
         spec = SynthesisSpec(
-            stability=args.stability, similarity=args.similarity, style=args.style
+            voice=args.voice,
+            language=args.language,
+            rate=args.rate,
+            stability=args.stability,
+            similarity=args.similarity,
+            style=args.style,
+            speaker_boost=args.speaker_boost,
         )
         try:
             spec.validate()
@@ -215,26 +224,10 @@ class RecTool:
         if segments is None:
             if args.text is None:
                 return _error("Provide text or segments.")
-            segments = [{"text": args.text}]
+            segments = [SegmentBatch.text_segment(args.text)]
+        batch = SegmentBatch(segments)
         if args.name is not None and len(segments) > 1:
             return _error("name only supported for single-segment calls")
-        # The daemon owns the store and is the sole authority on name validity:
-        # an absent (None) name is content-addressed; an explicit name --
-        # including "" -- is sent for the daemon to reject pre-ack (``is not
-        # None``, not truthiness, to match the client and the CLI).
-        single_name = (
-            args.name if args.name is not None and len(segments) == 1 else None
-        )
-        client = self._client_factory()
-
-        def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-            # Bare id only -- no store path leaks to the agent (CLI parity).
-            result = client.record(seg_text, seg_spec, name=single_name)
-            return {
-                "id": result.name,
-                "bytes": result.byte_count,
-                "cached": result.cached,
-            }
 
         # Route through SessionSpec so ``rec new`` shares the one state-to-spec
         # constructor every synthesis surface uses -- state is the sole authority
@@ -242,22 +235,17 @@ class RecTool:
         # than a daemon guess. The per-call override carries the CLI-shaped
         # per-request fields; state fills provider / voice / model / vibe_tags.
         try:
-            defaults = SessionSpec(session).fill(
-                SynthesisSpec(
-                    voice=args.voice,
-                    language=args.language,
-                    rate=args.rate,
-                    stability=args.stability,
-                    similarity=args.similarity,
-                    style=args.style,
-                    speaker_boost=args.speaker_boost,
-                )
-            )
+            defaults = SessionSpec(session).fill(spec)
         except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
             return _error(str(exc))
-        return SegmentBatch(segments, defaults).render(
-            handler=_handler, error_label="Record"
-        )
+        client = self._client_factory()
+
+        def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
+            # The daemon validates explicit names, including "".
+            result = client.record(seg_text, seg_spec, name=args.name)
+            return result.metadata(include_warning=True)
+
+        return batch.render(defaults, handler=_handler, error_label="Record")
 
     def _list(self, _args: RecArgs) -> str:
         """List the store's recordings as ``{"recordings": [{"id", "bytes"}]}``."""

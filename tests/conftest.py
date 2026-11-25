@@ -9,7 +9,7 @@ import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast, final
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,6 +22,40 @@ from punt_vox.providers.espeak import EspeakProvider, EspeakVoiceConfig
 from punt_vox.providers.openai import OpenAIProvider
 from punt_vox.providers.polly import PollyProvider, VoiceConfig
 from punt_vox.providers.say import SayProvider, SayVoiceConfig
+from punt_vox.voxd.record_store import RecordStore
+from punt_vox.voxd.workers.contracts import HarnessProfile
+
+if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
+
+
+@pytest.fixture
+def recording_socket() -> tuple[WebSocket, list[dict[str, object]]]:
+    """Capture JSON replies from a recording handler."""
+    sent: list[dict[str, object]] = []
+
+    @final
+    class _WS:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent.append(payload)
+
+    return cast("WebSocket", _WS()), sent
+
+
+@pytest.fixture
+def harness_profile() -> MagicMock:
+    """Mock a HarnessProfile with the integer input limit the protocol promises."""
+    profile = MagicMock(spec=HarnessProfile)
+    profile.input_limit = 1000
+    return profile
+
+
+@pytest.fixture
+def recording_store(tmp_path: Path) -> RecordStore:
+    """Provide an existing, isolated recording directory."""
+    store = RecordStore(tmp_path / "recordings")
+    store.root.mkdir(parents=True)
+    return store
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -89,10 +123,11 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     * ``ConfigStore(None)`` and the module-level ``read_config`` /
       ``read_field`` / ``write_field`` / ``write_fields`` wrappers, which fall
       back to ``config.DEFAULT_CONFIG_DIR``;
-    * ``server._find_config_dir()``, which re-imports ``find_config_dir`` from
+    * ``server._find_config_dir()`` and ``server._writable_config_dir()``,
+      which re-import ``find_config_dir`` / ``writable_config_dir`` from
       ``dirs`` at call time;
     * the ``/vibe`` / ``notify`` / ``voice`` CLI commands, which read
-      ``__main__.find_config_dir``.
+      ``__main__.find_config_dir`` / ``__main__.writable_config_dir``.
 
     ``hooks.find_config_dir`` is *not* redirected: hooks always pass an explicit
     ``cwd``, so they resolve relative to isolated payload directories and never
@@ -121,16 +156,10 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
         return config_dir
 
     monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", config_dir)
-    monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
-    monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
-    # session_spec.py owns SessionSpec.for_repo(), the one config-lookup
-    # path vox say/vox rec new/vox call all share -- ``vox say``'s
-    # __main__._fill_from_state and vox rec new's cli_rec._fill_from_state
-    # both route through it now, so neither module imports find_config_dir
-    # directly any more; only session_spec's own "from X import Y" binding
-    # (captured at import time, same reason __main__'s needs its own entry
-    # above) needs patching.
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", _resolve)
+    # SessionSpec.for_repo() is the config-lookup path shared by vox say,
+    # vox rec new, and vox call. Patch the binding in session_spec itself.
     monkeypatch.setattr("punt_vox.session_spec.find_config_dir", _resolve)
     return config_dir
 
@@ -348,19 +377,7 @@ def mock_elevenlabs_client() -> MagicMock:
 @pytest.fixture
 def elevenlabs_provider(mock_elevenlabs_client: MagicMock) -> ElevenLabsProvider:
     """Create an ElevenLabsProvider with a mocked client."""
-    provider = ElevenLabsProvider(client=mock_elevenlabs_client)
-    # Pre-populate the VoiceResolver cache for tests.
-    provider._voices._cache.update(  # pyright: ignore[reportPrivateUsage]
-        {
-            "matilda": "XrExE9yKIg1WjnnlVkGX",
-            "drew": "29vD33N1CtxCmqQRPOHJ",
-        }
-    )
-    # Mark cache as loaded so TTL checks work.
-    import time
-
-    provider._voices._loaded_at = time.monotonic()  # pyright: ignore[reportPrivateUsage]
-    return provider
+    return ElevenLabsProvider(client=mock_elevenlabs_client)
 
 
 # ---------------------------------------------------------------------------

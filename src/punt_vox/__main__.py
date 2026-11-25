@@ -19,31 +19,37 @@ from punt_vox.cli_daemon import DaemonCli
 from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_group import VoxGroup
-from punt_vox.cli_io import OutputFlags, TextInput
+from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.cli_status import StatusCli
+from punt_vox.cli_synthesis import CliSynthesis
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.commands.call import CallCli
-from punt_vox.config import ConfigStore, SpeakMode
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.config import SpeakMode
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.session_spec import SessionSpec
-from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
+from punt_vox.repo_config import RepoConfig
+from punt_vox.types_cli_options import (
+    FromOpt,
+    LanguageOpt,
+    ModelOpt,
+    ProviderOpt,
+    RateOpt,
+    SimilarityOpt,
+    SpeakerBoostFlag,
+    StabilityOpt,
+    StyleOpt,
+    VoiceOpt,
 )
+from punt_vox.types_errors import ConfigValueError
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
-
-    # Annotation-only; keeps `client` off __main__'s runtime import graph.
-    from punt_vox.client import SynthesizeResult
 
 logger = logging.getLogger(__name__)
 
@@ -67,44 +73,7 @@ app.add_typer(cache_app, name="cache")
 
 _formatter = OutputFormatter()
 _flags = OutputFlags(_formatter)
-_text_input = TextInput(_formatter)
-
-
-def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
-    """Validate a spec at the CLI boundary, returning it for chaining.
-
-    Translates ``ValueError`` from :meth:`SynthesisSpec.validate` into
-    ``typer.BadParameter`` so the CLI displays a user-friendly message. The
-    caller builds the :class:`SynthesisSpec` (the bundle already names every
-    field), so this stays a one-argument boundary check rather than re-listing
-    a dozen parameters.
-    """
-    try:
-        spec.validate()
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    return spec
-
-
-def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
-    """Fill unset synthesis fields from repo state through SessionSpec.
-
-    An unconfigured provider or incompatible provider/model pair exits with code 1.
-    """
-    try:
-        return SessionSpec.for_repo().fill(spec)
-    except ProviderNotConfiguredError as exc:
-        # SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
-        # message by default -- the wrong verb for this CLI path (mirrors
-        # commands/model.py, commands/voice.py, and commands/call_spec.py's
-        # identical rebuild).
-        message = str(ProviderNotConfiguredError.for_cli())
-        _formatter.error(message, f"Error: {message}")
-        raise typer.Exit(code=1) from exc
-    except ModelNotAvailableError as exc:
-        message = str(exc)
-        _formatter.error(message, f"Error: {message}")
-        raise typer.Exit(code=1) from exc
+_synthesis = CliSynthesis(_formatter)
 
 
 # ---------------------------------------------------------------------------
@@ -133,51 +102,6 @@ Quiet = Annotated[
 JsonOutput = Annotated[
     bool,
     typer.Option("--json", help="Output JSON."),
-]
-ProviderOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--provider",
-        help=(
-            "TTS provider (elevenlabs, polly, openai, say, espeak)."
-            " Default: this repo's vox.md provider (vox provider <name>)."
-        ),
-    ),
-]
-ModelOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--model",
-        help="Model name (e.g. eleven_v3, tts-1). Provider-specific.",
-    ),
-]
-VoiceOpt = Annotated[
-    str | None,
-    typer.Option("--voice", help="Voice name. Default: provider-specific."),
-]
-LanguageOpt = Annotated[
-    str | None,
-    typer.Option("--language", "--lang", help="ISO 639-1 language code (e.g. de, ko)."),
-]
-RateOpt = Annotated[
-    int,
-    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
-]
-StabilityOpt = Annotated[
-    float | None,
-    typer.Option("--stability", help="ElevenLabs voice stability (0.0-1.0)."),
-]
-SimilarityOpt = Annotated[
-    float | None,
-    typer.Option("--similarity", help="ElevenLabs voice similarity boost (0.0-1.0)."),
-]
-StyleOpt = Annotated[
-    float | None,
-    typer.Option("--style", help="ElevenLabs voice style/expressiveness (0.0-1.0)."),
-]
-SpeakerBoostFlag = Annotated[
-    bool,
-    typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost."),
 ]
 OnceOpt = Annotated[
     int | None,
@@ -237,10 +161,6 @@ ApiKeyStdinFlag = Annotated[
         ),
     ),
 ]
-FromOpt = Annotated[
-    Path | None,
-    typer.Option("--from", help="JSON file with segments array.", exists=True),
-]
 TextArg = Annotated[
     str | None, typer.Argument(help="Text to synthesize.", show_default=False)
 ]
@@ -267,18 +187,6 @@ def _callback(  # pyright: ignore[reportUnusedFunction]
 # ---------------------------------------------------------------------------
 
 
-def _dedup_fields(result: SynthesizeResult) -> dict[str, object]:
-    """Return the dedup annotations for a played result, empty if fresh."""
-    if not result.deduped:
-        return {}
-    fields: dict[str, object] = {"deduped": True}
-    if result.original_played_at is not None:
-        fields["original_played_at"] = result.original_played_at
-    if result.ttl_seconds_remaining is not None:
-        fields["ttl_seconds_remaining"] = result.ttl_seconds_remaining
-    return fields
-
-
 def _speak_segments(
     segments: list[str],
     spec: SynthesisSpec,
@@ -292,8 +200,8 @@ def _speak_segments(
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
-        payload: dict[str, object] = {"id": result.request_id, **_dedup_fields(result)}
-        _formatter.emit(payload, seg_text)
+        payload: dict[str, object] = {"id": result.request_id, **result.dedup_fields()}
+        _formatter.emit(payload, seg_text, warning=result.warning)
 
 
 @app.command()
@@ -323,34 +231,45 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     Reads the text from the TEXT argument, from ``--from`` (a JSON segments
     file), or from stdin when TEXT is ``-`` or the input is piped.
+
+    With --from and --json, stdout is JSON Lines: one JSON object per successful
+    segment, in input order. Blank segments are skipped. If the daemon rejects a
+    segment or the connection fails during processing, Vox writes a final
+    {"error": "..."} line and exits nonzero. Earlier lines remain; later segments
+    are skipped. An invalid segments file produces one error object and exits 2.
+
+    With a segments file named in.json, save stdout before running jq:
+
+    status=0
+
+    vox say --from in.json --json >out.jsonl ||
+
+    status=$?
+
+    jq -c . out.jsonl
+
+    echo "Vox exit status: $status" >&2
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    # Resolve the per-call API key from exactly one of the four
-    # supported sources (file, stdin, env var, argv) and fire a
-    # stderr warning when the argv path was used. See
-    # ``ApiKeyResolver`` for the full rationale.
-    resolved_api_key = ApiKeyResolver(
+    key_resolver = ApiKeyResolver(
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
-    ).resolve()
-
-    spec = _fill_from_state(
-        _validated_spec(
-            SynthesisSpec(
-                voice=voice,
-                language=language,
-                rate=rate,
-                provider=provider,
-                model=model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=speaker_boost or None,
-                api_key=resolved_api_key,
-            )
-        )
     )
 
-    segments = _text_input.resolve(text, from_file)
+    segments, spec = _synthesis.prepare(
+        text,
+        from_file,
+        voice=voice,
+        language=language,
+        rate=rate,
+        provider=provider,
+        model=model,
+        stability=stability,
+        similarity=similarity,
+        style=style,
+        speaker_boost=speaker_boost,
+        api_key=_synthesis.resolve_api_key(key_resolver, text, from_file),
+    )
+
     _speak_segments(segments, spec, once or None)
 
 
@@ -365,34 +284,32 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
         str,
         typer.Argument(
             help=(
-                "Mood word (e.g. 'excited', 'weary') pinned as manual, "
+                "Spoken delivery cue (e.g. 'excited', 'telling a secret'), "
                 "'auto' (mood follows session signals), or 'off' (neutral)."
             )
         ),
     ],
 ) -> None:
-    """Set the session mood the voice director translates into voice tags.
+    """Set the session mood for spoken delivery.
 
-    The daemon resolves the mood into 1-3 expressive tags (e.g. [excited],
-    [weary]) that ride the next synthesis call. A mode change ('auto' or
-    'off') resets the nudge cadence.
+    A manual mood is used as an expressive cue (e.g. [excited]) by ElevenLabs
+    v3. Other speech models do not apply it. 'auto' and 'off' clear the cue
+    and reset the nudge cadence.
 
     Example: vox vibe excited
     Example: vox vibe auto
 
     See also: vox status (current mood), mic:vibe (MCP peer).
     """
-    # Route through VibeChange so the CLI and MCP tool share one transition rule
-    # (a mode change resets the nudge cadence).
-    is_mode = mood in ("auto", "off")
-    change = VibeChange(
-        mood=None if is_mode else mood, tags=None, mode=mood if is_mode else "manual"
-    )
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_fields(change.resolve())
-    if is_mode:
-        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
-    else:
+    try:
+        updates = VibeChange.from_cli(mood).resolve()
+        RepoConfig().write_fields(updates)
+    except ConfigValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="mood") from exc
+    if updates["vibe_mode"] == "manual":
         _formatter.emit({"vibe": mood, "vibe_mode": "manual"}, f"Vibe: {mood}")
+    else:
+        _formatter.emit({"vibe_mode": mood}, f"Vibe mode: {mood}")
 
 
 # ---------------------------------------------------------------------------
@@ -441,7 +358,7 @@ def speak_cmd(  # pyright: ignore[reportUnusedFunction]
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
 
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("speak", mode)
+    RepoConfig().write_field("speak", mode)
     label = "Voice on." if mode == "y" else "Muted — chimes only."
     _formatter.emit({"speak": mode}, label)
 
@@ -521,7 +438,7 @@ _VoiceName = Annotated[
 
 def _ctx() -> Ctx:
     """Wire the collaborators the command layer needs."""
-    return Ctx(ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR), VoxClientSync())
+    return Ctx(RepoConfig(), VoxClientSync())
 
 
 def _run(coro: Coroutine[object, object, CommandResult]) -> None:
@@ -532,14 +449,11 @@ def _run(coro: Coroutine[object, object, CommandResult]) -> None:
     exit code the result carries becomes the process exit on failure.
     """
     result = asyncio.run(coro)
+    payload, text = result.json_data, result.text
     if result.error:
-        detail = result.json_data if result.json_data is not None else result.text
-        _formatter.error(detail, result.text)
+        _formatter.error((payload or {}).get("error", text), text)
         raise typer.Exit(code=result.exit_code)
-    payload = (
-        result.json_data if result.json_data is not None else {"text": result.text}
-    )
-    _formatter.emit(payload, result.text)
+    _formatter.emit(payload if payload is not None else {"text": text}, text)
 
 
 @app.command("model")
@@ -589,10 +503,12 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """List or set the session voice for the active (or given) provider.
+    """List a provider's voices or set the active provider's voice.
 
     ``vox voice`` lists the roster; ``vox voice <name>`` writes to
     ``.punt-labs/vox/vox.md`` (a stray leading ``@`` is stripped).
+    ``--provider`` can list another provider's voices, but when setting a
+    voice it must match the active provider.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     _run(cmds.voice(_ctx(), name, provider))
@@ -629,7 +545,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 ) -> None:
     """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+    cfg = RepoConfig().read()
     StatusCli.emit(_formatter, cfg)
 
 
@@ -639,21 +555,21 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 @app.command()
-def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
+def doctor(  # pyright: ignore[reportUnusedFunction]
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Check system health for vox.
 
     Raises:
         typer.Exit: If any diagnostic check fails.
     """
-    from punt_vox.doctor import DoctorCheck
-    from punt_vox.doctor_result import CheckResults
+    from punt_vox.cli_doctor import DoctorCli
 
-    check = DoctorCheck(client=VoxClientSync())
-    payload, text = CheckResults(check.run_all()).format()
-    _formatter.emit(payload, text)
-
-    if payload.get("failed", 0):
-        raise typer.Exit(code=1)
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    DoctorCli.emit(_formatter, VoxClientSync())
 
 
 # ---------------------------------------------------------------------------
@@ -728,40 +644,39 @@ def uninstall() -> None:
 
 
 @cache_app.command("status")
-def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_status_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Show the daemon cache's entry count, size, and path (honors VOXD_HOST).
 
     Raises:
         typer.Exit: If the daemon cannot report cache status.
     """
-    try:
-        info = VoxClientSync().cache_status()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    size_kb = info.size_bytes / 1024
-    payload = {
-        "entries": info.entries,
-        "size_bytes": info.size_bytes,
-        "path": str(info.path),
-    }
-    text = f"Entries: {info.entries}\nSize:    {size_kb:.1f} KB\nPath:    {info.path}"
-    _formatter.emit(payload, text)
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).status(VoxClientSync())
 
 
 @cache_app.command("clear")
-def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
+def cache_clear_cmd(
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
     """Delete all cached MP3 files on the daemon host.
 
     Raises:
         typer.Exit: If the daemon cannot clear the cache.
     """
-    try:
-        count = VoxClientSync().cache_clear()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
+    from punt_vox.cli_cache import CacheCli
+
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    CacheCli(_formatter).clear(VoxClientSync())
 
 
 # ---------------------------------------------------------------------------
@@ -795,7 +710,7 @@ app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 # call subcommand group (Conversation Mode; implementation in commands/call.py)
 # ---------------------------------------------------------------------------
 
-app.add_typer(CallCli.build_app(), name="call")
+app.add_typer(CallCli.build_app((_formatter, _flags)), name="call")
 
 
 # ---------------------------------------------------------------------------

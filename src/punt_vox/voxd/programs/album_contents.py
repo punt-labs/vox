@@ -1,7 +1,8 @@
 """The ``music get`` manifest value objects: one album's name and its ready parts.
 
 :class:`AlbumContents` is what a ``music get`` reply carries -- the album's on-disk
-name and a :class:`PartFile` per ready part. Each ``PartFile`` measures itself
+name, a :class:`PartFile` per ready part still on disk, and the names of ready
+parts whose files were deleted out of band. Each ``PartFile`` measures itself
 from the store: its bare name comes from the on-disk manifest, so it is
 bare-name-validated inside the album directory (:meth:`ContainmentRoot.contained_child`)
 *before* it is stat'd -- a corrupt or hostile manifest entry bearing a separator
@@ -53,13 +54,43 @@ class PartFile:
 @final
 @dataclass(frozen=True, slots=True)
 class AlbumContents:
-    """An album's on-disk name and its ready parts -- the ``music get`` manifest."""
+    """An album's on-disk name, its ready parts, and the ready parts gone from disk.
+
+    ``missing`` names ready parts whose files were deleted out of band, so a
+    ``music get`` still exports every surviving part and can say which it skipped.
+    """
 
     name: str
     parts: tuple[PartFile, ...]
+    missing: tuple[str, ...] = ()
 
     @classmethod
     def from_album(cls, album: Album, root: ContainmentRoot) -> Self:
-        """Return the get manifest: the album name and its sized ready parts."""
-        parts = tuple(PartFile.measured(root, part) for part in album.ready_parts())
-        return cls(album.locator, parts)
+        """Return the get manifest: the album name, sized parts, and missing parts.
+
+        Only absence (``FileNotFoundError``) marks a part missing; an unsafe name,
+        a non-regular file, or any other read fault still raises.
+
+        Raises:
+            ValueError: If a part name is unsafe or not a regular file.
+            OSError: If a part file cannot be inspected for a reason other than absence.
+        """
+        parts: list[PartFile] = []
+        missing: list[str] = []
+        for part in album.ready_parts():
+            try:
+                parts.append(PartFile.measured(root, part))
+            except FileNotFoundError:
+                missing.append(part.identity)
+        return cls(album.locator, tuple(parts), tuple(missing))
+
+    def wire(self) -> dict[str, object]:
+        """Return the ``manifest`` reply frame the ``music get`` client parses."""
+        return {
+            "type": "manifest",
+            "album": self.name,
+            "parts": [
+                {"part": part.name, "bytes": part.byte_count} for part in self.parts
+            ],
+            "missing": [{"part": name} for name in self.missing],
+        }

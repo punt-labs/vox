@@ -46,14 +46,14 @@ class CatalogVerbs:
         return json.dumps({"album_id": album_id})
 
     def get(self, args: MusicArgs) -> str:
-        """Export a saved album into *dest*; return the written locator."""
+        """Export a saved album into *dest*; return its locator and skipped parts."""
         if args.album_id is None or args.dest is None:
             return MusicFault.rejecting("music get requires album_id and dest")
         try:
-            target = self._gateway_factory().get(args.album_id, args.dest)
+            export = self._gateway_factory().get(args.album_id, args.dest)
         except (ValueError, *DAEMON_ERRORS) as exc:
             return MusicFault.of(exc)
-        return json.dumps({"album_id": args.album_id, "path": target})
+        return json.dumps(export.payload(args.album_id))
 
     def remove(self, args: MusicArgs) -> str:
         """Delete a saved album by id (a playing album is refused)."""

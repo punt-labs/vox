@@ -10,13 +10,21 @@ from unittest.mock import MagicMock
 
 import pytest
 from _program_fakes import FakeProgramGateway
+from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import TextContent
 
 if TYPE_CHECKING:
     from punt_vox.types_provider import ProviderStatusPayload
 
-from punt_vox.client import SynthesizeResult
+import punt_vox.server
+from punt_vox.atomic_file import AtomicFile
+from punt_vox.client import RecordResult, SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
+from punt_vox.dirs import (
+    find_config_dir as real_find_config_dir,
+    writable_config_dir as real_writable_config_dir,
+)
 from punt_vox.music_phrases import (
     GENERATING_NO_STYLE,
     GENERATING_WITH_STYLE,
@@ -37,6 +45,8 @@ from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
+from punt_vox.vibe import VibeChange
+from punt_vox.voice_target import VoiceTarget
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -146,10 +156,8 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
     ``vox.md`` or ``vox.local.md`` inside tmp_path.
     """
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     return tmp_path
 
 
@@ -350,7 +358,7 @@ class TestWriteConfigFields:
         read_count = 0
         write_count = 0
         orig_read = Path.read_text
-        orig_write = Path.write_text
+        orig_replace = AtomicFile.replace
 
         def counting_read(self: Path, *args: Any, **kwargs: Any) -> str:
             nonlocal read_count
@@ -358,14 +366,14 @@ class TestWriteConfigFields:
                 read_count += 1
             return orig_read(self, *args, **kwargs)
 
-        def counting_write(self: Path, *args: Any, **kwargs: Any) -> int:
+        def counting_replace(self: AtomicFile, text: str) -> None:
             nonlocal write_count
-            if self == local_md:
+            if self.path == local_md:
                 write_count += 1
-            return orig_write(self, *args, **kwargs)
+            orig_replace(self, text)
 
         monkeypatch.setattr(Path, "read_text", counting_read)
-        monkeypatch.setattr(Path, "write_text", counting_write)
+        monkeypatch.setattr(AtomicFile, "replace", counting_replace)
         # All ephemeral keys -> single file write to vox.local.md
         ConfigStore(_patch_config).write_fields({"vibe": "a", "vibe_tags": "[b]"})
         assert read_count == 1
@@ -421,6 +429,20 @@ class TestUnmute:
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
+
+    def test_forwards_synthesis_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        warning = "ElevenLabs ignores the requested speech rate (120%)."
+        client = MagicMock()
+
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="r1", warning=warning)
+
+        client.synthesize.side_effect = synthesize
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: client)
+
+        result = json.loads(unmute(text="hello", rate=120))
+
+        assert result[0]["warning"] == warning
 
     def test_unconfigured_provider_returns_error_envelope(
         self, monkeypatch: pytest.MonkeyPatch
@@ -560,6 +582,21 @@ class TestUnmute:
         with pytest.raises(ValueError, match="stability"):
             unmute(text="Hello", stability=1.5)
 
+    @pytest.mark.parametrize("rate", [0, -10])
+    def test_nonpositive_rate_rejected_before_synthesis(
+        self, monkeypatch: pytest.MonkeyPatch, rate: int
+    ) -> None:
+        """A rate of 0 or below is refused before voxd is contacted."""
+        mock_client = MagicMock()
+        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
+
+        with pytest.raises(
+            ValueError, match=f"rate must be greater than 0, got {rate}"
+        ):
+            unmute(text="Hello", rate=rate)
+
+        mock_client.synthesize.assert_not_called()
+
     def test_language_passed_to_synthesize(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -598,6 +635,88 @@ class TestUnmute:
 # ---------------------------------------------------------------------------
 # vibe tool tests
 # ---------------------------------------------------------------------------
+
+
+class TestMcpSegmentValidation:
+    """Malformed batches fail through the MCP protocol before any daemon RPC."""
+
+    @pytest.mark.parametrize("tool", ["unmute", "rec"])
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"segments": []}, "segments must contain at least one segment"),
+            (
+                {"segments": [{"voice": "roger"}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": ""}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": " \t"}]},
+                "segments[0].text must be a non-blank string",
+            ),
+            (
+                {"segments": [{"text": "Hello", "voci": "roger"}]},
+                "segments[0] contains unknown key(s): 'voci'",
+            ),
+            (
+                {"segments": [{"text": "Hello"}, {"text": " "}]},
+                "segments[1].text must be a non-blank string",
+            ),
+            ({"text": " \t"}, "text must be a non-blank string."),
+        ],
+        ids=[
+            "empty",
+            "missing-text",
+            "empty-text",
+            "blank-text",
+            "typo",
+            "late-invalid",
+            "blank-top-level-text",
+        ],
+    )
+    async def test_rejects_before_synthesis(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tool: str,
+        arguments: dict[str, object],
+        message: str,
+    ) -> None:
+        def synthesize(*_args: object, **_kwargs: object) -> SynthesizeResult:
+            return SynthesizeResult(request_id="req")
+
+        def record(*_args: object, **_kwargs: object) -> RecordResult:
+            return RecordResult(
+                id="test.mp3",
+                name="test.mp3",
+                store_path=Path("test.mp3"),
+                byte_count=1,
+            )
+
+        client = MagicMock()
+        client.synthesize.side_effect = synthesize
+        client.record.side_effect = record
+        client_factory = MagicMock(return_value=client)
+        monkeypatch.setattr(punt_vox.server, "_voxd_client", client_factory)
+        monkeypatch.setattr(
+            punt_vox.server._rec_tool, "_client_factory", client_factory
+        )
+        if tool == "rec":
+            arguments = {**arguments, "subcommand": "new"}
+
+        async with create_connected_server_and_client_session(
+            punt_vox.server.mcp
+        ) as session:
+            result = await session.call_tool(tool, arguments)
+
+        assert result.isError, result.content
+        assert isinstance(result.content[0], TextContent)
+        assert result.content[0].text.startswith(
+            f"Error executing tool {tool}: {message}"
+        )
+        client_factory.assert_not_called()
 
 
 class TestVibeTool:
@@ -730,6 +849,30 @@ class TestNotifyTool:
         result = json.loads(notify(mode="y"))
         assert result["notify"]["notify"] == "y"
         assert srv._session._notify == "y"
+
+    def test_nested_repo_write_lands_in_inner_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """mic:notify in a repo inheriting a workspace config writes its own."""
+        workspace = tmp_path / "workspace"
+        (workspace / ".git").mkdir(parents=True)
+        outer = workspace / ".punt-labs" / "vox" / "vox.md"
+        outer.parent.mkdir(parents=True)
+        outer.write_text('---\nnotify: "n"\nvoice: "roger"\n---\n')
+        inner = workspace / "inner"
+        (inner / ".git").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        monkeypatch.setattr("punt_vox.dirs.find_config_dir", real_find_config_dir)
+        monkeypatch.setattr(
+            "punt_vox.dirs.writable_config_dir", real_writable_config_dir
+        )
+
+        notify(mode="c")
+
+        assert outer.read_text() == '---\nnotify: "n"\nvoice: "roger"\n---\n'
+        inner_store = ConfigStore(inner / ".punt-labs" / "vox")
+        assert inner_store.read_field("notify") == "c"
+        assert inner_store.read_field("voice") == "roger"
 
     def test_speak_unset_c_inits_voice(self) -> None:
         """speak not yet set — mode=c should initialize it to y."""
@@ -1032,7 +1175,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         import punt_vox.server as srv
 
         with pytest.raises(VoxdConnectionError):
-            srv._voxd_client().voices("elevenlabs")
+            srv._voxd_client().voices(VoiceTarget("elevenlabs"))
 
 
 # ---------------------------------------------------------------------------
@@ -1052,6 +1195,46 @@ class TestSessionConfig:
         a = SessionConfig()
         b = SessionConfig()
         assert a.session_id != b.session_id
+
+    def test_change_vibe_mode_only_keeps_omitted_fields(self) -> None:
+        state = SessionConfig(_vibe="", _vibe_tags="")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="manual"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == ("", "", "manual")
+
+    def test_change_vibe_clears_resolved_fields_to_none(self) -> None:
+        state = SessionConfig(_vibe="calm", _vibe_tags="[calm]")
+        state.change_vibe(VibeChange(mood=None, tags=None, mode="off"))
+        assert (state.vibe, state.vibe_tags, state.vibe_mode) == (None, None, "off")
+
+    def test_set_vibe_mood_keeps_tags(self) -> None:
+        state = SessionConfig(_vibe_tags="[calm]")
+        state.set_vibe(mood="focused")
+        assert (state.vibe, state.vibe_tags) == ("focused", "[calm]")
+
+    def test_set_voice_strips_sigil(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@aria") == "aria"
+        assert state.voice == "aria"
+
+    def test_set_voice_blank_leaves_voice(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@") is None
+        assert state.voice == "roger"
+
+    def test_summary_sentence_notifications_off(self) -> None:
+        state = SessionConfig(_notify="n")
+        assert "notifications off" in state.summary_sentence()
+
+    @pytest.mark.parametrize(
+        ("speak", "delivery"), [("n", "chimes only"), ("y", "spoken")]
+    )
+    def test_summary_sentence_delivery(self, speak: str, delivery: str) -> None:
+        state = SessionConfig(
+            _notify="c", _speak=speak, _voice="roger", _vibe_mode="auto"
+        )
+        assert (
+            state.summary_sentence() == f"ready -- voice roger, {delivery}, auto vibe"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1756,11 +1939,9 @@ class TestStatusProviderStatus:
 def _refresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:  # pyright: ignore[reportUnusedFunction]
     """Patch _find_config_dir and DEFAULT_CONFIG_DIR for refresh tests."""
     import punt_vox.config as cfg
-    import punt_vox.dirs as dirs
     import punt_vox.server as srv
 
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(dirs, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(srv, "_find_config_dir", lambda: tmp_path)
     return tmp_path
 
@@ -1890,6 +2071,35 @@ class TestRefreshFromConfig:
         srv._session.refresh_from_config()
 
         assert srv._session._vibe == "should-survive"
+
+    def test_provider_switch_clears_the_previous_model(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        srv._session.model = "gpt-4o-mini-tts"
+        ConfigStore(_refresh_config).write_fields(
+            {"provider": "polly", "model": "", "voice": "Joanna"}
+        )
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "polly"
+        assert srv._session.model is None
+
+    def test_model_loads_when_provider_is_a_session_override(
+        self, _refresh_config: Path
+    ) -> None:
+        import punt_vox.server as srv
+
+        srv._session.provider = "openai"
+        ConfigStore(_refresh_config).write_field("model", "gpt-4o-mini-tts")
+
+        srv._session.refresh_from_config()
+
+        assert srv._session.provider == "openai"
+        assert srv._session.model == "gpt-4o-mini-tts"
 
 
 class TestRefreshIntegrationWithTools:

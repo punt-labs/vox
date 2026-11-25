@@ -10,9 +10,13 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands import Ctx, voice
 from punt_vox.config import ConfigStore
+from punt_vox.sibling_lock import SiblingLock
+from punt_vox.voice_target import VoiceTarget
 
 
 def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
@@ -28,7 +32,7 @@ def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
     if not vox_md.exists():
         vox_md.write_text('---\nprovider: "elevenlabs"\n---\n')
     client = MagicMock()
-    client.voices.return_value = voices if voices is not None else []
+    client.voices.return_value = voices if voices is not None else ["matilda"]
     return Ctx(store=ConfigStore(tmp_path), client=client)
 
 
@@ -53,12 +57,24 @@ class TestList:
         assert result.json_data is not None
         assert result.json_data["current"] == "roger"
 
+    async def test_lists_voices_for_the_configured_model(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path, voices=["marin"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        result = await voice(ctx, provider="OpenAI")
+        assert not result.error
+        assert "marin" in result.text
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("OpenAI", "gpt-4o-mini-tts")
+        )
+
     async def test_passes_provider_through(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path, voices=["joanna"])
         result = await voice(ctx, None, provider="polly")
         assert result.error is False
         # The stub client received the caller-supplied provider unchanged.
-        ctx.client.voices.assert_called_once_with("polly")  # type: ignore[attr-defined]
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("polly")
+        )
         assert result.json_data is not None
         assert result.json_data.get("provider") == "polly"
 
@@ -105,6 +121,98 @@ class TestList:
 class TestSet:
     """A name given -- normalize and write to config."""
 
+    async def test_selects_voice_for_the_configured_model(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path, voices=["cedar"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        result = await voice(ctx, "cedar")
+        assert not result.error
+        assert ctx.store.read().voice == "cedar"
+        cast("MagicMock", ctx.client).voices.assert_called_once_with(
+            VoiceTarget("openai", "gpt-4o-mini-tts")
+        )
+
+    async def test_rejects_inactive_provider_without_writing(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        ctx.store.write_field("voice", "matilda")
+        config_path = tmp_path / "vox.md"
+        before = config_path.read_bytes()
+
+        result = await voice(ctx, "alloy", provider="openai")
+
+        assert result.exit_code == 1
+        assert result.error is True
+        assert "openai" in result.text
+        assert "elevenlabs" in result.text
+        assert result.json_data is not None
+        assert result.text == f"Error: {result.json_data['error']}"
+        assert config_path.read_bytes() == before
+
+    async def test_rejects_provider_switched_before_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        config_path = tmp_path / "vox.md"
+        switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
+        acquire = SiblingLock._acquire
+
+        def after_provider_switch(lock: SiblingLock, descriptor: int) -> None:
+            # A peer's provider cascade finished just before we got the lock.
+            config_path.write_bytes(switched)
+            acquire(lock, descriptor)
+
+        monkeypatch.setattr(SiblingLock, "_acquire", after_provider_switch)
+
+        result = await voice(ctx, "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "the active provider is 'openai'" in result.text
+        assert config_path.read_bytes() == switched
+
+    async def test_rejects_model_switched_before_write_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path, voices=["marin"])
+        ctx.store.write_fields({"provider": "openai", "model": "gpt-4o-mini-tts"})
+        config_path = tmp_path / "vox.md"
+        switched = b'---\nprovider: "openai"\nmodel: "tts-1"\nvoice: "alloy"\n---\n'
+        acquire = SiblingLock._acquire
+
+        def after_model_switch(lock: SiblingLock, descriptor: int) -> None:
+            config_path.write_bytes(switched)
+            acquire(lock, descriptor)
+
+        monkeypatch.setattr(SiblingLock, "_acquire", after_model_switch)
+
+        result = await voice(ctx, "marin")
+
+        assert result.error
+        assert "The active model changed" in result.text
+        assert config_path.read_bytes() == switched
+
+    async def test_checked_write_preserves_uneditable_config(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "vox.md"
+        original = b'---\nprovider: "elevenlabs"\n'
+        config_path.write_bytes(original)
+
+        result = await voice(_ctx(tmp_path), "matilda", provider="elevenlabs")
+
+        assert result.exit_code == 1
+        assert "no closing ---" in result.text
+        assert config_path.read_bytes() == original
+
+    @pytest.mark.parametrize("provider", ["elevenlabs", "ElevenLabs", ""])
+    async def test_allows_active_or_empty_provider_option(
+        self, tmp_path: Path, provider: str
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        result = await voice(ctx, "matilda", provider=provider)
+        assert result.error is False
+        assert ctx.store.read().voice == "matilda"
+
     async def test_writes_normalized_voice(self, tmp_path: Path) -> None:
         result = await voice(_ctx(tmp_path), "matilda")
         assert result.error is False
@@ -125,7 +233,10 @@ class TestSet:
         assert result.exit_code == 1
         assert "empty" in result.text
 
-    async def test_unconfigured_provider_refuses_set(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("has_config", [True, False])
+    async def test_unconfigured_provider_refuses_set(
+        self, tmp_path: Path, has_config: bool
+    ) -> None:
         """Setting a voice with no provider configured refuses, never writes.
 
         A voice name is provider-scoped, so writing ``matilda`` into
@@ -134,14 +245,19 @@ class TestSet:
         with ``vox model``'s set-refusal; unlike the list branch, setting
         needs an authoritative provider.
         """
-        # Overwrite the seeded vox.md to remove the provider entry.
-        (tmp_path / "vox.md").write_text("---\n---\n")
+        config_path = tmp_path / "vox.md"
+        original = b"---\n---\n"
+        if has_config:
+            config_path.write_bytes(original)
         client = MagicMock()
         result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), "matilda")
         assert result.error is True
         assert result.exit_code == 1
         assert "no TTS provider" in result.text
-        assert ConfigStore(tmp_path).read_field("voice") is None
+        if has_config:
+            assert config_path.read_bytes() == original
+        else:
+            assert not config_path.exists()
         client.voices.assert_not_called()
 
     async def test_config_write_error_returns_envelope(self, tmp_path: Path) -> None:
@@ -151,7 +267,8 @@ class TestSet:
         raised ConfigValueError across the CommandResult boundary. The command
         must catch it and return an error result.
         """
-        result = await voice(_ctx(tmp_path), 'matilda"; injected: "bad')
+        malformed = 'matilda"; injected: "bad'
+        result = await voice(_ctx(tmp_path, voices=[malformed]), malformed)
         assert result.error is True
         assert result.exit_code == 1
         assert "Error" in result.text or "quote" in result.text.lower()

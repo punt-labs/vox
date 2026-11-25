@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -40,12 +41,16 @@ class TestAlbumTagMatches:
         matches = AlbumTagMatches(store.scan(), TagQuery(style="techno"))
 
         with patch(
-            "punt_vox.voxd.programs.album_manifest_file.os.open",
-            side_effect=FileNotFoundError("manifest disappeared"),
-        ) as open_file:
+            "punt_vox.voxd.programs.album_manifest_file.os",
+            O_RDONLY=os.O_RDONLY,
+            O_NOFOLLOW=os.O_NOFOLLOW,
+        ) as manifest_os:
+            manifest_os.open.side_effect = FileNotFoundError("manifest disappeared")
             assert not matches.select()
 
-        assert open_file.call_args.args[0] == tmp_path / locator / "manifest.json"
+        manifest_os.open.assert_called_once_with(
+            tmp_path / locator / "manifest.json", os.O_RDONLY | os.O_NOFOLLOW
+        )
         assert (
             "punt_vox.voxd.programs.album_tag_matches",
             logging.WARNING,

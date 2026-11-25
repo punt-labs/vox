@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast, final
 from unittest.mock import MagicMock, patch
 
+from _config_resolvers import resolver_at
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
@@ -138,7 +139,8 @@ def test_model_list_reports_the_same_fields(
     tool_payload = _tool_list_payload(model_tool.dispatch())
 
     # CLI surface: run `vox model --json` against the same config dir.
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
     runner = CliRunner()
     result = runner.invoke(app, ["model", "--json"])
     assert result.exit_code == 0
@@ -174,7 +176,8 @@ def test_model_shorthand_resolves_identically(
 
     # Reset config for the CLI leg.
     (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
         result = runner.invoke(app, ["model", "v3", "--json"])
@@ -205,7 +208,10 @@ def test_provider_list_reports_the_same_fields(
     )
     tool_payload = _tool_list_payload(provider_tool.dispatch())
 
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+
     runner = CliRunner()
     result = runner.invoke(app, ["provider", "--json"])
     assert result.exit_code == 0
@@ -233,7 +239,8 @@ def test_provider_set_writes_the_same_field(
 
     # Reset the file and drive the CLI.
     (tmp_path / "vox.md").unlink(missing_ok=True)
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
     runner = CliRunner()
     with patch(f"{_CLI}.VoxClientSync", return_value=stub):
         result = runner.invoke(app, ["provider", "openai", "--json"])
@@ -278,7 +285,10 @@ def test_voice_list_reports_the_same_names_and_current(
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch()))
 
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+
     with patch(f"{_CLI}.VoxClientSync") as cli_client_cls:
         cli_client_cls.return_value.voices.return_value = roster
         runner = CliRunner()
@@ -296,20 +306,19 @@ def test_voice_set_writes_the_same_field(
 ) -> None:
     """``matilda`` on both surfaces writes ``voice: matilda`` to the config."""
     session = _FakeSession(provider="elevenlabs")
-    client = MagicMock()
-    client.voices.return_value = []
+    store = ConfigStore(tmp_path)
+    store.write_field("provider", "elevenlabs")
+    client = _stub_client(["matilda"])
     voice_tool = VoiceTool(
         _session_provider(session), lambda: tmp_path, _client_factory(client)
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch("matilda")))
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
-    (tmp_path / "vox.md").unlink(missing_ok=True)
-    # Setting a voice with no provider configured refuses (F1); seed
-    # provider so the CLI side hits the write, not the refusal -- the
-    # tool side reads its provider from the in-memory _FakeSession above.
-    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    store.write_field("voice", "")
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "matilda", "--json"])
     assert result.exit_code == 0
@@ -326,19 +335,21 @@ def test_voice_set_strips_leading_at_on_both_surfaces(
     """The ``@`` normalization is the shared SynthesisSpec.normalize_voice
     choke-point -- both surfaces write the sigil-stripped name."""
     session = _FakeSession(provider="elevenlabs")
+    store = ConfigStore(tmp_path)
+    store.write_field("provider", "elevenlabs")
+    client = _stub_client(["sarah"])
     voice_tool = VoiceTool(
         _session_provider(session),
         lambda: tmp_path,
-        _client_factory(MagicMock()),
+        _client_factory(client),
     )
     tool_payload = cast("dict[str, Any]", json.loads(voice_tool.dispatch("@sarah")))
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
-    (tmp_path / "vox.md").unlink(missing_ok=True)
-    # Same F1 seed as the sibling parity test above; the CLI reads state
-    # from vox.md and the F1 refusal would fire on the write path.
-    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
-    monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
+    store.write_field("voice", "")
+    monkeypatch.setattr("punt_vox.dirs.find_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr("punt_vox.dirs.writable_config_dir", resolver_at(tmp_path))
+    monkeypatch.setattr(f"{_CLI}.VoxClientSync", lambda: client)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "@sarah", "--json"])
     assert result.exit_code == 0

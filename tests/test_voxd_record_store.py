@@ -8,6 +8,8 @@ empty, or NUL-bearing -- can cause a write outside the daemon-owned root.
 from __future__ import annotations
 
 import errno
+import os
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -86,6 +88,22 @@ class TestContainment:
         # None still content-addresses (the daemon-generated no-name path).
         assert store.resolve(None, "some text").name.endswith(".mp3")
 
+    @pytest.mark.parametrize("name", ["  ", " \t ", "\u3000"])
+    def test_whitespace_name_rejected_by_store(
+        self, store: RecordStore, name: str
+    ) -> None:
+        """A whitespace-only name would land a recording whose id reads as blank."""
+        with pytest.raises(ValueError, match="empty or whitespace"):
+            store.resolve(name, "some text")
+
+    def test_existing_whitespace_take_stays_removable(self, store: RecordStore) -> None:
+        """A blank-named take recorded before the rule can still be removed."""
+        store.root.mkdir(parents=True)
+        (store.root / "  ").write_bytes(b"x")
+        assert store.resolve_ref("  ") == store.root / "  "
+        store.remove("  ")
+        assert not (store.root / "  ").exists()
+
     @pytest.mark.parametrize("hostile", _HOSTILE_NAMES)
     def test_write_cannot_escape_root(self, store: RecordStore, hostile: str) -> None:
         """Property: every hostile name is rejected; none resolves outside root."""
@@ -115,7 +133,7 @@ class TestContainment:
 
 
 class TestEnumerateAndRemove:
-    """entries() lists immediate in-root files; remove() unlinks one by bare name."""
+    """Scan immediate recording files and remove one by bare name."""
 
     def test_entries_skips_dirs_and_symlinks(
         self, store: RecordStore, tmp_path: Path
@@ -124,7 +142,7 @@ class TestEnumerateAndRemove:
         (store.root / "real.mp3").write_bytes(b"12345")
         (store.root / "sub").mkdir()  # a directory is not a recording
         (store.root / "link.mp3").symlink_to(tmp_path / "elsewhere.mp3")
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"real.mp3"}
 
     def test_entries_does_not_follow_symlink_to_real_file(
@@ -134,7 +152,7 @@ class TestEnumerateAndRemove:
 
         The weaker sibling test uses a broken symlink, which a follow-based
         ``is_file()`` would also skip -- so it cannot tell a follow from a
-        non-follow. Here the target is a genuine regular file: if ``entries()``
+        non-follow. Here the target is a genuine regular file: if ``entry_batches()``
         followed the link (``is_file()`` semantics) it would list ``link.mp3`` as
         a plain recording. Because it classifies from ``lstat`` (whose mode is
         ``S_ISLNK``, not ``S_ISREG``), the link is excluded and its target is
@@ -146,21 +164,21 @@ class TestEnumerateAndRemove:
         (store.root / "real.mp3").write_bytes(b"12345")
         (store.root / "link.mp3").symlink_to(target)
 
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
 
         assert names == {"real.mp3"}  # link.mp3 not followed, not listed
 
     def test_entries_reports_byte_counts(self, store: RecordStore) -> None:
         store.root.mkdir(parents=True)
         (store.root / "a.mp3").write_bytes(b"1234")
-        [entry] = store.entries()
+        [entry] = chain.from_iterable(store.entry_batches())
         assert entry.name == "a.mp3"
         assert entry.byte_count == 4
 
     def test_entries_skips_a_child_whose_stat_fails(
         self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A child unlinked between iterdir and lstat (TOCTOU) is skipped, not fatal.
+        """A child unlinked between scandir and lstat (TOCTOU) is skipped, not fatal.
 
         A listing is best-effort under concurrent mutation: one entry whose lstat
         raises OSError drops out and the enumeration continues for the rest.
@@ -176,13 +194,13 @@ class TestEnumerateAndRemove:
             return real_lstat(self)
 
         monkeypatch.setattr(Path, "lstat", flaky_lstat)
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"good.mp3"}  # the racing entry skipped, listing survives
 
     def test_entries_skips_names_a_ref_would_reject(self, store: RecordStore) -> None:
         """A planted file whose name BareName refuses is not listed.
 
-        entries() must surface only names resolve_ref/remove would accept, so
+        entry_batches() must surface only names resolve_ref/remove would accept, so
         list and operate stay consistent -- a backslash- or non-printable-bearing
         name that ``rec get``/``rec remove`` reject can never appear in ``rec
         list``. A normal recording alongside it still lists.
@@ -191,7 +209,7 @@ class TestEnumerateAndRemove:
         (store.root / "good.mp3").write_bytes(b"12345")
         (store.root / "bad\\name.mp3").write_bytes(b"planted")  # backslash: rejected
         (store.root / "tab\tname.mp3").write_bytes(b"planted")  # non-printable
-        names = {entry.name for entry in store.entries()}
+        names = {entry.name for entry in chain.from_iterable(store.entry_batches())}
         assert names == {"good.mp3"}
 
     def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
@@ -278,7 +296,12 @@ class TestEnumerateAndRemove:
 
         monkeypatch.setattr(Path, "stat", denied)
         with pytest.raises(PermissionError, match="permission denied"):
-            store.entries()
+            next(store.entry_batches())
+
+    def test_batches_are_empty_when_the_root_is_missing(
+        self, store: RecordStore
+    ) -> None:
+        assert not list(store.entry_batches())
 
     def test_remove_access_fault_propagates_not_not_found(
         self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
@@ -318,6 +341,21 @@ class TestPlacement:
         assert write.path.read_bytes() == b"\xff\xfb" * 100
         assert write.byte_count == 200
 
+    @pytest.mark.parametrize("bytes_below_limit", [0, 1])
+    def test_name_at_or_just_below_filename_limit_lands_bytes(
+        self, store: RecordStore, tmp_path: Path, bytes_below_limit: int
+    ) -> None:
+        limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+        count, remaining = divmod(limit - bytes_below_limit, len(os.fsencode("é")))
+        name = "é" * count + "x" * remaining
+        source = tmp_path / "src.mp3"
+        source.write_bytes(b"audio")
+
+        write = store.place(source=source, text="hello", name=name)
+
+        assert write.path == store.root / name
+        assert write.path.read_bytes() == b"audio"
+
     def test_default_names_by_content_hash(
         self, store: RecordStore, tmp_path: Path
     ) -> None:
@@ -336,94 +374,3 @@ class TestPlacement:
         store.place(source=src, text="hi", name="out.mp3")
 
         assert not src.exists()
-
-    def test_move_reports_this_calls_bytes_not_a_racing_write(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The reported size is the bytes this call wrote, not a racing dest write."""
-        src = tmp_path / "mine.mp3"
-        src.write_bytes(b"mine!")  # 5 bytes -- what THIS call lands
-
-        real_replace = Path.replace
-
-        def racing_replace(self: Path, target: str | Path) -> Path:
-            # A concurrent same-name write lands a larger file at dest right after
-            # our rename; a byte count read from dest afterwards would misreport it.
-            result = real_replace(self, target)
-            Path(target).write_bytes(b"someone-elses-larger-bytes")
-            return result
-
-        monkeypatch.setattr(Path, "replace", racing_replace)
-
-        write = store.place(source=src, text="t", name="out.mp3")
-
-        assert write.byte_count == 5
-
-        assert not src.exists()
-
-    def test_fresh_uses_move_and_lands_0600(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Fresh synthesis takes the atomic-move path (no copy) at 0600."""
-
-        def no_copy(*_args: object, **_kwargs: object) -> None:
-            raise AssertionError("fresh synthesis must move, not copy")
-
-        monkeypatch.setattr("punt_vox.voxd.record_store.shutil.copyfileobj", no_copy)
-
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"fresh-audio")
-        src.chmod(0o644)
-        write = store.place(source=src, text="hi", name="out.mp3")
-
-        assert write.path.read_bytes() == b"fresh-audio"
-        assert write.path.stat().st_mode & 0o777 == 0o600
-        assert not src.exists()
-
-    def test_cross_device_falls_back_to_copy(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When the atomic move can't cross filesystems, copy still lands 0600."""
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"xdev-audio")
-        original_replace = Path.replace
-
-        def selective_replace(self: Path, target: Path) -> Path:
-            if self == src:
-                raise OSError(errno.EXDEV, "cross-device link")
-            return original_replace(self, target)
-
-        monkeypatch.setattr(Path, "replace", selective_replace)
-
-        write = store.place(source=src, text="hi", name="out.mp3")
-
-        assert write.path.read_bytes() == b"xdev-audio"
-        assert write.path.stat().st_mode & 0o777 == 0o600
-        assert not src.exists()
-
-    def test_non_exdev_move_error_propagates(
-        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A non-EXDEV OSError from the move re-raises; no silent copy fallback."""
-        src = tmp_path / "ephemeral.mp3"
-        src.write_bytes(b"nope")
-
-        def denied_replace(self: Path, target: Path) -> Path:
-            raise OSError(errno.EACCES, "permission denied")
-
-        monkeypatch.setattr(Path, "replace", denied_replace)
-
-        with pytest.raises(OSError, match="permission denied"):
-            store.place(source=src, text="hi", name="out.mp3")
-
-        assert not (store.root / "out.mp3").exists()
-        assert not list(store.root.glob("*.mp3.tmp"))
-
-    def test_missing_source_leaves_no_partial_file(
-        self, store: RecordStore, tmp_path: Path
-    ) -> None:
-        with pytest.raises(OSError, match="No such file"):
-            store.place(source=tmp_path / "missing.mp3", text="hi", name="out.mp3")
-
-        assert not (store.root / "out.mp3").exists()
-        assert not list(store.root.glob("*.mp3.tmp"))

@@ -244,7 +244,7 @@ class TestMusicPartFetch:
         """
         handler, _, lib = _handler(tmp_path)
         aid = asyncio.run(lib.new("a prompt", None))
-        album = lib.manifest(aid)
+        album = asyncio.run(lib.manifest(aid))
         secret = tmp_path / "secret.bin"
         secret.write_bytes(b"top-secret-bytes")
         (tmp_path / "programs" / album.name / "link.mp3").symlink_to(secret)

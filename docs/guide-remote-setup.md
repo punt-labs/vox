@@ -211,8 +211,12 @@ vox rec new "the build is green"
 # → a1b2c3d4e5f6.mp3   (the recording's id in the daemon store)
 ```
 
-Pass `--name greeting.mp3` to store under a chosen bare filename (no
-directories, no `..`). `vox rec list` enumerates the store.
+Without `--name`, the recording id depends only on the text. Recording the
+same text again silently replaces the earlier take, even if you change
+synthesis settings. Use a different `--name` for each take to keep them
+separate. `--name` only works for a single text segment. Supply a bare filename,
+such as `--name greeting.mp3` (no directories, no `..`). `vox rec list`
+enumerates the store.
 
 **`vox rec play <id>`** plays a stored recording on the daemon host by its id —
 audio comes out of A's speakers even though you ran the command on B:

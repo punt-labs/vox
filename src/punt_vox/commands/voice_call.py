@@ -65,12 +65,9 @@ class VoiceCall:
         self._run(self._control.request("stop_scoped", call_id=status.call_id))
         typer.echo("Stopping the call.")
 
-    def status(self) -> None:
-        """Print the current call's status line and transcript so far."""
-        view = self._run(self._control.display_status())
-        typer.echo(view.line())
-        for line in view.report():
-            typer.echo(line)
+    def status_snapshot(self) -> object:
+        """Read one status payload, leaving error formatting to the caller."""
+        return asyncio.run(self._control.status_snapshot())
 
     def teardown(self) -> None:
         """Remove only the managed agent and tools, not calls or workers."""

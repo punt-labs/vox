@@ -12,8 +12,11 @@ from uuid import uuid4
 
 import pytest
 from test_workers import TrivialProfile
+from typer.testing import CliRunner
 
+from punt_vox.__main__ import app
 from punt_vox.config import ConfigStore
+from punt_vox.repo_spellings import RepoSpellings
 from punt_vox.voxd.workers.contracts import WorkerLaunch
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
@@ -168,3 +171,53 @@ def test_real_tmux_literal_steering_clean_env_and_stop(
     else:
         pytest.fail("worker pane process survived stop")
     provider.stop(handle)
+
+
+def test_allow_accepts_a_real_top_level_and_refuses_its_child(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "child").mkdir()
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+    assert policy.allow(str(repo)) == (str(repo.resolve()),)
+    with pytest.raises(ValueError, match="not a git repository top level"):
+        policy.allow(str(repo / "child"))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(ValueError, match="not a git repository top level"):
+        policy.allow(str(plain))
+    assert policy.resolve(str(repo)) == repo.resolve()
+    assert policy.disallow(RepoSpellings(str(repo))) == ()
+
+
+def test_allow_then_disallow_a_relative_spelling_of_a_real_top_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``vox worker allow .`` then ``vox worker disallow .`` removes the entry.
+
+    allow stores the resolved top level; disallow resolves the same spelling
+    before matching, so the two name one entry. A stored entry that does not
+    resolve is still removable by typing it exactly.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    monkeypatch.chdir(repo)
+    sent: list[tuple[str, dict[str, str]]] = []
+    policy = WorkerRepoPolicy(ConfigStore(tmp_path / "config"))
+
+    async def request(operation: str, **fields: str) -> object:
+        sent.append((operation, fields))
+        if operation == "allow":
+            return list(policy.allow(fields["project"]))
+        return list(policy.disallow(RepoSpellings(fields["project"])))
+
+    monkeypatch.setattr("punt_vox.worker_client.WorkerClient.request", request)
+    allowed = CliRunner().invoke(app, ["worker", "allow", "."])
+    assert allowed.exit_code == 0, allowed.output
+    assert allowed.output == f"{repo.resolve()}\n"
+    disallowed = CliRunner().invoke(app, ["worker", "disallow", "."])
+    assert disallowed.exit_code == 0, disallowed.output
+    assert disallowed.output == ""
+    assert policy.repos() == ()
+    assert [fields["project"] for _, fields in sent] == [str(repo.resolve())] * 2

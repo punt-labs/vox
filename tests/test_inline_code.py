@@ -21,8 +21,13 @@ def test_backticks_in_html_attributes_do_not_open_code() -> None:
 def test_transform_code_in_image_alt_text() -> None:
     text = "![use `$1`](plot.png) then `$2`"
     assert InlineCode.rewrite_currency(text) == (
-        "![use `dollar sign 1`](plot.png) then `dollar sign 2`"
+        "use `dollar sign 1` then `dollar sign 2`"
     )
+
+
+def test_suffix_currency_does_not_cross_code_delimiters() -> None:
+    text = "`n`5€ 5€`n` `5€` then 5€"
+    assert InlineCode.rewrite_currency(text) == "`n`5€ 5€`n` `5€` then €5"
 
 
 def test_span_offsets_survive_leading_unicode_whitespace_lines() -> None:

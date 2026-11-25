@@ -59,7 +59,7 @@ class WireReply:
         """
         return await safe_send(self._websocket, {**payload, "id": self._request_id})
 
-    async def error(self, message: str | ValueError) -> bool:
+    async def error(self, message: str | Exception) -> bool:
         """Audit a rejected CLIENT request with a fixed code and send its frame.
 
         A rejection means the daemon refused a malformed or hostile request --
@@ -101,25 +101,29 @@ class WireReply:
         )
         return await self.send({"type": "error", "message": fault.wire_message})
 
-    async def reject_or_fault(self, exc: ValueError | LookupError | OSError) -> bool:
+    async def reject_or_fault(self, exc: Exception) -> bool:
         """Route a domain failure to :meth:`error` or :meth:`fault` by its type.
 
         The one place the fault-vs-error taxonomy is decided for handlers whose
-        boundary catches the same trio: a ``ValueError`` is a rejected client
-        request (a bad field, a lost-race guard, a backing refusal) and audits as
-        ``error``; a ``LookupError`` (a resolve that found nothing) or an
-        ``OSError`` (a filesystem fault) is a server-side operational failure and
-        audits as ``fault``. Centralising it here keeps every such handler
-        classifying identically instead of drifting apart one boundary at a time.
+        boundary catches domain failures: a ``LookupError`` (a resolve that
+        found nothing), an ``OSError`` (a filesystem fault, or the daemon's own
+        config file without a closing fence) or a ``UnicodeDecodeError`` (that
+        file not UTF-8 -- a ``ValueError`` by inheritance, but never the
+        client's doing) is a server-side operational failure and audits as
+        ``fault``, with the raw detail kept off the wire; everything else (a bad
+        field, a lost-race guard, a backing refusal, an unknown worker) is a
+        rejected client request and audits as ``error`` with its text verbatim.
+        Centralising it here keeps every such handler classifying identically
+        instead of drifting apart one boundary at a time.
 
         A handler whose not-found is a *client* rejection rather than an
         operational fault -- ``rec_remove``, where a ``FileNotFoundError`` means
         "names no recording", matching ``play``/``fetch`` -- must classify
         explicitly instead of using this helper.
         """
-        if isinstance(exc, ValueError):
-            return await self.error(exc)
-        return await self.fault(SafeFault.from_exception(exc))
+        if isinstance(exc, UnicodeDecodeError | LookupError | OSError):
+            return await self.fault(SafeFault.from_exception(exc))
+        return await self.error(exc)
 
     @staticmethod
     def _sanitize(message: str) -> str:

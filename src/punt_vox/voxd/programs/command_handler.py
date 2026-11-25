@@ -1,15 +1,12 @@
 """The shared base for the mutating program wire handlers (template method).
 
-Every mutating ``program_*`` handler is the same thin adapter: parse the wire
-message, hand the work to the :class:`ProgramService` (which POSTs one serialized
-:class:`ControlSignal` -- the handler never touches the Program), and reply. Only
-the parse-and-dispatch step differs per command, so it is the one abstract hook;
-the request-id plumbing, the applied ack, and the boundary error reply live here
-once.
+Every mutating ``program_*`` handler parses the wire message, hands the work to
+:class:`ProgramService`, and replies. Only parse-and-dispatch varies by command.
+An unmet synchronous playback guard is a no-op, not a malformed request.
 
 The boundary catches every *expected* domain failure and replies through
-:class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` (a bad
-request or a lost-race guard) is a rejected client request audited as ``error``,
+:class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` for a bad
+request is audited as ``error``,
 while a ``LookupError`` (``store.open`` on a deleted album dir) or an ``OSError``
 (``store.create``'s ``mkdir(exist_ok=False)`` mint-race guard, disk-full,
 permissions) is a server-side operational failure audited as ``fault``. Letting
@@ -21,17 +18,27 @@ every frame and no-ops on a gone peer. Handlers hold no session and no owner --
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, NotRequired, Self, TypedDict
 
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
+    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.voxd.programs.service import ProgramService
 
 __all__ = ["ProgramCommandHandler"]
+
+logger = logging.getLogger(__name__)
+
+
+class _ProgramReply(TypedDict):
+    type: str
+    applied: NotRequired[bool]
+    message: NotRequired[str]
 
 
 class ProgramCommandHandler(ABC):
@@ -39,7 +46,7 @@ class ProgramCommandHandler(ABC):
 
     __slots__ = ("_service",)
     _service: ProgramService
-    _WIRE_TYPE: ClassVar[str]
+    _wire_type: str
     """The reply ``type`` (and inbound message type) this handler answers."""
 
     def __new__(cls, service: ProgramService) -> Self:
@@ -51,23 +58,26 @@ class ProgramCommandHandler(ABC):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Parse and dispatch, replying with an ack, a rejection, or a fault.
 
-        The boundary classifies the domain failure through
-        :meth:`WireReply.reject_or_fault`: a ``ValueError`` is a rejected client
-        request (``error``), a ``LookupError``/``OSError`` a server-side
-        operational failure (``fault``). The ack and both failure frames are
-        id-stamped and gone-peer-safe, matching the store handlers.
+        Unmet playback guards return a command reply with ``applied=False``.
+        :meth:`WireReply.reject_or_fault` handles other expected failures.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
+        payload: _ProgramReply = {"type": self._wire_type}
         try:
-            self._run(msg)
+            outcome = self._run(msg)
         except (ValueError, LookupError, OSError) as exc:
             await reply.reject_or_fault(exc)
             return
-        await reply.send({"type": self._WIRE_TYPE})
+        if outcome is not None:
+            logger.info("%s skipped: reason=not_applied", self._wire_type)
+            payload["applied"] = outcome.applied
+            payload["message"] = outcome.message
+        await reply.send(dict(payload))
 
     @abstractmethod
-    def _run(self, msg: dict[str, object], /) -> None:
-        """Parse ``msg`` and issue the one serialized command to the service."""
+    # None is a bare wire acknowledgement, without a synchronous outcome.
+    def _run(self, msg: dict[str, object], /) -> CommandOutcome | None:
+        """Issue the command, returning a synchronous refusal if not applied."""
 
     @staticmethod
     def _opt_str(msg: dict[str, object], key: str) -> str | None:

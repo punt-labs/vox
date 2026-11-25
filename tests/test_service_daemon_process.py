@@ -60,12 +60,13 @@ class _Pidfd:
         self._r, self._w = os.pipe()
         monkeypatch.setattr("punt_vox.service.daemon_process.sys.platform", "linux")
         monkeypatch.setattr(os, "pidfd_open", self._open, raising=False)
-        monkeypatch.setattr(signal, "pidfd_send_signal", self._send, raising=False)
+        monkeypatch.setattr(signal, "pidfd_send_signal", self.send, raising=False)
 
     def _open(self, pid: int, flags: int = 0) -> int:
         return os.dup(self._r)
 
-    def _send(self, fd: int, sig: signal.Signals) -> None:
+    def send(self, fd: int, sig: signal.Signals) -> None:
+        """Record the signal and script the exit, as the patched syscall does."""
         self.sent.append(sig)
         if sig == self._exits_on:
             os.write(self._w, b"x")
@@ -131,11 +132,10 @@ def test_pidfd_permission_denied_reports_not_exited(
 def test_pidfd_reports_exit_when_the_process_disappears_during_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
-    mark_exited = signal.pidfd_send_signal
+    pidfd = _Pidfd(monkeypatch, exits_on=signal.SIGTERM)
 
     def gone(fd: int, sig: signal.Signals) -> None:
-        mark_exited(fd, sig)
+        pidfd.send(fd, sig)
         raise ProcessLookupError
 
     monkeypatch.setattr(signal, "pidfd_send_signal", gone, raising=False)
@@ -152,14 +152,16 @@ def test_handle_terminates_a_real_process(
     """End to end on this host: open the strongest handle, terminate, reap.
 
     The pidfd handle where this interpreter has ``os.pidfd_open``; the
-    start-time handle otherwise (macOS, or a Python built without it).
+    start-time handle otherwise (macOS, or a Python built without it). The
+    child is ``python .../voxd``, the shape of an installed console script:
+    a symlink named voxd would not do, because the macOS framework Python
+    re-executes itself and ``ps`` then reports the framework binary, not
+    the link.
     """
     monkeypatch.setenv("COLUMNS", columns)
     voxd = tmp_path / "voxd"
-    voxd.symlink_to(sys.executable)
-    proc = subprocess.Popen(
-        ["./voxd", "-c", "import time; time.sleep(30)"], cwd=tmp_path
-    )
+    voxd.write_text("import time; time.sleep(30)\n")
+    proc = subprocess.Popen([sys.executable, "./voxd"], cwd=tmp_path)
     try:
         handle = DaemonProcess.on_this_host(ProcessManager().identity).open(proc.pid)
         assert handle is not None

@@ -9,7 +9,6 @@ import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
-from socket import socket
 from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
@@ -18,18 +17,12 @@ if TYPE_CHECKING:
     from punt_vox.voxd.music_player.hub_ports import LuxClientFactory
 
 import typer
-import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
 from punt_vox.voxd.background_tasks import BackgroundTasks
-from punt_vox.voxd.config import (
-    DaemonConfig,
-    _install_token_redact_filter,
-    _run_dir,
-)
-from punt_vox.voxd.crash_logging import CrashLogger
+from punt_vox.voxd.config import DaemonConfig, _install_token_redact_filter, _run_dir
 from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.music_player import MusicPlayerSubsystem
@@ -38,14 +31,10 @@ from punt_vox.voxd.port_file import PortFile
 from punt_vox.voxd.programs.playlist_music import PlaylistMusic
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
 from punt_vox.voxd.router import WebSocketRouter
+from punt_vox.voxd.server import DaemonServer
 from punt_vox.voxd.synthesis import SynthesisPipeline
 
 logger = logging.getLogger(__name__)
-
-# Inbound WebSocket frame cap (uvicorn defaults to 16 MiB). 256 KiB comfortably
-# fits the largest legitimate client->daemon frame (a music request) while
-# denying multi-MB frames that would burden the daemon's event loop.
-_WS_MAX_FRAME_BYTES = 256 * 1024
 
 DEFAULT_PORT = 8421
 DEFAULT_HOST = "127.0.0.1"
@@ -128,51 +117,13 @@ class VoxDaemon:
 
     async def run(self, host: str, port: int) -> None:
         """Start uvicorn and serve until shutdown."""
-        # Route fire-and-forget task exceptions to vox.log -- with no stderr
-        # handler, the loop's default printer would otherwise write to nowhere.
-        CrashLogger(logger).install_loop_handler(asyncio.get_running_loop())
-        app = self.build_app()
 
-        if host not in ("127.0.0.1", "::1", "localhost"):
-            logger.warning(
-                "Binding to %s -- voxd is accessible from the network. "
-                "Ensure VOXD_TOKEN is set on all clients.",
-                host,
-            )
+        def publish_bound_port(actual_port: int) -> None:
+            self._health.set_bound_port(actual_port)
+            self._port_file.write(actual_port)
 
-        config = uvicorn.Config(
-            app,
-            host=host,
-            port=port,
-            log_config=None,
-            log_level="warning",
-            access_log=True,
-            # Cap inbound WS frames well below uvicorn's 16 MiB default: the
-            # largest legitimate client->daemon frame is a music request (a base
-            # prompt + 12 variations, ~tens of KiB). A tighter bound stops a
-            # token-bearing client from streaming multi-MB frames at the event loop.
-            ws_max_size=_WS_MAX_FRAME_BYTES,
-        )
         _install_token_redact_filter()
-        server = uvicorn.Server(config)
-
-        original_startup = server.startup
-        port_file = self._port_file
-
-        async def _startup_with_port_file(
-            sockets: list[socket] | None = None,
-        ) -> None:
-            await original_startup(sockets=sockets)
-            if server.servers and server.servers[0].sockets:
-                actual_port = server.servers[0].sockets[0].getsockname()[1]
-                port_file.write(actual_port)
-                logger.info("voxd listening on http://%s:%d", host, actual_port)
-            else:
-                logger.error("Server started but no bound sockets; shutting down")
-                server.should_exit = True
-
-        server.startup = _startup_with_port_file  # type: ignore[method-assign]
-        await server.serve()
+        await DaemonServer(self.build_app(), host, port, publish_bound_port).serve()
 
     @asynccontextmanager
     async def _lifespan(self, _app: Starlette) -> AsyncGenerator[None]:

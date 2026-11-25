@@ -88,7 +88,7 @@ class WorkerHooks:
                 self._store.ingest(payload)
             return None
         sequence = payload.get("relay_seq")
-        if type(sequence) is int and self._registry.hook_records.received(
+        if type(sequence) is int and self._registry.hook_records.acknowledged(
             record, sequence
         ):
             return None

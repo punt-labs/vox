@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
-import re
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from punt_vox.normalize import strip_vibe_tags
 from punt_vox.output import OutputResolver
 from punt_vox.providers.chunked import chunked_synthesize
+from punt_vox.providers.elevenlabs_catalog import ElevenLabsCatalog
 from punt_vox.providers.elevenlabs_client import ElevenLabsClient, VoiceSettings
-from punt_vox.providers.voice_resolver import VoiceResolver
+from punt_vox.providers.provider_faults import ProviderConfigError
 from punt_vox.types import (
     AudioProviderId,
     HealthCheck,
@@ -48,13 +49,6 @@ _MODEL_CHAR_LIMITS: dict[str, int] = {
 }
 _DEFAULT_CHAR_LIMIT = 10_000
 
-# ElevenLabs voice IDs are 20-char alphanumeric strings.
-_VOICE_ID_RE = re.compile(r"^[0-9a-zA-Z]{20}$")
-
-# Voice cache TTL in seconds -- re-fetched so newly added voices
-# appear without a daemon restart.
-_VOICE_CACHE_TTL_S: int = 1800
-
 
 class ElevenLabsProvider(TTSProvider):
     """ElevenLabs TTS provider.
@@ -71,7 +65,7 @@ class ElevenLabsProvider(TTSProvider):
 
     _model: str
     _client: ElevenLabsClient
-    _voices: VoiceResolver[str]
+    _voices: ElevenLabsCatalog
 
     def __new__(
         cls,
@@ -84,12 +78,7 @@ class ElevenLabsProvider(TTSProvider):
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
         self._client = ElevenLabsClient(sdk=client)
-        self._voices = VoiceResolver(
-            self._fetch_voices,
-            default_key="matilda",
-            ttl_seconds=_VOICE_CACHE_TTL_S,
-            cooldown_seconds=60,
-        )
+        self._voices = ElevenLabsCatalog(self._client)
         return self
 
     @property
@@ -100,7 +89,11 @@ class ElevenLabsProvider(TTSProvider):
     @property
     def default_voice(self) -> str:
         """Return the provider's default voice name."""
-        return "matilda"
+        return self._voices.default_name
+
+    @property
+    def _char_limit(self) -> int:
+        return _MODEL_CHAR_LIMITS.get(self._model, _DEFAULT_CHAR_LIMIT)
 
     # Models that interpret bracket-style expressive tags natively.
     # eleven_v3 treats bracket tags like [alert] and [serious] as
@@ -142,44 +135,20 @@ class ElevenLabsProvider(TTSProvider):
         """Synthesize text to an MP3 file using ElevenLabs."""
         # Strip expressive tags for models that don't interpret them,
         # so the TTS engine doesn't speak "[serious]" as a literal word.
-        text = request.text
         if not self.supports_expressive_tags:
-            text = strip_vibe_tags(text)
-
-        resolved_voice = request.voice or self.default_voice
-        voice_id = self._resolve_voice_id(resolved_voice)
-        rate = request.rate if request.rate is not None else 100
-
-        if rate != 100:
-            logger.debug(
-                "ElevenLabs does not support rate adjustment (got rate=%d). "
-                "Audio will be at normal speed.",
-                rate,
+            request = replace(
+                request, text=strip_vibe_tags(request.text), vibe_tags=None
             )
 
-        char_limit = _MODEL_CHAR_LIMITS.get(self._model, _DEFAULT_CHAR_LIMIT)
-
-        if len(text) > char_limit:
-            chunked_synthesize(
-                text=text,
-                char_limit=char_limit,
-                synthesize_chunk=lambda chunk, path: self._single_synthesize(
-                    chunk, path, voice_id, request
-                ),
-                output_path=output_path,
-            )
-        else:
-            self._single_synthesize(text, output_path, voice_id, request)
+        display_voice, voice_id = self._voices.resolve(
+            request.voice or self.default_voice
+        )
+        self._synthesize_text(request, output_path, voice_id)
 
         logger.info("Wrote %s", output_path)
-        display_voice = (
-            resolved_voice
-            if _VOICE_ID_RE.match(resolved_voice)
-            else resolved_voice.lower()
-        )
         return SynthesisResult(
             path=output_path,
-            text=text,
+            text=request.text,
             provider=AudioProviderId.elevenlabs,
             voice=display_voice,
             language=request.language,
@@ -192,10 +161,8 @@ class ElevenLabsProvider(TTSProvider):
         Language is accepted but not validated — ElevenLabs voices are
         multilingual (70+ languages with eleven_v3).
         """
-        self._resolve_voice_id(name)
-        if _VOICE_ID_RE.match(name):
-            return name
-        return name.lower()
+        canonical, _ = self._voices.resolve(name)
+        return canonical
 
     def check_health(self) -> list[HealthCheck]:
         """Check the ElevenLabs API key, then the account's subscription."""
@@ -218,7 +185,7 @@ class ElevenLabsProvider(TTSProvider):
         but all voices are returned regardless. Only short names (without
         descriptions) are included.
         """
-        return [k for k in self._voices.list_all() if " - " not in k]
+        return self._voices.short_names()
 
     def infer_language_from_voice(self, voice: str) -> str | None:  # noqa: ARG002 -- protocol requires voice param
         """Infer language from a voice name.
@@ -229,56 +196,40 @@ class ElevenLabsProvider(TTSProvider):
 
     # -- Private helpers --------------------------------------------------
 
-    def _fetch_voices(self) -> dict[str, str]:
-        """Fetch all voices from the ElevenLabs API.
+    def _synthesize_text(
+        self, request: SynthesisRequest, output_path: Path, voice_id: str
+    ) -> None:
+        tags = (request.vibe_tags or "").strip()
+        prefix = f"{tags} " if tags else ""
+        body_limit = self._char_limit - len(prefix)
+        if body_limit < min(len(prefix), max(1, len(request.text))):
+            msg = (
+                "ElevenLabs vibe cue leaves too little room for speech "
+                f"within {self._char_limit} characters"
+            )
+            raise ProviderConfigError(msg)
 
-        Returns a dict mapping lowercase name -> voice_id. Both the
-        full descriptive name (e.g. "adam - dominant, firm") and the
-        short name (e.g. "adam") are included as separate keys.
-        """
-        fresh: dict[str, str] = {}
+        def synthesize_chunk(chunk: str, path: Path) -> None:
+            self._single_synthesize(
+                replace(request, text=prefix + chunk), path, voice_id
+            )
 
-        response = self._client.call(lambda sdk: sdk.voices.get_all())
-        for voice in response.voices:
-            if voice.name is None:  # unnamed voices are reachable by raw id only
-                continue
-            full_name = voice.name.lower()
-            vid = voice.voice_id
-
-            # Store full name (e.g. "adam - dominant, firm").
-            if full_name not in fresh:
-                fresh[full_name] = vid
-
-            # Also store short name (before " - ") for convenient lookup.
-            short_name = full_name.split(" - ", 1)[0]
-            if short_name != full_name and short_name not in fresh:
-                fresh[short_name] = vid
-
-        logger.debug(
-            "Fetched %d voice entries from ElevenLabs API",
-            len(fresh),
-        )
-        return fresh
-
-    def _resolve_voice_id(self, name: str) -> str:
-        """Resolve a voice name or ID to a voice_id string."""
-        # Accept raw voice_id (20 alphanumeric chars) directly.
-        if _VOICE_ID_RE.match(name):
-            return name
-
-        return self._voices.resolve(name)
+        if len(request.text) > body_limit:
+            chunked_synthesize(request.text, body_limit, synthesize_chunk, output_path)
+        else:
+            synthesize_chunk(request.text, output_path)
 
     def _build_voice_settings(self, request: SynthesisRequest) -> Any | None:  # pyright: ignore[reportExplicitAny]
         """Build VoiceSettings from request fields, or None for defaults."""
-        kwargs: dict[str, Any] = {}
-        if request.stability is not None:
-            kwargs["stability"] = request.stability
-        if request.similarity is not None:
-            kwargs["similarity_boost"] = request.similarity
-        if request.style is not None:
-            kwargs["style"] = request.style
-        if request.speaker_boost is not None:
-            kwargs["use_speaker_boost"] = request.speaker_boost
+        settings = {
+            "stability": request.stability,
+            "similarity_boost": request.similarity,
+            "style": request.style,
+            "use_speaker_boost": request.speaker_boost,
+        }
+        kwargs: dict[str, Any] = {
+            key: value for key, value in settings.items() if value is not None
+        }
 
         if not kwargs:
             return None
@@ -289,10 +240,9 @@ class ElevenLabsProvider(TTSProvider):
 
     def _single_synthesize(
         self,
-        text: str,
+        request: SynthesisRequest,
         output_path: Path,
         voice_id: str,
-        request: SynthesisRequest,
     ) -> None:
         """Synthesize a single chunk to a file.
 
@@ -306,7 +256,7 @@ class ElevenLabsProvider(TTSProvider):
 
         kwargs: dict[str, Any] = {
             "voice_id": voice_id,
-            "text": text,
+            "text": request.text,
             "model_id": self._model,
             "output_format": "mp3_44100_128",
         }
@@ -320,5 +270,5 @@ class ElevenLabsProvider(TTSProvider):
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",
             voice_id,
-            len(text),
+            len(request.text),
         )

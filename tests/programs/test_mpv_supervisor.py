@@ -234,6 +234,7 @@ async def test_crash_then_reconnect_recovers(
     supervisor = MpvSupervisor(_SOCK, FakeSleeper())
     run = asyncio.create_task(supervisor.run())
     await _wait_until(lambda: supervisor.is_ready)
+    caplog.clear()
 
     with caplog.at_level(logging.INFO):
         readers[0].feed_eof()  # the process died -- the reader sees socket EOF

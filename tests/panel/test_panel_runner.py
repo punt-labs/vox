@@ -200,7 +200,11 @@ class TestChanged:
         rest = FakeRest()
         service = FakeService(raise_on="refused")
         await build_runner(service, lambda: rest).changed(
-            PanelTopic.VOICE.value, {"value": 0}
+            PanelTopic.VOICE.value,
+            {
+                "element_id": service.scene().roster_combo_id(PanelTopic.VOICE),
+                "value": 0,
+            },
         )  # must not raise
         assert service.recovered == ["voice"]
         assert service.corrected == 1
@@ -235,7 +239,11 @@ class TestChanged:
         caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
         service = FakeService(raise_on="refused")
         await build_runner(service, FakeRest).changed(
-            PanelTopic.VOICE.value, {"value": 0}
+            PanelTopic.VOICE.value,
+            {
+                "element_id": service.scene().roster_combo_id(PanelTopic.VOICE),
+                "value": 0,
+            },
         )
         assert [r.levelno for r in panel_records(caplog)] == [logging.ERROR]
         assert panel_records(caplog)[0].exc_info is not None

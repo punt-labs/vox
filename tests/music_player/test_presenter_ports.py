@@ -54,17 +54,17 @@ class _IdleProgram:
     def stop(self) -> None:
         pass
 
-    def advance(self) -> None:
-        pass
+    def advance(self) -> bool:
+        return True
 
-    def prev(self) -> None:
-        pass
+    def prev(self) -> bool:
+        return True
 
-    def pause(self) -> None:
-        pass
+    def pause(self) -> bool:
+        return True
 
-    def resume(self) -> None:
-        pass
+    def resume(self) -> bool:
+        return True
 
 
 @final

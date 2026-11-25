@@ -9,19 +9,24 @@ applies -- so a rejected or unresolvable command surfaces as a boundary error.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import shutil
+import threading
 from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
-from punt_vox.voxd.programs.next_handler import NextHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.status_handler import StatusHandler
 from punt_vox.voxd.programs.stop_handler import StopHandler
+from punt_vox.voxd.programs.transport_handler import TransportHandler
 
 from .conftest import make_service, seed_album
 
@@ -30,6 +35,7 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.programs.manifest import AlbumManifest
     from punt_vox.voxd.programs.service import ProgramService
     from punt_vox.voxd.types import MessageHandler
 
@@ -96,8 +102,114 @@ class TestMutatingHandlers:
         assert reply == {"type": "program_stop", "id": "9"}
 
     async def test_next_acks(self, tmp_path: Path) -> None:
-        reply = await _reply(NextHandler(_service(tmp_path)), {"id": "2"})
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        await service.run_once()
+        handlers = TransportHandler.handlers(service)
+        reply = await _reply(handlers["program_next"], {"id": "2"})
         assert reply == {"type": "program_next", "id": "2"}
+        await service.run_once()
+        reply = await _reply(handlers["program_prev"], {"id": "3"})
+        assert reply == {"type": "program_prev", "id": "3"}
+
+    @pytest.mark.parametrize("queued_stop", [False, True])
+    async def test_next_and_prev_follow_a_queued_replay(
+        self, tmp_path: Path, queued_stop: bool
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        if queued_stop:
+            await _reply(StopHandler(service), {"id": "s"})
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        assert service.status().is_idle
+        handlers = TransportHandler.handlers(service)
+        assert await _reply(handlers["program_next"], {"id": "n"}) == {
+            "type": "program_next",
+            "id": "n",
+        }
+        assert await _reply(handlers["program_prev"], {"id": "b"}) == {
+            "type": "program_prev",
+            "id": "b",
+        }
+        async with asyncio.timeout(1):
+            if queued_stop:
+                await service.run_once()
+            await service.run_once()
+            await service.run_once()
+            advanced = service.status().now_playing
+            assert advanced is not None and advanced.index == 2
+            await service.run_once()
+        stepped_back = service.status().now_playing
+        assert stepped_back is not None and stepped_back.index == 1
+        await _reply(StopHandler(service), {"id": "s"})
+        await service.run_once()
+        assert (await _reply(handlers["program_next"], {"id": "n"}))["applied"] is False
+
+    @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
+    @pytest.mark.parametrize("initially_active", [False, True])
+    async def test_step_after_queued_start_then_stop(
+        self, tmp_path: Path, wire_type: str, initially_active: bool
+    ) -> None:
+        seed_album(tmp_path / "programs", 1, 2, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        if initially_active:
+            await _reply(SelectHandler(service), {"id": "a", "style": "trance"})
+            await service.run_once()
+        await _reply(SelectHandler(service), {"id": "p", "style": "trance"})
+        await _reply(StopHandler(service), {"id": "s"})
+        assert service.status().is_idle is not initially_active
+
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "t"})
+
+        assert reply == {
+            "type": wire_type,
+            "id": "t",
+            "applied": False,
+            "message": "Nothing playing.",
+        }
+        await service.run_once()
+        await service.run_once()
+        assert service.status().is_idle
+
+    @pytest.mark.parametrize("wire_type", ["program_next", "program_prev"])
+    async def test_next_and_prev_report_nothing_playing(
+        self,
+        tmp_path: Path,
+        wire_type: str,
+    ) -> None:
+        service = _service(tmp_path)
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "2"})
+        assert reply == {
+            "type": wire_type,
+            "applied": False,
+            "message": "Nothing playing.",
+            "id": "2",
+        }
+        assert service.status().is_idle
+
+    @pytest.mark.parametrize("wire_type", ["program_pause", "program_resume"])
+    @pytest.mark.parametrize("stopped_program", [False, True])
+    async def test_pause_and_resume_report_nothing_playing(
+        self,
+        tmp_path: Path,
+        wire_type: str,
+        stopped_program: bool,
+    ) -> None:
+        service = _service(tmp_path)
+        if stopped_program:
+            service.turn_on(style="trance", vibe="calm", name=None, prompts=None)
+            await service.run_once()
+            service.stop()
+            await service.run_once()
+        reply = await _reply(TransportHandler.handlers(service)[wire_type], {"id": "2"})
+        assert reply == {
+            "type": wire_type,
+            "applied": False,
+            "message": "Nothing playing.",
+            "id": "2",
+        }
+        assert service.status().mode.value == "off"
 
     async def test_select_by_tags_acks_and_plays(self, tmp_path: Path) -> None:
         seed_album(tmp_path / "programs", 1, 2, 3, style="trance", vibe="calm")
@@ -157,6 +269,26 @@ class TestMutatingHandlers:
 
 
 class TestListHandler:
+    async def test_reads_album_manifests_outside_event_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seed_album(tmp_path / "programs", 1)
+        service = _service(tmp_path)
+        loop_thread = threading.get_ident()
+        read_threads: list[int] = []
+        original_read = Album.read
+
+        def read(album: Album) -> AlbumManifest:
+            read_threads.append(threading.get_ident())
+            return original_read(album)
+
+        monkeypatch.setattr(Album, "read", read)
+        reply = await _reply(ListHandler(service), {"id": "5"})
+
+        assert reply["type"] == "program_list"
+        assert len(read_threads) == 1
+        assert read_threads[0] != loop_thread, "album manifest read on the daemon loop"
+
     async def test_lists_albums_with_tags_and_counts(self, tmp_path: Path) -> None:
         root = tmp_path / "programs"
         seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
@@ -175,8 +307,44 @@ class TestListHandler:
         reply = await _reply(ListHandler(_service(tmp_path)), {"id": "6"})
         assert reply["programs"] == []
 
+    @pytest.mark.parametrize("read_before_remove", [False, True])
+    async def test_omits_album_removed_during_read_without_logging_a_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        read_before_remove: bool,
+    ) -> None:
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1)
+        service = _service(tmp_path)
+        loop = asyncio.get_running_loop()
+        read_started = asyncio.Event()
+        resume_read = threading.Event()
+        original_read = Album.read
+
+        def read(album: Album) -> AlbumManifest:
+            manifest = original_read(album) if read_before_remove else None
+            loop.call_soon_threadsafe(read_started.set)
+            assert resume_read.wait(timeout=5), "catalog removal did not run"
+            return original_read(album) if manifest is None else manifest
+
+        monkeypatch.setattr(Album, "read", read)
+        async with asyncio.TaskGroup() as tasks:
+            listing = tasks.create_task(_reply(ListHandler(service), {"id": "7"}))
+            try:
+                await asyncio.wait_for(read_started.wait(), timeout=5)
+                shutil.rmtree(root / locator)
+                service.catalog.remove(AlbumId("a3f1c9"))
+            finally:
+                resume_read.set()
+
+        assert listing.result()["programs"] == []
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+    @pytest.mark.parametrize("missing", [False, True])
     async def test_lists_survive_an_album_gone_unreadable(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, missing: bool
     ) -> None:
         # A list row reads Parts live from disk, so an album deleted after startup
         # raises when its row is built. The query isolates per album -- the broken
@@ -186,13 +354,24 @@ class TestListHandler:
         seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a3f1c9")
         gone = seed_album(root, 1, style="lofi", vibe="focus", album_id="7b2e04")
         service = _service(tmp_path)  # scans both into the catalog
-        shutil.rmtree(root / gone)  # the album vanishes after startup
+        if missing:
+            shutil.rmtree(root / gone)
+        else:
+            manifest_path = root / gone / "manifest.json"
+            data = json.loads(manifest_path.read_text())
+            data["parts"][0]["index"] = 0
+            manifest_path.write_text(json.dumps(data))
         with caplog.at_level(logging.ERROR):
             reply = await _reply(ListHandler(service), {"id": "5"})
         programs = reply["programs"]
         assert isinstance(programs, list)
         assert {p["id"] for p in programs} == {"a3f1c9"}  # the healthy album remains
-        assert any("7b2e04" in r.getMessage() for r in caplog.records)
+        error_type = "AlbumNotFoundError" if missing else "ValueError"
+        assert any(
+            "skipping unreadable album 7b2e04" in (message := record.getMessage())
+            and error_type in message
+            for record in caplog.records
+        )
 
 
 @final
@@ -201,7 +380,7 @@ class _RaisingHandler(ProgramCommandHandler):
 
     __slots__ = ("_error",)
     _error: Exception
-    _WIRE_TYPE = "program_probe"
+    _wire_type = "program_probe"
 
     def __new__(cls, error: Exception) -> Self:
         self = super().__new__(cls, cast("ProgramService", None))

@@ -160,7 +160,7 @@ Confirm the daemon refuses hostile input and protects a playing album:
 ```bash
 vox rec get "../escape.mp3"; echo "exit=$?"     # hostile ref → clean error, non-zero exit, nothing written
 vox music remove "$album"; echo "exit=$?"       # album from step 10 is playing → refused ("is playing")
-vox music off 2>/dev/null || true               # stop playback
+vox music stop                                 # stop playback
 vox music remove "$album"; echo "exit=$?"       # now stopped → removes cleanly (exit 0)
 ```
 

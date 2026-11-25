@@ -622,12 +622,12 @@ buffered to disk before \texttt{enqueue()} is called.
 \toprule
 \textbf{Parameter} & \textbf{Value} \\
 \midrule
-Default model   & \texttt{tts-1} (\texttt{tts-1-hd} available) \\
+Models          & \texttt{tts-1} (default), \texttt{tts-1-hd}, \texttt{gpt-4o-mini-tts} \\
 Expressive tags & Not supported \\
 Max chars/call  & 4\,096 (hard API limit) \\
 Chunking        & Auto-split at 4\,096 chars, stitch \\
-Voices          & 9 static: alloy, ash, coral, echo, fable, nova,
-  onyx, sage, shimmer \\
+Voices          & Legacy: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer \\
+                & \texttt{gpt-4o-mini-tts} also adds ballad, cedar, marin, verse \\
 Rate mapping    & CLI percentage $\to$ OpenAI speed float
   (0.25--4.0, direct linear: rate/100) \\
 \bottomrule

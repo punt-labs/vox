@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
@@ -17,6 +18,7 @@ from punt_vox.providers.elevenlabs import ElevenLabsProvider
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.output_health import OutputHealth
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.system_handlers import (
     ChimeHandler,
@@ -196,6 +198,15 @@ class TestChimeReply:
 class TestHealthReply:
     """The health handler replies through WireReply -- gone-peer-safe."""
 
+    @pytest.fixture
+    def _health_with_fixed_uptime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> DaemonHealth:
+        monkeypatch.setattr(
+            "punt_vox.voxd.health.time", SimpleNamespace(monotonic=lambda: 0.0)
+        )
+        return DaemonHealth(PlaybackQueue(), lambda: 0, 0)
+
     @pytest.mark.asyncio
     async def test_health_reports_through_wire_reply(self) -> None:
         """A health request returns an id-stamped health payload."""
@@ -205,6 +216,44 @@ class TestHealthReply:
 
         assert ws.sent[-1]["type"] == "health"
         assert ws.sent[-1]["id"] == "h1"
+
+    @pytest.mark.asyncio
+    async def test_unavailable_output_diagnostics_preserve_base_health(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _health_with_fixed_uptime: DaemonHealth,
+    ) -> None:
+        async def unavailable(_probe: OutputHealth) -> None:
+            return None
+
+        monkeypatch.setattr(OutputHealth, "probe_within_budget", unavailable)
+        health = _health_with_fixed_uptime
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
+
+    @pytest.mark.asyncio
+    async def test_output_probe_exception_preserves_base_health(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        _health_with_fixed_uptime: DaemonHealth,
+    ) -> None:
+        def broken_probe(_probe: OutputHealth) -> None:
+            raise RuntimeError("output probe failed")
+
+        monkeypatch.setattr(OutputHealth, "probe", broken_probe)
+        health = _health_with_fixed_uptime
+        ws = _CollectingWs()
+        await HealthHandler(health=health, output_health=OutputHealth(tmp_path))(
+            {"id": "h1", "output_dirs": True}, cast("WebSocket", ws)
+        )
+
+        assert ws.sent[-1] == {**health.full_payload(), "type": "health", "id": "h1"}
 
     @pytest.mark.asyncio
     async def test_gone_peer_during_health_send_does_not_raise(self) -> None:
@@ -220,10 +269,11 @@ class TestVoicesHandler:
     """The voices handler rejects a malformed provider without tearing the socket."""
 
     @pytest.mark.asyncio
-    async def test_non_string_provider_is_a_rejected_op(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("key", ["provider", "model"])
+    async def test_non_string_field_is_a_rejected_op(
+        self, caplog: pytest.LogCaptureFixture, key: str
     ) -> None:
-        """A non-string ``provider`` is a rejected client request, not a fault.
+        """A non-string field is a rejected client request, not a fault.
 
         The ValueError from the parse is caught and replied as an id-stamped error
         frame -- the parse must not escape the handler and tear the connection
@@ -231,14 +281,64 @@ class TestVoicesHandler:
         failed", because the client sent a bad request, not the daemon failing.
         """
         ws = _CollectingWs()
+        msg: dict[str, object] = {"id": "v1", "provider": "openai", key: 123}
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            await VoicesHandler()({"id": "v1", "provider": 123}, cast("WebSocket", ws))
+            await VoicesHandler()(msg, cast("WebSocket", ws))
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v1"
         assert "must be a string" in str(ws.sent[-1]["message"])
         assert any("rejected op" in r.getMessage() for r in caplog.records)
         assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("model", "has_marin"),
+        [
+            (None, False),
+            ("  ", False),
+            ("tts-1-hd", False),
+            (" gpt-4o-mini-tts ", True),
+        ],
+    )
+    async def test_openai_roster_uses_wire_model(
+        self, monkeypatch: pytest.MonkeyPatch, model: str | None, has_marin: bool
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "openai", "model": model}, cast("WebSocket", ws)
+        )
+        assert ws.sent[-1]["type"] == "voices"
+        roster = ws.sent[-1]["voices"]
+        assert isinstance(roster, list)
+        assert ("marin" in roster) == has_marin
+
+    @pytest.mark.asyncio
+    async def test_unknown_openai_model_is_rejected(self) -> None:
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "openai", "model": "tts-2"},
+            cast("WebSocket", ws),
+        )
+        assert ws.sent[-1]["type"] == "error"
+        assert "tts-2" in str(ws.sent[-1]["message"])
+
+    @pytest.mark.asyncio
+    async def test_elevenlabs_roster_accepts_unlisted_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-test")
+        monkeypatch.setattr(
+            ElevenLabsProvider, "list_voices", MagicMock(return_value=["roger"])
+        )
+        ws = _CollectingWs()
+        await VoicesHandler()(
+            {"id": "v1", "provider": "elevenlabs", "model": "eleven_monolingual_v1"},
+            cast("WebSocket", ws),
+        )
+        assert ws.sent[-1]["type"] == "voices"
+        assert ws.sent[-1]["voices"] == ["roger"]
 
     @pytest.mark.asyncio
     async def test_operational_failure_is_a_fault_not_a_rejection(
@@ -472,7 +572,10 @@ class TestVoicesHandler:
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "vf5"
-        assert ws.sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert (
+            ws.sent[-1]["message"]
+            == "Unknown voice 'bella'. Available: ['alloy', 'ash', 'ballad']"
+        )
         assert not any("operation failed" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio

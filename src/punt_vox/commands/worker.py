@@ -10,6 +10,7 @@ from typing import Annotated, final
 import typer
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.commands.worker_repos import WorkerReposCli
 from punt_vox.worker_client import WorkerClient
 
 
@@ -65,11 +66,8 @@ class WorkerCli:
         | None = None,  # None is ordinary text, not a permission answer.
     ) -> None:
         """Send literal input and await acknowledgement, optionally interrupting."""
-        fields: dict[str, str | bool | int] = {
-            "worker_id": worker_id,
-            "words": words,
-            "urgent": urgent,
-        }
+        fields: dict[str, str | bool | int] = {"worker_id": worker_id, "words": words}
+        fields["urgent"] = urgent
         if choice is not None:
             fields["choice"] = choice
         if prompt_seq is not None:
@@ -84,4 +82,5 @@ class WorkerCli:
         app.command("list")(WorkerCli.list_workers)
         app.command("stop")(WorkerCli.stop)
         app.command("steer")(WorkerCli.steer)
+        WorkerReposCli.register(app)
         return app

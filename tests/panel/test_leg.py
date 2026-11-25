@@ -17,11 +17,13 @@ from punt_lux import HubUnavailableError, OpError
 from panel.doubles import (
     PANEL_LOGGER,
     FailPoint,
+    FakeListener,
     FakeRest,
     FakeService,
     panel_records,
     wait_until,
 )
+from punt_vox.panel.panel_runner import PanelRunner
 from punt_vox.panel.topics import PanelTopic
 
 if TYPE_CHECKING:
@@ -39,6 +41,46 @@ _HANDSHAKE_SECONDS = 2.0
 
 def _luxd_is_down() -> LuxClient:
     raise HubUnavailableError("down")
+
+
+class TestServe:
+    async def test_polls_during_listen_and_cancels_poll_on_shutdown(
+        self, build_leg: Callable[..., VoxPanelLeg], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        listening = asyncio.Event()
+        polling = asyncio.Event()
+        poll_stopped = asyncio.Event()
+        hold = asyncio.Event()
+
+        async def listen(_listener: FakeListener) -> None:
+            listening.set()
+            await hold.wait()
+
+        async def reconcile(_runner: PanelRunner) -> None:
+            try:
+                polling.set()
+                await hold.wait()
+            finally:
+                poll_stopped.set()
+
+        monkeypatch.setattr(FakeListener, "listen", listen)
+        monkeypatch.setattr(PanelRunner, "reconciled", reconcile)
+        monkeypatch.setattr("punt_vox.panel.leg._SETTINGS_POLL_SECONDS", 0)
+        rest = FakeRest()
+        leg = build_leg(FakeService(), lambda: rest, topics=(PanelTopic.VOICE.value,))
+        serving = asyncio.create_task(leg.serve())
+        try:
+            async with asyncio.timeout(_HANDSHAKE_SECONDS):
+                await listening.wait()
+                await polling.wait()
+            assert rest.listener_built is not None
+            assert rest.listener_built.subscribed == (PanelTopic.VOICE.value,)
+            assert not poll_stopped.is_set()
+        finally:
+            serving.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await serving
+        assert poll_stopped.is_set()
 
 
 class TestListenOnce:

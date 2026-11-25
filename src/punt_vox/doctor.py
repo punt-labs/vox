@@ -88,10 +88,8 @@ class DoctorCheck:
         results.extend(self.check_daemon_health())
         results.extend(self.check_provider_readiness())
         results.extend(self.check_env_overrides())
-        results.extend(self.check_music_dir())
         results.append(self.check_uvx())
         results.extend(self.check_claude_desktop())
-        results.extend(self.check_output_dir())
         results.extend(self.check_deposited_guide())
         results.extend(CallChecks().run())
         return results
@@ -152,13 +150,13 @@ class DoctorCheck:
         ]
 
     def check_daemon_health(self) -> list[CheckResult]:
-        """Check voxd daemon is running and version matches."""
+        """Report voxd's version and its album output diagnostics."""
         client = self._client or VoxClientSync()
         try:
-            health = client.health()
+            health = client.health(output_dirs=True)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
-            return [self._unanswered(exc)]
-        return [self._answered(health)]
+            return [self._unanswered(exc), OutputDirCheck.unreported()]
+        return [self._answered(health), *OutputDirCheck(health).run()]
 
     @staticmethod
     def _unanswered(exc: VoxdConnectionError | VoxdProtocolError) -> CheckResult:
@@ -290,14 +288,6 @@ class DoctorCheck:
             return [CheckResult.ok(f"Remote config: {', '.join(overrides)}")]
         return []
 
-    def check_music_dir(self) -> list[CheckResult]:
-        """Check the music dir that normally holds the output root.
-
-        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
-        ``doctor`` holds the run_all schedule and delegates the verdict there.
-        """
-        return OutputDirCheck().music_dir()
-
     def check_uvx(self) -> CheckResult:
         """Check for uvx -- present/absent verdict, no host path (out of jail)."""
         if shutil.which("uvx"):
@@ -315,14 +305,6 @@ class DoctorCheck:
         ``doctor`` holds the run_all schedule and delegates the verdict there.
         """
         return DesktopCheck().run()
-
-    def check_output_dir(self) -> list[CheckResult]:
-        """Check the output data root is present and writable.
-
-        The check lives in :class:`~punt_vox.doctor_output.OutputDirCheck`;
-        ``doctor`` holds the run_all schedule and delegates the verdict there.
-        """
-        return OutputDirCheck().output_dir()
 
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.

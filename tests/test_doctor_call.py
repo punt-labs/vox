@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from punt_vox.client_errors import VoxdRefusedError
+from punt_vox.daemon_control import DaemonControl
 from punt_vox.doctor_call import CallChecks
 from punt_vox.doctor_result import WARN, CheckResult
 
@@ -25,6 +27,7 @@ def test_call_checks_report_host_requirements(
         patch("punt_vox.doctor_call_workers.Path") as path,
         patch("shutil.which", side_effect=which),
         patch("punt_vox.doctor_call_scope.httpx.get") as request,
+        patch.object(DaemonControl, "request", side_effect=VoxdRefusedError("down")),
     ):
         path.return_value.is_dir.return_value = False
         results = CallChecks().run()
@@ -34,12 +37,16 @@ def test_call_checks_report_host_requirements(
         "ElevenLabs convai_write (local ELEVENLABS_API_KEY)",
         "Claude login",
         "tmux",
+        "Microphone (voxd)",
+        "Worker repositories",
         "Echo cancellation",
     ]
     assert [result.status_kind for result in results] == [
         "skip",
         "skip",
         "pass" if tmux_found else "warn",
+        "warn",
+        "warn",
         "skip",
     ]
     assert not any(result.required for result in results)
@@ -50,6 +57,7 @@ def test_call_checks_includes_systemd_result(monkeypatch: pytest.MonkeyPatch) ->
     worker_result = CheckResult.of(WARN, "systemd version: 249", required=False)
     with (
         patch("shutil.which", return_value=None),
+        patch.object(DaemonControl, "request", side_effect=VoxdRefusedError("down")),
         patch(
             "punt_vox.doctor_call.CallWorkerChecks.run",
             side_effect=lambda: [worker_result],

@@ -59,3 +59,7 @@ class VoxdRejectionError(VoxdProtocolError):
     reason verbatim; a bare ``VoxdProtocolError`` names a bug and
     propagates.
     """
+
+
+class FetchWriteError(OSError):
+    """Raised if a decoded chunk cannot be written to the caller's sink."""

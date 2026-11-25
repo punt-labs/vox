@@ -8,10 +8,12 @@ and the per-call gateway lookup are asserted without a wire.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
 import pytest
 
+from punt_vox.album_export import AlbumExport
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.music_args import MusicArgs
 from punt_vox.server_music_catalog import CatalogVerbs
@@ -41,12 +43,12 @@ class _FakeCatalog:
         self._albums[album_id] = f"album-{album_id}"
         return album_id
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         self.calls.append(("get", (album_id, dest_dir)))
         if album_id not in self._albums:
             msg = f"no album named '{album_id}'"
             raise ValueError(msg)
-        return f"{dest_dir}/{self._albums[album_id]}"
+        return AlbumExport(Path(dest_dir) / self._albums[album_id])
 
     def remove(self, album_id: str) -> None:
         self.calls.append(("remove", album_id))
@@ -65,7 +67,7 @@ class _BrokenCatalog:
     def new(self, prompts: PromptSet, name: str | None) -> str:
         raise VoxdConnectionError(self._msg())
 
-    def get(self, album_id: str, dest_dir: str) -> str:
+    def get(self, album_id: str, dest_dir: str) -> AlbumExport:
         raise VoxdConnectionError(self._msg())
 
     def remove(self, album_id: str) -> None:

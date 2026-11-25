@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Self, cast, final
+from typing import Literal, Self, TypedDict, cast, final
+
+type OutputVerdict = Literal["absent", "not_writable", "writable"]
+
+
+class OutputDiagnostics(TypedDict):
+    """Path-free diagnostics returned when an output probe succeeds."""
+
+    output_dir: OutputVerdict
+    music_dir_missing: bool
 
 
 @final
@@ -18,6 +27,8 @@ class HealthStatus:
     ``daemon_version``) so a caller can confirm the daemon is up, on which
     port, and running which build. ``last_playback`` is the ``vox doctor``
     diagnostic the daemon reports, relativized so it carries no host path.
+    Output diagnostics are only present when requested, and report verdicts
+    instead of the daemon's paths.
 
     Deliberately absent: ``provider``. The daemon has no provider of its
     own; per-provider readiness is exposed by ``provider_status``. Absent fields fall
@@ -38,6 +49,8 @@ class HealthStatus:
     # because a caller only ever forwards it to a log, never branches on it.
     last_playback: Mapping[str, object] | None = None
     log_level: str = "unknown"
+    output_dir: str = ""
+    music_dir_missing: bool = False
 
     @classmethod
     def from_wire(cls, raw: Mapping[str, object]) -> Self:
@@ -52,6 +65,8 @@ class HealthStatus:
             active_sessions=cls._as_int(raw.get("active_sessions")),
             last_playback=cls._as_map(raw.get("last_playback")),
             log_level=cls._as_str(raw.get("log_level"), "unknown"),
+            output_dir=cls._as_str(raw.get("output_dir"), ""),
+            music_dir_missing=raw.get("music_dir_missing") is True,
         )
 
     @staticmethod

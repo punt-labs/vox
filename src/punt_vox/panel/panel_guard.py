@@ -73,7 +73,9 @@ class PanelGuard:
             self._outage.note(message)
 
     @asynccontextmanager
-    async def rejection(self, what: str) -> AsyncGenerator[None]:
+    async def rejection(
+        self, what: str, *, background: bool = False
+    ) -> AsyncGenerator[None]:
         """Swallow voxd refusing *what*, correcting the scene to say so instead.
 
         The opposite of :meth:`outage`, which swallows a transient the next tick
@@ -85,7 +87,7 @@ class PanelGuard:
             yield
         except VoxdProtocolError as exc:
             self._note(exc, what)
-            await self.repush()
+            await self.repush(background=background)
 
     @asynccontextmanager
     async def control_rejection(self, what: str) -> AsyncGenerator[None]:
@@ -122,7 +124,7 @@ class PanelGuard:
         except VoxdProtocolError as exc:
             self._note(exc, what)
 
-    async def repush(self) -> None:
+    async def repush(self, *, background: bool = False) -> None:
         """Refresh the held scene in place, letting an absent luxd drop it.
 
         Reached behind a genuine control change and behind a click's confirming
@@ -136,7 +138,7 @@ class PanelGuard:
         patches the scene an earlier one installed.
         """
         with self.outage("luxd unavailable; dropped the panel re-push"):
-            await self._service.push_scene(self._rest_factory())
+            await self._service.push_scene(self._rest_factory(), background=background)
 
     async def correct(self) -> None:
         """Reinstall the held scene in full, letting an absent luxd drop it.
@@ -147,7 +149,7 @@ class PanelGuard:
         successfully landed -- would see nothing to patch and leave the
         widget's wrong guess on screen. A full reinstall reasserts every field,
         the control's included, correcting what is already on screen (see
-        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`).
+        :class:`~punt_vox.panel.panel_push.PanelPush`).
         """
         with self.outage("luxd unavailable; dropped the panel correction"):
             await self._service.correct_scene(self._rest_factory())

@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.voxd.workers.types import WorkerDeadlines
+
 __all__ = ["WorkerEnvironment"]
 
 
@@ -28,7 +30,7 @@ class WorkerEnvironment:
             prefix=f"{cls.broker_prefix(namespace)}{os.getpid()}-"
         )
         self._socket = socket.socket(socket.AF_UNIX)
-        self._socket.settimeout(15)
+        self._socket.settimeout(WorkerDeadlines.ENV_DELIVERY)
         self._socket.bind(str(self.address))
         self._socket.listen(1)
         return self
