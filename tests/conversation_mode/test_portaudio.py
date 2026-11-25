@@ -519,3 +519,63 @@ def test_open_default_input_refreshes_first_and_releases_on_refusal(
 
     assert fake.terminated == 1
     assert table.open_streams == 0
+
+
+def test_a_device_pick_that_cannot_be_decoded_releases_the_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any failure between reserving and opening gives the count back."""
+    decode_error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def query_devices(
+        kind: str | None = None,  # None: the whole table, for the refresh's summary
+    ) -> DeviceInfo | list[DeviceInfo]:
+        if kind == "input":
+            raise decode_error
+        return [] if kind is None else {"name": "Speakers", "default_samplerate": 1.0}
+
+    _install(
+        monkeypatch,
+        query_devices=query_devices,
+        RawInputStream=_ignore,
+        _terminate=_ignore,
+        _initialize=_ignore,
+    )
+    table = DeviceTable()
+    with pytest.raises(OSError, match="invalid start byte"):
+        PortAudio(table).open_default_input(
+            samplerate=16000.0, blocksize=0, callback=_ignore
+        )
+
+    assert table.open_streams == 0
+    assert table.refresh()  # the next call re-reads the table; nothing is held
+
+
+def test_a_device_name_that_cannot_be_decoded_is_an_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def query_devices(kind: str) -> DeviceInfo:
+        del kind
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    _install(monkeypatch, query_devices=query_devices)
+    with pytest.raises(OSError, match="no usable default input device"):
+        PortAudio().device()
+
+
+def test_an_open_that_fails_for_any_reason_releases_the_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(**_kwargs: object) -> FakeInputStream:
+        raise RuntimeError("callback signature rejected")
+
+    _install(
+        monkeypatch,
+        query_devices=_device_info("USB Audio", 48000.0),
+        RawInputStream=explode,
+    )
+    table = DeviceTable()
+    with pytest.raises(RuntimeError, match="callback signature rejected"):
+        PortAudio(table).open(USB, samplerate=16000.0, blocksize=0, callback=_ignore)
+
+    assert table.open_streams == 0

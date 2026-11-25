@@ -303,3 +303,32 @@ def test_a_stream_that_will_not_close_is_a_mic_probe_error(
     _install_sleep(monkeypatch, lambda _msec: None)
     with pytest.raises(MicProbeError, match=str(error)):
         SoundDeviceCapture(_Backend([]))(0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_will_not_close_crosses_as_an_error_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the handler, a close that fails is an error frame, not a teardown."""
+
+    class _Unplugged(_RecordingStream):
+        def __exit__(self, *exc_info: object) -> None:
+            raise OSError("Error stopping stream: device unavailable")
+
+    class _Backend(_RecordingBackend):
+        def open_default_input(
+            self, **kwargs: object
+        ) -> tuple[InputDevice, _RecordingStream]:
+            return FAKE_DEVICE, _Unplugged(self.events)
+
+    _install_sleep(monkeypatch, lambda _msec: None)
+    ws = _CollectingWs()
+    await MicProbeHandler(capture=SoundDeviceCapture(_Backend([])))(
+        {"type": "mic_probe", "id": "m5"}, cast("WebSocket", ws)
+    )
+
+    (frame,) = ws.sent
+    assert frame["type"] == "error"
+    assert frame["id"] == "m5"
+    assert "device unavailable" in str(frame["message"])
+    assert "Fake Microphone" in str(frame["message"])

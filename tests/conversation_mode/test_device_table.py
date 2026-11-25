@@ -147,3 +147,29 @@ def test_releasing_more_than_was_reserved_is_a_bug() -> None:
 def test_the_shared_table_is_one_object_per_process() -> None:
     assert DeviceTable.shared() is DeviceTable.shared()
     assert DeviceTable() is not DeviceTable.shared()
+
+
+def test_refresh_reports_a_default_it_cannot_describe_and_still_re_reads(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The summary never fails the refresh, a default name it cannot decode included."""
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    module = sys.modules["sounddevice"]
+
+    def query_devices(kind: Kind | None = None) -> DeviceInfo | list[DeviceInfo]:
+        if kind == "input":  # Describing the default input reaches the bad name.
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return fake.query_devices(kind) if kind else fake.query_devices()
+
+    monkeypatch.setattr(module, "query_devices", query_devices)
+    fake.connect("Headset")
+    with caplog.at_level(logging.INFO):
+        assert DeviceTable().refresh() is True
+    assert fake.query_devices("output")["name"] == "Headset"
+    (line,) = caplog.messages
+    assert line == (
+        "PortAudio device table re-read from the system: 2 devices, "
+        "default input undescribable, default output #1"
+    )

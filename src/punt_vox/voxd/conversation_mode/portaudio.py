@@ -89,11 +89,14 @@ class PortAudio:
         A device PortAudio reports with no name or a sample rate that is not
         positive is as unusable as no device: the caller releases the call
         ID on an :class:`OSError`, so the :class:`ValueError` the device's
-        validation raises is converted here rather than escaping as one.
+        validation raises is converted here rather than escaping as one. So
+        is a name ``sounddevice`` cannot decode, a :class:`UnicodeDecodeError`
+        it raises while describing the device.
 
         Raises:
             OSError: When PortAudio has no default input device, or reports
-                one with no name or a non-positive sample rate.
+                one with no name, a non-positive sample rate, or a name
+                that cannot be decoded.
         """
         from sounddevice import PortAudioError, query_devices
 
@@ -101,6 +104,8 @@ class PortAudio:
             return PortAudio._reported(query_devices(kind="input"))
         except PortAudioError as exc:
             raise OSError(f"no default input device: {exc}") from exc
+        except UnicodeDecodeError as exc:
+            raise OSError(f"no usable default input device: {exc}") from exc
 
     @staticmethod
     def output_device() -> OutputDevice:
@@ -213,7 +218,8 @@ class PortAudio:
 
         The reservation is taken before *select* runs, so the table cannot
         be re-read between selecting the device and binding the stream to
-        it; a refusal at either step gives the count back.
+        it. Whatever fails at either step gives the count back: a count left
+        held would keep the table from ever refreshing again.
 
         Raises:
             OSError: When *select* or the open refuses.
@@ -224,7 +230,7 @@ class PortAudio:
             stream = device.opened(
                 samplerate=samplerate, blocksize=blocksize, callback=callback
             )
-        except OSError:
+        except BaseException:
             reservation.release()
             raise
         return device, CountedStream(stream, reservation)
