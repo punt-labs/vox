@@ -60,13 +60,22 @@ class PortAudio:
         so the library's own error is converted here rather than escaping
         as one.
 
+        Both defaults are read under a reservation on the table: sounddevice
+        reads PortAudio's device record after obtaining its pointer, valid
+        only until a terminate, so a probe's refresh on another thread is
+        kept while the read is in progress rather than terminating under it.
+
         Raises:
             OSError: When PortAudio refuses to re-read its device table, has
                 no default input or output device, or reports one it cannot
                 describe (:meth:`device`).
         """
         self._refreshed(self._table)
-        return DevicePair(self.device(), self.output_device())
+        reservation = self._table.reserve()
+        try:
+            return DevicePair(self.device(), self.output_device())
+        finally:
+            reservation.release()
 
     @staticmethod
     def _refreshed(table: DeviceTable) -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal
 
@@ -732,4 +733,49 @@ def test_leaving_a_stream_twice_releases_once(monkeypatch: pytest.MonkeyPatch) -
 
     assert created[0].stopped
     assert created[0].closed
+    assert table.open_streams == 0
+
+
+def test_devices_reads_both_defaults_under_a_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe's refresh during the call's device read is kept, not applied.
+
+    sounddevice reads PortAudio's device record after obtaining its pointer,
+    which is valid only until a terminate; the read happens with the table
+    reserved so no other thread can terminate under it.
+    """
+    table = DeviceTable()
+    outcomes: list[tuple[int, bool]] = []
+    input_queries = 0
+
+    def query_devices(
+        kind: str | None = None,  # None: the whole table, for the refresh's summary
+    ) -> DeviceInfo | list[DeviceInfo]:
+        nonlocal input_queries
+        if kind is None:
+            return []
+        if kind == "input":
+            input_queries += 1
+            # The first input query is the refresh's own log summary, under
+            # the table lock; the second is the call's read of its device.
+            if input_queries == 2:
+                held = table.open_streams
+                refresher = threading.Thread(
+                    target=lambda: outcomes.append((held, table.refresh()))
+                )
+                refresher.start()
+                refresher.join()
+        return {"name": f"Fake {kind}", "default_samplerate": 48000.0}
+
+    _install(
+        monkeypatch,
+        query_devices=query_devices,
+        _terminate=_ignore,
+        _initialize=_ignore,
+    )
+    pair = PortAudio(table).devices()
+
+    assert outcomes == [(1, False)]
+    assert pair.input.name == "Fake input"
     assert table.open_streams == 0
