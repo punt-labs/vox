@@ -1206,6 +1206,36 @@ class TestSessionConfig:
         state.change_vibe(VibeChange(mood=None, tags=None, mode="off"))
         assert (state.vibe, state.vibe_tags, state.vibe_mode) == (None, None, "off")
 
+    def test_set_vibe_mood_keeps_tags(self) -> None:
+        state = SessionConfig(_vibe_tags="[calm]")
+        state.set_vibe(mood="focused")
+        assert (state.vibe, state.vibe_tags) == ("focused", "[calm]")
+
+    def test_set_voice_strips_sigil(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@aria") == "aria"
+        assert state.voice == "aria"
+
+    def test_set_voice_blank_leaves_voice(self) -> None:
+        state = SessionConfig(_voice="roger")
+        assert state.set_voice("@") is None
+        assert state.voice == "roger"
+
+    def test_summary_sentence_notifications_off(self) -> None:
+        state = SessionConfig(_notify="n")
+        assert "notifications off" in state.summary_sentence()
+
+    @pytest.mark.parametrize(
+        ("speak", "delivery"), [("n", "chimes only"), ("y", "spoken")]
+    )
+    def test_summary_sentence_delivery(self, speak: str, delivery: str) -> None:
+        state = SessionConfig(
+            _notify="c", _speak=speak, _voice="roger", _vibe_mode="auto"
+        )
+        assert (
+            state.summary_sentence() == f"ready -- voice roger, {delivery}, auto vibe"
+        )
+
 
 # ---------------------------------------------------------------------------
 # music / program tool tests (routed through the ProgramGateway seam)
