@@ -442,12 +442,16 @@ def test_scripted_call_reaches_the_tool_result(
     # No tmux on the daemon's PATH, so the worker launch fails and the daemon
     # reports it to the agent rather than starting a real coding session. The
     # missing binary is an OSError, so the agent hears the path-free fault and
-    # the raw detail (the tmux name) goes to the daemon log alone.
+    # the raw detail (the binary's name) goes to the daemon log alone. On a
+    # Linux host running inside a systemd service (a CI runner), the launch
+    # is wrapped in systemd-run, which the bare PATH lacks too, so that is
+    # the name the log carries there.
     assert tool_result["is_error"] is True
     assert json.loads(str(tool_result["result"])) == {"error": "operation failed"}
     daemon_log = _daemon_log(voxd_env)
     assert "call tool start_worker failed: " in daemon_log
-    assert "tmux" in daemon_log
+    assert "No such file or directory" in daemon_log, daemon_log
+    assert "'tmux'" in daemon_log or "'systemd-run'" in daemon_log, daemon_log
 
     report = result.stdout + result.stderr
     assert result.returncode == 0, report
