@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.voice_agent.contracts import (
         AgentPermissions,
+        BuiltInTools,
         ClientTool,
         CreateAgentConfig,
         CreateConfig,
@@ -40,6 +41,19 @@ _UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
 _OVERRIDABLE: AgentPermissions = {
     "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
     "first_message": True,
+}
+# The provider ends the conversation itself when the agent runs this tool;
+# the daemon only hears the acknowledgement and the close that follows.
+_BUILT_IN_TOOLS: BuiltInTools = {
+    "end_call": {
+        "type": "system",
+        "name": "end_call",
+        "description": (
+            "End the call after the person says goodbye or asks to end the call "
+            "or hang up, once you have said one short closing sentence."
+        ),
+        "params": {"system_tool_type": "end_call"},
+    }
 }
 
 
@@ -157,7 +171,10 @@ class ConvAIControl:
                 "agent": {
                     "first_message": "",
                     "language": "en",
-                    "prompt": {"tool_ids": list(tool_ids)},
+                    "prompt": {
+                        "tool_ids": list(tool_ids),
+                        "built_in_tools": _BUILT_IN_TOOLS,
+                    },
                 },
                 "tts": {"agent_output_audio_format": "pcm_16000"},
                 "asr": {"user_input_audio_format": "pcm_16000"},

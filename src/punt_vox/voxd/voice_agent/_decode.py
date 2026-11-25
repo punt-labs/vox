@@ -189,7 +189,10 @@ class EventDecoder:
         "agent_tool_response": (
             "agent_tool_response",
             lambda body: AgentToolResponse(
-                body.text("tool_call_id"), body.flag("is_error")
+                body.text("tool_call_id"),
+                body.flag("is_error"),
+                body.optional_text("tool_name"),
+                body.optional_text("tool_type"),
             ),
         ),
         "user_transcript": (

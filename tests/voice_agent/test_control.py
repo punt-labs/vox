@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from typing import cast
+
 import httpx
 import pytest
 
@@ -147,3 +150,52 @@ def test_an_invalid_base_url_env_var_fails_the_call_by_name(
 
 def test_loopback_hosts_are_literal_ips_only() -> None:
     assert sorted(LOOPBACK_HOSTS) == ["127.0.0.1", "::1"]
+
+
+# The fingerprint of the boss catalog as provisioned before the agent had its
+# built-in end_call tool. A registration carrying it must not be reused.
+_FINGERPRINT_WITHOUT_END_CALL = (
+    "e103cca8572354fb8a99ca1e995d2a4b95b173af8f25e63ea5032ccac154a02c"
+)
+
+
+def test_the_agent_is_created_with_the_built_in_end_call_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider ends the call for the agent; the registration asks for it."""
+    bodies: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        bodies.append(cast("dict[str, object]", json.loads(request.content)))
+        return httpx.Response(200, json={"agent_id": "agent_vox"})
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(respond), base_url="https://test"
+        ) as client,
+        ConvAIControl("test-key") as control,
+        monkeypatch.context() as patch,
+    ):
+        patch.setattr(control, "_http", client)
+        assert control.create_agent(("tool_1",)) == "agent_vox"
+    (body,) = bodies
+    config = cast("dict[str, object]", body["conversation_config"])
+    agent = cast("dict[str, object]", config["agent"])
+    prompt = cast("dict[str, object]", agent["prompt"])
+    assert prompt["tool_ids"] == ["tool_1"]
+    built_in = cast("dict[str, object]", prompt["built_in_tools"])
+    end_call = cast("dict[str, object]", built_in["end_call"])
+    assert end_call["type"] == "system"
+    assert end_call["name"] == "end_call"
+    assert end_call["params"] == {"system_tool_type": "end_call"}
+    assert "closing sentence" in str(end_call["description"])
+
+
+def test_the_fingerprint_no_longer_matches_a_registration_without_end_call() -> None:
+    """An agent provisioned before end_call is torn down, not reused."""
+    from punt_vox.voxd.voice_call.boss_tools import BossTools
+
+    ordered = tuple(sorted(BossTools.CATALOG, key=lambda tool: tool.name))
+    assert (
+        ConvAIControl.registration_fingerprint(ordered) != _FINGERPRINT_WITHOUT_END_CALL
+    )

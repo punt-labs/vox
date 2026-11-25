@@ -38,6 +38,7 @@ from .steps import (
     SendInterruption,
     SendPing,
     SendToolCall,
+    SendToolResponse,
     SendUserTranscript,
     WaitForLogLine,
     WaitForToolResult,
@@ -72,6 +73,16 @@ _TOOL_CALL_STEPS: tuple[Step, ...] = (
 # Two seconds of agent audio: far more than plays before the cut lands.
 _AGENT_PCM = bytes(16_000 * 2 * 2)
 _PLAYBACK_STARTED = "PCM playback started"
+_GOODBYE = "Goodbye for now."
+# The agent says one closing sentence, runs its built-in end_call system
+# tool, and the server hangs up: the order the real server uses.
+_AGENT_ENDS_STEPS: tuple[Step, ...] = (
+    SendUserTranscript("goodbye"),
+    SendAgentResponse(_GOODBYE, 1),
+    SendAudio(bytes(16_000 * 2 // 10), 1),  # 100 ms of the closing sentence.
+    SendToolResponse("end_call", "end_1", "system"),
+    HangUp(),
+)
 
 
 def _interrupted_steps(log: Path) -> tuple[Step, ...]:
@@ -281,19 +292,27 @@ def _stop_failure(env: dict[str, str]) -> str | None:  # None: the stop was fine
     return f"vox call stop exited {stop.returncode}: {stop.stdout}{stop.stderr}"
 
 
-def _call_then_teardown(
-    env: dict[str, str], script: Path
-) -> subprocess.CompletedProcess[str]:
-    """Place the call, then delete the agent and tools the daemon provisioned."""
+@dataclass(frozen=True, slots=True)
+class CallRun:
+    """What one scripted call left behind: the CLI's run and the daemon's status."""
+
+    result: subprocess.CompletedProcess[str]
+    status: dict[str, object]  # ``vox call status --json`` after the call ended.
+
+
+def _call_then_teardown(env: dict[str, str], script: Path) -> CallRun:
+    """Place the call, read its final status, then delete the agent and tools."""
     result = _vox_call(env, script)
+    status = _vox(env, "call", "status", "--json", timeout=_STOP_TIMEOUT_S)
+    assert status.returncode == 0, status.stdout + status.stderr
     teardown = _vox(env, "call", "teardown", timeout=_STOP_TIMEOUT_S)
     assert teardown.returncode == 0, teardown.stdout + teardown.stderr
-    return result
+    return CallRun(result, cast("dict[str, object]", json.loads(status.stdout)))
 
 
 async def _run_call(
     env: dict[str, str], script: Path, steps: tuple[Step, ...]
-) -> tuple[FakeConvAIAgent, FakeConvAIRest, subprocess.CompletedProcess[str]]:
+) -> tuple[FakeConvAIAgent, FakeConvAIRest, CallRun]:
     """Start both fakes, then voxd with their addresses, then place the call.
 
     After the call the daemon tears its agent and tools down through the
@@ -304,8 +323,8 @@ async def _run_call(
         with FakeConvAIRest(agent.signed_url) as rest:
             env = {**env, "VOX_CONVAI_BASE_URL": rest.base_url}
             with _daemon(env):
-                result = await asyncio.to_thread(_call_then_teardown, env, script)
-            return agent, rest, result
+                run = await asyncio.to_thread(_call_then_teardown, env, script)
+            return agent, rest, run
 
 
 def _log_path(env: dict[str, str]) -> Path:
@@ -418,9 +437,10 @@ def test_scripted_call_reaches_the_tool_result(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """One call provisions, dials, answers a tool call, and reports its end."""
-    agent, rest, result = asyncio.run(
+    agent, rest, run = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _TOOL_CALL_STEPS)
     )
+    result = run.result
 
     assert agent.fault is None
     assert agent.cut_short is None
@@ -468,9 +488,10 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     tmp_path: Path, voxd_env: dict[str, str]
 ) -> None:
     """An interruption mid-reply, then a remote hangup, is a clean end, not a fault."""
-    agent, rest, result = asyncio.run(
+    agent, rest, run = asyncio.run(
         _run_call(voxd_env, _script(tmp_path), _interrupted_steps(_log_path(voxd_env)))
     )
+    result = run.result
 
     assert agent.fault is None
     assert agent.cut_short is None
@@ -491,3 +512,37 @@ def test_interruption_then_hangup_ends_the_call_cleanly(
     assert daemon_log.index(_PLAYBACK_STARTED) < daemon_log.index("PCM flush at")
     assert _played_ms(daemon_log) > 0
     assert _flush_dropped_ms(daemon_log) > 0
+
+
+def test_the_agent_ending_the_call_is_a_clean_end_by_the_agent(
+    tmp_path: Path, voxd_env: dict[str, str]
+) -> None:
+    """A goodbye the agent answers with end_call ends the call, credited to the agent.
+
+    The daemon treats the agent's hang-up as a normal end: the CLI exits 0 and
+    reports the call ended, the status names the agent as who ended it, the
+    end line in the daemon log says so too, and the trace records the agent's
+    end_call acknowledgement.
+    """
+    agent, rest, run = asyncio.run(
+        _run_call(voxd_env, _script(tmp_path), _AGENT_ENDS_STEPS)
+    )
+
+    assert agent.fault is None
+    assert agent.cut_short is None
+    assert rest.errors == []
+    report = run.result.stdout + run.result.stderr
+    assert run.result.returncode == 0, report
+    assert "call ended" in report
+    assert f"agent: {_GOODBYE}" in report
+    assert not [line for line in report.splitlines() if line.startswith("error: ")]
+    assert run.status["state"] == "ended", run.status
+    assert run.status["ended_by"] == "agent", run.status
+    assert run.status["error"] is None, run.status
+    daemon_log = _daemon_log(voxd_env)
+    ended = [line for line in daemon_log.splitlines() if "Call ended: " in line]
+    assert len(ended) == 1, daemon_log
+    assert "Call ended: ended by agent, 0 tool calls, duration " in ended[0], ended
+    events = _trace_events(report)
+    assert "agent_tool_response" in events, events
+    assert "agent_end_call" in events, events

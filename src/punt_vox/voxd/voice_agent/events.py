@@ -38,10 +38,21 @@ class ClientToolCall:
 
 @dataclass(frozen=True, slots=True)
 class AgentToolResponse:
-    """Acknowledge a tool result on the ElevenLabs side."""
+    """Acknowledge a tool the agent ran, a client tool or a built-in system tool."""
 
     tool_call_id: str
     is_error: bool
+    tool_name: str | None = None  # Some acknowledgements name no tool.
+    tool_type: str | None = None  # "client", or "system" for a built-in tool.
+
+    @property
+    def ends_call(self) -> bool:
+        """Return whether the agent ran its built-in end_call tool and hung up."""
+        return (
+            self.tool_type == "system"
+            and self.tool_name == "end_call"
+            and not self.is_error
+        )
 
 
 @dataclass(frozen=True, slots=True)
