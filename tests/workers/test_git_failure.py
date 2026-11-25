@@ -44,6 +44,10 @@ def test_bytes_stderr_is_decoded() -> None:
             "not the worker's own worktree: <path>",
         ),
         ("a 1.5 ratio and a/b relative path", "a 1.5 ratio and a/b relative path"),
+        (
+            "[Errno 1] denied: '/Users/Jim Freeman/x/.git'",
+            "[Errno 1] denied: '<path>'",
+        ),
     ],
 )
 def test_other_errors_keep_their_message_with_paths_scrubbed(

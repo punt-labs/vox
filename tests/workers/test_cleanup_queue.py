@@ -147,6 +147,8 @@ def test_a_lane_that_cannot_start_on_submit_fails_the_job_and_releases(
     assert queue.is_idle()
     [record] = caplog.records
     assert "w-2" in record.getMessage()
+    assert "could not start" in record.getMessage()
+    assert record.exc_info is not None
 
 
 def test_a_job_releases_its_worker_before_its_future_resolves() -> None:
@@ -248,3 +250,52 @@ def test_a_rerun_detached_before_shutdown_never_starts_after_it(
     assert start.call_count == 1  # the first lane only; the rerun never started
     [record] = [r for r in caplog.records if "dropped" in r.getMessage()]
     assert "w-6" in record.getMessage()
+
+
+def test_a_base_exception_in_a_job_still_settles_it_and_releases_the_worker() -> None:
+    """SystemExit from inside an operation must not hang the waiting reply.
+
+    Only Exception was caught, so a BaseException killed the lane thread
+    with the future unsettled: actor._settled waited forever and the worker
+    stayed active, so every later request for it parked as a rerun.
+    """
+    queue = WorkerCleanupQueue()
+
+    def explode() -> None:
+        raise SystemExit(3)
+
+    job = queue.submit("w-6", explode)
+    assert job is not None
+    with pytest.raises(SystemExit):
+        job.result(timeout=1)
+    deadline = time.monotonic() + 1
+    while not queue.is_idle():
+        assert time.monotonic() < deadline, "the worker was never released"
+        time.sleep(0.01)
+
+
+def test_a_settle_failure_on_the_rerun_path_still_hands_the_rerun_off() -> None:
+    """A cancelled future must not leave the worker active forever.
+
+    _detach keeps the worker active for its rerun; if settling the first
+    future raised, _hand_off never ran, is_idle() never returned True and
+    every later submit parked. The hand-off now runs in a finally.
+    """
+    queue = WorkerCleanupQueue()
+    first_running, finish_first = Event(), Event()
+
+    def first() -> None:
+        first_running.set()
+        assert finish_first.wait(2)
+
+    job = queue.submit("w-7", first)
+    assert job is not None
+    assert first_running.wait(1)
+    rerun = queue.submit("w-7", lambda: None)
+    assert rerun is None
+    job.cancel()
+    finish_first.set()
+    deadline = time.monotonic() + 2
+    while not queue.is_idle():
+        assert time.monotonic() < deadline, "worker still active after a cancel"
+        time.sleep(0.01)

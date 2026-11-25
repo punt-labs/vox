@@ -60,6 +60,7 @@ def test_mark_keeps_the_worktree_when_the_pane_may_still_be_live(
     assert not WorkerDiscard.queued(kept)
     [warning] = caplog.records
     assert starting.id in warning.getMessage()
+    assert "provider stop failed" in warning.getMessage()
 
 
 @pytest.mark.parametrize(
