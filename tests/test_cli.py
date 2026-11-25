@@ -3398,15 +3398,24 @@ class TestDaemonStatusCommand:
 
     def test_status_visible_voxd_no_reply_is_unresponsive(self) -> None:
         """A visible voxd that does not answer is never "not running"."""
-        world = FakeWorld(health_error="voxd has not written serve.token yet")
-        world.token_written = False
+        world = FakeWorld(rejects=True, health_error="auth rejected (4401)")
         world.run_unit(100)
         result, payload = self._status(world)
         assert result.exit_code == 1
         assert payload["status"] == "unresponsive"
         assert payload["pids"] == [100]
         assert "voxd pid 100" in str(payload["reason"])
-        assert "serve.token" in str(payload["reason"])
+        assert "auth rejected (4401)" in str(payload["reason"])
+
+    def test_status_without_a_token_file_is_unknown_not_unresponsive(self) -> None:
+        """No serve.token: nothing was sent, so voxd was not asked, not silent."""
+        world = FakeWorld(token_written=False)
+        world.run_unit(100)
+        result, payload = self._status(world)
+        assert result.exit_code == 1
+        assert payload["status"] == "unknown"
+        assert "serve.token is absent" in str(payload["reason"])
+        assert "gave no answer" not in str(payload["reason"])
 
     def test_status_unattributed_listener_is_unknown(self) -> None:
         """A listener vox cannot attribute is unknown, and gets no token."""
@@ -3419,7 +3428,7 @@ class TestDaemonStatusCommand:
         assert world.tokens_to == []
 
     def test_status_unresponsive_text_exits_nonzero(self) -> None:
-        world = FakeWorld(token_written=False, health_error="connection reset")
+        world = FakeWorld(rejects=True, health_error="connection reset")
         world.run_unit(100)
         with patch(
             f"{_CLI_DAEMON}.DaemonLifecycle.for_this_host",
@@ -3636,7 +3645,7 @@ class TestDaemonStatusCommand:
 
     def test_json_unresponsive_carries_the_refusal(self) -> None:
         """A visible voxd that refuses the request is unresponsive, with the cause."""
-        world = FakeWorld(token_written=False, health_error="connection refused")
+        world = FakeWorld(rejects=True, health_error="connection refused")
         world.run_unit(100)
         result, payload = self._status(world)
         assert result.exit_code == 1, result.output
