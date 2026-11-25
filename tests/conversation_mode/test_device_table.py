@@ -81,15 +81,13 @@ def test_refresh_terminates_portaudio_only_while_it_is_initialized(
     )
     fake.fail_next_initialize("Error initializing: Host API not found")
     table = DeviceTable()
-    assert table.initialized
+    assert (table.initialized, fake.terminated, fake.initialized) == (True, 0, 1)
     with pytest.raises(FakePortAudioError, match="Host API not found"):
         table.refresh()
-    assert not table.initialized
-    assert (fake.terminated, fake.initialized) == (1, 0)
+    assert (table.initialized, fake.terminated, fake.initialized) == (False, 1, 0)
     fake.connect("Headset")
     assert table.refresh() is True
-    assert table.initialized
-    assert (fake.terminated, fake.initialized) == (1, 1)
+    assert (table.initialized, fake.terminated, fake.initialized) == (True, 1, 1)
     assert fake.query_devices("output")["name"] == "Headset"
 
 
@@ -108,29 +106,39 @@ def test_refresh_keeps_the_table_while_a_stream_is_open(
         monkeypatch
     )
     table = DeviceTable()
-    table.stream_opened()
+    reservation = table.reserve()
     fake.connect("Headset")
     assert table.refresh() is False
     assert fake.terminated == 0
     assert fake.query_devices("input")["name"] == "Built-in"
-    table.stream_closed()
+    reservation.release()
     assert table.refresh() is True
     assert fake.query_devices("input")["name"] == "Headset"
 
 
-def test_open_streams_counts_up_and_down() -> None:
+def test_open_streams_counts_reservations_up_and_down() -> None:
     table = DeviceTable()
     assert table.open_streams == 0
-    table.stream_opened()
-    table.stream_opened()
-    assert table.open_streams == 2
-    table.stream_closed()
-    assert table.open_streams == 1
+    first = table.reserve()
+    second = table.reserve()
+    assert (table.open_streams, first.held) == (2, True)
+    first.release()
+    assert (table.open_streams, first.held) == (1, False)
+    second.release()
+    assert table.open_streams == 0
 
 
-def test_closing_a_stream_that_was_never_opened_is_a_bug() -> None:
-    with pytest.raises(ValueError, match="no PortAudio stream is open"):
-        DeviceTable().stream_closed()
+def test_a_reservation_releases_once() -> None:
+    table = DeviceTable()
+    reservation = table.reserve()
+    reservation.release()
+    reservation.release()
+    assert table.open_streams == 0
+
+
+def test_releasing_more_than_was_reserved_is_a_bug() -> None:
+    with pytest.raises(ValueError, match="no PortAudio stream is reserved"):
+        DeviceTable().release()
 
 
 def test_the_shared_table_is_one_object_per_process() -> None:

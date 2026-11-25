@@ -150,6 +150,36 @@ def test_open_requests_a_raw_mono_int16_stream(
     }
 
 
+def test_the_count_is_raised_before_the_native_input_stream_is_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant: refresh never terminates PortAudio while a stream is reserved.
+
+    A refresh on another thread that lands while PortAudio is creating the
+    native stream must find the count already raised.
+    """
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    refreshed: list[bool] = []
+
+    def create(**kwargs: object) -> FakeInputStream:
+        fake.connect("Headset")  # A device change arrives mid-creation.
+        refreshed.append(table.refresh())
+        return FakeInputStream(**kwargs)
+
+    monkeypatch.setattr(sys.modules["sounddevice"], "RawInputStream", create)
+    held = PortAudio(table).open(
+        USB, samplerate=16000.0, blocksize=320, callback=_ignore
+    )
+    assert refreshed == [False]
+    assert fake.terminated == 0
+    assert table.open_streams == 1
+    held.__exit__(None, None, None)
+    assert table.open_streams == 0
+
+
 def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -169,14 +199,14 @@ def test_a_stream_portaudio_refuses_is_an_oserror_naming_the_device_and_a_remedy
     def callback(*_args: object) -> None:
         pass
 
+    table = DeviceTable()
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio(DeviceTable()).open(
-            USB, samplerate=16000.0, blocksize=320, callback=callback
-        )
+        PortAudio(table).open(USB, samplerate=16000.0, blocksize=320, callback=callback)
     message = str(failure.value)
     assert "Invalid number of channels" in message
     assert "another application" in message
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
+    assert table.open_streams == 0  # The reservation was given back.
 
 
 def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
@@ -205,14 +235,14 @@ def test_a_stream_that_cannot_start_is_the_same_oserror_and_is_closed(
     def callback(*_args: object) -> None:
         pass
 
+    table = DeviceTable()
     with pytest.raises(OSError, match="cannot open input device USB Audio") as failure:
-        PortAudio(DeviceTable()).open(
-            USB, samplerate=16000.0, blocksize=320, callback=callback
-        )
+        PortAudio(table).open(USB, samplerate=16000.0, blocksize=320, callback=callback)
     assert "Device unavailable" in str(failure.value)
     assert isinstance(failure.value.__cause__, _FakePortAudioError)
     (stream,) = created
     assert stream.closed
+    assert table.open_streams == 0  # The reservation was given back.
 
 
 def test_a_stream_that_cannot_start_nor_close_is_still_the_device_oserror(

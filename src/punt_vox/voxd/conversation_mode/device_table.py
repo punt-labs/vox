@@ -15,6 +15,12 @@ object per process, it counts the streams open on it, and :meth:`refresh`
 re-reads only when that count is zero. A call opens its microphone first
 and its output streams later, so one refresh at the microphone serves both
 legs; a scripted call, with no microphone, refreshes at each output open.
+
+A stream is counted from before its native stream exists: the opener takes
+a :class:`Reservation` under the table's lock, then creates the stream, so
+no refresh on another thread can terminate PortAudio between the stream's
+creation and its count. The reservation is released once, when the stream
+closes or when creating or starting it fails.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from typing import ClassVar, Literal, Self, final
 
 from punt_vox.voxd.log_text import LogText
 
-__all__ = ["DeviceTable"]
+__all__ = ["DeviceTable", "Reservation"]
 
 logger = logging.getLogger(__name__)
 
@@ -142,19 +148,50 @@ class DeviceTable:
             f"default output {default('output')}"
         )
 
-    def stream_opened(self) -> None:
-        """Record one more stream open on the current table."""
+    def reserve(self) -> Reservation:
+        """Count one more stream on the current table, before it is created."""
         with self._lock:
             self._open_streams += 1
+        return Reservation(self)
 
-    def stream_closed(self) -> None:
-        """Record one stream closed; closing more than were opened is a bug.
+    def release(self) -> None:
+        """Count one stream fewer; releasing more than were reserved is a bug.
+
+        :class:`Reservation` calls this once per reservation; a caller holds
+        the reservation, not the table, so the release cannot repeat.
 
         Raises:
-            ValueError: When no stream is open.
+            ValueError: When no stream is reserved.
         """
         with self._lock:
             if self._open_streams == 0:
-                msg = "no PortAudio stream is open to close"
+                msg = "no PortAudio stream is reserved to release"
                 raise ValueError(msg)
             self._open_streams -= 1
+
+
+@final
+class Reservation:
+    """One stream's count on the table, from before it exists until released."""
+
+    __slots__ = ("_held", "_table")
+    _held: bool
+    _table: DeviceTable
+
+    def __new__(cls, table: DeviceTable) -> Self:
+        """Hold the count *table* has just taken for one stream."""
+        self = super().__new__(cls)
+        self._table = table
+        self._held = True
+        return self
+
+    @property
+    def held(self) -> bool:
+        """Whether the count is still held on the table."""
+        return self._held
+
+    def release(self) -> None:
+        """Give the count back; a second release does nothing."""
+        if self._held:
+            self._held = False
+            self._table.release()

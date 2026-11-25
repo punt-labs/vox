@@ -1,11 +1,11 @@
-"""A started input stream counted on the device table until it is left."""
+"""A started input stream holding its device-table reservation until it is left."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.conversation_mode.device_table import DeviceTable
+    from punt_vox.voxd.conversation_mode.device_table import Reservation
     from punt_vox.voxd.conversation_mode.mic_audio_source import InputStreamHandle
 
 __all__ = ["CountedStream"]
@@ -13,26 +13,25 @@ __all__ = ["CountedStream"]
 
 @final
 class CountedStream:
-    """A started stream counted on the device table until it is left."""
+    """A started stream holding its device-table reservation until it is left.
 
-    __slots__ = ("_counted", "_stream", "_table")
-    _counted: bool
+    The reservation was taken before the native stream was created; leaving
+    the stream releases it, and a second leave releases nothing more.
+    """
+
+    __slots__ = ("_reservation", "_stream")
+    _reservation: Reservation
     _stream: InputStreamHandle
-    _table: DeviceTable
 
-    def __new__(cls, stream: InputStreamHandle, table: DeviceTable) -> Self:
-        """Count *stream* as open on *table*."""
+    def __new__(cls, stream: InputStreamHandle, reservation: Reservation) -> Self:
+        """Hold *stream* and the *reservation* taken for it."""
         self = super().__new__(cls)
-        self._stream, self._table = stream, table
-        table.stream_opened()
-        self._counted = True
+        self._stream, self._reservation = stream, reservation
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        """Leave the stream, then release its count; idempotent like the stream."""
+        """Leave the stream, then release its reservation; a second leave is a no-op."""
         try:
             self._stream.__exit__(*exc_info)
         finally:
-            if self._counted:
-                self._counted = False
-                self._table.stream_closed()
+            self._reservation.release()

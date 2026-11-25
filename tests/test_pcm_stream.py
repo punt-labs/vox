@@ -847,7 +847,7 @@ class TestOutputDeviceFollowsTheSystem:
             monkeypatch
         )
         table = DeviceTable()
-        table.stream_opened()  # The call's microphone, counted by its backend.
+        table.reserve()  # The call's microphone, counted by its backend.
         playback = PlaybackQueue(sounddevice_output_stream, table)
         async with playback.stream_pcm():
             assert fake.terminated == 0

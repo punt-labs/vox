@@ -140,35 +140,24 @@ class PortAudio:
         blocksize: int,
         callback: RawInputCallback,
     ) -> InputStreamHandle:
-        """Open and start a raw mono int16 stream on the default input device.
+        """Open and start a raw mono int16 stream on *device*, counted on the table.
 
-        ``sounddevice`` opens the native stream in the constructor and starts
-        it on entry, and either step can fail with its own
-        :class:`~sounddevice.PortAudioError`. Both are one refusal here: the
-        caller sees the same :class:`OSError` naming *device*, and a stream
-        that opened but would not start is closed before it is raised, so
-        no device handle outlives the failure.
-
-        *device* is the one :meth:`devices` reported, so the refusal names
+        *device* is the one :meth:`devices` reported, so its refusal names
         the device PortAudio was asked for even when a later query would
-        fail (the device was unplugged or grabbed meanwhile). The started
-        stream is counted on the table until it is left.
+        fail (the device was unplugged or grabbed meanwhile). The stream is
+        counted on the table from before it is created until it is left, so
+        no refresh can terminate PortAudio underneath it; a refusal gives
+        the count back.
 
         Raises:
-            OSError: When PortAudio refuses the stream: the device is busy,
-                has no input channels, rejects the sample rate, or will not
-                start.
+            OSError: When PortAudio refuses the stream (:meth:`InputDevice.opened`).
         """
-        from sounddevice import PortAudioError, RawInputStream
-
+        reservation = self._table.reserve()
         try:
-            stream = RawInputStream(
-                samplerate=samplerate,
-                blocksize=blocksize,
-                channels=1,
-                dtype="int16",
-                callback=callback,
+            stream = device.opened(
+                samplerate=samplerate, blocksize=blocksize, callback=callback
             )
-        except PortAudioError as exc:
-            raise device.refused(exc) from exc
-        return CountedStream(device.started(stream), self._table)
+        except OSError:
+            reservation.release()
+            raise
+        return CountedStream(stream, reservation)

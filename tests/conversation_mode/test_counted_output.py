@@ -110,11 +110,11 @@ def test_the_table_is_re_read_before_the_stream_opens(
     assert fake.query_devices("output")["name"] == "Headset"
 
 
-def test_a_started_stream_is_counted_until_closed() -> None:
+def test_a_stream_is_counted_from_its_creation_until_closed() -> None:
     inner = _Stream()
     table = DeviceTable()
     stream = _open(_Factory(inner), table)
-    assert table.open_streams == 0
+    assert table.open_streams == 1
     stream.start()
     assert table.open_streams == 1
     stream.stop()
@@ -126,11 +126,59 @@ def test_a_started_stream_is_counted_until_closed() -> None:
     assert inner.calls == ["start", "stop", "abort", "close", "close"]
 
 
-def test_a_stream_that_fails_to_start_is_never_counted() -> None:
+def test_a_stream_that_fails_to_start_gives_its_reservation_back() -> None:
     table = DeviceTable()
     stream = _open(_Factory(_Stream(RuntimeError("device busy"))), table)
+    assert table.open_streams == 1
     with pytest.raises(RuntimeError, match="device busy"):
         stream.start()
+    assert table.open_streams == 0
+    stream.close()  # The sink closes a stream that would not start.
+    assert table.open_streams == 0
+
+
+def test_a_factory_that_fails_gives_the_reservation_back() -> None:
+    table = DeviceTable()
+
+    def refuse(**_kwargs: object) -> _Stream:
+        raise RuntimeError("no output device")
+
+    with pytest.raises(RuntimeError, match="no output device"):
+        CountedOutput(refuse, table)(
+            samplerate=16_000,
+            blocksize=320,
+            callback=_ignore,
+            finished_callback=_ignore,
+        )
+    assert table.open_streams == 0
+
+
+def test_the_count_is_raised_before_the_native_stream_is_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant: refresh never terminates PortAudio while a stream is reserved.
+
+    A refresh on another thread that lands while the factory is creating
+    the native stream must find the count already raised; otherwise it
+    would terminate PortAudio underneath a stream that exists but is not
+    yet counted.
+    """
+    fake = FakeSoundDevice(input_name="Built-in", output_name="Built-in").install(
+        monkeypatch
+    )
+    table = DeviceTable()
+    refreshed: list[bool] = []
+
+    def create(**_kwargs: object) -> _Stream:
+        fake.connect("Headset")  # A device change arrives mid-creation.
+        refreshed.append(table.refresh())
+        return _Stream()
+
+    stream = CountedOutput(create, table)(
+        samplerate=16_000, blocksize=320, callback=_ignore, finished_callback=_ignore
+    )
+    assert refreshed == [False]
+    assert fake.terminated == 1  # The refresh before creation, none during it.
     stream.close()
     assert table.open_streams == 0
 
