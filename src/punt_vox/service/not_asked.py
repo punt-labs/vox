@@ -110,6 +110,22 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
+    def publisher_without_port(cls, pid: int) -> Self:
+        """Return the miss for a live publisher that no longer holds the port."""
+        return cls(
+            f"voxd pid {pid} that published serve.port no longer holds port "
+            f"{DEFAULT_PORT}; no token sent unattributed"
+        )
+
+    @classmethod
+    def holder_uncheckable(cls, why: str) -> Self:
+        """Return the miss for a holder check that could not be made in time."""
+        return cls(
+            f"cannot tell whether the publisher holds port {DEFAULT_PORT}: {why}; "
+            "no token sent unattributed"
+        )
+
+    @classmethod
     def not_voxd(cls, pid: int, command: str) -> Self:
         """Return the miss for a published pid whose command is not voxd."""
         return cls(

@@ -499,6 +499,8 @@ class FakeProbe:
         proc = world.procs.get(pid)
         if proc is None or not proc.alive:
             return NotAskedError.publisher_gone(pid)
+        if not proc.on_port:
+            return NotAskedError.publisher_without_port(pid)
         return None
 
     def health(

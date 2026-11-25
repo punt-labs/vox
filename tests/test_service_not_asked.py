@@ -76,6 +76,20 @@ SENT_NOTHING = "no token sent"
             ),
         ),
         (
+            NotAskedError.publisher_without_port(84805),
+            (
+                "voxd pid 84805 that published serve.port no longer holds port "
+                "8421; no token sent unattributed"
+            ),
+        ),
+        (
+            NotAskedError.holder_uncheckable("cannot run lsof: timed out"),
+            (
+                "cannot tell whether the publisher holds port 8421: cannot run "
+                "lsof: timed out; no token sent unattributed"
+            ),
+        ),
+        (
             NotAskedError.not_voxd(84805, "/usr/bin/nc -l 8421"),
             (
                 "pid 84805 named in serve.pid is not voxd (command: /usr/bin/nc -l "

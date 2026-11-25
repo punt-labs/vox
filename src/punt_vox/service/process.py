@@ -36,6 +36,9 @@ class ProcessManager:
 
     # SIGTERM grace plus the SIGKILL wait for an install/uninstall kill.
     _KILL_BUDGET_S: ClassVar[float] = 7.0
+    _PROC: ClassVar[Path] = Path("/proc")
+    # /proc/net/tcp: the state column reads 0A for a LISTEN socket.
+    _LISTEN: ClassVar[str] = "0A"
 
     _deadline: Deadline
     _note: str  # "" unless the last kill left serve.port behind
@@ -132,6 +135,89 @@ class ProcessManager:
         # isdecimal (not isdigit) is the strict subset int() always accepts:
         # it rejects superscripts like "²" that isdigit would pass.
         return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
+
+    def holds_port(self, pid: int, port: int) -> bool:
+        """Return True when *pid* itself holds the TCP listener on *port*.
+
+        Asked of one process, so it never walks every open file the way the
+        port-wide ``lsof`` does: on macOS ``lsof -a -p <pid>`` is limited to
+        that process; on Linux the LISTEN rows for *port* in ``/proc/net/tcp``
+        and ``tcp6`` are matched against the socket inodes in
+        ``/proc/<pid>/fd``. Cut to this manager's deadline. Fails closed: a
+        check that cannot be made raises ``PortProbeError``.
+
+        Raises:
+            PortProbeError: If the process or the port table cannot be inspected.
+        """
+        if platform.system() == "Darwin":
+            return self._lsof_holds_port(pid, port)
+        self._deadline.cap(
+            _SUBPROCESS_TIMEOUT_SECONDS, f"cannot inspect pid {pid} on port {port}"
+        )
+        return self._proc_holds_port(pid, port)
+
+    def _lsof_holds_port(self, pid: int, port: int) -> bool:
+        """``lsof`` limited to *pid*: True when it lists the listener on *port*."""
+        cmd = [
+            "lsof", "-w", "-nP", "-t", "-a", "-p", str(pid),
+            f"-iTCP:{port}", "-sTCP:LISTEN",
+        ]  # fmt: skip
+        result = self._probe(cmd)
+        if self._found_nothing(result):
+            return False
+        if result.returncode != 0:
+            msg = (
+                f"cannot inspect pid {pid} on port {port}: lsof exited "
+                f"{result.returncode}: {result.stderr.strip()}"
+            )
+            raise PortProbeError(msg)
+        return str(pid) in result.stdout.split()
+
+    @classmethod
+    def _proc_holds_port(cls, pid: int, port: int) -> bool:
+        """Match *pid*'s socket inodes against the LISTEN sockets on *port*."""
+        listening = cls._listening_sockets(port)
+        fd_dir = cls._PROC / str(pid) / "fd"
+        try:
+            links = {cls._link(entry) for entry in fd_dir.iterdir()}
+        except OSError as exc:
+            msg = f"cannot read {fd_dir}: {exc}"
+            raise PortProbeError(msg) from exc
+        return not listening.isdisjoint(links)
+
+    @staticmethod
+    def _link(entry: Path) -> str:
+        """Return what the fd symlink *entry* points at; ``""`` once it is closed."""
+        try:
+            return str(entry.readlink())
+        except FileNotFoundError:
+            return ""
+
+    @classmethod
+    def _listening_sockets(cls, port: int) -> frozenset[str]:
+        """Return the ``socket:[inode]`` links of every LISTEN socket on *port*."""
+        found: set[str] = set()
+        for table in ("tcp", "tcp6"):
+            path = cls._PROC / "net" / table
+            try:
+                rows = path.read_text(encoding="ascii").splitlines()[1:]
+            except FileNotFoundError:
+                continue  # no IPv6 on this host
+            except OSError as exc:
+                msg = f"cannot read {path}: {exc}"
+                raise PortProbeError(msg) from exc
+            found.update(cls._listen_link(row, port) for row in rows)
+        found.discard("")
+        return frozenset(found)
+
+    @classmethod
+    def _listen_link(cls, row: str, port: int) -> str:
+        """Return one ``/proc/net/tcp`` *row*'s socket link if it listens on *port*."""
+        fields = row.split()
+        # local_address is HEXIP:HEXPORT; st is the state; inode is the 10th field.
+        if fields[3] != cls._LISTEN or int(fields[1].rsplit(":", 1)[1], 16) != port:
+            return ""
+        return f"socket:[{fields[9]}]"
 
     def identity(self, pid: int) -> ProcessIdentity | None:
         """Return *pid*'s start time and command line; ``None`` once it is gone.

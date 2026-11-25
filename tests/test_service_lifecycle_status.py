@@ -291,7 +291,8 @@ def test_status_unattributed_listener_names_the_sent_request() -> None:
         foreign_listener=True,
         published_health_error="connection reset",
     )
-    world.spawn(100, on_port=False)  # a live voxd that published, off the port
+    proc = world.run_unit(100)
+    world.before_holders = proc.exit  # gone between the request and lsof
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNKNOWN
     assert reading.reason == (
@@ -336,3 +337,14 @@ def test_status_live_publisher_is_asked_through_its_files() -> None:
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.RUNNING
     assert world.tokens_to_port == [8421]
+
+
+def test_status_live_publisher_without_the_port_is_not_asked() -> None:
+    """The shutdown window: voxd's socket is closed, its process lingers, and
+    something else may bind the port; nothing is sent."""
+    world = FakeWorld(port_file=8421, pid_file=100, foreign_listener=True)
+    world.spawn(100, on_port=False)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert world.tokens_to_port == []
+    assert "no longer holds port 8421" in reading.reason

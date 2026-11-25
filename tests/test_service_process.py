@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _lifecycle_fakes import FakeClock
 
 from punt_vox.service import DEFAULT_PORT
 from punt_vox.service.backend import PortProbeError
@@ -237,6 +238,116 @@ def test_find_pid_on_port_fuser_missing_raises_naming_psmisc(
     """A missing fuser raises naming the tool and the package that ships it."""
     with pytest.raises(PortProbeError, match=r"fuser: not found \(install psmisc\)"):
         ProcessManager().find_pid_on_port(8421)
+
+
+# ---------------------------------------------------------------------------
+# holds_port -- one process, never a walk of every open file; fails closed
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_asks_lsof_about_one_pid(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "123\n")
+    assert ProcessManager().holds_port(123, 8421) is True
+    argv = mock_run.call_args.args[0]
+    assert argv[:1] == ["lsof"]
+    assert argv[argv.index("-p") + 1] == "123"
+    assert "-a" in argv
+    assert "-iTCP:8421" in argv
+    assert "-sTCP:LISTEN" in argv
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_silent_exit_1_is_not_held(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().holds_port(123, 8421) is False
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_macos_lsof_failure_raises(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(1, stderr="lsof: no process ID found: 123")
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123 on port 8421"):
+        ProcessManager().holds_port(123, 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Darwin")
+@patch("punt_vox.service.process.subprocess.run")
+def test_holds_port_is_cut_to_the_deadline(
+    mock_run: MagicMock, _mock_sys: MagicMock
+) -> None:
+    mock_run.return_value = _ran(0, "123\n")
+    clock = FakeClock()
+    ProcessManager().within(Deadline(clock.monotonic, 0.75)).holds_port(123, 8421)
+    assert mock_run.call_args.kwargs["timeout"] == pytest.approx(0.75)
+
+
+def _proc_tree(root: Path, pid: int, inode: str, *, port_hex: str = "20E5") -> None:
+    """Lay out /proc/net/tcp with one LISTEN row on *port_hex* and *pid*'s fds."""
+    (root / "net").mkdir()
+    header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
+    row = (
+        f"   0: 0100007F:{port_hex} 00000000:0000 0A 00000000:00000000 00:00000000 "
+        f"00000000  1000        0 {inode} 1 0000000000000000 100 0 0 10 0"
+    )
+    (root / "net" / "tcp").write_text(f"{header}\n{row}\n")
+    fd_dir = root / str(pid) / "fd"
+    fd_dir.mkdir(parents=True)
+    (fd_dir / "0").symlink_to("/dev/null")
+    (fd_dir / "5").symlink_to(f"socket:[{inode}]")
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_matches_the_listen_inode(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    assert ProcessManager().holds_port(123, 8421) is True
+    assert ProcessManager().holds_port(123, 9000) is False
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_another_process_socket_is_not_held(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "124" / "fd").mkdir(parents=True)
+    (tmp_path / "124" / "fd" / "5").symlink_to("socket:[778]")
+    assert ProcessManager().holds_port(124, 8421) is False
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_unreadable_fd_dir_raises(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another user's /proc/<pid>/fd is unreadable: never read as "not held"."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    with pytest.raises(PortProbeError, match="cannot read"):
+        ProcessManager().holds_port(999, 8421)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_after_the_deadline_never_reads(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    clock = FakeClock()
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    clock.advance(1.5)
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123 on port 8421"):
+        bounded.holds_port(123, 8421)
 
 
 # ---------------------------------------------------------------------------

@@ -5,9 +5,11 @@ every open file. This request goes out first, under a gate made of what voxd
 itself publishes and what vox can check without ``lsof``: this user's own
 ``serve.port`` names the service port and ``serve.pid`` a pid that is alive
 and this user's (:class:`PublishedPort`), the target host is loopback, ``ps``
-says that pid runs voxd, and the port accepts a plain connection. A port file
-a crash left behind therefore cannot send the token to another user who
-binds the port next. A gate that does not open sends nothing and records why;
+says that pid runs voxd, that pid itself holds the listener on the port, and
+the port accepts a plain connection. A port file a crash left behind, or a
+voxd whose listening socket is already closed while its process lingers in
+shutdown, therefore cannot send the token to another user who binds the
+port next. A gate that does not open sends nothing and records why;
 a check the gate cannot complete -- a run file it cannot read, a ``ps`` or a
 connect it cannot finish -- closes this door and leaves attribution to
 decide, never the whole reading. A request that fails records its cause. The
@@ -99,6 +101,7 @@ class PublishedHealth:
         if not ipaddress.ip_address(target.host).is_loopback:
             raise NotAskedError.not_loopback(target.host)
         self._require_voxd(pid)
+        self._require_holder(pid)
         self._require_listener(target)
         return target
 
@@ -130,6 +133,20 @@ class PublishedHealth:
             raise NotAskedError.publisher_gone(pid)
         if not seen.is_voxd():
             raise NotAskedError.not_voxd(pid, seen.command)
+
+    def _require_holder(self, pid: int) -> None:
+        """Raise unless *pid* itself holds the listener, checked within the bound.
+
+        Raises:
+            NotAskedError: If *pid* does not hold the port, or the check could
+                not be made in time.
+        """
+        try:
+            holds = self._processes.within(self._bound).holds_port(pid, DEFAULT_PORT)
+        except PortProbeError as exc:
+            raise NotAskedError.holder_uncheckable(str(exc)) from exc
+        if not holds:
+            raise NotAskedError.publisher_without_port(pid)
 
     def _require_listener(self, target: HealthTarget) -> None:
         """Raise unless something accepts a connection, with the floor still left.

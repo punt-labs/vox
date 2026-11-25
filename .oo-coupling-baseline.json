@@ -1844,8 +1844,8 @@
     "efferent_coupling": 7.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.917,
-    "avg_lcom": 0.917
+    "max_lcom": 0.922,
+    "avg_lcom": 0.922
   },
   "src/punt_vox/service/process_identity.py": {
     "efferent_coupling": 0.0,
@@ -1858,8 +1858,8 @@
     "efferent_coupling": 5.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.333,
-    "avg_lcom": 0.333
+    "max_lcom": 0.286,
+    "avg_lcom": 0.286
   },
   "src/punt_vox/service/published_port.py": {
     "efferent_coupling": 3.0,

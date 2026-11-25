@@ -171,9 +171,10 @@ class LifecycleProbe(Protocol):
         """Return voxd's health through the port it published, else ``None``.
 
         Sent before the port is attributed, and only when this user's own
-        ``serve.port`` names the service port, the target is loopback, and
-        something accepts a connection there. Takes at most *within_s*
-        seconds. ``None`` is the documented answer for "not asked" and "no
+        ``serve.port`` names the service port and its ``serve.pid`` a live
+        voxd of this user that still holds the listener, the target is
+        loopback, and something accepts a connection there. Takes at most
+        *within_s* seconds. ``None`` is the documented answer for "not asked" and "no
         reply"; :meth:`health_miss` says why.
         """
         ...
