@@ -23,6 +23,7 @@ from punt_vox.voxd.workers.git_failure import DiscardError
 from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.registry import WorkerRegistry
+from punt_vox.voxd.workers.startup import WorkerStartup
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
@@ -486,3 +487,41 @@ def test_unexpected_discard_error_keeps_the_cleanup_outcome(tmp_path: Path) -> N
     assert "cleanup_pending" not in record.last_report
     assert "discard_pending" not in record.last_report
     assert record.last_report["discard_error"] == "RuntimeError: policy exploded"
+
+
+def test_a_restart_that_retires_a_launch_whose_discard_was_skipped_queues_it(
+    tmp_path: Path,
+) -> None:
+    """DiscardRetryOnStopOfStopped (Z): a dead pane confirms the provider is gone.
+
+    A rollback that could not stop the provider recorded discard_skipped and
+    left the worker starting. A later daemon start that finds the pane dead
+    retires the record to exited; that confirmation makes the discard owed
+    again, or the worktree and branch would stay behind for good.
+    """
+    provider = _StopRefusingProvider()
+    provider.fail = True
+    worktrees = MagicMock(spec=WorkerWorktrees)
+    first = _registry(tmp_path, provider, worktrees)
+    with pytest.raises(OSError, match="launch failed"):
+        first.start("edit", str(tmp_path), provider="fake", harness="test")
+    skipped = first.list()[0]
+    assert skipped.state == "starting"
+    assert skipped.last_report["discard_skipped"] == "provider stop failed"
+    worktrees.discard.assert_not_called()
+    first.shutdown()
+    provider.alive = False
+    records = WorkerRecords(tmp_path / "workers")
+    [saved] = records.load()
+    retired = WorkerStartup._retire(saved, records)
+    assert retired.state == "exited"
+    assert retired.last_report["discard_pending"] is True
+    assert "discard_skipped" not in retired.last_report
+    restored = _registry(tmp_path, provider, worktrees)
+    _settled(restored)
+    done = restored.list()[0]
+    assert done.last_report["worktree_discarded"] is True
+    assert not any(k.startswith("discard_") for k in done.last_report)
+    worktrees.discard.assert_called_once_with(
+        Path(skipped.project), Path(skipped.worktree), skipped.id
+    )

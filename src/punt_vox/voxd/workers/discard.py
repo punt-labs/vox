@@ -53,10 +53,27 @@ class WorkerDiscard:
 
     @classmethod
     def retry(cls, record: WorkerRecord) -> WorkerRecord:
-        """Queue a skipped or failed discard again once the worker is stopped."""
-        if record.state == "stopped" and cls._UNSETTLED.present(record):
+        """Queue a skipped or failed discard again once the worker is terminal.
+
+        Terminal means the provider is confirmed gone: an explicit stop left
+        the worker ``stopped``, or startup observed its pane dead and retired
+        it to ``exited``. A rollback that could not stop the provider leaves
+        ``discard_skipped``; without this a later retire would strand the
+        worktree, since nothing else converts the marker into owed work.
+        """
+        if record.state in ("stopped", "exited") and cls._UNSETTLED.present(record):
             return cls._queue(record)
         return record
+
+    @classmethod
+    def retire(cls, record: WorkerRecord) -> WorkerRecord:
+        """Record a confirmed exit and queue any discard it makes owed again.
+
+        A dead pane confirms the provider is gone, which is what a rollback
+        that could not stop it was waiting for; a skipped or failed discard
+        is queued with the exit so the worktree does not stay behind.
+        """
+        return cls.retry(record.retire())
 
     @classmethod
     def _queue(cls, record: WorkerRecord) -> WorkerRecord:

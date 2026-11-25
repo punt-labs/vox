@@ -219,7 +219,7 @@ collide with B keywords under ProB.
   \forall w : \dom discard @ discard~w = dDone \implies
     phase~w \in \{exited, stopped\} \land w \in providerStopped \\
   \forall w : \dom discard @ discard~w = dPending \implies
-    phase~w = stopped \land w \in providerStopped
+    phase~w \in \{exited, stopped\} \land w \in providerStopped
 \end{schema}
 
 Named invariants checked by implementation tests are:
@@ -297,7 +297,7 @@ provider, so done never contradicts the state invariant.
 \where
   worker? \in \dom discard \\
   discard~worker? \in \{dSkipped, dError\} \\
-  phase~worker? = stopped \\
+  phase~worker? \in \{exited, stopped\} \\
   worker? \in providerStopped \\
   discard' = discard \oplus \{worker? \mapsto dPending\} \\
   phase' = phase \\
@@ -316,9 +316,11 @@ An explicit stop retries a skipped or failed discard in one of two ways,
 by the phase it finds. A worker still \textit{starting} (its rollback
 could not stop the provider, so the discard was skipped) is stopped now:
 the provider stops, harness cleanup is owed, and the discard is queued. A
-worker already \textit{stopped} (its provider stopped and its discard
-failed, or a retry's stop succeeded but the discard failed again) owes no
-harness cleanup and no provider stop; only the discard is queued again.
+worker already terminal, \textit{stopped} or \textit{exited} (its provider
+is confirmed gone: a stop succeeded and the discard failed, or startup
+observed the pane dead and retired a record whose rollback had skipped the
+discard), owes no harness cleanup and no provider stop; only the discard is
+queued again.
 Either way the queue then takes \textit{DiscardComplete}. A stop of a
 starting worker whose provider refuses again leaves the discard skipped
 and the checkout in place.

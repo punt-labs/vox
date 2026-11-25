@@ -7,6 +7,7 @@ import subprocess
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
+from punt_vox.voxd.workers.discard import WorkerDiscard
 from punt_vox.voxd.workers.git_failure import GitFailure
 from punt_vox.voxd.workers.settlement import SettledDebts, WorkerSettlement
 
@@ -112,6 +113,7 @@ class WorkerRetirement:
         if alive:
             self._inventory.confirm(record.id)
         elif observed.state == "exited" and record.state != "exited":
+            observed = WorkerDiscard.retry(observed)
             self._retire(observed)
         return observed
 
