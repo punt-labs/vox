@@ -592,6 +592,8 @@ class TestSymbolStripping:
         ),
         ("`(x) < 3`", "x less than 3"),
         ("**x** > 3", "x greater than 3"),
+        ("_x_ < 3", "x less than 3"),
+        ("\u201cx < 3\u201d", "x less than 3"),
         ("[x < 3](/limits)", "x less than 3"),
         ("50% < x", "50 percent less than x"),
         ("-3 < x < 3", "-3 less than x less than 3"),
@@ -621,6 +623,13 @@ def test_comparisons_survive_inline_expressive_tags() -> None:
         "if x [warm] less than [serious] 3"
     )
     assert SpeechText.for_synthesis(text, expressive=False) == "if x less than 3"
+
+
+def test_comparison_before_an_attached_expressive_tag() -> None:
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=True) == (
+        "x less than 3 [sighs]"
+    )
+    assert SpeechText.for_synthesis("x < 3[sighs]", expressive=False) == "x less than 3"
 
 
 @pytest.mark.parametrize(

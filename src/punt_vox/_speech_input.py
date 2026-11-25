@@ -23,13 +23,16 @@ _SPOKEN = {
 _BARE_ANGLES = frozenset("<>")
 _ORDERED = _BARE_ANGLES | {"<=", ">="}
 _WORD_RE = re.compile(r"\S+")
+_VIBED_WORD_RE = re.compile(
+    rf"(?P<tag>{VIBE_TAG_RE.pattern})|(?:(?!{VIBE_TAG_RE.pattern})\S)+"
+)
 _QUOTE_PREFIX = r"(?:(?:[-+*]|\d{1,9}[.)])[ \t]+|>[ \t]*)*>"
 _QUOTE_RE = re.compile(rf"[ \t]*{_QUOTE_PREFIX}")
 _VIBED_QUOTE_RE = re.compile(
     rf"[ \t]*(?:{VIBE_TAG_RE.pattern}[^\S\r\n]+)*{_QUOTE_PREFIX}"
 )
 _OPERAND_RE = re.compile(r"[^\s<>!=]+")
-_WRAPPERS = """'"`()[]{}*.,;:?!"""
+_WRAPPERS = """'"`()[]{}*_.,;:?!\u2018\u2019\u201c\u201d"""
 _NUMBER_RE = re.compile(r"[-+\u2212]?(?:\d+(?:[.,]\d+)*|[.,]\d+)(?:[eE][+-]?\d+)?%?")
 _RADIX_RE = re.compile(r"0(?:[xX][\da-fA-F]+|[bB][01]+|[oO][0-7]+)")
 _CURRENCY_RE = re.compile(f"[{''.join(UNITS)}]")
@@ -95,9 +98,10 @@ class SpeechInput:
     @classmethod
     def _word_matches(cls, line: str, *, vibed: bool) -> list[_Word]:
         quote = (_VIBED_QUOTE_RE if vibed else _QUOTE_RE).match(line)
+        pattern = _VIBED_WORD_RE if vibed else _WORD_RE
         words: list[_Word] = []
-        for word in _WORD_RE.finditer(line, quote.end() if quote else 0):
-            if vibed and VIBE_TAG_RE.fullmatch(word[0]):
+        for word in pattern.finditer(line, quote.end() if quote else 0):
+            if vibed and word["tag"] is not None:
                 continue
             if words and cls._extends_amount(words[-1].value, word[0]):
                 previous = words.pop()
