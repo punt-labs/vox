@@ -54,8 +54,26 @@ class CreateToolConfig(TypedDict):
     tool_config: ToolConfig
 
 
+class _SystemToolParams(TypedDict):
+    system_tool_type: Literal["end_call"]
+
+
+class SystemTool(TypedDict):
+    """One of the provider's built-in tools, run on its side, not by a client."""
+
+    type: Literal["system"]
+    name: str
+    description: str
+    params: _SystemToolParams
+
+
+class BuiltInTools(TypedDict):
+    end_call: SystemTool
+
+
 class _RegisteredPrompt(TypedDict):
     tool_ids: list[str]
+    built_in_tools: BuiltInTools
 
 
 class _RegisteredAgent(TypedDict):

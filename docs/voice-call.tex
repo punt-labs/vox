@@ -23,13 +23,13 @@
 
 voxd runs at most one call. \texttt{call\_start} creates it in
 \emph{connecting}; the call task provisions the ElevenLabs agent and opens
-the conversation, which makes it \emph{live}. A remote hang-up, a
-\texttt{call\_stop} ends it; a connect timeout or other error fails it.
+the conversation, which makes it \emph{live}. A remote hang-up, the agent's
+built-in \texttt{end\_call} tool or a \texttt{call\_stop} ends it; a connect timeout or other error fails it.
 While a call holds the output, it owns the playback mutex across replies;
 an interruption ends the current reply only. Each tool call is keyed by its
 canonical arguments; a durable key runs its operation at most once per call.
 
-The model names eleven properties:
+The model names twelve properties:
 
 \begin{enumerate}
   \item[C1] \emph{One call}: a second \texttt{call\_start} is refused while a
@@ -65,6 +65,12 @@ The model names eleven properties:
   \item[C11] \emph{A named stop affects only that call}: a stop naming a
     previous call leaves its replacement unchanged
     (\texttt{test\_stale\_stop\_does\_not\_hang\_up\_the\_replacement\_call}).
+  \item[C12] \emph{Attribution survives the close}: the agent's end\_call
+    acknowledgement, taken while the call is live, names the agent as who
+    ended it whatever end follows; a failure names nobody
+    (\texttt{test\_the\_agent\_ending\_the\_call\_is\_credited\_to\_the\_agent},
+    \texttt{test\_a\_stop\_after\_the\_agents\_end\_call\_is\_still\_the\_agents\_hang\_up},
+    \texttt{test\_a\_failure\_after\_the\_agents\_end\_call\_is\_nobodys\_hang\_up}).
 \end{enumerate}
 
 \section{Types}
@@ -73,10 +79,13 @@ The model names eleven properties:
   [KEY, CALLID] \\
   CALL ::= idle | connecting | live | ended | failed \\
   INPUT ::= scripted | headset | externalAEC | openSpeakers \\
+  ENDEDBY ::= nobody | byAgent | byPeer | byCaller \\
   ZBOOL ::= ztrue | zfalse
 \end{zed}
 
-\texttt{idle} is the handlers' state before the first call.
+\texttt{idle} is the handlers' state before the first call. \texttt{ENDEDBY}
+is who ended the call: the agent through its built-in end\_call tool, the
+peer closing the conversation, or the caller stopping it.
 
 \section{State}
 
@@ -84,7 +93,8 @@ The model names eleven properties:
   call : CALL \\
   holding, replying, settled : ZBOOL \\
   durable, ran : \power KEY \\
-  current, issued : \power CALLID
+  current, issued : \power CALLID \\
+  endedBy : ENDEDBY
 \where
   (call \in \{ idle, connecting \} \lor settled = ztrue) \implies holding = zfalse \\
   call = idle \implies settled = ztrue \\
@@ -93,14 +103,20 @@ The model names eleven properties:
   ran \subseteq durable \\
   current \subseteq issued \\
   call = idle \implies current = \emptyset \\
-  call \neq idle \implies \# current = 1
+  call \neq idle \implies \# current = 1 \\
+  call \in \{ idle, connecting, failed \} \implies endedBy = nobody \\
+  call = live \implies endedBy \in \{ nobody, byAgent \} \\
+  call = ended \implies endedBy \neq nobody
 \end{schema}
 
 Here \texttt{current} retains the last call's ID even after it ends, and
 \texttt{issued} models the IDs reserved by the call trace store.
 
 The first predicate is C5. \texttt{durable} is the set of durable keys whose
-operation has run or is in flight; \texttt{ran} those that finished.
+operation has run or is in flight; \texttt{ran} those that finished. The
+last three predicates are C12: \texttt{endedBy} is set before the terminal
+state only by the agent's end\_call acknowledgement, every ended call names
+who ended it, and a failed call names nobody.
 
 \begin{schema}{InitCall}
   Call' \\
@@ -113,7 +129,8 @@ operation has run or is in flight; \texttt{ran} those that finished.
   durable' = \emptyset \\
   ran' = \emptyset \\
   current' = \emptyset \\
-  issued' = savedIds?
+  issued' = savedIds? \\
+  endedBy' = nobody
 \end{schema}
 
 \section{Lifecycle}
@@ -156,7 +173,8 @@ cleans the partial record first, under the same registration lock.
   durable' = \emptyset \\
   ran' = \emptyset \\
   current' = \{ id? \} \\
-  issued' = issued \cup current'
+  issued' = issued \cup current' \\
+  endedBy' = nobody
 \end{schema}
 
 \texttt{Start} is refused until the prior call task has finished (C1).
@@ -193,7 +211,8 @@ task leaves the previous call unchanged.
   durable' = durable \\
   ran' = ran \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 Cancellation stops the call's wait for the provisioning thread, not the
@@ -217,8 +236,30 @@ without changing any call state, including that of a later call.
   durable' = durable \\
   ran' = ran \\
   current' = current \\
+  issued' = issued \\
+  endedBy' = endedBy
+\end{schema}
+
+\begin{schema}{AgentEndCall}
+  \Delta Call \\
+  \Xi ManagedAgent
+\where
+  call = live \\
+  endedBy = nobody \\
+  endedBy' = byAgent \\
+  call' = call \\
+  settled' = settled \\
+  holding' = holding \\
+  replying' = replying \\
+  durable' = durable \\
+  ran' = ran \\
+  current' = current \\
   issued' = issued
 \end{schema}
+
+\texttt{AgentEndCall} is the agent's end\_call acknowledgement: the call
+stays live, playing out the closing sentence, and already names the agent
+as who ended it. The provider's close follows, through \texttt{End}.
 
 Acceptance here includes validating or provisioning the registration,
 obtaining the signed URL, preparing the worker snapshot, and completing the
@@ -232,11 +273,15 @@ status replies.
 \begin{schema}{End}
   \Delta Call \\
   \Delta ManagedAgent \\
-  failure?, draining? : ZBOOL
+  failure?, draining? : ZBOOL \\
+  by? : ENDEDBY
 \where
   call \in \{ connecting, live \} \\
-  failure? = ztrue \implies call' = failed \\
+  by? \in \{ byPeer, byCaller \} \\
+  failure? = ztrue \implies call' = failed \land endedBy' = nobody \\
   failure? = zfalse \implies call' = ended \\
+  (failure? = zfalse \land endedBy = byAgent) \implies endedBy' = byAgent \\
+  (failure? = zfalse \land endedBy = nobody) \implies endedBy' = by? \\
   settled' = zfalse \\
   draining? = ztrue \implies
     (call = live \land failure? = zfalse \land holding' = holding) \\
@@ -255,7 +300,10 @@ status replies.
 admits \emph{connecting}, which is C2; no operation leaves \emph{ended} or
 \emph{failed} except a new \texttt{Start}, which is C3. Terminal status
 can be visible before the call task has finished its cleanup, including
-draining the final reply after a remote hang-up.
+draining the final reply after a remote hang-up. \texttt{by?} is the peer
+for a remote close and the caller for a stop or cancellation; it names who
+ended the call only when the agent had not already (C12). A failure, even
+one after the agent's end\_call, names nobody.
 
 \begin{schema}{EndNamed}
   End \\
@@ -263,7 +311,8 @@ draining the final reply after a remote hang-up.
 \where
   id? \in current \\
   failure? = zfalse \\
-  draining? = zfalse
+  draining? = zfalse \\
+  by? = byCaller
 \end{schema}
 
 \begin{schema}{RejectStaleStop}
@@ -297,11 +346,12 @@ draining the final reply after a remote hang-up.
   durable' = durable \\
   ran' = ran \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 \begin{zed}
-  StopNamed \defs (EndNamed \hide (failure?, draining?)) \semi SettleCall
+  StopNamed \defs (EndNamed \hide (failure?, draining?, by?)) \semi SettleCall
 \end{zed}
 
 \begin{schema}{StopNamedDuringCleanup}
@@ -377,7 +427,8 @@ touches workers or the departure cursor.
   durable' = durable \\
   ran' = ran \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 \begin{schema}{Interrupt}
@@ -391,7 +442,8 @@ touches workers or the departure cursor.
   durable' = durable \\
   ran' = ran \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 \texttt{Interrupt} leaves \texttt{holding} as it was: C4.
@@ -411,7 +463,8 @@ touches workers or the departure cursor.
   holding' = holding \\
   replying' = replying \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 \begin{schema}{Replay}
@@ -434,7 +487,8 @@ touches workers or the departure cursor.
   holding' = holding \\
   replying' = replying \\
   current' = current \\
-  issued' = issued
+  issued' = issued \\
+  endedBy' = endedBy
 \end{schema}
 
 A key enters \texttt{durable} only through \texttt{RunDurable}, whose

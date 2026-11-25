@@ -19,6 +19,7 @@ class _CallStatus(TypedDict, total=False):
     call_id: str
     trace: str
     error: str | None  # None unless the call failed.
+    ended_by: str | None  # None until the call ended without failing.
     transcript: list[object]
     tool_calls: list[object]
 
@@ -73,9 +74,24 @@ class CallStatusView:
         """Return the call's trace file, which names one call; empty when idle."""
         return str(self._status.get("trace", ""))
 
+    @property
+    def ended_by(self) -> str:
+        """Return who ended the call (agent, peer or caller) once it has ended.
+
+        The daemon records the agent's end_call before the provider closes
+        the conversation, so a live call can already name the agent; the
+        view says nothing until the state is ended.
+        """
+        who = self._status.get("ended_by")
+        return who if self.state == "ended" and isinstance(who, str) else ""
+
     def line(self) -> str:
-        """Return the live one-line summary: state, tool calls, last turn."""
-        parts = [f"call {self.state}", f"{len(self._entries('tool_calls'))} tool calls"]
+        """Return the live line: state, who ended the call, tool calls, last turn."""
+        state = f"call {self.state}"
+        parts = [
+            f"{state} by {self.ended_by}" if self.ended_by else state,
+            f"{len(self._entries('tool_calls'))} tool calls",
+        ]
         transcript = self._entries("transcript")
         if transcript:
             last = transcript[-1]
@@ -92,6 +108,8 @@ class CallStatusView:
             for turn in self._entries("transcript")
         ]
         lines.extend(self._tool_line(call) for call in self._entries("tool_calls"))
+        if self.ended_by:
+            lines.append(f"ended by {self.ended_by}")
         if error := self._status.get("error"):
             lines.append(f"error: {error}")
         if self.trace:

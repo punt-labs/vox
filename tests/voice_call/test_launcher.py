@@ -282,7 +282,9 @@ class TestTraceAndLog:
         messages = [r.message for r in caplog.records if r.name == _LOG]
         assert messages[0] == "Call starting: input script, echo control none"
         assert messages[1] == "Call live: conversation conv_launch"
-        assert messages[2].startswith("Call ended: ended, 0 tool calls, duration ")
+        assert messages[2].startswith(
+            "Call ended: ended by peer, 0 tool calls, duration "
+        )
         assert messages[2].endswith(f", trace {active.status()['trace']}")
 
     async def test_a_cancelled_call_still_logs_its_end(
@@ -299,7 +301,7 @@ class TestTraceAndLog:
         (ended,) = [
             r.message for r in caplog.records if r.message.startswith("Call ended:")
         ]
-        assert ended.startswith("Call ended: ended, 0 tool calls")
+        assert ended.startswith("Call ended: ended by caller, 0 tool calls")
 
     async def test_the_departure_brief_is_saved_beside_the_trace(
         self, tmp_path: Path
@@ -796,7 +798,7 @@ class TestCancelBeforeFirstStep:
         (ended,) = [
             r.message for r in caplog.records if r.message.startswith("Call ended:")
         ]
-        assert ended.startswith("Call ended: ended, 0 tool calls")
+        assert ended.startswith("Call ended: ended by caller, 0 tool calls")
 
     async def test_a_cancel_after_the_body_ran_closes_the_input_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

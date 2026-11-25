@@ -22,6 +22,7 @@ from .steps import (
     SendInterruption,
     SendPing,
     SendToolCall,
+    SendToolResponse,
     SendUserTranscript,
     WaitForLogLine,
     WaitForToolResult,
@@ -157,10 +158,46 @@ async def test_server_ping_is_the_real_shape_and_the_pong_is_awaited() -> None:
         (SendUserTranscript("hi"), "user_transcript"),
         (SendAgentResponse("hello", 2), "agent_response"),
         (SendInterruption(3), "interruption"),
+        (SendToolResponse("end_call", "end_1", "system"), "agent_tool_response"),
     ],
 )
 async def test_each_send_step_emits_its_frame(step: Step, frame_type: str) -> None:
     await _run((step, HangUp()), frame_type)
+
+
+async def test_a_tool_response_step_names_the_tool_its_type_and_outcome() -> None:
+    """The acknowledgement carries what the real server's does: name, type, flags."""
+    steps: tuple[Step, ...] = (
+        SendToolResponse("end_call", "end_1", "system"),
+        HangUp(),
+    )
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        frame = await _recv(socket)
+        await socket.wait_closed()
+    ack = cast("Message", frame["agent_tool_response"])
+    assert frame["type"] == "agent_tool_response"
+    assert ack["tool_name"] == "end_call"
+    assert ack["tool_call_id"] == "end_1"
+    assert ack["tool_type"] == "system"
+    assert ack["is_error"] is False
+    assert ack["is_called"] is True
+    assert isinstance(ack["event_id"], int)
+
+
+async def test_a_tool_response_step_can_acknowledge_a_tool_the_agent_skipped() -> None:
+    steps: tuple[Step, ...] = (
+        SendToolResponse("end_call", "end_1", "system", is_called=False),
+        HangUp(),
+    )
+    async with asyncio.timeout(2), FakeConvAIAgent(steps) as agent:
+        socket = await _open(agent)
+        await _recv(socket)
+        frame = await _recv(socket)
+        await socket.wait_closed()
+    ack = cast("Message", frame["agent_tool_response"])
+    assert ack["is_called"] is False
 
 
 async def test_client_close_ends_the_script_without_raising() -> None:
