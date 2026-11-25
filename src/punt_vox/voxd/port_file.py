@@ -77,7 +77,14 @@ class PortFile:
             # The pid first: a reader that sees this daemon's serve.port then
             # never pairs it with a previous daemon's serve.pid.
             self._mine_pid = self._publish(self._pid_path, str(pid))
-            self._mine = self._publish(self._path, str(port))
+            try:
+                self._mine = self._publish(self._path, str(port))
+            except OSError:
+                # The old port must not stay paired with this pid: with no
+                # pid file at all, a reader asks nothing.
+                self._pid_path.unlink(missing_ok=True)
+                self._mine_pid = None
+                raise
         logger.info("Wrote port file: %s (port %d, pid %d)", self._path, port, pid)
 
     @classmethod

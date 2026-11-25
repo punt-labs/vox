@@ -158,6 +158,30 @@ def test_a_failed_rename_leaves_no_temporary_file_and_raises(
     assert not (tmp_path / "serve.port").exists()
 
 
+def test_a_failed_port_publish_unpublishes_the_pid_it_just_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """serve.pid lands first; if serve.port then fails, the pair must not be
+    the old port with the new pid, so the pid file goes too."""
+    old = PortFile(tmp_path)
+    old.write(8421)
+    old_pid_text = (tmp_path / "serve.pid").read_text()
+    real_replace = Path.replace
+
+    def refuse_the_port(self: Path, target: Path) -> Path:
+        if target.name == "serve.port":
+            raise OSError(errno.EXDEV, "cross-device rename")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", refuse_the_port)
+    with pytest.raises(OSError, match="cross-device"):
+        PortFile(tmp_path).write(8421)
+    assert not (tmp_path / "serve.pid").exists()
+    assert (tmp_path / "serve.port").read_text() == "8421"  # the old daemon's
+    assert old_pid_text == str(os.getpid())
+    assert _temporaries(tmp_path) == []
+
+
 def test_removal_paused_after_its_check_never_deletes_a_newer_daemons_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
