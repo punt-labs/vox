@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.workers.cleanup import WorkerCleanup
 from punt_vox.voxd.workers.cleanup_queue import WorkerCleanupQueue
+from punt_vox.voxd.workers.discard import WorkerDiscard
+from punt_vox.voxd.workers.git_failure import GitFailure
+from punt_vox.voxd.workers.settlement import SettledDebts, WorkerSettlement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.workers.inventory import WorkerInventory
     from punt_vox.voxd.workers.lifecycle import WorkerLifecycle
     from punt_vox.voxd.workers.model import WorkerRecord
+    from punt_vox.voxd.workers.policy import WorkerRepoPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +28,30 @@ logger = logging.getLogger(__name__)
 class WorkerRetirement:
     """Run terminal cleanup once per worker and checkpoint its outcome."""
 
-    __slots__ = ("_executor", "_inventory", "_profiles", "_release")
+    __slots__ = ("_executor", "_inventory", "_release", "_settlement")
     _executor: WorkerCleanupQueue
     _inventory: WorkerInventory
-    _profiles: dict[str, HarnessProfile]
     _release: Callable[[str], None]
+    _settlement: WorkerSettlement
 
-    def __new__(
-        cls, profiles: dict[str, HarnessProfile], inventory: WorkerInventory
-    ) -> Self:
-        """Use one background writer for harness cleanup."""
+    def __new__(cls, settlement: WorkerSettlement, inventory: WorkerInventory) -> Self:
+        """Use one background writer for harness cleanup and worktree discard."""
         self = super().__new__(cls)
-        self._profiles = profiles
+        self._settlement = settlement
         self._inventory = inventory
         self._executor = WorkerCleanupQueue()
         self._release = lambda _worker: None
         return self
+
+    @classmethod
+    def for_registry(
+        cls,
+        profiles: dict[str, HarnessProfile],
+        policy: WorkerRepoPolicy,
+        inventory: WorkerInventory,
+    ) -> Self:
+        """Build the retirement over the debts the registry's catalogs settle."""
+        return cls(WorkerSettlement(profiles, policy), inventory)
 
     def release_with(self, release: Callable[[str], None]) -> None:
         """Bind the actor-owned retention transition, not a cleanup job."""
@@ -52,11 +62,26 @@ class WorkerRetirement:
     ) -> Future[None] | None:  # PY-TS-14: no future without a newly queued job.
         """Queue terminal cleanup without waiting for a config file lease."""
         record = self._inventory.get(worker_id)
-        if record.state not in ("exited", "stopped") or not WorkerCleanup.pending(
+        if record.state not in ("exited", "stopped") or not self._settlement.owed(
             record
         ):
             return None
         return self._executor.submit(worker_id, lambda: self._cleanup(worker_id))
+
+    def schedule_prompt(
+        self, worker_id: str
+    ) -> Future[None] | None:  # PY-TS-14: no future unless the job settles promptly.
+        """Queue terminal cleanup; return the job only when a reply can wait on it.
+
+        Harness cleanup is quick. A retried worktree discard is up to six git
+        calls at 20 s each, against a client budget of seconds, so its job is
+        queued but withheld: the record reports ``discard_pending`` and the
+        outcome lands on it once the queue has run the discard.
+        """
+        job = self.schedule(worker_id)
+        if self._settlement.prompt(self._inventory.get(worker_id)):
+            return job
+        return None
 
     def cleanup_idle(self) -> bool:
         """Check whether all scheduled cleanup has settled."""
@@ -82,44 +107,55 @@ class WorkerRetirement:
             subprocess.SubprocessError,
         ) as exc:
             logger.warning(
-                "Worker %s reconciliation unavailable (%s)",
-                record.id,
-                type(exc).__name__,
+                "Worker %s reconciliation unavailable: %s", record.id, GitFailure(exc)
             )
             return record
         if alive:
             self._inventory.confirm(record.id)
         elif observed.state == "exited" and record.state != "exited":
-            self._inventory.close(record.id)
-            try:
-                self._inventory.save(observed)
-            except (OSError, ValueError) as exc:
-                logger.warning("Worker retirement not saved (%s)", type(exc).__name__)
-            else:
-                self._release(record.id)
-                self.schedule(observed.id)
+            observed = WorkerDiscard.retry(observed)
+            self._retire(observed)
         return observed
 
+    def _retire(self, observed: WorkerRecord) -> None:
+        """Checkpoint a newly confirmed exit, then release it and queue cleanup."""
+        self._inventory.close(observed.id)
+        try:
+            self._inventory.save(observed)
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Worker %s retirement not saved: %s", observed.id, GitFailure(exc)
+            )
+            return
+        self._release(observed.id)
+        self.schedule(observed.id)
+
     def _cleanup(self, worker_id: str) -> None:
+        """Settle the debts owed when this job starts, and only those.
+
+        A stop that marks a further debt while this job runs has its request
+        rerun by the queue as a job of its own once this one ends. That keeps
+        a reply waiting on this job bound to the work it was queued for: a
+        harness cleanup never grows into a discard of up to six git calls.
+
+        The discard a job ran is irreversible, so the record is the only
+        trace of its outcome. A save that fails after it names the worker
+        and the failure, not just the exception type.
+        """
         try:
             record = self._inventory.get(worker_id)
-            if not WorkerCleanup.pending(record):
-                return
-            result = WorkerCleanup.run(record, self._profiles)
-            self._inventory.update(
-                record.id, lambda current: self._merge(current, result)
-            )
+            if self._settlement.owed(record):
+                self._checkpoint(worker_id, self._settlement.settle(record))
         except (OSError, ValueError) as exc:
-            logger.warning("Worker cleanup outcome not saved (%s)", type(exc).__name__)
+            logger.warning(
+                "Worker %s settlement outcome not saved: %s", worker_id, GitFailure(exc)
+            )
 
-    @staticmethod
-    def _merge(record: WorkerRecord, result: WorkerRecord) -> WorkerRecord:
-        """Fold cleanup markers only, preserving any late worker reports."""
-        keys = ("cleanup_pending", "cleanup_error")
-        return replace(
-            record,
-            last_report={
-                **{k: v for k, v in record.last_report.items() if k not in keys},
-                **{k: result.last_report[k] for k in keys if k in result.last_report},
-            },
-        )
+    def _checkpoint(self, worker_id: str, settled: SettledDebts) -> WorkerRecord:
+        """Fold the settled markers onto the newest record and save it.
+
+        The inventory folds, saves and, when the save fails, remembers under
+        its own lock, so a concurrent stop's marker is never overwritten by
+        a stale copy and a failed save never masks the fold.
+        """
+        return self._inventory.update(worker_id, settled.fold)

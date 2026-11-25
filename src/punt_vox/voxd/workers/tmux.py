@@ -112,21 +112,50 @@ class TmuxWorkerProvider:
         return TmuxProbe.missing(result)
 
     def stop(self, handle: str) -> None:
-        """Kill the session and its pane process group."""
-        if self._run("has-session", "-t", f"={handle}", check=False).returncode == 0:
-            pane = self._run(
-                "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
-            )
-            if pane.returncode != 0:
-                return
-            pid = int(pane.stdout.strip())
-            try:
-                group = os.getpgid(pid)
-            except ProcessLookupError:
-                group = None
-            self._run("kill-session", "-t", f"={handle}", check=False)
-            if group is not None:
-                TmuxProbe.wait_for_exit(group)
+        """Kill the session and its pane process group.
+
+        An absent session is a finished stop, whether it was gone at the
+        probe or vanished between the probe and the kill. A session that is
+        there but whose pane cannot be read or killed raises, so a rollback
+        never records a possibly live pane as stopped and removes its worktree.
+
+        Raises:
+            RuntimeError: If a tmux command fails for a reason other than
+                absence, or the session is there and cannot be killed.
+        """
+        if self._session_missing(
+            handle, self._run("has-session", "-t", f"={handle}", check=False)
+        ):
+            return
+        pane = self._run(
+            "display-message", "-p", "-t", f"={handle}:", "#{pane_pid}", check=False
+        )
+        if self._ended(pane):
+            return
+        group = self._pane_group(pane.stdout)
+        # A session gone by the kill still had a pane group a moment ago;
+        # wait for it either way.
+        self._ended(self._run("kill-session", "-t", f"={handle}", check=False))
+        if group is not None:
+            TmuxProbe.wait_for_exit(group)
+
+    @staticmethod
+    def _ended(result: subprocess.CompletedProcess[str]) -> bool:
+        """Return whether the session vanished under this command; else raise."""
+        if result.returncode == 0:
+            return False
+        try:
+            return TmuxProbe.missing(result)
+        except RuntimeError as exc:
+            raise RuntimeError("Worker session could not be killed") from exc
+
+    # PY-TS-14: None when the pane's process is already gone; nothing to wait for.
+    @staticmethod
+    def _pane_group(pane_pid: str) -> int | None:
+        try:
+            return os.getpgid(int(pane_pid.strip()))
+        except ProcessLookupError:
+            return None
 
     # PY-TS-14: transport relays the profile's open JSON snapshot schema unchanged.
     def progress(self, worker_id: str, profile: HarnessProfile) -> dict[str, object]:

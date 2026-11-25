@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import unicodedata
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self, cast, final
@@ -60,7 +59,9 @@ class WorkerRegistry:
         self._providers, self._profiles = providers, profiles
         self._lifecycle = WorkerLifecycle(providers, profiles)
         self._inventory = WorkerInventory(records)
-        self._retirement = WorkerRetirement(profiles, self._inventory)
+        self._retirement = WorkerRetirement.for_registry(
+            profiles, policy, self._inventory
+        )
         return self
 
     def restore(
@@ -100,10 +101,7 @@ class WorkerRegistry:
         harness: str = "claude",
     ) -> WorkerRecord:
         """Validate all inputs before making any worktree or launching a process."""
-        if not task.strip():
-            raise ValueError("Worker task must not be empty")
-        if provider not in self._providers or harness not in self._profiles:
-            raise ValueError("Unknown worker provider or harness")
+        self._validate(task, provider, harness)
         repo = self._policy.resolve(project)
         worker_id = str(uuid4())
         worktree = self._inventory.worktree(worker_id)
@@ -141,13 +139,26 @@ class WorkerRegistry:
         self._retirement.schedule(observed.id)
         return observed
 
+    def _validate(self, task: str, provider: str, harness: str) -> None:
+        """Refuse an empty task or a provider or harness the catalogs lack."""
+        if not task.strip():
+            raise ValueError("Worker task must not be empty")
+        if provider not in self._providers or harness not in self._profiles:
+            raise ValueError("Unknown worker provider or harness")
+
     def _rollback(self, record: WorkerRecord, error: Exception) -> None:
+        """Record the failure now; the worktree discard runs off the lock."""
         record = self._lifecycle.rollback(record, error)
         try:
             self._inventory.save(record)
         except (OSError, ValueError, RuntimeError) as exc:
             self._inventory.remember(record)
-            logger.warning("Worker rollback checkpoint failed (%s)", type(exc).__name__)
+            logger.warning(
+                "Worker %s rollback checkpoint not saved: %s",
+                record.id,
+                self._lifecycle.failure_text(exc),
+            )
+        self._retirement.schedule(record.id)
 
     def list(self) -> list[WorkerRecord]:
         """Report current state and close hook admission for confirmed exits."""
@@ -176,19 +187,24 @@ class WorkerRegistry:
         )
 
     def stop(self, worker_id: str) -> WorkerRecord:
-        """Terminate a worker but preserve its branch and worktree."""
-        record, cleanup = self.request_stop(worker_id)
-        if cleanup is None:
+        """Terminate a worker and settle every debt it owes before returning."""
+        record = self._inventory.update(worker_id, self._lifecycle.terminate)
+        job = self._retirement.schedule(worker_id)
+        if job is None:
             return record
-        cleanup.result()
+        job.result()
         return self._inventory.get(worker_id)
 
     def request_stop(
         self, worker_id: str
     ) -> tuple[WorkerRecord, Future[None] | None]:  # PY-TS-14: only wait on a new job.
-        """Persist termination and start cleanup without waiting for its lease."""
+        """Persist termination and queue cleanup; return a job a reply may wait on.
+
+        A retried worktree discard is queued but withheld: the reply reports
+        ``discard_pending`` and the outcome lands on the record later.
+        """
         record = self._inventory.update(worker_id, self._lifecycle.terminate)
-        return record, self._retirement.schedule(worker_id)
+        return record, self._retirement.schedule_prompt(worker_id)
 
     def steer(
         self,
@@ -203,12 +219,7 @@ class WorkerRegistry:
         | None = None,  # None is ordinary text, not a permission answer.
     ) -> int:
         """Delegate steering without knowing the harness's keys or transport."""
-        if not words.strip():
-            raise ValueError("Worker words must not be empty or whitespace")
-        if any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in words):
-            raise ValueError(
-                "Worker words must not contain control characters or newlines"
-            )
+        SteerDelivery.validate(words)
         record = self._retirement.observe(
             self._inventory.get(worker_id), self._lifecycle
         )
@@ -217,21 +228,20 @@ class WorkerRegistry:
         self._inventory.save(record)
         if choice is not None:
             self._question(record, prompt_seq)
-        if prompt_epoch is not None and prompt_epoch != record.last_report.get(
-            "prompt_epoch", 0
-        ):
+        if prompt_epoch is not None:
+            self._live_prompt(record, prompt_epoch)
+        return SteerDelivery(
+            self._profiles[record.harness], self._providers[record.provider]
+        ).send(record, words, urgent=urgent, choice=choice)
+
+    @staticmethod
+    def _live_prompt(record: WorkerRecord, prompt_epoch: int) -> None:
+        """Refuse steering bound to a prompt the worker has since replaced."""
+        if prompt_epoch != record.last_report.get("prompt_epoch", 0):
             raise ValueError(
                 "Worker has a new prompt; read worker_status and ask the person "
                 "again before steering"
             )
-        profile = self._profiles[record.harness]
-        if len(words) > profile.input_limit:
-            raise ValueError(
-                f"Words exceed receipt limit of {profile.input_limit} characters"
-            )
-        return SteerDelivery(profile, self._providers[record.provider]).send(
-            record, words, urgent=urgent, choice=choice
-        )
 
     @staticmethod
     def _question(

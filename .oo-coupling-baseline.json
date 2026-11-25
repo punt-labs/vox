@@ -3794,11 +3794,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/actor.py": {
-    "efferent_coupling": 3.0,
-    "public_names": 1.0,
+    "efferent_coupling": 4.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.476,
-    "avg_lcom": 0.476
+    "max_lcom": 0.4,
+    "avg_lcom": 0.4
   },
   "src/punt_vox/voxd/workers/allowlist.py": {
     "efferent_coupling": 1.0,
@@ -3836,7 +3836,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/cleanup.py": {
-    "efferent_coupling": 0.0,
+    "efferent_coupling": 1.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -3846,8 +3846,8 @@
     "efferent_coupling": 0.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.444,
+    "avg_lcom": 0.444
   },
   "src/punt_vox/voxd/workers/codec.py": {
     "efferent_coupling": 2.0,
@@ -3857,7 +3857,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/command.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -3877,11 +3877,25 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/workers/discard.py": {
+    "efferent_coupling": 2.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/workers/environment.py": {
-    "efferent_coupling": 0.0,
+    "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.167,
+    "avg_lcom": 0.167
+  },
+  "src/punt_vox/voxd/workers/git_failure.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.333,
     "avg_lcom": 0.167
   },
   "src/punt_vox/voxd/workers/handlers.py": {
@@ -3909,15 +3923,22 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.617,
-    "avg_lcom": 0.617
+    "max_lcom": 0.575,
+    "avg_lcom": 0.575
   },
   "src/punt_vox/voxd/workers/lifecycle.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 5.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/workers/markers.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.4,
+    "avg_lcom": 0.4
   },
   "src/punt_vox/voxd/workers/model.py": {
     "efferent_coupling": 1.0,
@@ -3927,11 +3948,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/workers/policy.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 4.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.381,
+    "avg_lcom": 0.381
   },
   "src/punt_vox/voxd/workers/reaper.py": {
     "efferent_coupling": 2.0,
@@ -3958,18 +3979,25 @@
     "efferent_coupling": 10.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.199,
+    "avg_lcom": 0.199
   },
   "src/punt_vox/voxd/workers/retirement.py": {
+    "efferent_coupling": 4.0,
+    "public_names": 2.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.4,
+    "avg_lcom": 0.4
+  },
+  "src/punt_vox/voxd/workers/settlement.py": {
     "efferent_coupling": 2.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.429,
-    "avg_lcom": 0.429
+    "max_lcom": 0.167,
+    "avg_lcom": 0.084
   },
   "src/punt_vox/voxd/workers/startup.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 5.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -4026,7 +4054,7 @@
   },
   "src/punt_vox/voxd/workers/types.py": {
     "efferent_coupling": 1.0,
-    "public_names": 1.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -4034,6 +4062,13 @@
   "src/punt_vox/voxd/workers/wiring.py": {
     "efferent_coupling": 9.0,
     "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/workers/worktrees.py": {
+    "efferent_coupling": 2.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -4046,7 +4081,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/worker_client.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
