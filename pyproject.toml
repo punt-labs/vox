@@ -514,6 +514,7 @@ application = [
 ]
 domain = [
     "punt_vox._audio",
+    "punt_vox._code_currency",
     "punt_vox._inline_code",
     "punt_vox._speech_abbreviations",
     "punt_vox._speech_punctuation",
