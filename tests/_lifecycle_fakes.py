@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 from unittest.mock import MagicMock
 
@@ -29,7 +30,7 @@ from punt_vox.service.backend import (
 from punt_vox.service.clock import Poll
 from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
-from punt_vox.service.health import HealthTarget
+from punt_vox.service.health import DaemonNotUpError, HealthTarget
 from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
@@ -199,6 +200,9 @@ class FakeWorld:
     foreign_listener: bool = False
     off_port: frozenset[int] = frozenset()
     token_written: bool = True
+    # voxd refuses every token-bearing request with ``health_error`` (a
+    # rejected token, a reset): the request was sent and got no answer
+    rejects: bool = False
     probe_error: str = ""
     # scripted manager responses
     stop_error: Exception | None = None
@@ -541,7 +545,10 @@ class FakeProbe:
             self._miss = RuntimeError(self._world.health_error)
             return None
         holder = self._world.holder()
-        if holder is None or not self._world.token_written:
+        if not self._world.token_written:
+            self._miss = DaemonNotUpError.missing(Path("/run/serve.token"))
+            return None
+        if holder is None or self._world.rejects:
             self._miss = RuntimeError(self._world.health_error)
             return None
         return HealthStatus(

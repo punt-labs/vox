@@ -31,7 +31,7 @@ def test_status_a_voxd_that_answers_is_running() -> None:
 
 
 def test_status_visible_voxd_no_reply_is_unresponsive() -> None:
-    world = FakeWorld(token_written=False, health_error="auth rejected (4401)")
+    world = FakeWorld(rejects=True, health_error="auth rejected (4401)")
     world.run_unit(100)
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNRESPONSIVE
@@ -190,9 +190,7 @@ def test_status_sends_no_published_token_to_an_empty_port() -> None:
 
 def test_status_published_port_no_answer_falls_back_to_attribution() -> None:
     """A rejected fast request is not the reading: lsof still names the holder."""
-    world = FakeWorld(
-        port_file=8421, token_written=False, health_error="auth rejected (4401)"
-    )
+    world = FakeWorld(port_file=8421, rejects=True, health_error="auth rejected (4401)")
     world.run_unit(100)
     reading = lifecycle(world).status()
     assert reading.state is DaemonState.UNRESPONSIVE
@@ -348,3 +346,18 @@ def test_status_live_publisher_without_the_port_is_not_asked() -> None:
     assert reading.state is DaemonState.UNKNOWN
     assert world.tokens_to_port == []
     assert "no longer holds port 8421" in reading.reason
+
+
+def test_status_without_a_token_file_says_voxd_was_not_asked() -> None:
+    """No serve.token: the client is never built, so nothing was asked and the
+    reading must not claim voxd "gave no answer"."""
+    world = FakeWorld(port_file=8421, token_written=False)
+    world.run_unit(100)
+    reading = lifecycle(world).status()
+    assert reading.state is DaemonState.UNKNOWN
+    assert "gave no answer" not in reading.reason
+    assert reading.reason == (
+        "/run/serve.token is absent: voxd has not published its token; no token "
+        "sent; voxd was not asked first: /run/serve.token is absent: voxd has not "
+        "published its token; no token sent"
+    )

@@ -231,11 +231,19 @@ def test_start_probe_error_type_reaches_the_report() -> None:
 
 def test_start_timeout_names_the_health_cause() -> None:
     """The last health failure's cause is in the timeout detail."""
-    world = FakeWorld(token_written=False, health_error="auth rejected (4401)")
+    world = FakeWorld(rejects=True, health_error="auth rejected (4401)")
     world.run_unit(100)
     report = lifecycle(world).start()
     assert report.outcome is Outcome.TIMEOUT
     assert "auth rejected (4401)" in report.detail
+
+
+def test_start_timeout_without_a_token_file_names_the_file() -> None:
+    world = FakeWorld(token_written=False)
+    world.run_unit(100)
+    report = lifecycle(world).start()
+    assert report.outcome is Outcome.TIMEOUT
+    assert "/run/serve.token is absent" in report.detail
 
 
 def test_start_overruled_refusal_is_carried_into_the_detail() -> None:

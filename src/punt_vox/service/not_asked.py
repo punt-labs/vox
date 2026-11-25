@@ -8,7 +8,7 @@ voxd was not asked.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self
 
 from punt_vox.service.process import DEFAULT_PORT
 
@@ -18,9 +18,13 @@ if TYPE_CHECKING:
 __all__ = ["NotAskedError"]
 
 
-@final
 class NotAskedError(RuntimeError):
-    """voxd was never asked: no token-bearing health request went out."""
+    """voxd was never asked: no token-bearing health request went out.
+
+    The base of one small hierarchy: :class:`~punt_vox.service.health.
+    DaemonNotUpError` (voxd's token not available) is the one subclass, so
+    a missing token reads as "not asked" wherever a reading classifies it.
+    """
 
     __slots__ = ()
 

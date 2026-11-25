@@ -8,12 +8,14 @@ token from ``serve.token``. Nothing is read from the calling shell.
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.health import DaemonNotUpError, HealthTarget
+from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.process import DEFAULT_PORT
 
 # Construct the unspecified addresses rather than spelling "0.0.0.0" as a
@@ -117,14 +119,41 @@ def test_health_target_client_reads_run_file_token(
 
 
 def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no serve.token, no client exists, so VOXD_TOKEN cannot leak."""
+    """With no serve.token, no client exists, so VOXD_TOKEN cannot leak.
+
+    The miss is a NotAskedError naming the path: no request was made, and a
+    status reading must say so rather than "gave no answer".
+    """
     monkeypatch.setenv("VOXD_TOKEN", "shell-token")
-    monkeypatch.setattr("punt_vox.service.health.RunFiles.token", lambda: None)
+    monkeypatch.setattr("punt_vox.service.health.run_dir", lambda: tmp_path)
     captured = _capture_clients(monkeypatch)
 
-    with pytest.raises(DaemonNotUpError, match=r"serve\.token"):
+    with pytest.raises(DaemonNotUpError) as missing:
         HealthTarget("").client()
 
+    assert isinstance(missing.value, NotAskedError)
+    assert str(missing.value) == (
+        f"{tmp_path / 'serve.token'} is absent: voxd has not published its "
+        "token; no token sent"
+    )
+    assert captured == []
+
+
+def test_an_unreadable_token_file_names_itself_and_builds_no_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("punt_vox.service.health.run_dir", lambda: tmp_path)
+    token = tmp_path / "serve.token"
+    token.write_text("secret")
+    token.chmod(0)
+    captured = _capture_clients(monkeypatch)
+
+    with pytest.raises(DaemonNotUpError) as unreadable:
+        HealthTarget("").client()
+
+    assert str(unreadable.value) == (
+        f"{token} cannot be read: voxd's token is not available; no token sent"
+    )
     assert captured == []

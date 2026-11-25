@@ -14,21 +14,45 @@ value is pinned to a trusted source and none comes from the calling shell:
 
 from __future__ import annotations
 
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_endpoint import RunFiles
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.paths import run_dir
+from punt_vox.service.not_asked import NotAskedError
 from punt_vox.service.process import DEFAULT_PORT
 from punt_vox.service.voxd_bind import VoxdBind
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = ["DaemonNotUpError", "HealthTarget"]
 
 
 @final
-class DaemonNotUpError(RuntimeError):
-    """voxd has not written its token yet, so no health request is sent."""
+class DaemonNotUpError(NotAskedError):
+    """voxd's token is not available, so no health request is sent.
+
+    A :class:`NotAskedError`: the client is never built, so nothing reached
+    voxd, and a reading must say it was not asked rather than that it gave
+    no answer.
+    """
 
     __slots__ = ()
+
+    @classmethod
+    def missing(cls, token_file: Path) -> Self:
+        """Return the miss for a ``serve.token`` voxd has not written."""
+        return cls(
+            f"{token_file} is absent: voxd has not published its token; no token sent"
+        )
+
+    @classmethod
+    def unreadable(cls, token_file: Path) -> Self:
+        """Return the miss for a ``serve.token`` that is there but cannot be read."""
+        return cls(
+            f"{token_file} cannot be read: voxd's token is not available; no token sent"
+        )
 
 
 @final
@@ -62,14 +86,17 @@ class HealthTarget:
     def client(self) -> VoxClientSync:
         """Return a client pinned to the daemon's host, port, and run-file token.
 
-        Raises ``DaemonNotUpError`` when ``serve.token`` is absent: voxd writes
-        it on startup, so the caller treats that as "not up yet" and polls.
+        Raises ``DaemonNotUpError`` naming the file when ``serve.token`` is
+        absent (voxd writes it on startup, so a poll keeps waiting) or cannot
+        be read.
 
         Raises:
-            DaemonNotUpError: If the daemon has not published its authentication token.
+            DaemonNotUpError: If the daemon's token is absent or unreadable.
         """
         token = RunFiles.token()
         if token is None:
-            msg = "voxd has not written serve.token yet"
-            raise DaemonNotUpError(msg)
+            token_file = run_dir() / "serve.token"
+            if token_file.exists():
+                raise DaemonNotUpError.unreadable(token_file)
+            raise DaemonNotUpError.missing(token_file)
         return VoxClientSync(host=self._host, port=self._port, token=token)
