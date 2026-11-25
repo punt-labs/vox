@@ -10,6 +10,7 @@ from typing import Self, final
 
 from punt_vox.process_env import ProcessEnv
 from punt_vox.voxd.workers.startup_probes import StartupProbes
+from punt_vox.voxd.workers.types import WorkerDeadlines
 
 __all__ = ["WorkerCommand"]
 
@@ -60,7 +61,7 @@ class WorkerCommand:
                 capture_output=True,
                 text=True,
                 input=input_text,
-                timeout=StartupProbes.timeout(15),
+                timeout=StartupProbes.timeout(WorkerDeadlines.PROVIDER_START),
             )
         except subprocess.SubprocessError:
             if scoped:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.config import ConfigStore
 from punt_vox.voxd.workers.allowlist import RepoAllowlist
+from punt_vox.voxd.workers.types import WorkerDeadlines
 from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ class WorkerRepoPolicy:
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=WorkerDeadlines.RESOLVE,
             )
         except FileNotFoundError as exc:
             raise ValueError("git is not installed on the daemon host") from exc

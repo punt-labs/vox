@@ -19,16 +19,39 @@ class WorkerDeadlines:
     """
 
     __slots__ = ()
-    # `git worktree add` on a loaded machine has taken over 20 s.
-    CREATE: Final = 90
-    # A start waits this long for another start to release the actor, then
-    # is refused with the reason; the actor holds its lock for a whole start.
+    # The bounded phases of one start, in order. The client budget is their
+    # sum plus a reply margin, so a start in which every phase runs to its
+    # deadline still answers before the client gives up.
+    #
+    # `git rev-parse --show-toplevel` resolving the project.
+    RESOLVE: Final = 5
+    # Waiting for another worker call to release the actor; past this the
+    # start is refused with the reason, since the lock is held for a whole
+    # call.
     LOCK_WAIT: Final = 15
-    # The lock wait plus this start's own work once it holds the lock:
-    # resolution, the saved record and a provider stop on rollback.
-    START_MARGIN: Final = LOCK_WAIT + 15
-    START: Final = CREATE + START_MARGIN
+    # `git worktree add`; on a loaded machine it has taken over 20 s.
+    CREATE: Final = 90
+    # The provider bringing its session up and the harness settling.
+    PROVIDER_START: Final = 15
+    # Handing the harness its environment over the local socket.
+    ENV_DELIVERY: Final = 15
+    # The saved record, a provider stop on rollback, and the reply itself.
+    REPLY_MARGIN: Final = 10
+    START: Final = (
+        RESOLVE + LOCK_WAIT + CREATE + PROVIDER_START + ENV_DELIVERY + REPLY_MARGIN
+    )
     CONTROL: Final = 30
+
+    @classmethod
+    def start_phases(cls) -> tuple[int, ...]:
+        """Return every bounded phase of a start, in order, without the margin."""
+        return (
+            cls.RESOLVE,
+            cls.LOCK_WAIT,
+            cls.CREATE,
+            cls.PROVIDER_START,
+            cls.ENV_DELIVERY,
+        )
 
     @classmethod
     def budget(cls, operation: str) -> int:

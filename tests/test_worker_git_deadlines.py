@@ -448,15 +448,36 @@ def test_worktree_create_failure_reports_the_fatal_line_not_the_progress_line(
         WorkerWorktrees().create(tmp_path, tmp_path / "worktree", "vox-worker/x")
 
 
+def test_start_budget_covers_every_bounded_phase_of_a_start() -> None:
+    """A start in which every phase runs to its deadline still answers.
+
+    Resolve, the lock wait, the worktree create, the provider start and the
+    environment delivery are each bounded; their sum must fit inside the
+    client budget with room for the reply, or a slow start times out on
+    the client and the spoken reason never arrives.
+    """
+    phases = WorkerDeadlines.start_phases()
+    assert phases == (
+        WorkerDeadlines.RESOLVE,
+        WorkerDeadlines.LOCK_WAIT,
+        WorkerDeadlines.CREATE,
+        WorkerDeadlines.PROVIDER_START,
+        WorkerDeadlines.ENV_DELIVERY,
+    )
+    assert sum(phases) + WorkerDeadlines.REPLY_MARGIN <= WorkerDeadlines.START
+    assert WorkerDeadlines.CREATE == WorkerWorktrees.CREATE_DEADLINE
+
+
 @pytest.mark.asyncio
-async def test_client_start_budget_outlives_the_daemon_create_deadline() -> None:
-    """A start that hits the 90 s deadline must still answer, not time out."""
+async def test_client_budgets_derive_from_the_shared_deadlines() -> None:
+    """The client asks WorkerDeadlines for each operation's budget, nothing else."""
     with patch.object(DaemonControl, "request", new=AsyncMock(return_value={})) as rpc:
         await WorkerClient.request("start", project="/repo", task="edit")
         await WorkerClient.request("stop", worker_id="w")
     start, stop = (c.kwargs["timeout"] for c in rpc.call_args_list)
-    assert start == WorkerWorktrees.CREATE_DEADLINE + 30
-    assert stop < WorkerWorktrees.CREATE_DEADLINE
+    assert start == WorkerDeadlines.START
+    assert stop == WorkerDeadlines.CONTROL
+    assert stop < WorkerDeadlines.CREATE
 
 
 @pytest.mark.asyncio
