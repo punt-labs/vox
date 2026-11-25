@@ -1711,6 +1711,29 @@ class TestApplyVibeForSynthesis:
             self._apply("5€[pause]10 years ago", None, "elevenlabs", model) == expected
         )
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("spaced", "attached"),
+        [
+            ("$1 million[pause]10 years ago", "$1million[pause]10 years ago"),
+            ("$1 million,[pause]10 years ago", "$1million,[pause]10 years ago"),
+            (
+                "We saved $1 million—enough to retire",
+                "We saved $1million—enough to retire",
+            ),
+            ("$1 million[pause]€2 million", "$1million[pause]€2million"),
+            ("$1 million-[pause]$2 million", "$1million-[pause]$2million"),
+            ("$1 million—€2 billion", "$1million—€2billion"),
+            ("$1 million\u2019s worth", "$1million\u2019s worth"),
+        ],
+    )
+    def test_spaced_currency_scale_matches_attached(
+        self, model: str, spaced: str, attached: str
+    ) -> None:
+        assert self._apply(spaced, None, "elevenlabs", model) == self._apply(
+            attached, None, "elevenlabs", model
+        )
+
     def test_inline_tags_stripped_non_expressive(self) -> None:
         result = self._apply("hello [serious] world", None, "polly", None)
         assert result == "hello world"
