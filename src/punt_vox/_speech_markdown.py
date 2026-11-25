@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, NamedTuple, cast, final
 
 from markdown_it.rules_inline import backtick
 
+from punt_vox import _speech_parser as md
 from punt_vox._markdown_offsets import MarkdownOffsets
-from punt_vox._speech_parser import ALT_OPENING, SOURCE_OFFSET, LinkSpan, SpeechParser
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -27,7 +27,7 @@ class SpeechMarkdown:
     """Parse speech Markdown and retain offsets into the original input."""
 
     @classmethod
-    def spans(cls, text: str, *, vibed: bool) -> Iterator[CodeSpan | LinkSpan]:
+    def spans(cls, text: str, *, vibed: bool) -> Iterator[CodeSpan | md.LinkSpan]:
         """Yield code, link, and image bounds from the original Markdown parse."""
         if "`" not in text and "](" not in text:
             return
@@ -40,38 +40,38 @@ class SpeechMarkdown:
     @staticmethod
     def _source_span(
         token: Token, offset: int, positions: dict[int, int]
-    ) -> CodeSpan | LinkSpan | None:
+    ) -> CodeSpan | md.LinkSpan | None:
         at = positions.get
         if token.type == "code_inline":
-            opening, end = cast("tuple[int, int]", token.meta[SOURCE_OFFSET])
+            opening, end = cast("tuple[int, int]", token.meta[md.SOURCE_OFFSET])
             width = len(token.markup)
             code = at(offset + opening), at(offset + end - width)
             if None not in code:
                 start, close = cast("tuple[int, int]", code)
                 return CodeSpan(start, start + width, close)
-        elif isinstance(bounds := token.meta.get(SOURCE_OFFSET), tuple):
-            opening, label_end, end = cast("tuple[int, int, int]", bounds)
+        elif isinstance(bounds := token.meta.get(md.SOURCE_OFFSET), md.LabelBounds):
+            opening, label_end, end, width = bounds
             return SpeechMarkdown._label_span(
                 (at(offset + opening), at(offset + label_end), at(offset + end)),
-                image=token.type == "image",
+                width=width,
             )
         return None
 
     @staticmethod
     def _label_span(
-        bounds: tuple[int | None, int | None, int | None], *, image: bool
-    ) -> LinkSpan | None:
+        bounds: tuple[int | None, int | None, int | None], *, width: int
+    ) -> md.LinkSpan | None:
         if None in bounds:
             return None
         start, label_end, close = cast("tuple[int, int, int]", bounds)
-        return LinkSpan((start - image, start + 1), label_end, close + 1)
+        return md.LinkSpan((start - width, start + 1), label_end, close + 1)
 
     @classmethod
     def _inline_sources(
         cls, text: str, *, vibed: bool
     ) -> Iterator[tuple[str, list[Token], list[int]]]:
         lines = MarkdownOffsets.line_boundaries(text)
-        for token in cls._MARKDOWN.parse(text, SpeechParser.speech_env(vibed=vibed)):
+        for token in cls._MARKDOWN.parse(text, md.SpeechParser.speech_env(vibed=vibed)):
             if token.type == "inline" and token.map is not None and token.children:
                 start, end = token.map
                 yield token.content, token.children, lines[start : end + 1]
@@ -83,7 +83,7 @@ class SpeechMarkdown:
         for token in tokens:
             yield token, offset
             if token.type == "image" and token.children:
-                start = cast("int", token.meta[ALT_OPENING])
+                start = cast("int", token.meta[md.ALT_OPENING])
                 yield from cls._source_tokens(token.children, offset + start)
 
     @staticmethod
@@ -91,10 +91,10 @@ class SpeechMarkdown:
         start, size = state.pos, len(state.tokens)
         matched = backtick(state, silent)
         if matched and len(state.tokens) > size:
-            state.tokens[-1].meta[SOURCE_OFFSET] = (start, state.pos)
+            state.tokens[-1].meta[md.SOURCE_OFFSET] = (start, state.pos)
         return matched
 
-    _MARKDOWN = SpeechParser.create()
+    _MARKDOWN = md.SpeechParser.create()
     _MARKDOWN.inline.ruler.at(
         "backticks",
         lambda state, silent: SpeechMarkdown._code_rule(state, silent=silent),

@@ -9,16 +9,18 @@ from markdown_it import MarkdownIt
 from markdown_it.rules_block import fence
 from markdown_it.rules_inline import image, link
 
-from punt_vox._link_labels import VIBE_TAG_RE, LinkSpan as LinkSpan
+from punt_vox._speech_label_rule import (
+    ALT_OPENING as ALT_OPENING,
+    SOURCE_OFFSET as SOURCE_OFFSET,
+    VIBE_TAG_RE,
+    LabelBounds as LabelBounds,
+    LinkSpan as LinkSpan,
+    SpeechLabelRule,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from markdown_it.rules_block import StateBlock
-    from markdown_it.rules_inline import StateInline
 
-ALT_OPENING = "vox_alt_opening"
-SOURCE_OFFSET = "vox_source_offset"
 _VIBED = "vox_vibed"
 _FENCE_TAGS = re.compile(rf"(?:{VIBE_TAG_RE.pattern}[ \t]*)+(?=`{{3,}}|~{{3,}})")
 
@@ -39,10 +41,12 @@ class SpeechParser(MarkdownIt):
             {"alt": ["paragraph", "reference", "blockquote", "list"]},
         )
         parser.inline.ruler.at(
-            "link", lambda state, silent: cls._label_rule(link, state, silent=silent)
+            "link",
+            lambda state, silent: SpeechLabelRule.apply(link, state, silent=silent),
         )
         parser.inline.ruler.at(
-            "image", lambda state, silent: cls._label_rule(image, state, silent=silent)
+            "image",
+            lambda state, silent: SpeechLabelRule.apply(image, state, silent=silent),
         )
         return parser
 
@@ -55,24 +59,6 @@ class SpeechParser(MarkdownIt):
     def validateLink(self, url: str) -> bool:
         """Allow local file links while keeping the parser's other URL rules."""
         return url.lower().startswith("file:") or super().validateLink(url)
-
-    @staticmethod
-    def _label_rule(
-        rule: Callable[[StateInline, bool], bool], state: StateInline, *, silent: bool
-    ) -> bool:
-        opening = state.pos + (rule is image)
-        opening_token = len(state.tokens) + bool(state.pending)
-        matched = rule(state, silent)
-        if matched and not silent:
-            label_end = state.md.helpers.parseLinkLabel(
-                state, opening, disableNested=rule is link
-            )
-            token = state.tokens[opening_token]
-            if rule is image:
-                token.meta[ALT_OPENING] = opening + 1
-            if state.pos > label_end + 2 and state.src[label_end + 1] == "(":
-                token.meta[SOURCE_OFFSET] = (opening, label_end, state.pos - 1)
-        return matched
 
     @staticmethod
     def _fence_rule(

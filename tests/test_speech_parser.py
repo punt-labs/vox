@@ -10,12 +10,12 @@ from punt_vox._speech_parser import ALT_OPENING, SOURCE_OFFSET, SpeechParser
 @pytest.mark.parametrize(
     ("text", "image_bounds"),
     [
-        ("See ![chart](image.png).", (5, 11, 22)),
+        ("See ![chart](image.png).", (5, 11, 22, 1)),
         ("See ![chart][img].\n\n[img]: image.png", None),
     ],
 )
 def test_image_records_alt_opening_and_only_inline_destination_bounds(
-    text: str, image_bounds: tuple[int, int, int] | None
+    text: str, image_bounds: tuple[int, int, int, int] | None
 ) -> None:
     tokens = SpeechParser.create().parse(text, SpeechParser.speech_env(vibed=False))
     inline = next(token for token in tokens if token.type == "inline")

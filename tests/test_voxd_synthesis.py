@@ -1394,6 +1394,10 @@ class TestApplyVibeForSynthesis:
         ("text", "expected"),
         [
             ("Use ![diagram](image.png).", "Use diagram."),
+            ("See [![diagram](d.png)]", "See diagram"),
+            ("[![diagram](x.png)]", "diagram"),
+            ("See [[![diagram](d.png)]]", "See diagram"),
+            ("See [![diagram](d.png)](/help).", "See diagram."),
             (
                 "See [![build passing](badge.svg)](https://example.com).",
                 "See build passing.",
