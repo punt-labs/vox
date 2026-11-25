@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Self
 
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
-from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
+from punt_vox.voxd.pcm_output import OutputStreamFactory
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
@@ -98,13 +98,15 @@ class PlaybackQueue:
     _queue: asyncio.Queue[PlaybackItem]
 
     def __new__(
-        cls, output_stream: OutputStreamFactory = sounddevice_output_stream
+        cls,
+        output_stream: OutputStreamFactory | None = None,  # None: the default.
     ) -> Self:
         """Create a playback queue that opens PCM streams with *output_stream*.
 
         The default is PortAudio, unless the test-only ``VOX_PCM_OUTPUT``
-        switch names the silent device. The queue is built once at daemon
-        boot, so this is where every test-only call switch is validated.
+        switch names the silent device; a device passed explicitly is kept
+        whatever the switch says. The queue is built once at daemon boot,
+        so this is where every test-only call switch is validated.
         """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
@@ -249,10 +251,13 @@ class PlaybackQueue:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-        except FileNotFoundError as exc:
-            elapsed = _monotonic() - start
+        except OSError as exc:
+            # A missing player binary is the common case; any other OSError
+            # at spawn is reported the same way, under its own type name.
+            what = "binary not found" if isinstance(exc, FileNotFoundError) else "spawn"
             logger.error(
-                "Playback FAILED: binary not found: %s (%s) cmd=%s audio_env=%s",
+                "Playback FAILED: %s: %s (%s) cmd=%s audio_env=%s",
+                what,
                 cmd[0],
                 exc,
                 cmd,
@@ -261,20 +266,8 @@ class PlaybackQueue:
             self.record_result(
                 path=path,
                 rc=-1,
-                elapsed=elapsed,
-                stderr=f"FileNotFoundError: {exc}",
-            )
-            return None
-        except OSError as exc:
-            elapsed = _monotonic() - start
-            logger.error(
-                "Playback FAILED: OSError spawning %s: %s audio_env=%s",
-                cmd[0],
-                exc,
-                env_snapshot,
-            )
-            self.record_result(
-                path=path, rc=-1, elapsed=elapsed, stderr=f"OSError: {exc}"
+                elapsed=_monotonic() - start,
+                stderr=f"{type(exc).__name__}: {exc}",
             )
             return None
 

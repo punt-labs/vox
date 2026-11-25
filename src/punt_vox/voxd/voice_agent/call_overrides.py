@@ -28,7 +28,8 @@ sets them in the daemon's environment:
   Unset or empty is the default device; any other value fails with a
   :class:`ValueError` naming the variable, so a misspelt switch never falls
   back to PortAudio and surfaces later as an open error that does not name
-  it. The playback queue reads it, because the device is chosen there.
+  it. The playback queue reads it when no device was passed to it, because
+  the default device is chosen there; a device a caller passes is kept.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ import os
 from typing import TYPE_CHECKING, Final, final
 from urllib.parse import urlsplit
 
-from punt_vox.voxd.pcm_output import OutputStreamFactory
+from punt_vox.voxd.pcm_output import OutputStreamFactory, sounddevice_output_stream
 from punt_vox.voxd.pcm_silent import SilentOutputStream
 
 if TYPE_CHECKING:
@@ -70,16 +71,24 @@ class CallOverrides:
     __slots__ = ()
 
     @classmethod
-    def check(cls, default: OutputStreamFactory) -> OutputStreamFactory:
+    def check(
+        cls,
+        explicit: OutputStreamFactory | None,  # None: no device was passed.
+    ) -> OutputStreamFactory:
         """Validate every switch now and return the output device.
 
         Called once at daemon boot, from the playback queue. A malformed
         switch raises the same :class:`ValueError` its use would; the REST
-        and loopback values are discarded here and read again per use.
+        and loopback values are discarded here and read again per use. The
+        device is *explicit* when the caller passed one, whatever the output
+        switch says; otherwise PortAudio or the switch's choice.
         """
         cls.rest("", "")
         cls.allow_loopback()
-        return cls.pcm_output(default)
+        if explicit is not None:
+            cls.pcm_output(explicit)
+            return explicit
+        return cls.pcm_output(sounddevice_output_stream)
 
     @classmethod
     def rest(cls, default: str, api_key: str) -> tuple[str, str]:

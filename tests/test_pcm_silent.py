@@ -62,6 +62,14 @@ def test_the_playback_queue_reads_the_env_var(monkeypatch: pytest.MonkeyPatch) -
     assert PlaybackQueue()._output_stream is SilentOutputStream
 
 
+def test_an_explicit_device_is_kept_despite_the_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The switch replaces only the default device, never one the caller passed."""
+    monkeypatch.setenv("VOX_PCM_OUTPUT", "silent")
+    assert PlaybackQueue(_crashing_device)._output_stream is _crashing_device
+
+
 def _crashing_device(
     *,
     samplerate: int,

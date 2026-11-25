@@ -45,4 +45,4 @@ def test_boot_stops_on_a_malformed_switch_naming_it(
 def test_check_passes_with_every_switch_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     for switch in ("VOX_CONVAI_BASE_URL", "VOX_CALL_ALLOW_LOOPBACK", "VOX_PCM_OUTPUT"):
         monkeypatch.delenv(switch, raising=False)
-    assert CallOverrides.check(sounddevice_output_stream) is sounddevice_output_stream
+    assert CallOverrides.check(None) is sounddevice_output_stream
