@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
     from markdown_it.rules_block import StateBlock
     from markdown_it.rules_inline import StateInline
-    from markdown_it.token import Token
 
 ALT_OPENING = "vox_alt_opening"
 SOURCE_OFFSET = "vox_source_offset"
@@ -47,9 +46,10 @@ class SpeechParser(MarkdownIt):
         )
         return parser
 
-    def parse_speech(self, text: str, *, vibed: bool) -> list[Token]:
-        """Parse text with optional expressive tags before code fences."""
-        return self.parse(text, {_VIBED: vibed})
+    @staticmethod
+    def speech_env(*, vibed: bool) -> dict[str, bool]:
+        """Configure whether expressive tags may precede code fences."""
+        return {_VIBED: vibed}
 
     @override
     def validateLink(self, url: str) -> bool:

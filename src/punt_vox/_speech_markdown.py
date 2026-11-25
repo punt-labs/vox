@@ -71,7 +71,7 @@ class SpeechMarkdown:
         cls, text: str, *, vibed: bool
     ) -> Iterator[tuple[str, list[Token], list[int]]]:
         lines = MarkdownOffsets.line_boundaries(text)
-        for token in cls._MARKDOWN.parse_speech(text, vibed=vibed):
+        for token in cls._MARKDOWN.parse(text, SpeechParser.speech_env(vibed=vibed)):
             if token.type == "inline" and token.map is not None and token.children:
                 start, end = token.map
                 yield token.content, token.children, lines[start : end + 1]

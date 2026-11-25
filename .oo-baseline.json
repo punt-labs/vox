@@ -158,7 +158,7 @@
   "src/punt_vox/_speech_parser.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.0,
+    "avg_params": 1.8,
     "max_complexity": 6.0,
     "avg_complexity": 2.6,
     "module_size": 73.0,
