@@ -142,6 +142,22 @@ def test_a_fake_call_and_a_live_call_keep_separate_registrations(
     assert live.is_file()
 
 
+def test_teardown_under_the_override_leaves_no_loopback_files_behind(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One fake port leaves nothing in the config dir once torn down.
+
+    A real HOME would otherwise collect one registration lock per fake
+    port the tier ever used; the registration itself is already removed.
+    """
+    monkeypatch.setattr("punt_vox.voxd.voice_agent.agent.config_dir", lambda: tmp_path)
+    monkeypatch.setenv("VOX_CONVAI_BASE_URL", wire.url)
+    with ConvAIControl(_API_KEY) as control:
+        VoiceAgent(control).connection((_CLOCK,))
+        VoiceAgent(control).teardown()
+    assert sorted(path.name for path in tmp_path.iterdir()) == []
+
+
 def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     tmp_path: Path, wire: Requests
 ) -> None:

@@ -32,10 +32,11 @@ class VoiceAgent:
     a stable tool catalog; explicitly tear the agent down to replace that catalog.
     """
 
-    __slots__ = ("_control", "_file", "_lock")
+    __slots__ = ("_control", "_file", "_lock", "_transient")
     _control: ConvAIControl
     _file: AtomicFile
     _lock: SiblingLock
+    _transient: bool  # A fake endpoint's registration, removed whole on teardown.
 
     def __new__(
         cls,
@@ -50,9 +51,11 @@ class VoiceAgent:
         """
         self = super().__new__(cls)
         self._control = control
-        default = control.registration_path(config_dir() / "voice-agent.json")
+        live = config_dir() / "voice-agent.json"
+        default = control.registration_path(live)
         self._file = AtomicFile(path if path is not None else default)
         self._lock = SiblingLock(self._file.path)
+        self._transient = path is None and default != live
         return self
 
     def connection(self, tools: tuple[ClientTool, ...]) -> tuple[str, tuple[str, ...]]:
@@ -66,20 +69,33 @@ class VoiceAgent:
                 stored = None
             if stored is None:
                 stored = self._provision(ordered, fingerprint)
-            if stored.configuration_hash != fingerprint:
-                msg = "Vox voice agent configuration changed; run `vox call teardown`"
-                raise ConvAIError(msg)
-            agent_id = stored.agent_id
-            if agent_id is None:
-                msg = "No provisioned ElevenLabs agent"
-                raise ConvAIError(msg)
+            agent_id = self._usable_agent_id(stored, fingerprint)
         return self._control.signed_url(agent_id), stored.tool_ids
 
+    @staticmethod
+    def _usable_agent_id(stored: Registration, fingerprint: str) -> str:
+        """Return the agent id of a registration that matches this catalog, or raise."""
+        if stored.configuration_hash != fingerprint:
+            msg = "Vox voice agent configuration changed; run `vox call teardown`"
+            raise ConvAIError(msg)
+        if stored.agent_id is None:
+            msg = "No provisioned ElevenLabs agent"
+            raise ConvAIError(msg)
+        return stored.agent_id
+
     def teardown(self) -> None:
-        """Delete managed resources; retain the config if deletion must be retried."""
+        """Delete managed resources; retain the config if deletion must be retried.
+
+        A fake endpoint's registration is one of many a test tier may leave
+        under a real HOME, one per port, so its lock goes with it once the
+        delete is through. The live registration's lock stays: other vox
+        processes serialize on it.
+        """
         with self._locked():
             if (stored := self._read()) is not None:
                 self._delete(stored)
+        if self._transient:
+            self._lock.path.unlink(missing_ok=True)
 
     @contextmanager
     def _locked(self) -> Generator[None]:
