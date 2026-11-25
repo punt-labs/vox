@@ -67,14 +67,21 @@ class WorkerDiscard:
     def run(cls, record: WorkerRecord, policy: WorkerRepoPolicy) -> WorkerRecord:
         """Discard the worktree and replace the pending marker with the outcome.
 
-        The policy records a git or path failure itself. Anything else that
-        escapes it still lands on the record as ``discard_error``: the same
-        settlement job may have run harness cleanup, and an exception here
-        would lose that outcome with it.
+        The policy records a git or path failure itself. An OSError,
+        ValueError, RuntimeError or SubprocessError that escapes it still
+        lands on the record as ``discard_error``, with its traceback in the
+        log: the same settlement job may have run harness cleanup, and an
+        exception here would lose that outcome with it. A programming error
+        (TypeError, KeyError) escapes by design and fails the job.
         """
         try:
             return policy.discard_recorded(cls.MARKERS.strip(record))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             failure = GitFailure(exc)
-            logger.warning("Worker %s worktree discard failed: %s", record.id, failure)
+            logger.warning(
+                "Worker %s worktree discard failed: %s",
+                record.id,
+                failure,
+                exc_info=True,
+            )
             return cls.MARKERS.replace(record, {"discard_error": str(failure)})

@@ -82,9 +82,21 @@ class WorkerInventory:
     def update(
         self, worker_id: str, transform: Callable[[WorkerRecord], WorkerRecord]
     ) -> WorkerRecord:
-        """Serialize updates that can race with retirement cleanup completion."""
+        """Serialize updates that can race with retirement cleanup completion.
+
+        The read, the transform and the write happen under one lock, so a
+        concurrent update is never overwritten by a stale copy. A save that
+        fails still leaves the transformed record in memory before the error
+        propagates: an outcome such as a finished discard is irreversible, and
+        memory must carry it even when the disk does not.
+        """
         with self._updates:
-            return self.save(transform(self.get(worker_id)))
+            transformed = transform(self.get(worker_id))
+            try:
+                return self.save(transformed)
+            except (OSError, ValueError):
+                self.remember(transformed)
+                raise
 
     def remember(self, record: WorkerRecord) -> None:
         """Retain a record in memory if rollback cannot persist it."""

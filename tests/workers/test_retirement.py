@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import replace
-from threading import Event
+from threading import Event, Thread
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock, patch
 
@@ -392,9 +392,8 @@ def test_unsaved_settlement_outcome_still_reaches_memory(tmp_path: Path) -> None
         "work", str(tmp_path), provider="fake", harness="test"
     )
     record = replace(launched, state="stopped", last_report={"discard_pending": True})
-    inventory = Mock(spec=WorkerInventory)
-    inventory.get.return_value = record
-    inventory.update.side_effect = OSError("disk full")
+    inventory = WorkerInventory(WorkerRecords(tmp_path / "workers"))
+    inventory.restore([record])
 
     def discarded(current: WorkerRecord) -> WorkerRecord:
         return replace(
@@ -406,11 +405,11 @@ def test_unsaved_settlement_outcome_still_reaches_memory(tmp_path: Path) -> None
     retirement = WorkerRetirement(
         WorkerSettlement({"test": TrivialProfile()}, policy), inventory
     )
-    job = retirement.schedule(record.id)
-    assert job is not None
-    job.result(timeout=1)
-    inventory.remember.assert_called_once()
-    remembered = inventory.remember.call_args.args[0]
+    with patch.object(WorkerRecords, "save", side_effect=OSError("disk full")):
+        job = retirement.schedule(record.id)
+        assert job is not None
+        job.result(timeout=1)
+    remembered = inventory.get(record.id)
     assert remembered.last_report["worktree_discarded"] is True
     assert "discard_pending" not in remembered.last_report
 
@@ -465,3 +464,61 @@ async def test_a_second_stop_on_the_same_worker_never_grows_the_awaited_job(
     assert not discarding.is_set() or reply["last_report"].get("discard_pending")
     _settled(registry)
     assert registry.list()[0].last_report["worktree_discarded"] is True
+
+
+def test_failed_settlement_save_never_overwrites_a_concurrent_stop(
+    tmp_path: Path,
+) -> None:
+    """A stop that lands while a failed save is remembered keeps its marker.
+
+    The settlement job folds worktree_discarded; its save fails. A stop on
+    the same worker marks discard_pending in that moment. Memory must end
+    with both: the stop applied on top of the fold, never a stale fold
+    written over the stop. Otherwise the queue's rerun finds nothing owed
+    and the retry is lost until restart.
+    """
+    launched = _registry(tmp_path, FakeWorkerProvider()).start(
+        "work", str(tmp_path), provider="fake", harness="test"
+    )
+    record = replace(launched, state="stopped", last_report={"discard_pending": True})
+    inventory = WorkerInventory(WorkerRecords(tmp_path / "workers"))
+    inventory.restore([record])
+
+    def discarded(current: WorkerRecord) -> WorkerRecord:
+        return replace(
+            current, last_report={**current.last_report, "worktree_discarded": True}
+        )
+
+    policy = Mock(spec=WorkerRepoPolicy)
+    policy.discard_recorded.side_effect = discarded
+    retirement = WorkerRetirement(
+        WorkerSettlement({"test": TrivialProfile()}, policy), inventory
+    )
+    original_remember = WorkerInventory.remember
+    stopper = Thread(
+        target=lambda: inventory.update(
+            record.id,
+            lambda r: replace(
+                r, last_report={**r.last_report, "discard_pending": True}
+            ),
+        )
+    )
+
+    def remember_while_a_stop_lands(self: WorkerInventory, rec: WorkerRecord) -> None:
+        if not stopper.is_alive() and stopper.ident is None:
+            stopper.start()
+            time.sleep(0.05)
+        original_remember(self, rec)
+
+    with (
+        patch.object(WorkerRecords, "save", side_effect=[OSError("disk full"), None]),
+        patch.object(WorkerInventory, "remember", remember_while_a_stop_lands),
+    ):
+        job = retirement.schedule(record.id)
+        assert job is not None
+        job.result(timeout=1)
+        stopper.join(1)
+    assert not stopper.is_alive()
+    final = inventory.get(record.id).last_report
+    assert final["worktree_discarded"] is True
+    assert final["discard_pending"] is True

@@ -152,12 +152,8 @@ class WorkerRetirement:
     def _checkpoint(self, worker_id: str, settled: SettledDebts) -> WorkerRecord:
         """Fold the settled markers onto the newest record and save it.
 
-        A save that fails still updates memory: the discard the job ran is
-        irreversible, so the in-memory record must carry its outcome even
-        when the disk does not.
+        The inventory folds, saves and, when the save fails, remembers under
+        its own lock, so a concurrent stop's marker is never overwritten by
+        a stale copy and a failed save never masks the fold.
         """
-        try:
-            return self._inventory.update(worker_id, settled.fold)
-        except (OSError, ValueError):
-            self._inventory.remember(settled.fold(self._inventory.get(worker_id)))
-            raise
+        return self._inventory.update(worker_id, settled.fold)

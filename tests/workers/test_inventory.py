@@ -5,6 +5,7 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from test_workers import FakeWorkerProvider, _registry
 
 from punt_vox.voxd.workers.inventory import WorkerInventory
@@ -74,3 +75,17 @@ def test_admission_stays_retryable_during_liveness_confirmation(
             True,
             False,
         )
+
+
+def test_failed_save_keeps_the_transformed_record_in_memory(tmp_path: Path) -> None:
+    """An update whose save fails still leaves the transformed record in memory."""
+    registry = _registry(tmp_path, FakeWorkerProvider())
+    record = registry.start("work", str(tmp_path), provider="fake", harness="test")
+    inventory = WorkerInventory(WorkerRecords(tmp_path / "workers"))
+    inventory.restore([record])
+    with (
+        patch.object(WorkerRecords, "save", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        inventory.update(record.id, lambda r: replace(r, state="stopped"))
+    assert inventory.get(record.id).state == "stopped"
