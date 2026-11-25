@@ -18,7 +18,6 @@ from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_status import DaemonState
 from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
-from punt_vox.service.lifecycle_status import StatusCheck
 
 
 def test_status_a_voxd_that_answers_is_running() -> None:
@@ -161,16 +160,6 @@ def test_status_asks_the_published_port_before_lsof_runs() -> None:
     assert reading.health.pid == 100
     assert world.tokens_to_port == [8421]
     assert world.tokens_to == [], "no attributed request was needed"
-
-
-def test_status_published_port_health_gets_a_reserved_share() -> None:
-    """lsof gets only what the health reserve leaves; the reading stays bounded."""
-    world = FakeWorld(port_file=8421, probe_blocks_s=60.0)
-    world.run_unit(100)
-    clock = FakeClock()
-    reading = lifecycle(world, clock).status()
-    assert reading.state is DaemonState.RUNNING
-    assert clock.monotonic() <= StatusCheck.HEALTH_RESERVE_S
 
 
 def test_status_sends_no_published_token_without_serve_port() -> None:

@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self, final
+from unittest.mock import MagicMock
 
 from punt_vox.service.backend import (
     KILL_GRACE_FLOOR_S,
@@ -26,7 +27,9 @@ from punt_vox.service.backend import (
     PrivilegeDeniedError,
 )
 from punt_vox.service.clock import Poll
+from punt_vox.service.daemon_probe import DaemonProbe
 from punt_vox.service.deadline import Deadline
+from punt_vox.service.health import HealthTarget
 from punt_vox.service.health_request import HealthRequest
 from punt_vox.service.lifecycle import DaemonLifecycle
 from punt_vox.service.lifecycle_report import LifecycleOutcome
@@ -663,6 +666,23 @@ def assert_p5_no_signal(world: FakeWorld, *forbidden: int) -> None:
     assert not set(world.signalled) & set(forbidden)
 
 
+def probe_over(
+    mgr: MagicMock, target: HealthTarget | MagicMock | None = None
+) -> DaemonProbe:
+    """Return the real probe over a mocked process manager, on a fake clock."""
+    pinned = target or HealthTarget("")
+    return DaemonProbe(mgr, lambda: pinned, Poll(FakeClock()))
+
+
+def holding_voxd() -> tuple[MagicMock, MagicMock]:
+    """Return a process manager whose port 8421 holder is one voxd handle."""
+    mgr = MagicMock()
+    held = MagicMock(pid=42)
+    mgr.find_pid_on_port.return_value = [42]
+    mgr.open_voxd.return_value = held
+    return mgr, held
+
+
 def lifecycle(world: FakeWorld, clock: FakeClock | None = None) -> DaemonLifecycle:
     """Return a lifecycle over *world*, polling on a fake clock."""
     world.clock = clock if clock is not None else FakeClock()
@@ -689,5 +709,7 @@ __all__ = [
     "assert_p5_no_signal",
     "denied",
     "failed",
+    "holding_voxd",
     "lifecycle",
+    "probe_over",
 ]
