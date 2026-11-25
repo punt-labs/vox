@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
@@ -39,12 +39,22 @@ async def test_the_health_route_carries_the_output_health_probe() -> None:
         async def probe_within_budget(self) -> dict[str, object]:
             return {"output_dirs": {"music": "writable"}}
 
+    @final
     class _CollectingWs:
-        def __init__(self) -> None:
-            self.sent: list[dict[str, object]] = []
+        __slots__ = ("_sent",)
+        _sent: list[dict[str, object]]
+
+        def __new__(cls) -> Self:
+            self = super().__new__(cls)
+            self._sent = []
+            return self
+
+        @property
+        def sent(self) -> list[dict[str, object]]:
+            return self._sent
 
         async def send_json(self, data: dict[str, object]) -> None:
-            self.sent.append(data)
+            self._sent.append(data)
 
     playback = PlaybackQueue()
     routes = SystemRoutes.build(

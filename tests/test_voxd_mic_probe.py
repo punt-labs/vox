@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Literal, NoReturn, Self, cast, final
 
 import pytest
 from conversation_mode._fake_sounddevice import FakeSoundDevice
@@ -35,14 +35,25 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.input_device import InputDevice
 
 
+@final
 class _CollectingWs:
     """A fake websocket that records the frames the handler sends."""
 
-    def __init__(self) -> None:
-        self.sent: list[dict[str, object]] = []
+    __slots__ = ("_sent",)
+    _sent: list[dict[str, object]]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._sent = []
+        return self
+
+    @property
+    def sent(self) -> list[dict[str, object]]:
+        """The frames sent so far, in order."""
+        return self._sent
 
     async def send_json(self, data: dict[str, object]) -> None:
-        self.sent.append(data)
+        self._sent.append(data)
 
 
 def _report(peak: int) -> MicProbeReport:
@@ -112,8 +123,13 @@ async def test_missing_call_extra_names_the_fix(
 class _RecordingStream:
     """A started stream handle that records when it is left."""
 
-    def __init__(self, events: list[str]) -> None:
+    __slots__ = ("_events",)
+    _events: list[str]
+
+    def __new__(cls, events: list[str]) -> Self:
+        self = super().__new__(cls)
         self._events = events
+        return self
 
     def __exit__(self, *exc_info: object) -> None:
         self._events.append("exit")
@@ -122,16 +138,32 @@ class _RecordingStream:
 class _RecordingBackend:
     """A probe backend that records the order of its calls."""
 
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.kwargs: dict[str, object] = {}
+    __slots__ = ("_events", "_kwargs")
+    _events: list[str]
+    _kwargs: dict[str, object]
+
+    def __new__(cls, events: list[str]) -> Self:
+        self = super().__new__(cls)
+        self._events = events
+        self._kwargs = {}
+        return self
+
+    @property
+    def events(self) -> list[str]:
+        """The calls recorded so far, shared with the streams it opens."""
+        return self._events
+
+    @property
+    def kwargs(self) -> dict[str, object]:
+        """The keyword arguments of the last open."""
+        return self._kwargs
 
     def open_default_input(
         self, **kwargs: object
     ) -> tuple[InputDevice, _RecordingStream]:
-        self.events.append("open_default_input")
-        self.kwargs = kwargs
-        return FAKE_DEVICE, _RecordingStream(self.events)
+        self._events.append("open_default_input")
+        self._kwargs = kwargs
+        return FAKE_DEVICE, _RecordingStream(self._events)
 
 
 def _install_sleep(
@@ -408,8 +440,13 @@ class _RefusingFinder:
     so the exception reaches the importer before the module exists.
     """
 
-    def __init__(self, error: Exception) -> None:
+    __slots__ = ("_error",)
+    _error: Exception
+
+    def __new__(cls, error: Exception) -> Self:
+        self = super().__new__(cls)
         self._error = error
+        return self
 
     def find_spec(self, name: str, *_args: object) -> None:
         if name == "sounddevice":

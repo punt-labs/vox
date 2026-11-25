@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
@@ -14,31 +14,54 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.mic_audio_source import NativeInputStream
 
 
+@final
 class _Stream:
     """A native stream that records its teardown calls."""
 
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+    __slots__ = ("_calls",)
+    _calls: list[str]
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._calls = []
+        return self
+
+    @property
+    def calls(self) -> list[str]:
+        """The teardown calls made on this stream, in order."""
+        return self._calls
 
     def __exit__(self, *exc_info: object) -> None:
-        self.calls.append("exit")
+        self._calls.append("exit")
 
     def stop(self, *, ignore_errors: bool = True) -> None:
-        self.calls.append(f"stop({ignore_errors})")
+        self._calls.append(f"stop({ignore_errors})")
 
     def close(self, *, ignore_errors: bool = True) -> None:
-        self.calls.append(f"close({ignore_errors})")
+        self._calls.append(f"close({ignore_errors})")
 
 
+@final
 class _Device:
     """A device whose strict release records the stream it was given, or refuses."""
 
-    def __init__(self, error: OSError | None = None) -> None:  # None: release succeeds
-        self.released_streams: list[object] = []
+    __slots__ = ("_error", "_released")
+    _error: OSError | None  # None: the release succeeds.
+    _released: list[object]
+
+    def __new__(cls, error: OSError | None = None) -> Self:  # None: release succeeds
+        self = super().__new__(cls)
+        self._released = []
         self._error = error
+        return self
+
+    @property
+    def released_streams(self) -> list[object]:
+        """The streams handed to :meth:`released`, in order."""
+        return self._released
 
     def released(self, stream: NativeInputStream) -> None:
-        self.released_streams.append(stream)
+        self._released.append(stream)
         if self._error is not None:
             raise self._error
 
