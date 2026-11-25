@@ -46,9 +46,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         match self.path:
             case "/v1/convai/tools":
-                self._reply({"id": self._fake.issue("tool")})
+                self._reply({"id": self._fake.issue(_TOOLS)})
             case "/v1/convai/agents/create":
-                self._reply({"agent_id": self._fake.issue("agent")})
+                self._reply({"agent_id": self._fake.issue(_AGENTS)})
             case _:
                 self._unknown_path()
 
@@ -61,7 +61,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._unknown_path()
             return
         agent_id = parse_qs(url.query).get("agent_id", [""])[0]
-        if self._fake.issued(f"{_AGENTS}/{agent_id}"):
+        if self._fake.issued(_AGENTS, agent_id):
             self._reply({"signed_url": self._fake.signed_url})
         else:
             self._error("unknown agent_id")
@@ -71,7 +71,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._seen()
         if not self._authorized():
             return
-        if self._fake.issued(urlsplit(self.path).path):
+        prefix, _, resource_id = urlsplit(self.path).path.rpartition("/")
+        if self._fake.issued(prefix, resource_id):
             self._reply({})
         else:
             self._error("unknown id")
@@ -114,7 +115,8 @@ class FakeConvAIRest:
     never issued, a request that makes the handler raise -- is recorded in
     ``errors``, which the fixture asserts is empty. A query string (the real
     client deletes with ``?force=true``) never changes which id a request
-    names.
+    names, and each id belongs to the resource that issued it: a tool id is
+    never signed as an agent, and a DELETE must name the right route.
     """
 
     __slots__ = (
@@ -128,7 +130,7 @@ class FakeConvAIRest:
     _signed_url: str
     _requests: list[tuple[str, str]]
     _errors: list[str]
-    _issued: list[str]
+    _issued: dict[str, list[str]]  # Ids handed out, per resource route.
     _server: _Server
     _thread: Thread
 
@@ -138,7 +140,7 @@ class FakeConvAIRest:
         self._signed_url = signed_url
         self._requests = []
         self._errors = []
-        self._issued = []
+        self._issued = {_TOOLS: [], _AGENTS: []}
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.fake = self
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
@@ -164,16 +166,16 @@ class FakeConvAIRest:
         """Keep one thing the daemon did that the real API would not accept."""
         self._errors.append(text)
 
-    def issue(self, kind: str) -> str:
-        """Hand out the next ``tool_N`` or ``agent_N`` id and remember it."""
-        resource_id = f"{kind}_{len(self._issued) + 1}"
-        self._issued.append(resource_id)
+    def issue(self, route: str) -> str:
+        """Hand out the next ``tool_N`` or ``agent_N`` id for *route*; remember it."""
+        ids = self._issued[route]
+        resource_id = f"{route.rpartition('/')[2].rstrip('s')}_{len(ids) + 1}"
+        ids.append(resource_id)
         return resource_id
 
-    def issued(self, path: str) -> bool:
-        """Return whether *path* (no query) names an id this fake handed out."""
-        prefix, _, resource_id = path.rpartition("/")
-        return prefix in {_TOOLS, _AGENTS} and resource_id in self._issued
+    def issued(self, route: str, resource_id: str) -> bool:
+        """Return whether *route* (``/v1/convai/tools`` or agents) issued the id."""
+        return resource_id in self._issued.get(route, ())
 
     def __enter__(self) -> Self:
         self._thread.start()

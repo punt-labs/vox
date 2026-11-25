@@ -133,3 +133,27 @@ def test_a_server_thread_that_will_not_stop_fails_the_exit(
     monkeypatch.setattr(threading.Thread, "is_alive", _always_alive)
     with pytest.raises(RuntimeError, match="fake REST server thread did not stop"):
         rest.__exit__(None, None, None)
+
+
+def test_a_tool_id_is_never_signed_as_an_agent() -> None:
+    """Each id belongs to the resource that issued it; the fake keeps them apart."""
+    with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
+        tool = http.post("/v1/convai/tools", json={}).json()["id"]
+        signed = http.get(
+            "/v1/convai/conversation/get-signed-url", params={"agent_id": tool}
+        )
+        assert signed.status_code == 404
+    route = "GET /v1/convai/conversation/get-signed-url"
+    assert rest.errors == [f"{route}?agent_id={tool}: unknown agent_id"]
+
+
+def test_a_delete_names_the_resource_that_issued_the_id() -> None:
+    with FakeConvAIRest("ws://127.0.0.1:1/x") as rest, _client(rest) as http:
+        tool = http.post("/v1/convai/tools", json={}).json()["id"]
+        agent = http.post("/v1/convai/agents/create", json={}).json()["agent_id"]
+        assert http.delete(f"/v1/convai/agents/{tool}").status_code == 404
+        assert http.delete(f"/v1/convai/tools/{agent}").status_code == 404
+    assert rest.errors == [
+        f"DELETE /v1/convai/agents/{tool}: unknown id",
+        f"DELETE /v1/convai/tools/{agent}: unknown id",
+    ]
