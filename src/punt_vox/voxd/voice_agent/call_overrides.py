@@ -138,8 +138,10 @@ class CallOverrides:
             port = url.port
         except ValueError:
             return "it does not parse as a URL with a valid port"
-        # Any userinfo, a password alone included, is more than host and port.
-        extra = ("@" in url.netloc, url.path, url.query, url.fragment)
+        # Any userinfo, a password alone included, is more than host and port;
+        # so is a query or fragment marker, even an empty one, which urlsplit
+        # reports as an empty field.
+        extra = ("@" in url.netloc, url.path, "?" in override, "#" in override)
         checks = (
             (url.scheme != "http", "the scheme is not http"),
             (url.hostname not in LOOPBACK_HOSTS, "the host is not a loopback IP"),

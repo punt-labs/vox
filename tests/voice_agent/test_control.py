@@ -132,6 +132,8 @@ def test_the_real_key_is_sent_without_the_override(
         "http://:x@127.0.0.1:1",  # a password alone is still userinfo
         "http://user:x@127.0.0.1:1",
         "http://[::1",  # unparsable
+        "http://127.0.0.1:8080?",  # an empty query is still a query
+        "http://127.0.0.1:8080#",  # an empty fragment is still a fragment
     ],
 )
 def test_an_invalid_base_url_env_var_fails_the_call_by_name(
