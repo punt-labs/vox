@@ -118,6 +118,12 @@ def test_health_target_client_reads_run_file_token(
     ]
 
 
+def _run_dir(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Point both the token reader and the error's path at *path*."""
+    monkeypatch.setattr("punt_vox.service.health.run_dir", lambda: path)
+    monkeypatch.setattr("punt_vox.client_endpoint._user_run_dir", lambda: path)
+
+
 def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -127,7 +133,7 @@ def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
     status reading must say so rather than "gave no answer".
     """
     monkeypatch.setenv("VOXD_TOKEN", "shell-token")
-    monkeypatch.setattr("punt_vox.service.health.run_dir", lambda: tmp_path)
+    _run_dir(monkeypatch, tmp_path)
     captured = _capture_clients(monkeypatch)
 
     with pytest.raises(DaemonNotUpError) as missing:
@@ -144,10 +150,29 @@ def test_no_token_file_raises_daemon_not_up_and_builds_no_client(
 def test_an_unreadable_token_file_names_itself_and_builds_no_client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("punt_vox.service.health.run_dir", lambda: tmp_path)
+    _run_dir(monkeypatch, tmp_path)
     token = tmp_path / "serve.token"
     token.write_text("secret")
     token.chmod(0)
+    captured = _capture_clients(monkeypatch)
+
+    with pytest.raises(DaemonNotUpError) as unreadable:
+        HealthTarget("").client()
+
+    assert str(unreadable.value) == (
+        f"{token} cannot be read: voxd's token is not available; no token sent"
+    )
+    assert captured == []
+
+
+def test_an_invalid_utf8_token_file_is_not_asked_and_builds_no_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bytes that are not UTF-8 fail before any connection: that is "not
+    asked", never an ordinary miss that reads as the daemon having been asked."""
+    _run_dir(monkeypatch, tmp_path)
+    token = tmp_path / "serve.token"
+    token.write_bytes(b"\xff\xfe")
     captured = _capture_clients(monkeypatch)
 
     with pytest.raises(DaemonNotUpError) as unreadable:

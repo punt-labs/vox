@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_endpoint import RunFiles
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
 from punt_vox.service.not_asked import NotAskedError
@@ -93,9 +94,14 @@ class HealthTarget:
         Raises:
             DaemonNotUpError: If the daemon's token is absent or unreadable.
         """
-        token = RunFiles.token()
+        token_file = run_dir() / "serve.token"
+        try:
+            token = RunFiles.token()
+        except VoxdConnectionError as exc:
+            # Bytes that are not UTF-8: read before any connection, so it is
+            # "not asked", never a miss that reads as the daemon having been.
+            raise DaemonNotUpError.unreadable(token_file) from exc
         if token is None:
-            token_file = run_dir() / "serve.token"
             if token_file.exists():
                 raise DaemonNotUpError.unreadable(token_file)
             raise DaemonNotUpError.missing(token_file)
