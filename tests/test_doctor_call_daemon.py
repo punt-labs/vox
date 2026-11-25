@@ -103,6 +103,26 @@ def test_mic_check_never_captures_in_the_doctor_process(
     assert "punt_vox.voxd.mic_probe" not in sys.modules
 
 
+def test_mic_check_names_the_restart_when_the_daemon_predates_the_probe() -> None:
+    """A daemon serving older code answers unknown message type; restart it."""
+    error = VoxdProtocolError("unknown message type: mic_probe")
+    with patch.object(DaemonControl, "request", side_effect=error):
+        result = MicCaptureCheck().run()
+
+    assert result.status_kind == "warn"
+    assert result.message.startswith("Microphone (voxd):")
+    assert "vox daemon restart" in result.message
+
+
+def test_repos_check_names_the_restart_when_the_daemon_predates_the_rpc() -> None:
+    error = VoxdProtocolError("unknown message type: worker_repos")
+    with patch.object(DaemonControl, "request", side_effect=error):
+        result = WorkerReposCheck().run()
+
+    assert result.status_kind == "warn"
+    assert "vox daemon restart" in result.message
+
+
 def test_repos_check_reports_the_count_and_last_path_segments() -> None:
     repos = ["/Users/me/Coding/punt-labs/vox-demo", "/srv/lux"]
     with patch.object(DaemonControl, "request", return_value=repos) as rpc:

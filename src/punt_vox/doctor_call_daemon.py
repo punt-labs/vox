@@ -60,9 +60,17 @@ class _DaemonAnswer:
 
     @staticmethod
     def reason(exc: VoxdConnectionError | VoxdProtocolError) -> str:
-        """Return the one-line reason a doctor row shows for *exc*."""
+        """Return the one-line reason a doctor row shows for *exc*.
+
+        A daemon that does not know the message type is serving code older
+        than this doctor; the fix is a restart, so the row says so.
+        """
         if isinstance(exc, VoxdRefusedError):
             return "daemon not running"
+        if str(exc).startswith("unknown message type"):
+            return (
+                f"{exc}; the running daemon predates this check, run vox daemon restart"
+            )
         return str(exc)
 
 
