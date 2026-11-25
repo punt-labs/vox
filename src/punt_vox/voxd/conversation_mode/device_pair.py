@@ -58,19 +58,36 @@ class DevicePair:
 
     @property
     def shared_hardware(self) -> bool:
-        """Whether both legs name one piece of hardware.
+        """Whether both legs are known to name one piece of hardware.
 
         Names are compared with their trailing role words removed, so the
         built-in microphone and speakers of one machine count as shared,
-        as does a headset reporting the same name for both.
+        as does a headset reporting the same name for both. A name that is
+        only role words ("Microphone", "Speakers") identifies no hardware,
+        so such a pair is never claimed as shared (:attr:`named_hardware`).
         """
-        return self._stem(self._input.name) == self._stem(self._output.name)
+        return self.named_hardware and self._stem(self._input.name) == self._stem(
+            self._output.name
+        )
+
+    @property
+    def named_hardware(self) -> bool:
+        """Whether both names say which hardware they are, beyond their role.
+
+        Two generic names both reduce to nothing, and nothing equals nothing;
+        comparing them would call two unrelated devices the same hardware.
+        """
+        return bool(self._stem(self._input.name)) and bool(
+            self._stem(self._output.name)
+        )
 
     def log(self, *, sample_rate_hz: int) -> None:
         """Name both devices in the daemon log, and say whether they share hardware.
 
-        The devices name themselves, so their text is made safe for one
-        line each: a name with a line break may not forge a log line.
+        A pair whose names cannot be told apart is reported as such: neither
+        configuration is claimed for it. The devices name themselves, so
+        their text is made safe for one line each: a name with a line break
+        may not forge a log line.
         """
         logger.info(
             "Call input device: %s (default %.0f Hz), capturing at %d Hz",
@@ -83,10 +100,17 @@ class DevicePair:
             LogText.reason(self._output.name),
             self._output.default_samplerate_hz,
         )
-        if self.shared_hardware:
+        if not self.named_hardware:
+            logger.info(
+                "Call audio hardware: input %s and output %s cannot be told apart "
+                "by name, so whether they share hardware is unknown",
+                LogText.reason(self._input.name),
+                LogText.reason(self._output.name),
+            )
+        elif self.shared_hardware:
             logger.info(
                 "Call audio hardware: input and output are the same hardware (%s)",
-                LogText.reason(self._stem(self._output.name) or self._output.name),
+                LogText.reason(self._stem(self._output.name)),
             )
         else:
             logger.warning(
