@@ -315,6 +315,52 @@ def test_holds_port_linux_matches_the_listen_inode(
     assert ProcessManager().holds_port(123, 9000) is False
 
 
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        pytest.param("   0: 0100007F:20E5 00000000:0000 0A", "short", id="short-row"),
+        pytest.param(
+            "   0: 0100007F:ZZZZ 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000  1000        0 777 1 0000000000000000 100 0 0 10 0",
+            "non-hex",
+            id="non-hex-port",
+        ),
+        pytest.param(
+            "   0: 0100007F 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000  1000        0 777 1 0000000000000000 100 0 0 10 0",
+            "no colon",
+            id="address-without-port",
+        ),
+    ],
+)
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_malformed_table_row_raises(
+    _mock_sys: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row: str,
+    why: str,
+) -> None:
+    """A row the parser cannot read is a failed probe, never a traceback."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp").write_text(f"header\n{row}\n")
+    with pytest.raises(PortProbeError, match=r"cannot parse .*net/tcp") as caught:
+        ProcessManager().holds_port(123, 8421)
+    assert row.strip()[:24] in str(caught.value)
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_non_ascii_table_raises(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp").write_bytes(b"header\n\xff\xfe\n")
+    with pytest.raises(PortProbeError, match=r"cannot read .*net/tcp"):
+        ProcessManager().holds_port(123, 8421)
+
+
 @patch("punt_vox.service.process.platform.system", return_value="Linux")
 def test_holds_port_linux_another_process_socket_is_not_held(
     _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

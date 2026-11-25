@@ -203,21 +203,32 @@ class ProcessManager:
                 rows = path.read_text(encoding="ascii").splitlines()[1:]
             except FileNotFoundError:
                 continue  # no IPv6 on this host
-            except OSError as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 msg = f"cannot read {path}: {exc}"
                 raise PortProbeError(msg) from exc
-            found.update(cls._listen_link(row, port) for row in rows)
+            found.update(cls._listen_link(path, row, port) for row in rows)
         found.discard("")
         return frozenset(found)
 
     @classmethod
-    def _listen_link(cls, row: str, port: int) -> str:
-        """Return one ``/proc/net/tcp`` *row*'s socket link if it listens on *port*."""
+    def _listen_link(cls, path: Path, row: str, port: int) -> str:
+        """Return one *row* of *path*'s socket link if it listens on *port*.
+
+        Raises:
+            PortProbeError: If the row is not in the kernel's table format.
+        """
         fields = row.split()
         # local_address is HEXIP:HEXPORT; st is the state; inode is the 10th field.
-        if fields[3] != cls._LISTEN or int(fields[1].rsplit(":", 1)[1], 16) != port:
+        try:
+            listens = fields[3] == cls._LISTEN
+            local_port = int(fields[1].rsplit(":", 1)[1], 16)
+            inode = fields[9]
+        except (IndexError, ValueError) as exc:
+            msg = f"cannot parse {path} row {row.strip()[:24]!r}: {exc}"
+            raise PortProbeError(msg) from exc
+        if not listens or local_port != port:
             return ""
-        return f"socket:[{fields[9]}]"
+        return f"socket:[{inode}]"
 
     def identity(self, pid: int) -> ProcessIdentity | None:
         """Return *pid*'s start time and command line; ``None`` once it is gone.
