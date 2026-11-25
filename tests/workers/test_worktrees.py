@@ -250,3 +250,24 @@ def test_discard_removes_a_checkout_git_never_finished_populating(
     assert not worktree.exists()
     assert not _is_listed(repo, worktree)
     assert _git(repo, "branch", "--list", branch) == ""
+
+
+def test_discard_keeps_edits_in_a_worktree_linked_by_a_relative_path(
+    repo: Path, tmp_path: Path
+) -> None:
+    """With worktree.useRelativePaths the .git pointer names the git dir
+    relative to the checkout; the index probe must resolve it there, or an
+    edited checkout reads as never populated and is deleted."""
+    (repo / "README.md").write_text("tracked\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "r")
+    _git(repo, "config", "worktree.useRelativePaths", "true")
+    worker_id = str(uuid4())
+    worktree = tmp_path / "workers" / worker_id / "worktree"
+    WorkerWorktrees().create(repo, worktree, f"vox-worker/{worker_id}")
+    link = (worktree / ".git").read_text().removeprefix("gitdir:").strip()
+    assert not Path(link).is_absolute(), link
+    (worktree / "README.md").write_text("edited\n")
+    with pytest.raises(WorktreeInUseError):
+        WorkerWorktrees().discard(repo, worktree, worker_id)
+    assert (worktree / "README.md").read_text() == "edited\n"

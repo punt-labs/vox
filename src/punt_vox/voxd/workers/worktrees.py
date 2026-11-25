@@ -242,7 +242,8 @@ class WorkerWorktrees:
         if pointer.is_dir():
             return (pointer / "index").exists()
         gitdir = pointer.read_text().removeprefix("gitdir:").strip()
-        return (Path(gitdir) / "index").exists()
+        # worktree.useRelativePaths writes the link relative to the checkout.
+        return (pointer.parent / gitdir / "index").exists()
 
     def _registered(self, project: Path, worktree: Path) -> bool:
         listing = self._git(project, "worktree", "list", "--porcelain")
