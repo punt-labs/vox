@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -113,3 +114,21 @@ async def test_a_child_spawned_during_serve_can_be_stopped_by_sigterm(
     monkeypatch.setattr(uvicorn.Server, "startup", spawn_then_stop)
     await DaemonServer(Starlette(), "127.0.0.1", 0, lambda _port: None).serve()
     assert seen == [str(int(signal.SIG_DFL))]
+
+
+def test_signal_setup_off_the_main_thread_installs_nothing_and_does_not_raise() -> None:
+    """Signals are a main-thread affair; a worker thread serves without them."""
+    daemon = DaemonServer(Starlette(), "127.0.0.1", 0, lambda _port: None)
+    failures: list[ValueError] = []
+
+    def enter_on_a_thread() -> None:
+        try:
+            with daemon._stop_signals_end_normally():  # pyright: ignore[reportPrivateUsage]
+                pass
+        except ValueError as exc:  # what signal.signal raises off the main thread
+            failures.append(exc)
+
+    worker = threading.Thread(target=enter_on_a_thread)
+    worker.start()
+    worker.join(timeout=5)
+    assert failures == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self, final
 
@@ -96,8 +97,13 @@ class DaemonServer:
         process exits 0. It is a Python handler, never ``SIG_IGN``: an
         ignored signal is inherited across ``exec``, so a child spawned
         meanwhile could not be stopped by SIGTERM, while a caught one
-        resets to the default in the child.
+        resets to the default in the child. Signals can be handled only on
+        the main thread; off it uvicorn installs nothing, and neither does
+        this.
         """
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
         previous = {
             sig: signal.signal(sig, self._server.handle_exit) for sig in _STOP_SIGNALS
         }
