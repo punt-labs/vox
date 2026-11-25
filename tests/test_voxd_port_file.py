@@ -182,6 +182,39 @@ def test_a_failed_port_publish_unpublishes_the_pid_it_just_wrote(
     assert _temporaries(tmp_path) == []
 
 
+def test_a_failed_cleanup_after_a_failed_port_publish_keeps_the_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The port rename fails and then the pid unlink fails too: the caller
+    sees the publish error, the unlink failure is logged, and the daemon no
+    longer counts the pid file as its own."""
+    real_replace = Path.replace
+    real_unlink = Path.unlink
+
+    def refuse_the_port(self: Path, target: Path) -> Path:
+        if target.name == "serve.port":
+            raise OSError(errno.EXDEV, "cross-device rename")
+        return real_replace(self, target)
+
+    def refuse_the_pid_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "serve.pid":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "replace", refuse_the_port)
+    monkeypatch.setattr(Path, "unlink", refuse_the_pid_unlink)
+    port_file = PortFile(tmp_path)
+    with (
+        caplog.at_level(logging.WARNING, logger="punt_vox.voxd.port_file"),
+        pytest.raises(OSError, match="cross-device"),
+    ):
+        port_file.write(8421)
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert "serve.pid" in warning.getMessage()
+    assert "Permission denied" in warning.getMessage()
+    assert port_file._mine_pid is None  # pyright: ignore[reportPrivateUsage]
+
+
 def test_removal_paused_after_its_check_never_deletes_a_newer_daemons_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

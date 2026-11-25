@@ -81,11 +81,25 @@ class PortFile:
                 self._mine = self._publish(self._path, str(port))
             except OSError:
                 # The old port must not stay paired with this pid: with no
-                # pid file at all, a reader asks nothing.
-                self._pid_path.unlink(missing_ok=True)
-                self._mine_pid = None
+                # pid file at all, a reader asks nothing. The publish error
+                # is the one the caller sees; a cleanup failure is logged.
+                self._unpublish_pid()
                 raise
         logger.info("Wrote port file: %s (port %d, pid %d)", self._path, port, pid)
+
+    def _unpublish_pid(self) -> None:
+        """Remove the pid file just written, after a failed port publish.
+
+        Never raises: the caller is already raising the publish error, which
+        must not be replaced. The pid file is no longer counted as this
+        daemon's either way.
+        """
+        try:
+            self._pid_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Could not remove %s: %s", self._pid_path, exc)
+        finally:
+            self._mine_pid = None
 
     @classmethod
     def _publish(cls, path: Path, text: str) -> FileIdentity:
