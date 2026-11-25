@@ -26,8 +26,10 @@ from punt_vox._speech_markdown import SpeechMarkdown
             "Use [ref]; see [guide](/help).\n\n[ref]: /reference",
             "Use [ref]; see guide.\n\n[ref]: /reference",
         ),
-        ("See ![guide](/cover.png).", "See ![guide](/cover.png)."),
-        ("See ![the [guide](/help)](/cover.png).", "See ![the guide](/cover.png)."),
+        ("See ![guide](/cover.png).", "See guide."),
+        ("See ![the [guide](/help)](/cover.png).", "See the guide."),
+        ('See ![the `guide`](<cover (old).png> "title").', "See the `guide`."),
+        ("Write `![guide](/cover.png)`.", "Write `![guide] (/cover.png)`."),
     ],
 )
 def test_link_labels(raw: str, expected: str) -> None:

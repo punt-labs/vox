@@ -1388,6 +1388,29 @@ class TestApplyVibeForSynthesis:
         assert request.text == expected
 
     @pytest.mark.parametrize(
+        ("provider", "model"), [("espeak", None), ("elevenlabs", "eleven_v3")]
+    )
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Use ![diagram](image.png).", "Use diagram."),
+            (
+                "See [![build passing](badge.svg)](https://example.com).",
+                "See build passing.",
+            ),
+            ("Use this![](decorative.png).", "Use this."),
+            ("Use this[![](decorative.png)](/help).", "Use this."),
+        ],
+    )
+    def test_markdown_image_alt_is_spoken(
+        self, text: str, expected: str, provider: str, model: str | None
+    ) -> None:
+        request = SynthesisPipeline.prepare_audio_request(
+            text, SynthesisSpec(provider=provider, model=model)
+        )
+        assert request.text == expected
+
+    @pytest.mark.parametrize(
         ("text", "expected"),
         [
             ("[[draft]](/docs)", "draft"),
