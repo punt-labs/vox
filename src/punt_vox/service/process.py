@@ -255,17 +255,27 @@ class ProcessManager:
         names = {line[1:] for line in result.stdout.splitlines() if line[:1] == "n"}
         return not names.isdisjoint(address.lsof_names())
 
-    @classmethod
-    def _proc_holds_port(cls, pid: int, address: ListenAddress) -> bool:
-        """Match *pid*'s socket inodes against the LISTEN sockets at *address*."""
-        listening = cls._listening_sockets(address)
-        fd_dir = cls._PROC / str(pid) / "fd"
+    def _proc_holds_port(self, pid: int, address: ListenAddress) -> bool:
+        """Match *pid*'s socket inodes against the LISTEN sockets at *address*.
+
+        The deadline is checked per fd: a process with thousands of open
+        files cannot carry the scan past it.
+        """
+        listening = self._listening_sockets(address)
+        fd_dir = self._PROC / str(pid) / "fd"
+        links: set[str] = set()
         try:
-            links = {cls._link(entry) for entry in fd_dir.iterdir()}
+            for entry in fd_dir.iterdir():
+                self._tick()
+                links.add(self._link(entry))
         except OSError as exc:
             msg = f"cannot read {fd_dir}: {exc}"
             raise PortProbeError(msg) from exc
         return not listening.isdisjoint(links)
+
+    def _tick(self) -> None:
+        """Raise ``PortProbeError`` once the deadline has passed mid-scan."""
+        self._deadline.cap(_SUBPROCESS_TIMEOUT_SECONDS, "holder check ran out of time")
 
     @staticmethod
     def _link(entry: Path) -> str:
@@ -275,12 +285,15 @@ class ProcessManager:
         except FileNotFoundError:
             return ""
 
-    @classmethod
-    def _listening_sockets(cls, address: ListenAddress) -> frozenset[str]:
-        """Return the ``socket:[inode]`` links of every LISTEN socket at *address*."""
+    def _listening_sockets(self, address: ListenAddress) -> frozenset[str]:
+        """Return the ``socket:[inode]`` links of every LISTEN socket at *address*.
+
+        The deadline is checked before each table is read.
+        """
         found: set[str] = set()
         for table in ("tcp", "tcp6"):
-            path = cls._PROC / "net" / table
+            self._tick()
+            path = self._PROC / "net" / table
             try:
                 rows = path.read_text(encoding="ascii").splitlines()[1:]
             except FileNotFoundError:
@@ -289,7 +302,7 @@ class ProcessManager:
                 msg = f"cannot read {path}: {exc}"
                 raise PortProbeError(msg) from exc
             forms = address.proc_forms(table)
-            found.update(cls._listen_link(path, row, forms) for row in rows)
+            found.update(self._listen_link(path, row, forms) for row in rows)
         found.discard("")
         return frozenset(found)
 

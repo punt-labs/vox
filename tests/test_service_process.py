@@ -489,6 +489,50 @@ def test_holds_port_linux_after_the_deadline_never_reads(
         bounded.holds_port(123, "127.0.0.1", 8421)
 
 
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_stops_between_fds_when_the_deadline_passes(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process with many fds: the scan checks the deadline per fd, not once."""
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    for fd in range(6, 12):
+        (tmp_path / "123" / "fd" / str(fd)).symlink_to("/dev/null")
+    clock = FakeClock()
+    real_link = ProcessManager._link  # pyright: ignore[reportPrivateUsage]
+
+    def slow_link(entry: Path) -> str:
+        clock.advance(0.4)  # each readlink costs 0.4 s on a loaded box
+        return real_link(entry)
+
+    monkeypatch.setattr(ProcessManager, "_link", staticmethod(slow_link))
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    with pytest.raises(PortProbeError, match="holder check ran out of time"):
+        bounded.holds_port(123, "127.0.0.1", 8421)
+    assert clock.monotonic() < 2.0  # stopped early, not after all eight fds
+
+
+@patch("punt_vox.service.process.platform.system", return_value="Linux")
+def test_holds_port_linux_stops_between_tables_when_the_deadline_passes(
+    _mock_sys: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ProcessManager, "_PROC", tmp_path)
+    _proc_tree(tmp_path, 123, "777")
+    (tmp_path / "net" / "tcp6").write_text(f"{_HEADER}\n")
+    clock = FakeClock()
+    real_read_text = Path.read_text
+
+    def slow_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.parent.name == "net":
+            clock.advance(0.7)  # each table read costs 0.7 s
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", slow_read_text)
+    bounded = ProcessManager().within(Deadline(clock.monotonic, 1.0))
+    with pytest.raises(PortProbeError, match="holder check ran out of time"):
+        bounded.holds_port(123, "127.0.0.1", 8421)
+
+
 # ---------------------------------------------------------------------------
 # identity / is_vox_daemon_process -- fails closed
 # ---------------------------------------------------------------------------

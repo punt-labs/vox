@@ -3369,10 +3369,10 @@
   "src/punt_vox/service/process.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.97,
+    "avg_params": 0.94,
     "max_complexity": 6.0,
-    "avg_complexity": 2.6,
-    "module_size": 279.0,
+    "avg_complexity": 2.55,
+    "module_size": 283.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
