@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -88,14 +89,18 @@ def test_mic_check_warns_when_the_daemon_cannot_answer(
     assert expected in result.message
 
 
-def test_mic_check_never_captures_in_the_doctor_process() -> None:
-    """The check talks to the daemon only; no capture backend is imported here."""
-    with (
-        patch.object(DaemonControl, "request", return_value=_reply(5)),
-        patch("punt_vox.voxd.mic_probe.SoundDeviceCapture") as local_capture,
-    ):
+def test_mic_check_never_captures_in_the_doctor_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The check's only I/O is the daemon request: no capture code is even imported."""
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    monkeypatch.delitem(sys.modules, "punt_vox.voxd.mic_probe", raising=False)
+    with patch.object(DaemonControl, "request", return_value=_reply(5)) as rpc:
         MicCaptureCheck().run()
-    local_capture.assert_not_called()
+
+    rpc.assert_awaited_once()
+    assert "sounddevice" not in sys.modules
+    assert "punt_vox.voxd.mic_probe" not in sys.modules
 
 
 def test_repos_check_reports_the_count_and_last_path_segments() -> None:
