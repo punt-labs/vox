@@ -196,6 +196,7 @@ class TestIdempotency:
             "The eof_received handler uses stderr",
             "normal sentence",
             "/usr/local/bin",
+            "`prefix[draft](/help)suffix`",
         ],
     )
     def test_idempotent(self, text: str) -> None:
