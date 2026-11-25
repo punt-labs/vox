@@ -549,6 +549,40 @@ def test_holds_port_linux_stops_between_tables_when_the_deadline_passes(
 
 
 # ---------------------------------------------------------------------------
+# owner_uid -- the process's real uid, from ps; fails closed
+# ---------------------------------------------------------------------------
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_reads_the_real_uid(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, "  1001\n")
+    assert ProcessManager().owner_uid(123) == 1001
+    argv = mock_run.call_args.args[0]
+    assert argv[:2] == ["ps", "-p"]
+    assert "uid=" in argv
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_gone_pid_is_none(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(1)
+    assert ProcessManager().owner_uid(123) is None
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_ps_failure_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(2, stderr="ps: illegal option")
+    with pytest.raises(PortProbeError, match="ps exited 2"):
+        ProcessManager().owner_uid(123)
+
+
+@patch("punt_vox.service.process.subprocess.run")
+def test_owner_uid_unparseable_raises(mock_run: MagicMock) -> None:
+    mock_run.return_value = _ran(0, "not a uid\n")
+    with pytest.raises(PortProbeError, match="cannot inspect pid 123"):
+        ProcessManager().owner_uid(123)
+
+
+# ---------------------------------------------------------------------------
 # identity / is_vox_daemon_process -- fails closed
 # ---------------------------------------------------------------------------
 

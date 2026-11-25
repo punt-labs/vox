@@ -236,6 +236,16 @@ class DaemonProbe:
         """
         return self._process_mgr.within(bound).identity(pid)
 
+    def owner_uid_within(self, pid: int, bound: Deadline) -> int | None:
+        """Return the real uid *pid* runs as, from a ``ps`` cut to *bound*.
+
+        ``None`` once the process is gone.
+
+        Raises:
+            PortProbeError: If ``ps`` could not run in time.
+        """
+        return self._process_mgr.within(bound).owner_uid(pid)
+
     def holds_port(self, pid: int, host: str, bound: Deadline) -> bool:
         """Return True when *pid* itself holds the listener a request to *host* reaches.
 

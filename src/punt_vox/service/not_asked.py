@@ -146,6 +146,14 @@ class NotAskedError(RuntimeError):
         )
 
     @classmethod
+    def publisher_owned_by(cls, pid: int, uid: int, own_uid: int) -> Self:
+        """Return the miss for a published pid whose real uid is not the caller's."""
+        return cls(
+            f"pid {pid} named in serve.pid belongs to uid {uid}, not this user "
+            f"(uid {own_uid}); no token sent unattributed"
+        )
+
+    @classmethod
     def not_voxd(cls, pid: int, command: str) -> Self:
         """Return the miss for a published pid whose command is not voxd."""
         return cls(

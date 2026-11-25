@@ -4,9 +4,10 @@
 every open file. This request goes out first, under a gate made of what voxd
 itself publishes and what vox can check without ``lsof``: this user's own
 ``serve.port`` names the service port and ``serve.pid`` a pid that is alive
-and this user's (:class:`PublishedPort`), the target host is loopback, ``ps``
-says that pid runs voxd, that pid itself holds the listener on the port, and
-the port accepts a plain connection. A port file a crash left behind, or a
+(:class:`PublishedPort`), the target host is loopback, ``ps`` says that pid
+runs voxd and runs as this user (ownership is proven by uid, never by a
+signal), that pid itself holds the listener on the port, and the port accepts
+a plain connection. A port file a crash left behind, or a
 voxd whose listening socket is already closed while its process lingers in
 shutdown, therefore cannot send the token to another user who binds the
 port next. A gate that does not open sends nothing and records why;
@@ -19,6 +20,7 @@ token goes out through no other unattributed door.
 from __future__ import annotations
 
 import ipaddress
+import os
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.service.backend import PortProbeError
@@ -103,6 +105,7 @@ class PublishedHealth:
         if not ipaddress.ip_address(target.host).is_loopback:
             raise NotAskedError.not_loopback(target.host)
         self._require_voxd(pid)
+        self._require_owner(pid)
         self._require_holder(pid, target)
         self._require_listener(target)
         return target
@@ -135,6 +138,26 @@ class PublishedHealth:
             raise NotAskedError.publisher_gone(pid)
         if not seen.is_voxd():
             raise NotAskedError.not_voxd(pid, seen.command)
+
+    def _require_owner(self, pid: int) -> None:
+        """Raise unless *pid*'s real uid, from a bounded ``ps``, is the caller's.
+
+        A signal proves liveness only: ``os.kill(pid, 0)`` succeeds for root
+        on any process, so root's stale run files naming a pid another user's
+        voxd later took would otherwise pass.
+
+        Raises:
+            NotAskedError: If *pid* is gone, is another user's, or ``ps``
+                could not run.
+        """
+        try:
+            uid = self._probe.owner_uid_within(pid, self._bound)
+        except PortProbeError as exc:
+            raise NotAskedError.uncheckable(str(exc)) from exc
+        if uid is None:
+            raise NotAskedError.publisher_gone(pid)
+        if uid != os.getuid():
+            raise NotAskedError.publisher_owned_by(pid, uid, os.getuid())
 
     def _require_holder(self, pid: int, target: HealthTarget) -> None:
         """Raise unless *pid* holds the listener the request to *target* reaches.

@@ -188,6 +188,9 @@ class PublishedPort:
             # and succeeds, which would open the gate with no publisher at all.
             raise NotAskedError.no_pid()
         pid = self._pid
+        # Liveness only: a signal that is refused is another user's process,
+        # but one that is accepted proves nothing for root. The gate proves
+        # ownership by the process's real uid afterwards.
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

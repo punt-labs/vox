@@ -104,6 +104,13 @@ SENT_NOTHING = "no token sent"
             ),
         ),
         (
+            NotAskedError.publisher_owned_by(84805, 1001, 0),
+            (
+                "pid 84805 named in serve.pid belongs to uid 1001, not this user "
+                "(uid 0); no token sent unattributed"
+            ),
+        ),
+        (
             NotAskedError.not_voxd(84805, "/usr/bin/nc -l 8421"),
             (
                 "pid 84805 named in serve.pid is not voxd (command: /usr/bin/nc -l "

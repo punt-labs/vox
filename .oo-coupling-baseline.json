@@ -1653,10 +1653,10 @@
   },
   "src/punt_vox/service/backend.py": {
     "efferent_coupling": 0.0,
-    "public_names": 11.0,
+    "public_names": 12.0,
     "circular_imports": 0.0,
     "max_lcom": 1.0,
-    "avg_lcom": 1.0
+    "avg_lcom": 0.5
   },
   "src/punt_vox/service/clock.py": {
     "efferent_coupling": 1.0,
@@ -1669,8 +1669,8 @@
     "efferent_coupling": 10.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.661,
-    "avg_lcom": 0.661
+    "max_lcom": 0.647,
+    "avg_lcom": 0.647
   },
   "src/punt_vox/service/daemon_process.py": {
     "efferent_coupling": 3.0,
@@ -1842,10 +1842,10 @@
   },
   "src/punt_vox/service/process.py": {
     "efferent_coupling": 7.0,
-    "public_names": 4.0,
+    "public_names": 3.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.924,
-    "avg_lcom": 0.462
+    "max_lcom": 0.931,
+    "avg_lcom": 0.931
   },
   "src/punt_vox/service/process_identity.py": {
     "efferent_coupling": 0.0,
@@ -1858,8 +1858,8 @@
     "efferent_coupling": 5.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.286,
-    "avg_lcom": 0.286
+    "max_lcom": 0.25,
+    "avg_lcom": 0.25
   },
   "src/punt_vox/service/published_port.py": {
     "efferent_coupling": 4.0,

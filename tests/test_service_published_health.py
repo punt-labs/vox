@@ -35,6 +35,7 @@ def _published(monkeypatch: pytest.MonkeyPatch, reading: PublishedPort) -> Magic
     mgr = MagicMock()
     mgr.port_file = Path("/nonexistent/serve.port")
     mgr.within.return_value.identity.return_value.is_voxd.return_value = True
+    mgr.within.return_value.owner_uid.return_value = os.getuid()
     mgr.within.return_value.holds_port.return_value = True
 
     def at(path: Path) -> PublishedPort:
@@ -139,12 +140,47 @@ def test_a_live_publisher_of_this_user_is_asked(
     mgr = MagicMock()
     mgr.port_file = tmp_path / "serve.port"
     mgr.within.return_value.identity.return_value.is_voxd.return_value = True
+    mgr.within.return_value.owner_uid.return_value = os.getuid()
     mgr.within.return_value.holds_port.return_value = True
     target = MagicMock(host="127.0.0.1", port=8421)
     status = HealthStatus(status="ok", pid=os.getpid())
     target.client.return_value.health.return_value = status
     assert probe_over(mgr, target).published_health(1.5) is status
     mgr.within.return_value.identity.assert_called_once_with(os.getpid())
+
+
+def test_a_publisher_owned_by_another_uid_sends_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """root can signal any process, so a successful os.kill(pid, 0) proves
+    nothing about ownership: the real uid from ps must be the caller's."""
+    connect = _listening(monkeypatch)
+    monkeypatch.setattr(os, "getuid", lambda: 0)
+    mgr = _published(monkeypatch, _ours())
+    mgr.within.return_value.owner_uid.return_value = 1001
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = probe_over(mgr, target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    connect.assert_not_called()
+    mgr.within.return_value.holds_port.assert_not_called()
+    assert str(probe.health_miss()) == (
+        f"pid {os.getpid()} named in serve.pid belongs to uid 1001, not this user "
+        "(uid 0); no token sent unattributed"
+    )
+
+
+def test_a_publisher_gone_before_the_uid_read_sends_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _listening(monkeypatch)
+    mgr = _published(monkeypatch, _ours())
+    mgr.within.return_value.owner_uid.return_value = None
+    target = MagicMock(host="127.0.0.1", port=8421)
+    probe = probe_over(mgr, target)
+    assert probe.published_health(1.5) is None
+    target.client.assert_not_called()
+    assert "is gone" in str(probe.health_miss())
 
 
 def test_a_publisher_that_is_not_voxd_sends_no_token(
@@ -205,8 +241,11 @@ def test_the_ps_is_cut_to_the_request_bound_and_the_holder_check_to_its_own(
     target = MagicMock(host="127.0.0.1", port=8421)
     target.client.return_value.health.return_value = HealthStatus(status="ok")
     probe_over(mgr, target).published_health(1.5)
-    ps_bound, holder_bound = (call.args[0] for call in mgr.within.call_args_list)
+    ps_bound, uid_bound, holder_bound = (
+        call.args[0] for call in mgr.within.call_args_list
+    )
     assert ps_bound.remaining() == pytest.approx(1.5)
+    assert uid_bound.remaining() == pytest.approx(1.5)
     assert holder_bound.remaining() == pytest.approx(DaemonProbe.HOLDER_CHECK_S)
     mgr.within.return_value.holds_port.assert_called_once_with(
         os.getpid(), "127.0.0.1", 8421
@@ -226,6 +265,7 @@ def test_a_holder_check_that_takes_its_whole_bound_leaves_the_request_its_floor(
         remaining = bound.remaining()  # type: ignore[attr-defined]
         bounded = MagicMock()
         bounded.identity.return_value.is_voxd.return_value = True
+        bounded.owner_uid.return_value = os.getuid()
 
         def slow_holder_check(pid: int, host: str, port: int) -> bool:
             bounds.append(remaining)
