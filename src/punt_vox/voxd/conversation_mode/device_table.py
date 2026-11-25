@@ -7,7 +7,7 @@ voxd keeps the table it read at startup: a headset connected after that
 is invisible to a call, which captures from the built-in microphone and
 plays through the speakers while every fresh player process (music through
 mpv) correctly follows the headset. The speakers then feed the microphone
-and the agent interrupts itself (PL-1619).
+and the agent interrupts itself.
 
 The only way to re-read the table is ``Pa_Terminate`` then ``Pa_Initialize``,
 and ``Pa_Terminate`` closes every stream still open. So the table is one

@@ -827,7 +827,7 @@ class TestOutputDeviceFollowsTheSystem:
     async def test_a_stream_opened_after_a_headset_connects_plays_through_it(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """PL-1619: the output leg must follow the system's current default too."""
+        """The output leg must follow the system's current default too."""
         fake = FakeSoundDevice(
             input_name="MacBook Air Microphone", output_name="MacBook Air Speakers"
         ).install(monkeypatch)

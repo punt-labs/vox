@@ -3,8 +3,8 @@
 A headset carries both legs, so the agent's voice never reaches the
 microphone. A built-in microphone with Bluetooth output, or a Bluetooth
 microphone with the built-in speakers, is the echo configuration: the
-speakers feed the microphone and the agent interrupts itself (PL-1619). The
-pair logs itself at call start so the daemon log names both devices and
+speakers feed the microphone and the agent interrupts itself. The pair
+logs itself at call start so the daemon log names both devices and
 says which configuration this is.
 """
 

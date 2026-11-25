@@ -4,8 +4,8 @@
 opens a stream it asks the :class:`~.device_table.DeviceTable` to re-read
 PortAudio's devices (a no-op while any stream is open), so a scripted call
 -- which has no microphone to do that at call start -- still plays through
-the system's current default output (PL-1619). The stream it returns is
-counted on the table from a successful start to its close.
+the system's current default output. The stream it returns is counted on
+the table from a successful start to its close.
 """
 
 from __future__ import annotations

@@ -38,7 +38,7 @@ class PortAudio:
 
     Every stream it opens is counted on the :class:`DeviceTable`, and
     :meth:`devices` re-reads that table first, so a call that starts after
-    the person connects a headset finds the headset (PL-1619).
+    the person connects a headset finds the headset.
     """
 
     __slots__ = ("_table",)

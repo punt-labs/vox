@@ -179,7 +179,7 @@ async def test_a_reader_that_falls_behind_sees_only_the_newest_second(
 async def test_a_call_opened_after_a_headset_connects_captures_from_the_headset(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """PL-1619: a long-running voxd must not capture from the device table it
+    """A long-running voxd must not capture from the device table it
     enumerated at startup once the system's default input has changed."""
     fake = FakeSoundDevice(
         input_name="MacBook Air Microphone", output_name="MacBook Air Speakers"

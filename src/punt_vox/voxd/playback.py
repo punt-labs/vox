@@ -112,7 +112,7 @@ class PlaybackQueue:
         whatever the switch says. The queue is built once at daemon boot,
         so this is where every test-only call switch is validated. Every
         stream is opened through *table*, so it binds to the system's
-        current default output and is counted while open (PL-1619).
+        current default output and is counted while open.
         """
         self = super().__new__(cls)
         self._queue = asyncio.Queue()
@@ -159,7 +159,7 @@ class PlaybackQueue:
         played out, was flushed, or the caller raised.
 
         The stream opens on the device table's current defaults and is
-        counted on the table while open (PL-1619).
+        counted on the table while open.
         """
         guard: contextlib.AbstractAsyncContextManager[object] = (
             contextlib.nullcontext() if locked else self._mutex
