@@ -15,11 +15,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self, final
 
-__all__ = ["Judge", "Verdict"]
+__all__ = ["Judge", "Verdict", "is_final", "script_plan"]
 
 _CALL_TIMEOUT_S: Final = 300
 _STOP_TIMEOUT_S: Final = 30
@@ -37,7 +38,17 @@ _SEARCH_TURN: Final = (
 )
 _SILENCE_TURN: Final = "Give me a minute, I need to think."
 
+_FINAL_STATES: Final = ("call ended", "call failed")
+_SETTLE_POLLS: Final = 10
+_SETTLE_WAIT_S: Final = 2.0
+
 type Status = Literal["PASS", "FAIL", "SKIP"]
+
+
+def is_final(status: str) -> bool:
+    """Return whether ``vox call status`` text reports a call that has ended."""
+    first = status.splitlines()[0] if status.strip() else ""
+    return first.startswith(_FINAL_STATES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +169,8 @@ class Judge:
         return Verdict("silence", "PASS", "no 'are you there' in the whole call")
 
     def _clean_end(self) -> Verdict:
+        if not is_final(self._report):
+            return Verdict("clean end", "FAIL", "the call was still live when judged")
         if "RuntimeWarning" in self._output or "Traceback" in self._output:
             return Verdict("clean end", "FAIL", "warning or traceback on hang-up")
         if not self._ended:
@@ -196,7 +209,8 @@ class CallRun:
                 check=False,
                 timeout=_CALL_TIMEOUT_S + 15,
             )
-            status = self._status()
+            self._stop()
+            status = self._settled_status()
         finally:
             self._stop()
         return status, done.stdout + done.stderr
@@ -243,6 +257,16 @@ class CallRun:
             check=True,
         )
         return pcm
+
+    def _settled_status(self) -> str:
+        """Poll briefly until the call reports an ended state; return that text."""
+        status = self._status()
+        for _ in range(_SETTLE_POLLS):
+            if is_final(status):
+                break
+            time.sleep(_SETTLE_WAIT_S)
+            status = self._status()
+        return status
 
     @staticmethod
     def _status() -> str:

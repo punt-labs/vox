@@ -17,6 +17,7 @@ sys.modules["verify_call"] = verify_call
 _SPEC.loader.exec_module(verify_call)
 
 _GOOD = """\
+call ended by caller | 2 tool calls | agent: Hi
 agent: Hi, it's Vox. What are we working on?
 user: What does the pallets flask repository say about application factories?
 agent: One moment.
@@ -141,3 +142,31 @@ def test_without_search_the_plan_leaves_out_the_search_turn() -> None:
     assert not any(
         "search the web" in t.text for t in verify_call.script_plan(search=False)
     )
+
+
+_LIVE = (Path(__file__).parent / "fixtures" / "vox_call_status_live.txt").read_text()
+
+
+def test_a_live_status_is_not_final() -> None:
+    assert not verify_call.is_final(_LIVE)
+
+
+def test_an_ended_status_is_final() -> None:
+    assert verify_call.is_final(_STATUS)
+
+
+def test_a_failed_status_is_final() -> None:
+    assert verify_call.is_final("call failed | 0 tool calls\nerror: boom\n")
+
+
+@pytest.mark.parametrize("text", ["", "call idle", "call connecting | 0 tool calls"])
+def test_empty_idle_or_connecting_status_is_not_final(text: str) -> None:
+    assert not verify_call.is_final(text)
+
+
+def test_a_live_status_fails_the_clean_end_even_if_it_looks_complete() -> None:
+    verdicts = {
+        v.name: v for v in verify_call.Judge(_LIVE, "", search_key=True).verdicts()
+    }
+    assert verdicts["clean end"].status == "FAIL"
+    assert "still live" in verdicts["clean end"].why

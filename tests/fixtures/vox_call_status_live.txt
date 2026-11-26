@@ -1,0 +1,8 @@
+call live | 3 tool calls | agent: [happy] The freshest open models right now are Thinking Machines' Ink...
+agent: Hi, it's Vox. What are we working on?
+user: What is the Python SDK repository for the Model Context Protocol? Look it up in the docs.
+agent: One moment, let me look that up.
+user: Give me a minute, I need to think.
+tool: read_docs({}) -> ok
+tool: search_web({}) -> ok
+trace: /Users/jfreeman/.punt-labs/vox/calls/call-c33301f9a9a840cd91b18e043057a943.jsonl
