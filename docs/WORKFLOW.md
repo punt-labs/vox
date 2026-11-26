@@ -75,6 +75,9 @@ derive a pin by rebuilding locally: the archive headers are normalized, but
 package-manager caches can record fetch metadata.
 Keep the sidecar in JSON syntax (valid YAML) so the installer can read it
 using the standard library, with no download before it verifies the runtime.
+For local builds, use the upstream Node and ShellCheck distributions with
+their license files intact. The builder also fetches the notices for the
+selected uv release.
 
 ## Level 1 — The backlog loop
 

@@ -90,6 +90,9 @@ jobs:
           mkdir "$scratch/runtime" "$scratch/home" "$scratch/tmp"
           tar -xzf "runtime-assets/vox-handoff-$PLATFORM.tar.gz" -C "$scratch/runtime"
           runtime="$scratch/runtime"
+          for notice in node-LICENSE shellcheck-LICENSE.txt uv-LICENSE-APACHE uv-LICENSE-MIT; do
+            test -s "$runtime/licenses/$notice"
+          done
           cp -R "$runtime/cache/uv" "$scratch/uv-cache"
           cp -R "$runtime/cache/npm" "$scratch/npm-cache"
           if [[ $RUNNER_OS == Linux ]]; then

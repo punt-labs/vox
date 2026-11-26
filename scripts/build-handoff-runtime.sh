@@ -20,6 +20,7 @@ fi
 uv_tool=$(require_tool uv)
 shellcheck_tool=$(require_tool shellcheck)
 node_tool=$(require_tool node)
+curl_tool=$(require_tool curl)
 python_version=$(<"$repo/.python-version")
 node_tool=$(env -i PATH=/usr/bin:/bin "$node_tool" -p 'process.execPath')
 node_home=$(dirname -- "$(dirname -- "$node_tool")")
@@ -27,18 +28,37 @@ if [[ ! -f $node_home/lib/node_modules/npm/bin/npx-cli.js ]]; then
     printf 'Node must come from a distribution that bundles npm and npx.\n' >&2
     exit 1
 fi
+shellcheck_home=$(dirname -- "$shellcheck_tool")
+if [[ ! -s $node_home/LICENSE || ! -s $shellcheck_home/LICENSE.txt ]]; then
+    printf 'Use the upstream Node and ShellCheck distributions, including their license files.\n' >&2
+    exit 1
+fi
+uv_version=$("$uv_tool" --version)
+if [[ ! $uv_version =~ ^uv\ ([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]|$) ]]; then
+    printf 'Use a versioned uv release; got %s.\n' "$uv_version" >&2
+    exit 1
+fi
+uv_version=${BASH_REMATCH[1]}
 
 work=$(mktemp -d "$output/.vox-runtime.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 runtime=$work/runtime
 mkdir -p "$runtime/bin" "$runtime/node/bin" "$runtime/node/lib/node_modules" \
-    "$runtime/cache/uv" "$runtime/cache/npm" "$work/home" "$work/tmp"
+    "$runtime/cache/uv" "$runtime/cache/npm" "$runtime/licenses" "$work/home" "$work/tmp"
 install -m 0755 "$uv_tool" "$runtime/bin/uv"
 install -m 0755 "$shellcheck_tool" "$runtime/bin/shellcheck"
 install -m 0755 "$node_tool" "$runtime/node/bin/node"
 cp -R -P "$node_home/lib/node_modules/npm" "$runtime/node/lib/node_modules/npm"
 ln -s ../lib/node_modules/npm/bin/npm-cli.js "$runtime/node/bin/npm"
 ln -s ../lib/node_modules/npm/bin/npx-cli.js "$runtime/node/bin/npx"
+install -m 0644 "$node_home/LICENSE" "$runtime/licenses/node-LICENSE"
+install -m 0644 "$shellcheck_home/LICENSE.txt" "$runtime/licenses/shellcheck-LICENSE.txt"
+for notice in LICENSE-APACHE LICENSE-MIT; do
+    "$curl_tool" --proto '=https' --proto-redir '=https' --fail --silent --show-error \
+        --location --connect-timeout 15 --max-time 180 --output "$runtime/licenses/uv-$notice" \
+        "https://raw.githubusercontent.com/astral-sh/uv/$uv_version/$notice"
+    test -s "$runtime/licenses/uv-$notice"
+done
 
 isolated=(env -i "HOME=$work/home" "TMPDIR=$work/tmp"
     "PATH=$runtime/bin:$runtime/node/bin:/usr/bin:/bin" LC_ALL=C TZ=UTC PYTHONDONTWRITEBYTECODE=1)
@@ -87,7 +107,7 @@ rm -f -- "$runtime/cache/npm/_update-notifier-last-checked"
 # Normalize archive headers; package-manager cache contents can change on a
 # fresh fetch. Pin the digest of the published bytes, not a local rebuild.
 LC_ALL=C "$tar_tool" --sort=name --format=gnu --mtime=@0 --numeric-owner \
-    --owner=0 --group=0 --hard-dereference -C "$runtime" -cf - bin cache node python versions.txt \
+    --owner=0 --group=0 --hard-dereference -C "$runtime" -cf - bin cache licenses node python versions.txt \
     | gzip -n > "$work/runtime.tar.gz"
 sha=$("$python_tool" -c '
 import hashlib, sys
