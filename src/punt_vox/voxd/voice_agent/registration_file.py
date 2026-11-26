@@ -11,8 +11,8 @@ from punt_vox.atomic_file import AtomicFile
 from punt_vox.private_state import PrivateState
 from punt_vox.sibling_lock import SiblingLock
 from punt_vox.voxd.voice_agent.contracts import Registration
-from punt_vox.voxd.voice_agent.control import ConvAIControl
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.reply import Reply
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 __all__ = ["RegistrationFile"]
 
-_RETIRED: Final = frozenset({"retired_agents", "retired_tools"})
+_RETIRED: Final = frozenset(
+    {"retired_agents", "retired_tools", "pending_agents", "pending_tools"}
+)
 
 
 @final
@@ -108,12 +110,14 @@ class RegistrationFile:
                     )
                     raise ConvAIError(msg)
                 return Registration(
-                    None if agent_id is None else ConvAIControl.resource_id(agent_id),
+                    None if agent_id is None else Reply.resource_id(agent_id),
                     self._ids(ids),
                     fingerprint,
                     credential_id,
                     self._ids(fields.get("retired_agents", [])),
                     self._ids(fields.get("retired_tools", [])),
+                    self._ids(fields.get("pending_agents", [])),
+                    self._ids(fields.get("pending_tools", [])),
                 )
             case _:
                 msg = "Invalid Vox voice agent config"
@@ -133,4 +137,4 @@ class RegistrationFile:
         if not isinstance(value, str):
             msg = "Invalid tool ID in Vox voice agent config"
             raise ConvAIError(msg)
-        return ConvAIControl.resource_id(value)
+        return Reply.resource_id(value)

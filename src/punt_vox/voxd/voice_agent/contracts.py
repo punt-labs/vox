@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
@@ -45,6 +45,47 @@ class Registration:
     # connects so a slow delete never blocks a call.
     retired_agents: tuple[str, ...] = ()
     retired_tools: tuple[str, ...] = ()
+    # What an unfinished replacement has created so far. A finished one empties
+    # these; ids still here at the next start belong to a run that died.
+    pending_agents: tuple[str, ...] = ()
+    pending_tools: tuple[str, ...] = ()
+
+    def remaining(
+        self, agents: tuple[str, ...], tools: tuple[str, ...]
+    ) -> Registration:
+        """Return the record of a teardown that left *agents* and *tools* behind."""
+        return replace(
+            self,
+            agent_id=None,
+            tool_ids=(),
+            retired_agents=agents,
+            retired_tools=tools,
+            pending_agents=(),
+            pending_tools=(),
+        )
+
+    @property
+    def orphaned_agents(self) -> tuple[str, ...]:
+        """Return the agents nothing will use again: retired, or from a dead run."""
+        return (*self.retired_agents, *self.pending_agents)
+
+    @property
+    def orphaned_tools(self) -> tuple[str, ...]:
+        """Return the tools nothing will use again: retired, or from a dead run."""
+        return (*self.retired_tools, *self.pending_tools)
+
+    @property
+    def agents(self) -> tuple[str, ...]:
+        """Return every agent this record names, current or not."""
+        return (
+            *self.orphaned_agents,
+            *(() if self.agent_id is None else (self.agent_id,)),
+        )
+
+    @property
+    def tools(self) -> tuple[str, ...]:
+        """Return every tool this record names, current or not."""
+        return (*self.orphaned_tools, *self.tool_ids)
 
 
 class ToolConfig(TypedDict):

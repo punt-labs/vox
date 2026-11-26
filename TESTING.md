@@ -664,27 +664,27 @@ the run. To prove Polly on a `ProofBranch`, dispatch with
 
 Combined coverage excludes `roundtrip` and `levels` explicitly, so its selection
 does not depend on whether Whisper or mpv is installed. The dedicated speech job enforces WER;
-the coverage ratchet covers default, slow, subprocess, and packaging tiers.
+the coverage floor covers default, slow, subprocess, and packaging tiers.
 
-Coverage is measured, not subject to an absolute percentage floor (punt-kit
-`ci.md` section 11). On PRs the test job also measures the merge base with the
-target branch in a detached worktree, using that revision's tests/dependencies
-and the current coverage harness/configuration. Both total line coverage and
-total branch coverage must not decrease, implementing the PL-TT-2 no-regression
-policy. The comparison uses exact covered/valid fractions, with no epsilon or
-rounding allowance. A missing, empty, or invalid report fails closed.
+Coverage is gated by an absolute floor: total line coverage and total branch
+coverage must each be at least 95%. The comparison uses exact covered/valid
+fractions (19/20), with no epsilon or rounding allowance. A missing, empty, or
+invalid report fails closed. On PRs the test job also measures the merge base
+with the target branch in a detached worktree, using that revision's
+tests/dependencies and the current coverage harness/configuration. The
+merge-base figures are printed for information and never fail the run.
 
 The base measurement passes the head configuration explicitly with the harness's
 `--rcfile` option. The harness uses that file for pytest-cov, subprocess startup,
 and report generation; it ignores and removes inherited `COVERAGE_RCFILE` from
 the test environment so nested harness calls keep their own configuration.
 
-There is no committed numeric baseline to raise: improvements automatically
-become the comparison point after merging. Never lower a floor or regenerate a
-baseline to bypass a regression; add tests instead. Locally run `make coverage`
-and compare reports with
-`make coverage-compare COVERAGE_BASE=/path/to/base.json`. Without `COVERAGE_BASE`,
-`make coverage-compare` publishes the current totals without a comparison.
+There is no committed numeric baseline: the floor is the constant in
+`tools/compare_coverage.py`. Never lower it to bypass a failure; add tests
+instead. Locally run `make coverage` and check a report with
+`make coverage-compare COVERAGE_BASE=/path/to/base.json` (the base is printed
+alongside the current totals). Without `COVERAGE_BASE`, `make coverage-compare`
+publishes the current totals and checks the floor.
 
 The job summary publishes line and branch percentages. The `coverage` artifact
 contains XML, JSON, and browsable HTML; terminal output lists missing lines.

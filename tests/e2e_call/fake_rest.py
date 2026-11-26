@@ -21,6 +21,17 @@ _AGENTS = "/v1/convai/agents"
 _SIGNED_URL = "/v1/convai/conversation/get-signed-url"
 
 
+def _description_of(body: bytes) -> str:
+    """Return the tool description the daemon sent, marker included."""
+    config = json.loads(body).get("tool_config", {})
+    return str(config.get("description", ""))
+
+
+def _name_of(body: bytes) -> str:
+    """Return the agent name the daemon sent, marker included."""
+    return str(json.loads(body).get("name", ""))
+
+
 @final
 class _Server(ThreadingHTTPServer):
     """Keep a handler's exception for the test instead of printing it."""
@@ -41,14 +52,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._seen()
-        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if not self._authorized():
             return
         match self.path:
             case "/v1/convai/tools":
-                self._reply({"id": self._fake.issue(_TOOLS)})
+                tool_id = self._fake.issue(_TOOLS)
+                self._fake.remember(tool_id, _description_of(body))
+                self._reply({"id": tool_id})
             case "/v1/convai/agents/create":
-                self._reply({"agent_id": self._fake.issue(_AGENTS)})
+                agent_id = self._fake.issue(_AGENTS)
+                self._fake.remember(agent_id, _name_of(body))
+                self._reply({"agent_id": agent_id})
             case _:
                 self._unknown_path()
 
@@ -58,7 +73,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         if url.path != _SIGNED_URL:
-            self._unknown_path()
+            self._reply_resource(url.path)
             return
         agent_id = parse_qs(url.query).get("agent_id", [""])[0]
         if self._fake.issued(_AGENTS, agent_id):
@@ -77,6 +92,17 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._error("unknown id")
             self._reply({"detail": "not found"}, status=404)
+
+    def _reply_resource(self, path: str) -> None:
+        """Answer the marker check the daemon makes before it deletes."""
+        route, _, resource_id = path.rpartition("/")
+        text = self._fake.recorded(resource_id)
+        if route == _TOOLS and text is not None:
+            self._reply({"id": resource_id, "tool_config": {"description": text}})
+        elif route == _AGENTS and text is not None:
+            self._reply({"agent_id": resource_id, "name": text})
+        else:
+            self._unknown_path()
 
     def _seen(self) -> None:
         self._fake.requests.append((self.command, self.path))
@@ -122,6 +148,7 @@ class FakeConvAIRest:
     __slots__ = (
         "_errors",
         "_issued",
+        "_recorded",
         "_requests",
         "_server",
         "_signed_url",
@@ -131,6 +158,7 @@ class FakeConvAIRest:
     _requests: list[tuple[str, str]]
     _errors: list[str]
     _issued: dict[str, list[str]]  # Ids handed out, per resource route.
+    _recorded: dict[str, str]  # Marker-bearing text sent at creation, per id.
     _server: _Server
     _thread: Thread
 
@@ -141,6 +169,7 @@ class FakeConvAIRest:
         self._requests = []
         self._errors = []
         self._issued = {_TOOLS: [], _AGENTS: []}
+        self._recorded = {}
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.fake = self
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
@@ -172,6 +201,14 @@ class FakeConvAIRest:
         resource_id = f"{route.rpartition('/')[2].rstrip('s')}_{len(ids) + 1}"
         ids.append(resource_id)
         return resource_id
+
+    def remember(self, resource_id: str, text: str) -> None:
+        """Keep the description or name the daemon created *resource_id* with."""
+        self._recorded[resource_id] = text
+
+    def recorded(self, resource_id: str) -> str | None:
+        """Return the text kept for *resource_id*; None for an id never issued."""
+        return self._recorded.get(resource_id)
 
     def issued(self, route: str, resource_id: str) -> bool:
         """Return whether *route* (``/v1/convai/tools`` or agents) issued the id."""

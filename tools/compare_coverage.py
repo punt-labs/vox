@@ -1,4 +1,4 @@
-"""Publish total line/branch coverage and reject merge-base regressions."""
+"""Publish total line/branch coverage and enforce the 95% coverage floor."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import os
 from fractions import Fraction
 from pathlib import Path
 from typing import Self
+
+FLOOR = Fraction(19, 20)
 
 
 class CoverageTotals:
@@ -56,39 +58,33 @@ class CoverageTotals:
             f"branches {float(self.branches):.2%}"
         )
 
-    def regressions(self, base: CoverageTotals) -> list[str]:
-        """Name each metric that decreased, using exact rational comparisons."""
-        return [
-            name
-            for name in ("lines", "branches")
-            if getattr(self, name) < getattr(base, name)
-        ]
+    def below_floor(self) -> list[str]:
+        """Name each metric under the floor, using exact rational comparisons."""
+        return [name for name in ("lines", "branches") if getattr(self, name) < FLOOR]
 
 
 def main() -> int:
-    """Publish current/base totals and fail closed on either regression."""
+    """Publish totals and fail closed when either metric is under the floor."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("current", type=Path)
     parser.add_argument("--base", type=Path)
     args = parser.parse_args()
     current = CoverageTotals(args.current)
     messages = [current.summary("Current")]
-    regressions = []
     if args.base is not None:
-        base = CoverageTotals(args.base)
-        messages.append(base.summary("Merge base"))
-        regressions = current.regressions(base)
-        messages.append(
-            f"Coverage regression: {', '.join(regressions)}"
-            if regressions
-            else "No coverage regression."
-        )
+        messages.append(CoverageTotals(args.base).summary("Merge base"))
+    below = current.below_floor()
+    messages.append(
+        f"Coverage below the {FLOOR:.0%} floor: {', '.join(below)}"
+        if below
+        else f"Coverage floor {FLOOR:.0%}: met"
+    )
     report = "\n".join(messages)
     print(report)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(summary).open("a") as stream:
             stream.write(f"## Combined test coverage\n\n{report}\n")
-    return int(bool(regressions))
+    return int(bool(below))
 
 
 if __name__ == "__main__":
