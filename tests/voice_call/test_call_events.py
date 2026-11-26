@@ -504,3 +504,93 @@ async def test_a_send_that_meets_the_peers_close_stops_the_pump_not_the_call() -
         "caller_audio_stopped",
         {"reason": "ElevenLabs WebSocket send failed (closed)"},
     )
+
+
+def _gated_call(events: list[object]) -> tuple[VoiceAgentCall, _Peer, FakeWorkers]:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234")]
+    peer = _Peer(events)
+
+    @asynccontextmanager
+    async def opener(
+        url: str, options: SessionOptions, *, trace: EventTrace
+    ) -> AsyncGenerator[_Peer]:
+        del url, options, trace
+        yield peer
+
+    call = VoiceAgentCall(
+        BossTools(workers, workers),
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=MagicMock(spec=EventTrace),
+        opener=cast("Opener", opener),
+        progress=ProgressEvents(),
+    )
+    return call, peer, workers
+
+
+_READBACK = "Start a worker in repo for this task: fix x. Say yes to go ahead."
+
+
+async def test_what_the_agent_and_person_say_releases_a_held_request() -> None:
+    start: dict[str, object] = {"task": "fix x"}
+    call, peer, workers = _gated_call(
+        [
+            ClientToolCall("t1", "worker_status", {"worker_id": "abcd1234"}, True),
+            ClientToolCall("t2", "start_worker", start, expects_response=True),
+            AgentResponse(_READBACK, event_id=1),
+            UserTranscript("yes", event_id=2),
+            ClientToolCall("t3", "start_worker", start, expects_response=True),
+        ]
+    )
+    await call.run(_dial)
+    assert "awaiting_confirmation" in peer.results[1]
+    assert "awaiting_confirmation" not in peer.results[2]
+    assert workers.started == [("fix x", "/repo")]
+
+
+async def test_a_tool_response_from_outside_voxd_taints_the_call() -> None:
+    call, peer, workers = _gated_call(
+        [
+            AgentToolResponse("a1", False, "exa_search", "webhook"),
+            ClientToolCall("t1", "start_worker", {"task": "fix x"}, True),
+        ]
+    )
+    await call.run(_dial)
+    assert "awaiting_confirmation" in peer.results[0]
+    assert workers.started == []
+
+
+async def test_a_held_steer_is_not_traced_as_a_receipt() -> None:
+    stream = io.StringIO()
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", prompt_epoch=4)]
+    tools = BossTools(workers, workers)
+    tools.guard.provenance.taint()
+    call = VoiceAgentCall(
+        tools,
+        _Silent(),
+        AgentSpeaker(cast("PlaybackQueue", FakePlayback())),
+        trace=EventTrace(stream),
+        opener=Conversation.open,
+        progress=ProgressEvents(),
+    )
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall(
+            "s1",
+            "steer_worker",
+            {"worker_id": "abcd1234", "words": "private words"},
+            expects_response=True,
+        ),
+    )
+    assert "private words" not in stream.getvalue()
+
+
+async def test_search_arguments_are_not_kept_in_the_call_status() -> None:
+    call, _, _ = _gated_call(
+        [ClientToolCall("t1", "search_web", {"query": "my private thing"}, True)]
+    )
+    await call.run(_dial)
+    shown = call.status()["tool_calls"]
+    assert shown == [{"tool": "search_web", "arguments": {}, "error": True}]

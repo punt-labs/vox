@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import signal
 import sys
 from typing import TYPE_CHECKING, Self, final
 
@@ -12,6 +13,8 @@ import typer
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from punt_vox.commands.voice_call_control import CallControl
     from punt_vox.commands.voice_call_status import CallStatusView
 
@@ -44,13 +47,32 @@ class CallFollower:
                 take; 130 when a second Ctrl-C interrupts the hangup.
         """
         try:
-            return asyncio.run(self._follow(started))
+            return self.run(self._follow(started))
         except KeyboardInterrupt:
             return self.hang_up(started.call_id)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             typer.echo(f"Lost the call's status, hanging up: {exc}", err=True)
             self.finish(self.hang_up(started.call_id))
             raise typer.Exit(1) from None
+
+    @staticmethod
+    def run[T](work: Coroutine[object, object, T]) -> T:
+        """Run *work* on a fresh event loop whose shutdown Ctrl-C cannot cut short.
+
+        ``asyncio.run`` closes its loop with the default SIGINT handler back in
+        place, so a second Ctrl-C during that close abandons the loop's own
+        async-generator cleanup and leaves a coroutine never awaited. SIGINT is
+        ignored for the close alone; during the work it still interrupts.
+        """
+        runner = asyncio.Runner()
+        try:
+            return runner.run(work)
+        finally:
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                runner.close()
+            finally:
+                signal.signal(signal.SIGINT, previous)
 
     @staticmethod
     def finish(view: CallStatusView) -> None:
@@ -86,7 +108,7 @@ class CallFollower:
     def hang_up(self, call_id: str) -> CallStatusView:
         """Stop the named call and return its ended status."""
         try:
-            ended = asyncio.run(self._control.request("stop_scoped", call_id=call_id))
+            ended = self.run(self._control.request("stop_scoped", call_id=call_id))
         except KeyboardInterrupt:
             typer.echo(
                 "\nInterrupted while hanging up; the call may still be live:"

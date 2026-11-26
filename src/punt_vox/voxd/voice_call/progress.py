@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, nullcontext
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_call.progress_types import WorkerProgress
+from punt_vox.voxd.voice_call.provenance import CallProvenance
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -52,16 +53,22 @@ class ProgressEvents:
 class CallProgress:
     """Send hidden context immediately, speaking results only at a lull."""
 
-    __slots__ = ("_activity", "_events", "_reported")
+    __slots__ = ("_activity", "_events", "_provenance", "_reported")
     _activity: float
     _events: ProgressEvents
+    _provenance: CallProvenance
     _reported: dict[str, int]
     LULL = 2.0
 
-    def __new__(cls, events: ProgressEvents) -> Self:
-        """Bind the live stream and an idle activity clock."""
+    def __new__(
+        cls,
+        events: ProgressEvents,
+        provenance: CallProvenance | None = None,  # None: a record nobody reads.
+    ) -> Self:
+        """Bind the live stream, the call's provenance and an idle activity clock."""
         self = super().__new__(cls)
         self._events = events
+        self._provenance = provenance if provenance is not None else CallProvenance()
         self._activity = 0.0
         self._reported = {}
         return self
@@ -122,8 +129,8 @@ class CallProgress:
     def _lull_remaining(cls, activity: float) -> float:
         return max(0.0, cls.LULL - (asyncio.get_running_loop().time() - activity))
 
-    @staticmethod
-    async def _context(conv: Conversation, event: WorkerProgress) -> None:
+    async def _context(self, conv: Conversation, event: WorkerProgress) -> None:
+        self._provenance.taint()  # A worker's report is untrusted text.
         await conv.send_context(
             json.dumps(
                 {

@@ -88,6 +88,10 @@ class _Connector:
     def __init__(self, url: str) -> None:
         self.url = url
         self.teardowns = 0
+        self.retirements = 0
+
+    def retire_stale(self) -> None:
+        self.retirements += 1
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
@@ -1058,6 +1062,9 @@ class _SlowConnector:
         self._loop.call_soon_threadsafe(self.entered.set)
         self.release.wait()
         raise ConvAIError("agent provisioning failed")
+
+    def retire_stale(self) -> None:
+        """Nothing is provisioned, so nothing was replaced."""
 
     def teardown(self) -> None:
         raise AssertionError("unexpected teardown")

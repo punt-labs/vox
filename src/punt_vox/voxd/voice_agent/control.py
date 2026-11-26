@@ -8,27 +8,23 @@ switch, which also replaces the key sent with a placeholder; see
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 from typing import TYPE_CHECKING, Self, cast, final
 
 import httpx
 
-from punt_vox.voxd.voice_agent._decode import EventDecoder
+from punt_vox.voxd.voice_agent.agent_body import AgentBody
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.settings import AgentSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.voice_agent.contracts import (
-        AgentPermissions,
-        BuiltInTools,
         ClientTool,
-        CreateAgentConfig,
         CreateConfig,
-        CreateToolConfig,
     )
 
 __all__ = ["ConvAIControl"]
@@ -38,38 +34,23 @@ _CONVAI = "/v1/convai"
 _SIGNED_URL = "/conversation/get-signed-url"
 _RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
-_OVERRIDABLE: AgentPermissions = {
-    "prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True},
-    "first_message": True,
-}
-# The provider ends the conversation itself when the agent runs this tool;
-# the daemon only hears the acknowledgement and the close that follows.
-_BUILT_IN_TOOLS: BuiltInTools = {
-    "end_call": {
-        "type": "system",
-        "name": "end_call",
-        "description": (
-            "End the call after the person says goodbye or asks to end the call "
-            "or hang up, once you have said one short closing sentence."
-        ),
-        "params": {"system_tool_type": "end_call"},
-    }
-}
 
 
 @final
 class ConvAIControl:
     """Own the authenticated REST connection for one ElevenLabs workspace."""
 
-    __slots__ = ("_credential_id", "_http")
+    __slots__ = ("_credential_id", "_http", "_settings")
     _credential_id: str
     _http: httpx.Client
+    _settings: AgentSettings
 
     def __new__(
         cls,
         api_key: str,
         *,
         base_url: str | None = None,  # None reads the test override, else the API.
+        settings: AgentSettings | None = None,  # None: the minimal settings.
     ) -> Self:
         """Construct off the event loop because key derivation is synchronous."""
         if not api_key.strip():
@@ -78,6 +59,7 @@ class ConvAIControl:
         if base_url is None:
             base_url, api_key = CallOverrides.rest(_API, api_key)
         self = super().__new__(cls)
+        self._settings = AgentSettings.minimal() if settings is None else settings
         self._credential_id = hashlib.scrypt(
             api_key.encode(),
             salt=f"vox:elevenlabs:convai:{base_url}".encode(),
@@ -91,7 +73,7 @@ class ConvAIControl:
         return self
 
     @classmethod
-    def from_environment(cls) -> Self:
+    def from_environment(cls, settings: AgentSettings | None = None) -> Self:
         """Construct from ``ELEVENLABS_API_KEY``, or from the REST override alone.
 
         The override is resolved first: it supplies the placeholder key, so
@@ -104,7 +86,7 @@ class ConvAIControl:
         if not api_key:
             msg = "voxd has no ELEVENLABS_API_KEY for a voice call"
             raise ValueError(msg)
-        return cls(api_key, base_url=base_url)
+        return cls(api_key, base_url=base_url, settings=settings)
 
     @property
     def credential_id(self) -> str:
@@ -124,12 +106,13 @@ class ConvAIControl:
 
     def create_tool(self, tool: ClientTool) -> str:
         """Register a client tool without adding any remote execution capability."""
-        response = self._request("POST", "/tools", self._tool_config(tool))
+        response = self._request("POST", "/tools", AgentBody.tool(tool))
         return self._created_id(response, "id")
 
     def create_agent(self, tool_ids: tuple[str, ...]) -> str:
         """Provision an agent that requires a signed connection and PCM at 16 kHz."""
-        response = self._request("POST", "/agents/create", self._agent_config(tool_ids))
+        body = AgentBody.create(self._settings, tool_ids)
+        response = self._request("POST", "/agents/create", body)
         return self._created_id(response, "agent_id")
 
     @classmethod
@@ -139,57 +122,9 @@ class ConvAIControl:
         except ConvAIError as exc:
             raise ConvAIError(f"{exc}{_UNKNOWN_CREATE}") from None
 
-    @classmethod
-    def registration_fingerprint(cls, tools: tuple[ClientTool, ...]) -> str:
+    def registration_fingerprint(self, tools: tuple[ClientTool, ...]) -> str:
         """Identify the provisioned settings and ordered tool catalog."""
-        names = {tool.name for tool in tools}
-        if "" in names or len(names) != len(tools):
-            msg = "ElevenLabs client-tool names must be nonempty and unique"
-            raise ValueError(msg)
-        settings = (cls._agent_config(()), [cls._tool_config(tool) for tool in tools])
-        return hashlib.sha256(
-            json.dumps(settings, sort_keys=True, allow_nan=False).encode()
-        ).hexdigest()
-
-    @staticmethod
-    def _tool_config(tool: ClientTool) -> CreateToolConfig:
-        return {
-            "tool_config": {
-                "type": "client",
-                "name": tool.name,
-                "description": tool.description,
-                "expects_response": True,
-                "parameters": tool.parameters,
-            }
-        }
-
-    @staticmethod
-    def _agent_config(tool_ids: tuple[str, ...]) -> CreateAgentConfig:
-        return {
-            "name": "Vox voice agent",
-            "conversation_config": {
-                "agent": {
-                    "first_message": "",
-                    "language": "en",
-                    "prompt": {
-                        "tool_ids": list(tool_ids),
-                        "built_in_tools": _BUILT_IN_TOOLS,
-                    },
-                },
-                "tts": {"agent_output_audio_format": "pcm_16000"},
-                "asr": {"user_input_audio_format": "pcm_16000"},
-                "conversation": {"client_events": list(EventDecoder.subscriptions())},
-            },
-            "platform_settings": {
-                "auth": {"enable_auth": True},
-                "overrides": {
-                    "conversation_config_override": {
-                        "agent": _OVERRIDABLE,
-                        "conversation": {"text_only": True},
-                    }
-                },
-            },
-        }
+        return AgentBody.fingerprint(self._settings, tools)
 
     def signed_url(self, agent_id: str) -> str:
         """Fetch a fresh, short-lived WebSocket URL; never cache it."""

@@ -1,4 +1,4 @@
-.PHONY: help test test-e2e test-call-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions check-comments check-docstrings build-api-docs report format build install clean depot metrics coverage coverage-compare prfaq clean-tex zspec zspec-test
+.PHONY: help test test-e2e test-call-e2e verify-call lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions check-comments check-docstrings build-api-docs report format build install clean depot metrics coverage coverage-compare prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -50,6 +50,9 @@ test-levels-live: ## Live ElevenLabs music loudness, silence, track change, chim
 
 test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m "e2e and not quarantine"
+
+verify-call: ## Place a real scripted call through the installed voxd and judge it (spends credits, plays audio)
+	uv run python tools/verify_call.py
 
 test-call-e2e: ## Voice-call e2e -- a real voxd against a fake ElevenLabs agent on loopback, no credentials
 	uv run pytest tests/e2e_call -m call_e2e -q
