@@ -7500,6 +7500,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/workers/darwin_process_table.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 5.0,
+    "module_size": 25.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/workers/discard.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -7630,6 +7643,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/workers/pane_process_group.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.67,
+    "max_complexity": 6.0,
+    "avg_complexity": 3.67,
+    "module_size": 38.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/workers/policy.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -7647,9 +7673,9 @@
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
     "avg_params": 1.71,
-    "max_complexity": 6.0,
-    "avg_complexity": 3.29,
-    "module_size": 94.0,
+    "max_complexity": 5.0,
+    "avg_complexity": 3.14,
+    "module_size": 93.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -7804,8 +7830,8 @@
     "encapsulation_ratio": 1.0,
     "avg_params": 1.0,
     "max_complexity": 5.0,
-    "avg_complexity": 5.0,
-    "module_size": 48.0,
+    "avg_complexity": 3.67,
+    "module_size": 36.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

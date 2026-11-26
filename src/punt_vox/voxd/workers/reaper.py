@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, final
@@ -89,7 +90,7 @@ class WorkerReaper:
         try:
             if cls._orphan(records, handle):
                 provider.stop(handle)
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             logger.warning(
                 "Worker orphan %s not reaped (%s)", handle, type(exc).__name__
             )
@@ -97,8 +98,6 @@ class WorkerReaper:
     @staticmethod
     def _orphan(records: WorkerRecords, handle: str) -> bool:
         prefix = "vox-worker-"
-        if not handle.startswith(prefix):
-            return False
         try:
             worker_id = str(UUID(handle.removeprefix(prefix)))
         except ValueError:

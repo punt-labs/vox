@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import time
 from typing import TYPE_CHECKING, final
 
-from punt_vox.voxd.workers.startup_probes import StartupProbes
+from punt_vox.voxd.workers.pane_process_group import PaneProcessGroup
 
 if TYPE_CHECKING:
     from subprocess import CompletedProcess
@@ -50,14 +48,4 @@ class TmuxProbe:
     @staticmethod
     def wait_for_exit(group: int) -> None:
         """Wait for the worker pane's separate process group to disappear."""
-        if group == os.getpgrp():
-            raise RuntimeError("Worker pane must have its own process group")
-        deadline = time.monotonic() + StartupProbes.timeout(3)
-        while True:
-            try:
-                os.killpg(group, 0)
-            except ProcessLookupError:
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Worker pane did not exit after stop")
-            time.sleep(0.01)
+        PaneProcessGroup(group).wait_for_exit()
