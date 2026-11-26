@@ -118,8 +118,8 @@ def test_stop_tolerates_a_pane_process_disappearing() -> None:
 
 def test_stop_refuses_its_own_process_group() -> None:
     with (
-        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=42),
-        patch("punt_vox.voxd.workers.tmux_probe.os.killpg") as kill,
+        patch("os.getpgrp", return_value=42),
+        patch("os.killpg") as kill,
         pytest.raises(RuntimeError, match="own process group"),
     ):
         TmuxProbe.wait_for_exit(42)
@@ -128,10 +128,37 @@ def test_stop_refuses_its_own_process_group() -> None:
 
 def test_stop_deadline_is_bounded() -> None:
     with (
-        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=1),
-        patch("punt_vox.voxd.workers.tmux_probe.os.killpg"),
-        patch("punt_vox.voxd.workers.tmux_probe.time.monotonic", side_effect=[0, 4]),
+        patch("os.getpgrp", return_value=1),
+        patch("os.killpg"),
+        patch("time.monotonic", side_effect=[0, 4]),
         pytest.raises(RuntimeError, match="did not exit"),
+    ):
+        TmuxProbe.wait_for_exit(42)
+
+
+def test_stop_accepts_a_darwin_group_with_only_zombies() -> None:
+    with (
+        patch("os.getpgrp", return_value=1),
+        patch("platform.system", return_value="Darwin"),
+        patch("os.killpg", side_effect=PermissionError),
+        patch(
+            "subprocess.check_output",
+            return_value="42 ZN\n43 S\n",
+        ),
+    ):
+        TmuxProbe.wait_for_exit(42)
+
+
+def test_stop_does_not_ignore_eperm_for_a_live_darwin_group() -> None:
+    with (
+        patch("os.getpgrp", return_value=1),
+        patch("platform.system", return_value="Darwin"),
+        patch("os.killpg", side_effect=PermissionError),
+        patch(
+            "subprocess.check_output",
+            return_value="42 Z\n42 S\n",
+        ),
+        pytest.raises(PermissionError),
     ):
         TmuxProbe.wait_for_exit(42)
 
