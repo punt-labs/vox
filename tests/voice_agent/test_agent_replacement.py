@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
+from punt_vox.voxd.voice_agent.disposal import Disposal
+from punt_vox.voxd.voice_agent.fault import ForeignResourceError
+from punt_vox.voxd.voice_agent.host_marker import HostMarker
 
 from .fake_wire import API_KEY, SIGNED_URL
 
@@ -63,7 +66,7 @@ def test_a_tool_without_voxds_marker_is_never_deleted(
         VoiceAgent(control, path=config).retire_stale()
     assert wire.deletes() == []
     assert wire.verifications == ["tool tool_foreign"]
-    assert _stored(config)["retired_tools"] == []
+    assert _stored(config)["retired_tools"] == ["tool_foreign"]
 
 
 def test_an_agent_without_voxds_marker_is_never_deleted(
@@ -76,7 +79,7 @@ def test_an_agent_without_voxds_marker_is_never_deleted(
         _write_registration(config, control, retired_agents=["agent_foreign"])
         VoiceAgent(control, path=config).retire_stale()
     assert wire.deletes() == []
-    assert _stored(config)["retired_agents"] == []
+    assert _stored(config)["retired_agents"] == ["agent_foreign"]
 
 
 def test_a_registration_copied_from_another_host_deletes_nothing(
@@ -89,9 +92,9 @@ def test_a_registration_copied_from_another_host_deletes_nothing(
         VoiceAgent(control, path=first).connection((_CLOCK,))
         second.parent.mkdir()
         second.write_text(first.read_text())
-        VoiceAgent(control, path=second).teardown()
+        with pytest.raises(ConvAIError, match="lacks this host's marker"):
+            VoiceAgent(control, path=second).teardown()
     assert wire.deletes() == []
-    assert not second.exists()
 
 
 def test_a_tampered_registration_cannot_delete_a_foreign_resource_at_teardown(
@@ -102,9 +105,46 @@ def test_a_tampered_registration_cannot_delete_a_foreign_resource_at_teardown(
     wire.delete_tool_status = 200
     with ConvAIControl(API_KEY, base_url=wire.url) as control:
         _write_registration(config, control, tool_ids=["tool_foreign"])
-        VoiceAgent(control, path=config).teardown()
+        with pytest.raises(ConvAIError, match=r"tool tool_foreign: lacks"):
+            VoiceAgent(control, path=config).teardown()
     assert wire.deletes() == []
+
+
+def test_teardown_deletes_what_it_can_and_names_each_id_it_could_not(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    wire.tools["tool_foreign"] = _FOREIGN_DESCRIPTION
+    wire.delete_forgets = True
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        record = _stored(config)
+        record["retired_tools"] = ["tool_foreign"]
+        config.write_text(json.dumps(record))
+        with pytest.raises(ConvAIError) as caught:
+            agent.teardown()
+    text = str(caught.value)
+    assert "tool tool_foreign: lacks this host's marker; not deleted" in text
+    assert "tool_clock" not in text
+    assert wire.tools == {"tool_foreign": _FOREIGN_DESCRIPTION}
+    assert wire.agents == {}
+    assert _stored(config)["retired_tools"] == ["tool_foreign"]
+
+
+def test_a_teardown_that_deleted_everything_reports_nothing_and_removes_the_file(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    wire.delete_forgets = True
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        agent.teardown()
     assert not config.exists()
+    assert wire.tools == {} and wire.agents == {}
 
 
 def test_a_resource_that_is_already_gone_is_not_deleted_again(
@@ -128,6 +168,39 @@ def test_every_delete_is_preceded_by_a_marker_check(
         agent.teardown()
     assert wire.verifications == ["agent agent_vox", "tool tool_clock"]
     assert len(wire.deletes()) == 2
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"<html>gateway error</html>", b"{}", b'{"tool_config": {"description": 7}}'],
+    ids=["not-json", "field-missing", "field-not-text"],
+)
+def test_an_unreadable_lookup_is_retryable_not_foreign(
+    tmp_path: Path, wire: Requests, body: bytes
+) -> None:
+    config = tmp_path / _REGISTRATION
+    wire.tools["tool_clock"] = "Return UTC time"
+    wire.lookup_body = body
+    wire.delete_tool_status = 200
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        _write_registration(config, control, retired_tools=["tool_clock"])
+        with pytest.raises(ConvAIError) as caught:
+            control.delete_tool("tool_clock", "[marker]")
+        assert not isinstance(caught.value, ForeignResourceError)
+        VoiceAgent(control, path=config).retire_stale()
+    assert wire.deletes() == []
+    assert _stored(config)["retired_tools"] == ["tool_clock"]
+
+
+def test_a_lookup_that_shows_text_without_the_marker_is_foreign(
+    tmp_path: Path, wire: Requests
+) -> None:
+    wire.tools["tool_x"] = _FOREIGN_DESCRIPTION
+    with (
+        ConvAIControl(API_KEY, base_url=wire.url) as control,
+        pytest.raises(ForeignResourceError),
+    ):
+        control.delete_tool("tool_x", "[marker]")
 
 
 # -- Invariant 1: a failed replacement leaves the account as it was -----------
@@ -339,3 +412,44 @@ def test_cleanup_of_an_interrupted_run_never_raises_and_keeps_what_it_could_not_
         wire.delete_tool_status = 403
         agent.retire_stale()
     assert _stored(config)["pending_tools"] == ["tool_alarm"]
+
+
+def test_a_failing_cleanup_never_replaces_the_original_error(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_args: object, **_kwargs: object) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    wire.create_agent_status = 403
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _REGISTRATION)
+        monkeypatch.setattr(Disposal, "tools", broken)
+        with pytest.raises(ConvAIError, match="HTTP 403") as caught:
+            agent.connection((_CLOCK,))
+    assert any("disk full" in note for note in caught.value.__notes__)
+
+
+# -- The host marker file ------------------------------------------------------
+
+
+def test_a_host_marker_that_cannot_be_written_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = HostMarker(tmp_path / _REGISTRATION)
+
+    def fail(_fd: int, _data: bytes) -> int:
+        msg = "no space left"
+        raise OSError(msg)
+
+    monkeypatch.setattr("os.write", fail)
+    with pytest.raises(ConvAIError, match="host marker"):
+        marker.text()
+    assert not list(tmp_path.glob("*.host*"))
+    monkeypatch.undo()
+    assert marker.text().startswith("[vox-voice-agent host=")
+
+
+def test_the_host_marker_token_is_stable_once_created(tmp_path: Path) -> None:
+    config = tmp_path / _REGISTRATION
+    assert HostMarker(config).text() == HostMarker(config).text()

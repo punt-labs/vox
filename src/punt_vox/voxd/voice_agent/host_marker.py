@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import secrets
-from typing import TYPE_CHECKING, Final, Self, final
+import tempfile
+from pathlib import Path
+from typing import Final, Self, final
 
 from punt_vox.voxd.voice_agent.fault import ConvAIError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 __all__ = ["HostMarker"]
 
@@ -37,34 +37,49 @@ class HostMarker:
 
     def text(self) -> str:
         """Return the marker, creating the host token on first use."""
-        return f"[{_VOXD} host={self._token()}]"
-
-    def _token(self) -> str:
         try:
-            return self._read()
+            token = self._read(self._file)
         except FileNotFoundError:
-            pass
+            token = self._create(self._file)
+        return f"[{_VOXD} host={token}]"
+
+    @classmethod
+    def _create(cls, target: Path) -> str:
+        """Publish a complete token file or none: never a partial one."""
+        token = secrets.token_hex(16)
+        scratch = ""
         try:
-            fd = os.open(self._file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            return self._read()  # Another voxd created it first.
+            fd, scratch = tempfile.mkstemp(
+                dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+            )
+            try:
+                os.write(fd, token.encode())
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                os.link(scratch, target)  # Fails if another voxd got there first.
+            except FileExistsError:
+                return cls._read(target)
         except OSError as exc:
             msg = f"Cannot create the Vox host marker ({type(exc).__name__})"
             raise ConvAIError(msg) from None
-        token = secrets.token_hex(16)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(token)
+        finally:
+            if scratch:
+                with contextlib.suppress(OSError):
+                    Path(scratch).unlink()
         return token
 
-    def _read(self) -> str:
+    @staticmethod
+    def _read(target: Path) -> str:
         try:
-            token = self._file.read_text(encoding="utf-8").strip()
+            token = target.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            raise
         except (OSError, UnicodeDecodeError) as exc:
-            if isinstance(exc, FileNotFoundError):
-                raise
             msg = f"Unreadable Vox host marker ({type(exc).__name__})"
             raise ConvAIError(msg) from None
-        if not token:  # A creator that died between open and write.
+        if not token:
             msg = "Vox host marker is empty; delete it to create a new one"
             raise ConvAIError(msg)
         return token

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
@@ -49,6 +49,20 @@ class Registration:
     # these; ids still here at the next start belong to a run that died.
     pending_agents: tuple[str, ...] = ()
     pending_tools: tuple[str, ...] = ()
+
+    def remaining(
+        self, agents: tuple[str, ...], tools: tuple[str, ...]
+    ) -> Registration:
+        """Return the record of a teardown that left *agents* and *tools* behind."""
+        return replace(
+            self,
+            agent_id=None,
+            tool_ids=(),
+            retired_agents=agents,
+            retired_tools=tools,
+            pending_agents=(),
+            pending_tools=(),
+        )
 
     @property
     def orphaned_agents(self) -> tuple[str, ...]:

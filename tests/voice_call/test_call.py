@@ -1226,6 +1226,21 @@ async def test_agent_teardown_resolves_the_cold_connector_off_loop(
     assert connector.teardowns == 1
 
 
+async def test_a_teardown_that_leaves_resources_behind_is_an_error_reply(
+    tmp_path: Path,
+) -> None:
+    class _Leaving(_Connector):
+        def teardown(self) -> None:
+            raise ConvAIError("tool tool_a: lacks this host's marker; not deleted")
+
+    handlers = _handlers(
+        FakeWorkers(), FakePlayback(), tmp_path, connector=_Leaving("ws://unused")
+    )
+    reply = await _rpc(handlers, {"type": "call_teardown"})
+    assert "tool tool_a: lacks this host's marker" in str(reply.get("message"))
+    assert "result" not in reply
+
+
 async def test_agent_teardown_waits_for_cancelled_call_provisioning(
     tmp_path: Path,
 ) -> None:

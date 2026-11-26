@@ -18,6 +18,7 @@ API_KEY: Final = "localhost-test-key"
 SIGNED_URL: Final = "ws://127.0.0.1:42609/convai?conversation_signature=not-for-logs"
 _TOOLS: Final = "/v1/convai/tools/"
 _AGENTS: Final = "/v1/convai/agents/"
+_SIGNED_URL: Final = "/v1/convai/conversation/get-signed-url?agent_id="
 
 
 class Requests:
@@ -35,6 +36,7 @@ class Requests:
     tools: dict[str, str]
     agents: dict[str, str]
     next_tool_ids: list[str]
+    next_agent_ids: list[str]
     create_tool_id: str
     disconnect_on_tool_creation: bool
     create_agent_status: int
@@ -42,6 +44,7 @@ class Requests:
     delete_tool_status: int
     delete_agent_status: int
     delete_forgets: bool
+    lookup_body: bytes | None  # Raw reply to a marker lookup; None: the real shape.
     url: str
 
     def __new__(cls) -> Self:
@@ -51,11 +54,13 @@ class Requests:
         self.tools = {}
         self.agents = {}
         self.next_tool_ids = []
+        self.next_agent_ids = []
         self.create_tool_id = "tool_clock"
         self.disconnect_on_tool_creation = False
         self.create_agent_status = self.signed_url_status = 200
         self.delete_tool_status = self.delete_agent_status = 404
         self.delete_forgets = False
+        self.lookup_body = None
         self.url = ""
         return self
 
@@ -86,9 +91,14 @@ def serve() -> Generator[Requests]:
                 requests.tools[tool_id] = body["tool_config"]["description"]
                 self._reply(200, {"id": tool_id})
             elif self.path == "/v1/convai/agents/create":
+                agent_id = (
+                    requests.next_agent_ids.pop(0)
+                    if requests.next_agent_ids
+                    else "agent_vox"
+                )
                 if requests.create_agent_status == 200:
-                    requests.agents["agent_vox"] = body["name"]
-                self._reply(requests.create_agent_status, {"agent_id": "agent_vox"})
+                    requests.agents[agent_id] = body["name"]
+                self._reply(requests.create_agent_status, {"agent_id": agent_id})
             else:
                 self._reply(500, {})
 
@@ -98,9 +108,7 @@ def serve() -> Generator[Requests]:
                 self._describe(path.removeprefix(_TOOLS), requests.tools, "tool")
             elif path.startswith(_AGENTS):
                 self._describe(path.removeprefix(_AGENTS), requests.agents, "agent")
-            elif (
-                self.path == "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"
-            ):
+            elif self.path.startswith(_SIGNED_URL):
                 self._observe(None)
                 self._reply(requests.signed_url_status, {"signed_url": SIGNED_URL})
             else:
@@ -135,6 +143,8 @@ def serve() -> Generator[Requests]:
             requests.verifications.append(f"{kind} {resource_id}")
             if resource_id not in held:
                 self._reply(404, {})
+            elif requests.lookup_body is not None:
+                self._send(200, requests.lookup_body)
             elif kind == "tool":
                 self._reply(
                     200,
@@ -156,7 +166,9 @@ def serve() -> Generator[Requests]:
             assert self.headers["xi-api-key"] in {API_KEY, PLACEHOLDER_KEY}
 
         def _reply(self, code: int, body: dict[str, object]) -> None:
-            response = json.dumps(body).encode()
+            self._send(code, json.dumps(body).encode())
+
+        def _send(self, code: int, response: bytes) -> None:
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))

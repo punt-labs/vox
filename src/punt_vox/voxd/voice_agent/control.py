@@ -141,8 +141,7 @@ class ConvAIControl:
         reply = self._wire.request("GET", path, tolerate_404=True)
         if reply.is_absent():
             return False
-        text = reply.text_at(*field)
-        if text is not None and marker in text:
+        if marker in reply.text_at(*field):
             return True
         msg = f"ElevenLabs {path} was not created by this host's voxd; not deleted"
         raise ForeignResourceError(msg)

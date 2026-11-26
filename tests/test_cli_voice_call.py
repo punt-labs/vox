@@ -96,6 +96,17 @@ def test_call_teardown_requests_explicit_agent_deletion(state: str) -> None:
     assert "provision a new agent" in result.output
 
 
+def test_call_teardown_that_leaves_resources_behind_exits_one_naming_them() -> None:
+    leftover = VoxdProtocolError("tool tool_a: lacks this host's marker; not deleted")
+    with patch.object(DaemonControl, "request", side_effect=leftover):
+        result = CliRunner(env={"COLUMNS": "200"}).invoke(
+            CallCli.build_app(), ["teardown"]
+        )
+    assert result.exit_code == 1
+    assert "tool tool_a: lacks this host's marker" in result.output
+    assert "provision a new agent" not in result.output
+
+
 def test_call_teardown_allows_the_serial_provider_deletion_budget() -> None:
     with patch.object(DaemonControl, "request", return_value={"state": "idle"}) as rpc:
         result = runner.invoke(CallCli.build_app(), ["teardown"])

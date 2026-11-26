@@ -7,6 +7,7 @@ import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.voice_agent.disposal import Undeleted
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
@@ -63,8 +64,8 @@ class Retirement:
             agents, tools = self._retired_ids()
             if not (agents or tools):
                 return
-            kept_agents = self._disposal.agents(agents)
-            kept_tools = self._disposal.tools(tools)
+            kept_agents = Undeleted.ids(self._disposal.agents(agents))
+            kept_tools = Undeleted.ids(self._disposal.tools(tools))
             self._forget({*agents} - {*kept_agents}, {*tools} - {*kept_tools})
         except (ConvAIError, OSError) as exc:
             logger.warning("Old ElevenLabs resources not retired this time: %s", exc)

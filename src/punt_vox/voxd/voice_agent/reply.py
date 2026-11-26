@@ -55,24 +55,30 @@ class Reply:
         except ConvAIError as exc:
             raise ConvAIError(f"{exc}{unknown_note}") from None
 
-    def text_at(self, *path: str) -> str | None:
-        """Return the string reached by *path*, or None if the shape differs."""
-        value = self._at(path, strict=False)
-        return value if isinstance(value, str) else None
+    def text_at(self, *path: str) -> str:
+        """Return the string reached by *path*; an unreadable reply is an error.
 
-    def _at(self, path: tuple[str, ...], *, strict: bool = True) -> object:
-        value = self._json(strict=strict)
+        Invalid JSON, a missing field and a non-text field all raise
+        :class:`ConvAIError`, so the caller can tell "could not read" from
+        "read, and it says something else".
+        """
+        value = self._at(path)
+        if isinstance(value, str):
+            return value
+        msg = f"ElevenLabs reply is missing {'.'.join(path)}"
+        raise ConvAIError(msg)
+
+    def _at(self, path: tuple[str, ...]) -> object:
+        value = self._json()
         for name in path:
             if not isinstance(value, dict):
                 return None
             value = cast("dict[str, object]", value).get(name)
         return value
 
-    def _json(self, *, strict: bool = True) -> object:
+    def _json(self) -> object:
         try:
             return self._response.json()
         except (ValueError, RecursionError):
-            if strict:
-                msg = "ElevenLabs returned invalid JSON"
-                raise ConvAIError(msg) from None
-            return None
+            msg = "ElevenLabs returned invalid JSON"
+            raise ConvAIError(msg) from None

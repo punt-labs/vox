@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.paths import config_dir
 from punt_vox.voxd.voice_agent.contracts import Registration
 from punt_vox.voxd.voice_agent.control import ConvAIControl
-from punt_vox.voxd.voice_agent.disposal import Disposal
+from punt_vox.voxd.voice_agent.disposal import Disposal, Undeleted
+from punt_vox.voxd.voice_agent.fault import ConvAIError
 from punt_vox.voxd.voice_agent.host_marker import HostMarker
 from punt_vox.voxd.voice_agent.registration_file import RegistrationFile
 from punt_vox.voxd.voice_agent.replacement import Replacement
@@ -112,11 +112,16 @@ class VoiceAgent:
                 self._delete(stored)
 
     def _delete(self, stored: Registration) -> None:
-        for agent_id in stored.agents:
-            self._disposal.agent(agent_id)
+        """Delete what can be deleted; keep and report what cannot."""
+        agents_left = self._disposal.agents(stored.agents)
+        self._store.write(stored.remaining(Undeleted.ids(agents_left), stored.tools))
+        tools_left = self._disposal.tools(stored.tools)
+        if not (left := (*agents_left, *tools_left)):
+            self._store.remove()
+            return
         self._store.write(
-            replace(stored, agent_id=None, retired_agents=(), pending_agents=())
+            stored.remaining(Undeleted.ids(agents_left), Undeleted.ids(tools_left))
         )
-        for tool_id in stored.tools:
-            self._disposal.tool(tool_id)
-        self._store.remove()
+        reasons = "; ".join(item.reason for item in left)
+        msg = f"Left in place on ElevenLabs, still recorded: {reasons}"
+        raise ConvAIError(msg)

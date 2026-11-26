@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import Registration
+from punt_vox.voxd.voice_agent.disposal import Undeleted
 from punt_vox.voxd.voice_agent.fault import ConvAIError
 
 if TYPE_CHECKING:
@@ -82,15 +83,19 @@ class Replacement:
                 (*base.retired_tools, *base.tool_ids),
             )
             self._store.write(finished)
-        except Exception:
-            self._abandon(record)
+        except Exception as failure:
+            try:
+                self._abandon(record)
+            except (ConvAIError, OSError) as cleanup:
+                # Cleanup must never replace the failure that started it.
+                failure.add_note(f"cleanup after the failure also failed: {cleanup!r}")
             raise
         return finished, agent_id
 
     def _abandon(self, record: Registration) -> None:
         """Delete what the attempt created and restore the old registration."""
-        kept_agents = self._disposal.agents(record.pending_agents)
-        kept_tools = self._disposal.tools(record.pending_tools)
+        kept_agents = Undeleted.ids(self._disposal.agents(record.pending_agents))
+        kept_tools = Undeleted.ids(self._disposal.tools(record.pending_tools))
         base = self._base
         try:
             if base is None and not (kept_agents or kept_tools):

@@ -43,6 +43,8 @@ def test_a_fake_call_and_a_live_call_keep_separate_registrations(
     # A live call under the same HOME has no registration yet: it would
     # provision its own, not refuse the fake one as an identity mismatch.
     monkeypatch.delenv("VOX_CONVAI_BASE_URL")
+    # The live account is a different one: it issues ids of its own.
+    wire.next_tool_ids, wire.next_agent_ids = ["tool_live"], ["agent_live"]
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         VoiceAgent(control).connection((_CLOCK,))
     assert live.is_file()
