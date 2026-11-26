@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 from _lifecycle_fakes import FakeClock
 
+from punt_vox.paths import run_dir
 from punt_vox.service.backend import PortProbeError
 from punt_vox.service.daemon_process import (
     DaemonProcess,
@@ -192,9 +193,15 @@ def test_identity_reads_a_command_line_wider_than_the_terminal(
         assert seen is not None
         assert seen.command.endswith(f" {voxd}")
         assert seen.is_voxd()
+        assert ProcessManager().open_voxd(proc.pid) is not None
     finally:
         proc.kill()
         proc.wait()
+
+
+def test_port_file_lives_in_the_user_run_dir() -> None:
+    """``serve.port`` is read from the run dir voxd publishes it in."""
+    assert ProcessManager().port_file == run_dir() / "serve.port"
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +326,7 @@ def test_start_time_handles_on_one_process_are_equal() -> None:
     assert first == again
     assert len({first, again}) == 1
     assert first != later
+    assert first != 4242
 
 
 def test_pidfd_handles_on_one_process_are_equal(
@@ -331,6 +339,7 @@ def test_pidfd_handles_on_one_process_are_equal(
     assert again is not None
     assert first == again
     assert len({first, again}) == 1
+    assert first != 4242
 
 
 def test_pidfd_open_failure_is_port_probe_error(
