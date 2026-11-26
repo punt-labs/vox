@@ -348,8 +348,8 @@ class TestApplyVibeForSynthesis:
             ("€1,500,50-2,500,50", "1,500.50 to 2,500.50 euros"),
             ("$1,50-2,50", "1,50-2,50"),
             ("€1.50-2.50", "1.50-2.50"),
-            ("1.50\u20132.50€", "1.50\u20132.50"),
-            ("1,50\u20132,50€", "1,50\u20132,50"),
+            ("1.50\u20132.50€", "1.50 to 2.50 euros"),
+            ("1,50\u20132,50€", "1.50 to 2.50 euros"),
         ],
     )
     def test_euro_comma_decimals(self, model: str, source: str, expected: str) -> None:
@@ -394,6 +394,25 @@ class TestApplyVibeForSynthesis:
         assert (
             self._apply(f"€1,50{separator}2,50", None, "elevenlabs", model) == dot_range
         )
+
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("It costs (1.234,56-2.345,67€).", "It costs 1,234.56 to 2,345.67 euros."),
+            ("1.234,56\u20132.345.678€", "1,234.56 to 2,345,678 euros"),
+            ("1.50\u20132,50€", "1.50 to 2.50 euros"),
+            ("\u22121,50\u20132.50€", "minus 1.50 to 2.50 euros"),
+            ("140\u2013150¥", "140 to 150 yen"),
+            ("1.50-2.50€", "1.50-2.50"),
+            ("1,50\u20132,50$", "1,50\u20132,50"),
+            ("`1.50\u20132.50€`", "1.50\u20132.50"),
+        ],
+    )
+    def test_trailing_currency_range(
+        self, model: str, source: str, expected: str
+    ) -> None:
+        assert self._apply(source, None, "elevenlabs", model) == expected
 
     @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
     @pytest.mark.parametrize(
