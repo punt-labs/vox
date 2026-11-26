@@ -153,8 +153,12 @@ async def test_a_research_result_holds_the_next_worker_start_for_a_yes() -> None
 
 
 def _exa(handler: Callable[[httpx.Request], httpx.Response]) -> ExaSearch:
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return ExaSearch("exa-secret-key", client=client)
+    return ExaSearch(
+        "exa-secret-key",
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+    )
 
 
 async def test_exa_sends_the_key_as_a_header_and_asks_for_three_short_texts() -> None:
@@ -255,3 +259,37 @@ async def test_an_unreachable_server_is_a_spoken_error() -> None:
     docs = DeepWikiDocs(StreamableHttpTransport("http://127.0.0.1:1/mcp"))
     with pytest.raises(ValueError, match="documentation lookup"):
         await docs.ask("pallets/flask", "q")
+
+
+async def test_a_search_opens_and_closes_its_own_connection_pool() -> None:
+    made: list[httpx.AsyncClient] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": []})
+
+    def factory() -> httpx.AsyncClient:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        made.append(client)
+        return client
+
+    search = ExaSearch("k", client_factory=factory)
+    await search.search("one")
+    await search.search("two")
+    assert len(made) == 2
+    assert all(client.is_closed for client in made)
+
+
+async def test_a_failed_search_still_closes_its_connection_pool() -> None:
+    made: list[httpx.AsyncClient] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    def factory() -> httpx.AsyncClient:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        made.append(client)
+        return client
+
+    with pytest.raises(ValueError, match="web search failed"):
+        await ExaSearch("k", client_factory=factory).search("x")
+    assert made[0].is_closed

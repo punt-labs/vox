@@ -10,7 +10,7 @@ import httpx
 from punt_vox.voxd.voice_call.lookup.snippet import Snippet
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 __all__ = ["ExaSearch"]
 
@@ -25,18 +25,23 @@ KEY_VARIABLE: Final = "EXA_API_KEY"
 class ExaSearch:
     """Run one fixed-shape query against Exa and return short snippets."""
 
-    __slots__ = ("_client", "_key")
+    __slots__ = ("_client_factory", "_key")
     _key: str
-    _client: httpx.AsyncClient
+    _client_factory: Callable[[], httpx.AsyncClient]
 
-    def __new__(cls, api_key: str, *, client: httpx.AsyncClient | None = None) -> Self:
+    def __new__(
+        cls,
+        api_key: str,
+        *,
+        client_factory: Callable[[], httpx.AsyncClient] = httpx.AsyncClient,
+    ) -> Self:
         """Bind the key, which leaves this object only in the request header."""
         if not api_key.strip():
             msg = f"{KEY_VARIABLE} is empty"
             raise ValueError(msg)
         self = super().__new__(cls)
         self._key = api_key
-        self._client = client if client is not None else httpx.AsyncClient()
+        self._client_factory = client_factory
         return self
 
     @classmethod
@@ -53,12 +58,14 @@ class ExaSearch:
             "contents": {"text": {"maxCharacters": _TEXT_CHARS}},
         }
         try:
-            response = await self._client.post(
-                _URL,
-                json=body,
-                headers={"x-api-key": self._key},
-                timeout=_TIMEOUT_S,
-            )
+            # One pool per search, closed when it ends: nothing outlives a call.
+            async with self._client_factory() as client:
+                response = await client.post(
+                    _URL,
+                    json=body,
+                    headers={"x-api-key": self._key},
+                    timeout=_TIMEOUT_S,
+                )
         except httpx.TimeoutException:
             raise TimeoutError from None
         except httpx.HTTPError as exc:
