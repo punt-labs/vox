@@ -8,6 +8,8 @@ handle_push_trigger = false
 
 [review_agent]
 enable_incremental_review = true
+# REVIEW.md at the repo root scopes every review agent (docs.qodo.ai/governance/use-review-md).
+enable_review_md = true
 # comments_routing below is authoritative; the threshold restates it (High only inline).
 inline_comments_severity_threshold = 3
 issues_user_guidelines = """
