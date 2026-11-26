@@ -63,10 +63,10 @@ file scopes match). Full `make check` runs at handoff or before opening a PR,
 not before every commit.
 
 For snapshot-enabled Ethos, `make handoff-runtime` installs the version pinned
-by this checkout on Linux x86-64 or macOS ARM64. Run it once on a new machine
-and again when the pin changes. It needs Python 3 and curl, and checks the
-archive's SHA-256 before installing it under `~/.punt-labs/ethos/runtimes/`.
-The gate never downloads it.
+by this checkout on Linux x86-64 or Apple Silicon with macOS 13.5 or newer.
+Run it once on a new machine and again when the pin changes. It needs Python 3
+and curl, and checks the archive's SHA-256 before installing it under
+`~/.punt-labs/ethos/runtimes/`. The gate never downloads it.
 
 To refresh the pins after a toolchain or dependency change, dispatch **Handoff
 runtime** on `main` with the next `handoff-runtime-vN` tag. Use the release

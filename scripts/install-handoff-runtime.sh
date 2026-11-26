@@ -10,7 +10,16 @@ fi
 
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64) platform=linux-amd64 ;;
-    Darwin/arm64) platform=darwin-arm64 ;;
+    Darwin/arm64)
+        macos=$(sw_vers -productVersion)
+        if [[ ! $macos =~ ^([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]] ||
+            ! ((10#${BASH_REMATCH[1]} > 13 ||
+                (10#${BASH_REMATCH[1]} == 13 && 10#${BASH_REMATCH[2]} >= 5))); then
+            printf 'The Vox handoff runtime requires macOS 13.5 or newer (found %s).\n' "$macos" >&2
+            exit 1
+        fi
+        platform=darwin-arm64
+        ;;
     *) echo 'No Vox snapshot runtime is published for this platform.' >&2; exit 1 ;;
 esac
 
