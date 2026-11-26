@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 
 import httpx
 import pytest
 from fastmcp import FastMCP
-from fastmcp.client.transports import FastMCPTransport
+from fastmcp.client.transports import FastMCPTransport, StreamableHttpTransport
 from pydantic import Field
 
 from punt_vox.voxd.voice_call.boss_tools import BossTools
@@ -189,7 +190,7 @@ async def test_the_documentation_client_asks_one_fixed_tool() -> None:
     server = FastMCP("docs")
 
     @server.tool
-    def ask_question(
+    def ask_wiki_question(
         repo_name: Annotated[str, Field(alias="repoName")], question: str
     ) -> str:
         return f"{repo_name}: {question}"
@@ -204,3 +205,53 @@ def test_search_is_offered_only_when_the_environment_holds_a_key() -> None:
     assert ExaSearch.from_environment({}) is None
     assert ExaSearch.from_environment({"EXA_API_KEY": "  "}) is None
     assert ExaSearch.from_environment({"EXA_API_KEY": "k"}) is not None
+
+
+_RECORDED = Path(__file__).parent / "fixtures" / "deepwiki_tools_list.json"
+
+
+def test_the_documentation_tool_and_arguments_match_the_real_servers_tool_list() -> (
+    None
+):
+    tools = json.loads(_RECORDED.read_text())["result"]["tools"]
+    by_name = {tool["name"]: tool for tool in tools}
+    ask = by_name[DeepWikiDocs.TOOL]
+    assert set(ask["inputSchema"]["required"]) == set(DeepWikiDocs.ARGUMENTS)
+    assert set(ask["inputSchema"]["properties"]) == set(DeepWikiDocs.ARGUMENTS)
+
+
+def _server_without_the_tool() -> FastMCP:
+    server = FastMCP("docs")
+
+    @server.tool
+    def read_wiki_structure(repo_name: str) -> str:
+        return repo_name
+
+    return server
+
+
+async def test_a_server_missing_the_tool_is_a_spoken_error_not_a_traceback() -> None:
+    docs = DeepWikiDocs(FastMCPTransport(_server_without_the_tool()))
+    with pytest.raises(ValueError, match="documentation lookup"):
+        await docs.ask("pallets/flask", "factories?")
+
+
+async def test_a_tool_error_from_the_server_is_a_spoken_error() -> None:
+    server = FastMCP("docs")
+
+    @server.tool
+    def ask_wiki_question(
+        repo_name: Annotated[str, Field(alias="repoName")], question: str
+    ) -> str:
+        raise RuntimeError("private upstream detail")
+
+    docs = DeepWikiDocs(FastMCPTransport(server))
+    with pytest.raises(ValueError, match="documentation lookup") as caught:
+        await docs.ask("pallets/flask", "q")
+    assert "private upstream detail" not in str(caught.value)
+
+
+async def test_an_unreachable_server_is_a_spoken_error() -> None:
+    docs = DeepWikiDocs(StreamableHttpTransport("http://127.0.0.1:1/mcp"))
+    with pytest.raises(ValueError, match="documentation lookup"):
+        await docs.ask("pallets/flask", "q")

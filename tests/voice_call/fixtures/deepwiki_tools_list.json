@@ -1,0 +1,48 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "read_wiki_structure",
+        "description": "Get a list of documentation topics for a GitHub repository.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repoName": {"type": "string", "description": "GitHub repository: owner/repo"}
+          },
+          "required": ["repoName"]
+        }
+      },
+      {
+        "name": "read_wiki_contents",
+        "description": "View documentation about a GitHub repository.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repoName": {"type": "string", "description": "GitHub repository: owner/repo"}
+          },
+          "required": ["repoName"]
+        }
+      },
+      {
+        "name": "ask_wiki_question",
+        "description": "Ask any question about a GitHub repository.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repoName": {
+              "anyOf": [
+                {"type": "string"},
+                {"type": "array", "items": {"type": "string"}, "maxItems": 10}
+              ],
+              "description": "GitHub repository (owner/repo) or a list of up to 10"
+            },
+            "question": {"type": "string", "description": "The question to ask"}
+          },
+          "required": ["repoName", "question"]
+        }
+      }
+    ]
+  }
+}
