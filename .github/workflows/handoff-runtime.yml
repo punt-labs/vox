@@ -70,7 +70,9 @@ jobs:
             "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/$asset"
           printf '%s  %s\n' "$SHELLCHECK_SHA" "$asset" | shasum -a 256 --check
           tar -xzf "$asset"
-          echo "$RUNNER_TEMP/shellcheck-v0.11.0" >> "$GITHUB_PATH"
+          mkdir handoff-bin
+          ln -s "$RUNNER_TEMP/shellcheck-v0.11.0/shellcheck" handoff-bin/shellcheck
+          echo "$RUNNER_TEMP/handoff-bin" >> "$GITHUB_PATH"
       - name: Package the offline runtime
         env:
           PLATFORM: ${{ matrix.platform }}

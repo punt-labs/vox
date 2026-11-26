@@ -23,6 +23,7 @@ node_tool=$(require_tool node)
 curl_tool=$(require_tool curl)
 python_version=$(<"$repo/.python-version")
 node_tool=$(env -i PATH=/usr/bin:/bin "$node_tool" -p 'process.execPath')
+shellcheck_tool=$(env -i PATH=/usr/bin:/bin "$node_tool" -p 'require("node:fs").realpathSync(process.argv[1])' -- "$shellcheck_tool")
 node_home=$(dirname -- "$(dirname -- "$node_tool")")
 if [[ ! -f $node_home/lib/node_modules/npm/bin/npx-cli.js ]]; then
     printf 'Node must come from a distribution that bundles npm and npx.\n' >&2
