@@ -3633,11 +3633,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/voice_agent/agent.py": {
-    "efferent_coupling": 7.0,
+    "efferent_coupling": 6.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.564,
-    "avg_lcom": 0.564
+    "max_lcom": 0.238,
+    "avg_lcom": 0.238
   },
   "src/punt_vox/voxd/voice_agent/agent_body.py": {
     "efferent_coupling": 2.0,
@@ -3687,6 +3687,20 @@
     "circular_imports": 0.0,
     "max_lcom": 0.667,
     "avg_lcom": 0.667
+  },
+  "src/punt_vox/voxd/voice_agent/registration_file.py": {
+    "efferent_coupling": 6.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.267,
+    "avg_lcom": 0.267
+  },
+  "src/punt_vox/voxd/voice_agent/retirement.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.833,
+    "avg_lcom": 0.833
   },
   "src/punt_vox/voxd/voice_agent/sender.py": {
     "efferent_coupling": 1.0,

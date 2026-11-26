@@ -603,3 +603,90 @@ def test_teardown_also_deletes_what_is_still_retired(
     deleted = [p for m, p, _ in wire.calls if m == "DELETE"]
     assert len(deleted) == 4
     assert not config.exists()
+
+
+def _held_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[threading.Event, threading.Event]:
+    """Make every agent delete wait until released; return (entered, release)."""
+    entered, release = threading.Event(), threading.Event()
+    real = ConvAIControl.delete_agent
+
+    def slow(control: ConvAIControl, agent_id: str) -> None:
+        entered.set()
+        assert release.wait(20)
+        real(control, agent_id)
+
+    monkeypatch.setattr(ConvAIControl, "delete_agent", slow)
+    return entered, release
+
+
+def test_a_redial_reaches_the_provider_while_a_retirement_delete_is_held_open(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        redial: list[tuple[str, tuple[str, ...]]] = []
+        dialing = threading.Thread(
+            target=lambda: redial.append(
+                agent.connection((ClientTool("new", "Different tool"),))
+            )
+        )
+        dialing.start()
+        dialing.join(5)
+        finished = not dialing.is_alive()
+        release.set()
+        retiring.join(10)
+        dialing.join(10)
+    assert finished, "a redial waited for the retirement delete"
+    assert redial[0][0] == _SIGNED_URL
+
+
+def test_retirement_is_single_flight(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        first = threading.Thread(target=agent.retire_stale)
+        first.start()
+        assert entered.wait(5)
+        wire.calls.clear()
+        agent.retire_stale()  # A second run while one is in flight does nothing.
+        assert wire.calls == []
+        release.set()
+        first.join(10)
+
+
+def test_removals_are_merged_into_the_latest_registration(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        wire.create_tool_id = "tool_two"
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        wire.create_tool_id = "tool_clock"
+        agent.connection((ClientTool("newer", "Another tool"),))
+        release.set()
+        retiring.join(10)
+    stored = json.loads(config.read_text())
+    # The run deleted the first replaced tool; the tool replaced meanwhile stays.
+    assert stored["retired_tools"] == ["tool_two"]
+    assert stored["tool_ids"] == ["tool_clock"]
