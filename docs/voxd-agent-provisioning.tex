@@ -8,63 +8,77 @@
 \section{Scope}
 
 Voxd provisions ElevenLabs resources for the voice call: one agent at a
-time that new calls use, plus the tools that agent owns. The model covers
-what the registration file records, what exists remotely, and the gap
-between them that a lost file or a crash leaves behind. Replacing the
-configuration builds a new agent beside the active one and swaps it in;
-the old agent is deleted only when no call rides it. Voxd never writes to
-an existing agent, so it cannot replace a person's unpublished dashboard
-draft. Tools are created for one agent and deleted with it. A deleted
-agent's tools go with it.
+time that new calls use, plus the resources that agent owns. A resource is
+a client tool today; the same lifecycle covers any other kind an agent may
+own, such as an MCP server or a stored secret, because the rules do not
+depend on the kind. The model covers what the registration file records,
+what exists remotely, and the gap between them that a lost file, a crash, a
+dashboard deletion or a hand-edited file leaves behind.
 
-Resources voxd did not create are outside the model. \texttt{tagged} holds
-the agents whose name carries voxd's marker, so a sweep can only ever
-reach an agent voxd named.
+Replacing the configuration builds a new agent beside the active one and
+swaps it in. The daemon allows one call at a time, so no call rides a
+replaced agent when the swap happens, and the model has no call state.
+Voxd never writes to an agent it did not create in the current build. Its
+one write to an existing agent is the attach step, applied to an agent that
+is still being built, before any call can reach it.
+
+\texttt{marked} holds the remote agents whose name carries voxd's marker and
+this host. A marker is a name, so anyone can create a foreign agent that
+carries one; no automatic path treats \texttt{marked} as proof of
+ownership. Automatic deletion applies only to ids the registration file
+names, and only after the remote agent's marker is read back. A sweep of
+marked agents the file does not record is a person's act.
 
 \begin{zed}
-  [AGENTID, TOOLID]
+  [AGENTID, RESID]
 \end{zed}
 
 \begin{schema}{Lifecycle}
-  active, building, retired : \power AGENTID \\
-  fileTools : \power TOOLID \\
-  busy : \power AGENTID \\
-  remoteAgents, tagged : \power AGENTID \\
-  remoteTools : \power TOOLID \\
-  attached : AGENTID \pfun \power TOOLID
+  active, building, retired, proven, complete : \power AGENTID \\
+  fileOwned : AGENTID \pfun \power RESID \\
+  remoteAgents, marked : \power AGENTID \\
+  remoteRes : \power RESID \\
+  attached : AGENTID \pfun \power RESID
 \where
   \# active \leq 1 \land \# building \leq 1 \\
   active \cap building = \emptyset \\
   active \cap retired = \emptyset \\
   building \cap retired = \emptyset \\
-  active \cup building \cup retired \subseteq tagged \\
-  tagged \subseteq remoteAgents \\
-  \dom attached = remoteAgents \\
-  \bigcup (\ran attached) \subseteq remoteTools \\
-  fileTools \subseteq remoteTools \\
-  busy \subseteq remoteAgents
+  \dom fileOwned = active \cup building \cup retired \\
+  proven \subseteq active \cup retired \\
+  marked \subseteq remoteAgents \\
+  \dom attached = marked \\
+  complete \subseteq marked \\
+  \bigcup (\ran attached) \subseteq remoteRes \\
+  \forall a, b : \dom attached \spot a \neq b \implies
+    attached~a \cap attached~b = \emptyset
 \end{schema}
 
-\texttt{active} is the agent new calls use, \texttt{building} the one
-being provisioned, \texttt{retired} the replaced agents awaiting deletion.
-The registration file is absent exactly when all three are empty and
-\texttt{fileTools} is empty. \texttt{busy} holds the agents a call is
-using now; it is daemon memory, not a file field.
+\texttt{active} is the agent new calls use, \texttt{building} the one being
+provisioned, \texttt{retired} the replaced agents awaiting deletion, and
+\texttt{proven} the recorded agents on which a call setup has succeeded.
+\texttt{fileOwned} is the registration file's map from each recorded agent
+to the resources recorded for it. \texttt{attached} is the remote truth: the
+resources each marked agent actually lists. \texttt{complete} holds the
+agents whose recorded resources are all attached. The registration file is
+absent exactly when \texttt{fileOwned} is empty.
 
 \begin{schema}{InitLifecycle}
   Lifecycle'
 \where
   active' = \emptyset \land building' = \emptyset \land retired' = \emptyset \\
-  fileTools' = \emptyset \land busy' = \emptyset \\
-  remoteAgents' = \emptyset \land tagged' = \emptyset \\
-  remoteTools' = \emptyset \land attached' = \emptyset
+  proven' = \emptyset \land complete' = \emptyset \\
+  fileOwned' = \emptyset \\
+  remoteAgents' = \emptyset \land marked' = \emptyset \\
+  remoteRes' = \emptyset \land attached' = \emptyset
 \end{schema}
 
 \section{Building and swapping}
 
-The agent is created first, marked, and recorded; each tool is then
-created for it. A crash after a create and before its record is the only
-way a remote resource goes unrecorded while the file survives.
+The agent is created first, with the marker, so a marked agent exists before
+any resource does. Each resource is created and recorded for it, then one
+write attaches all of them to the agent. An agent that is not complete is
+never published.
 
 \begin{schema}{BeginBuild}
   \Delta Lifecycle \\
@@ -73,93 +87,182 @@ way a remote resource goes unrecorded while the file survives.
   building = \emptyset \land agent? \notin remoteAgents \\
   building' = \{agent?\} \\
   remoteAgents' = remoteAgents \cup \{agent?\} \\
-  tagged' = tagged \cup \{agent?\} \\
+  marked' = marked \cup \{agent?\} \\
   attached' = attached \cup \{agent? \mapsto \emptyset\} \\
+  fileOwned' = fileOwned \cup \{agent? \mapsto \emptyset\} \\
   active' = active \land retired' = retired \\
-  fileTools' = fileTools \land busy' = busy \\
-  remoteTools' = remoteTools
+  proven' = proven \land complete' = complete \\
+  remoteRes' = remoteRes
 \end{schema}
 
-\begin{schema}{BuildTool}
+\begin{schema}{CreateResource}
   \Delta Lifecycle \\
   agent? : AGENTID \\
-  tool? : TOOLID
+  res? : RESID
 \where
-  agent? \in building \land tool? \notin remoteTools \\
-  remoteTools' = remoteTools \cup \{tool?\} \\
-  fileTools' = fileTools \cup \{tool?\} \\
-  attached' = attached \oplus
-    \{agent? \mapsto attached~agent? \cup \{tool?\}\} \\
+  agent? \in building \cap marked \land res? \notin remoteRes \\
+  remoteRes' = remoteRes \cup \{res?\} \\
+  fileOwned' = fileOwned \oplus
+    \{agent? \mapsto fileOwned~agent? \cup \{res?\}\} \\
   active' = active \land building' = building \land retired' = retired \\
-  busy' = busy \\
-  remoteAgents' = remoteAgents \land tagged' = tagged
+  proven' = proven \land complete' = complete \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  attached' = attached
+\end{schema}
+
+\begin{schema}{AttachResources}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in building \cap marked \\
+  fileOwned~agent? \subseteq remoteRes \\
+  attached' = attached \oplus \{agent? \mapsto fileOwned~agent?\} \\
+  complete' = complete \cup \{agent?\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  proven' = proven \land fileOwned' = fileOwned \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes
 \end{schema}
 
 \begin{schema}{Publish}
   \Delta Lifecycle \\
   agent? : AGENTID
 \where
-  agent? \in building \\
+  agent? \in building \cap complete \\
   building' = \emptyset \land active' = \{agent?\} \\
   retired' = retired \cup active \\
-  fileTools' = fileTools \land busy' = busy \\
-  remoteAgents' = remoteAgents \land tagged' = tagged \\
-  remoteTools' = remoteTools \land attached' = attached
+  proven' = proven \land complete' = complete \\
+  fileOwned' = fileOwned \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes \land attached' = attached
 \end{schema}
 
-\section{Calls}
+\texttt{Prove} records that a call setup succeeded on the active agent. A
+replaced agent is deleted only while the active one is proven; if the
+active agent fails its first setup, the previous proven agent is promoted.
 
-A call rides the agent that was active when it started. A replacement
-therefore never ends a call, and a deletion never touches a busy agent.
-
-\begin{schema}{StartCall}
+\begin{schema}{Prove}
   \Delta Lifecycle \\
   agent? : AGENTID
 \where
   agent? \in active \\
-  busy' = busy \cup \{agent?\} \\
+  proven' = proven \cup \{agent?\} \\
   active' = active \land building' = building \land retired' = retired \\
-  fileTools' = fileTools \\
-  remoteAgents' = remoteAgents \land tagged' = tagged \\
-  remoteTools' = remoteTools \land attached' = attached
+  complete' = complete \land fileOwned' = fileOwned \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes \land attached' = attached
 \end{schema}
 
-\texttt{EndLastCall} models the end of the last call on the agent; the
-implementation counts calls and runs this when the count reaches zero.
-
-\begin{schema}{EndLastCall}
+\begin{schema}{Promote}
   \Delta Lifecycle \\
   agent? : AGENTID
 \where
-  agent? \in busy \\
-  busy' = busy \setminus \{agent?\} \\
-  active' = active \land building' = building \land retired' = retired \\
-  fileTools' = fileTools \\
-  remoteAgents' = remoteAgents \land tagged' = tagged \\
-  remoteTools' = remoteTools \land attached' = attached
+  active = \emptyset \land agent? \in retired \cap proven \\
+  active' = \{agent?\} \land retired' = retired \setminus \{agent?\} \\
+  building' = building \land proven' = proven \land complete' = complete \\
+  fileOwned' = fileOwned \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes \land attached' = attached
 \end{schema}
 
 \section{Deletion}
 
-\begin{schema}{DeleteRecorded}
+Every automatic deletion starts from an id the registration file names and
+reads the remote agent back first. \texttt{DeleteMarked} applies only when
+the remote agent carries the marker; \texttt{DeleteGone} only when the
+remote agent no longer exists. No schema applies to a remote agent that
+exists and is not marked, so a file naming a foreign agent deletes nothing.
+Deleting a marked agent deletes the resources the agent itself lists, which
+is the remote truth, never a resource id taken from the file alone.
+
+\begin{schema}{DeleteMarked}
   \Delta Lifecycle \\
   agent? : AGENTID
 \where
-  agent? \in active \cup building \cup retired \\
-  agent? \notin busy \\
+  agent? \in active \cup building \cup retired \land agent? \in marked \\
   active' = active \setminus \{agent?\} \\
   building' = building \setminus \{agent?\} \\
   retired' = retired \setminus \{agent?\} \\
+  proven' = proven \setminus \{agent?\} \\
+  complete' = complete \setminus \{agent?\} \\
+  fileOwned' = \{agent?\} \ndres fileOwned \\
   remoteAgents' = remoteAgents \setminus \{agent?\} \\
-  tagged' = tagged \setminus \{agent?\} \\
-  attached' = \{agent?\} \ndres attached \\
-  remoteTools' = remoteTools \setminus attached~agent? \\
-  fileTools' = fileTools \setminus attached~agent? \\
-  busy' = busy
+  marked' = marked \setminus \{agent?\} \\
+  remoteRes' = remoteRes \setminus attached~agent? \\
+  attached' = \{agent?\} \ndres attached
 \end{schema}
 
-\texttt{DeleteRecorded} serves teardown (every recorded agent in turn),
-the retirement of a replaced agent, and cleanup after a failed build.
+\begin{schema}{RetireGate}
+  Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in retired \\
+  active \neq \emptyset \land active \subseteq proven
+\end{schema}
+
+\texttt{DeleteRetired} is the deletion of a replaced agent: the same effect
+as \texttt{DeleteMarked}, allowed only while the active agent is proven.
+
+\begin{zed}
+  DeleteRetired \defs DeleteMarked \land RetireGate
+\end{zed}
+
+\begin{schema}{DeleteGone}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in active \cup building \cup retired \land agent? \notin remoteAgents \\
+  active' = active \setminus \{agent?\} \\
+  building' = building \setminus \{agent?\} \\
+  retired' = retired \setminus \{agent?\} \\
+  proven' = proven \setminus \{agent?\} \\
+  fileOwned' = \{agent?\} \ndres fileOwned \\
+  remoteRes' = remoteRes \setminus
+    (fileOwned~agent? \setminus \bigcup (\ran attached)) \\
+  complete' = complete \land remoteAgents' = remoteAgents \\
+  marked' = marked \land attached' = attached
+\end{schema}
+
+\section{What can happen outside voxd}
+
+\begin{schema}{RemoteDelete}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in marked \\
+  remoteAgents' = remoteAgents \setminus \{agent?\} \\
+  marked' = marked \setminus \{agent?\} \\
+  complete' = complete \setminus \{agent?\} \\
+  attached' = \{agent?\} \ndres attached \\
+  active' = active \land building' = building \land retired' = retired \\
+  proven' = proven \land fileOwned' = fileOwned \\
+  remoteRes' = remoteRes
+\end{schema}
+
+\begin{schema}{ForeignAgent}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \notin remoteAgents \\
+  remoteAgents' = remoteAgents \cup \{agent?\} \\
+  marked' = marked \land attached' = attached \\
+  active' = active \land building' = building \land retired' = retired \\
+  proven' = proven \land complete' = complete \land fileOwned' = fileOwned \\
+  remoteRes' = remoteRes
+\end{schema}
+
+\begin{schema}{TamperFile}
+  \Delta Lifecycle \\
+  foreign? : AGENTID
+\where
+  foreign? \in remoteAgents \setminus marked \\
+  active' = \{foreign?\} \land building' = \emptyset \land retired' = \emptyset \\
+  proven' = \emptyset \\
+  fileOwned' = \{foreign? \mapsto \emptyset\} \\
+  complete' = complete \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes \land attached' = attached
+\end{schema}
 
 \section{Lost registration and crashes}
 
@@ -167,10 +270,10 @@ the retirement of a replaced agent, and cleanup after a failed build.
   \Delta Lifecycle
 \where
   active' = \emptyset \land building' = \emptyset \land retired' = \emptyset \\
-  fileTools' = \emptyset \\
-  busy' = busy \\
-  remoteAgents' = remoteAgents \land tagged' = tagged \\
-  remoteTools' = remoteTools \land attached' = attached
+  proven' = \emptyset \land fileOwned' = \emptyset \\
+  complete' = complete \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
+  remoteRes' = remoteRes \land attached' = attached
 \end{schema}
 
 \begin{schema}{CrashAfterAgentCreate}
@@ -179,66 +282,67 @@ the retirement of a replaced agent, and cleanup after a failed build.
 \where
   agent? \notin remoteAgents \\
   remoteAgents' = remoteAgents \cup \{agent?\} \\
-  tagged' = tagged \cup \{agent?\} \\
+  marked' = marked \cup \{agent?\} \\
   attached' = attached \cup \{agent? \mapsto \emptyset\} \\
   active' = active \land building' = building \land retired' = retired \\
-  fileTools' = fileTools \land busy' = busy \\
-  remoteTools' = remoteTools
+  proven' = proven \land complete' = complete \land fileOwned' = fileOwned \\
+  remoteRes' = remoteRes
 \end{schema}
 
-\begin{schema}{CrashAfterToolCreate}
+\begin{schema}{CrashAfterResourceCreate}
   \Delta Lifecycle \\
-  tool? : TOOLID
+  res? : RESID
 \where
-  tool? \notin remoteTools \\
-  remoteTools' = remoteTools \cup \{tool?\} \\
+  res? \notin remoteRes \\
+  remoteRes' = remoteRes \cup \{res?\} \\
   active' = active \land building' = building \land retired' = retired \\
-  fileTools' = fileTools \land busy' = busy \\
-  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  proven' = proven \land complete' = complete \land fileOwned' = fileOwned \\
+  remoteAgents' = remoteAgents \land marked' = marked \\
   attached' = attached
 \end{schema}
 
 \subsection{Sweep}
 
-A sweep is a person's act. It deletes one agent the person chose from the
-listing, and only a marked agent the file does not record. It never
-deletes a recorded agent, an unmarked agent, or a tool no marked agent
-owns.
+A sweep is a person's act. It deletes one marked agent the file does not
+record, chosen by the person from the listing, together with the resources
+that agent lists. It never reaches a recorded agent, an unmarked agent, or a
+resource no marked agent lists.
 
-\begin{schema}{SweepAgent}
+\begin{schema}{SweepMarked}
   \Delta Lifecycle \\
   agent? : AGENTID
 \where
-  agent? \in tagged \setminus (active \cup building \cup retired) \\
-  agent? \notin busy \\
+  agent? \in marked \setminus (active \cup building \cup retired) \\
   remoteAgents' = remoteAgents \setminus \{agent?\} \\
-  tagged' = tagged \setminus \{agent?\} \\
+  marked' = marked \setminus \{agent?\} \\
+  complete' = complete \setminus \{agent?\} \\
   attached' = \{agent?\} \ndres attached \\
-  remoteTools' = remoteTools \setminus attached~agent? \\
+  remoteRes' = remoteRes \setminus attached~agent? \\
   active' = active \land building' = building \land retired' = retired \\
-  fileTools' = fileTools \setminus attached~agent? \land busy' = busy
+  proven' = proven \land fileOwned' = fileOwned
 \end{schema}
 
-\begin{schema}{ListOrphanTools}
+\begin{schema}{ListOrphanResources}
   \Xi Lifecycle \\
-  orphans! : \power TOOLID
+  orphans! : \power RESID
 \where
-  orphans! = remoteTools \setminus \bigcup (\ran attached)
+  orphans! = remoteRes \setminus \bigcup (\ran attached)
 \end{schema}
 
-\texttt{ListOrphanTools} only reports. Deleting an orphan tool is the
-person's act, by tool identifier, because a tool alone does not show who
+\texttt{ListOrphanResources} only reports. Deleting an orphan resource is the
+person's act, by identifier, because a resource alone does not show who
 created it.
 
 \section{Correspondence}
 
 \begin{tabular}{ll}
 Z & Design section \\
-\texttt{BeginBuild}, \texttt{BuildTool}, \texttt{Publish} & Provisioning order \\
-\texttt{StartCall}, \texttt{EndLastCall} & Calls ride their agent \\
-\texttt{DeleteRecorded} & Teardown and retirement \\
+\texttt{BeginBuild}, \texttt{CreateResource}, \texttt{AttachResources}, \texttt{Publish} & Provisioning order \\
+\texttt{Prove}, \texttt{Promote}, \texttt{DeleteRetired} & Rollback and retirement \\
+\texttt{DeleteMarked}, \texttt{DeleteGone} & Teardown and cleanup \\
+\texttt{RemoteDelete}, \texttt{ForeignAgent}, \texttt{TamperFile} & Failure table \\
 \texttt{LoseFile}, \texttt{CrashAfter*} & Failure table \\
-\texttt{SweepAgent}, \texttt{ListOrphanTools} & Lost registration \\
+\texttt{SweepMarked}, \texttt{ListOrphanResources} & Lost registration \\
 \end{tabular}
 
 \end{document}
