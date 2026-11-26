@@ -40,7 +40,7 @@ _DEFAULT_BINARY = Path.home() / ".local" / "bin" / "vox"
 _REQUEST_TIMEOUT = 30.0
 
 # The core mic tool set clients depend on. Music/rec/enablement/model/provider/
-# vibe are also registered but this floor is what the bead demands.
+# vibe are also registered but this floor is what clients depend on.
 _REQUIRED_TOOLS = frozenset({"unmute", "notify", "speak", "voice", "status"})
 
 
