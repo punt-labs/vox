@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Final, Self, cast, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.private_state import PrivateState
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = ["RegistrationFile"]
+
+_RETIRED: Final = frozenset({"retired_agents", "retired_tools"})
 
 
 @final
@@ -50,8 +52,15 @@ class RegistrationFile:
                 raise ConvAIError(msg) from None
             yield
 
-    def read(self) -> Registration | None:  # No file is valid before provisioning.
-        """Return the registration, or None before the first provisioning."""
+    def read(
+        self, *, for_teardown: bool = False
+    ) -> Registration | None:  # No file is valid before provisioning.
+        """Return the registration, or None before the first provisioning.
+
+        A file written before retirement existed is refused with how to clear
+        it. Teardown alone reads it, so the one instruction it gives can be
+        followed: it deletes the agent and tools the file names.
+        """
         if self._file.path.is_symlink():
             msg = "Vox voice agent config must not be a symbolic link"
             raise ConvAIError(msg)
@@ -62,7 +71,7 @@ class RegistrationFile:
         except (OSError, UnicodeDecodeError) as exc:
             msg = f"Unreadable Vox voice agent config ({type(exc).__name__})"
             raise ConvAIError(msg) from None
-        return self._parse(raw)
+        return self._parse(raw, for_teardown=for_teardown)
 
     def write(self, record: Registration) -> None:
         """Replace the file atomically, readable by its owner only."""
@@ -72,7 +81,7 @@ class RegistrationFile:
         """Delete the file; the lock file beside it stays."""
         self._file.path.unlink()
 
-    def _parse(self, raw: str) -> Registration:
+    def _parse(self, raw: str, *, for_teardown: bool) -> Registration:
         try:
             data: object = json.loads(raw)
         except (ValueError, RecursionError):
@@ -90,6 +99,12 @@ class RegistrationFile:
                     msg = (
                         "Vox voice agent uses a different ElevenLabs key or endpoint; "
                         "restore it and tear down the agent before switching"
+                    )
+                    raise ConvAIError(msg)
+                if not for_teardown and not fields.keys() >= _RETIRED:
+                    msg = (
+                        "Vox voice agent config is from an older build; "
+                        "run `vox call teardown` once"
                     )
                     raise ConvAIError(msg)
                 return Registration(

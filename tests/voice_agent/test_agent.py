@@ -690,3 +690,50 @@ def test_removals_are_merged_into_the_latest_registration(
     # The run deleted the first replaced tool; the tool replaced meanwhile stays.
     assert stored["retired_tools"] == ["tool_two"]
     assert stored["tool_ids"] == ["tool_clock"]
+
+
+def _legacy_registration(control: ConvAIControl) -> dict[str, object]:
+    return {
+        "agent_id": "agent_vox",
+        "tool_ids": ["tool_clock"],
+        "configuration_hash": "abc",
+        "credential_id": control.credential_id,
+    }
+
+
+def test_a_registration_without_the_retirement_fields_is_refused(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        config.write_text(json.dumps(_legacy_registration(control)))
+        with pytest.raises(ConvAIError, match="vox call teardown") as caught:
+            VoiceAgent(control, path=config).connection((_CLOCK,))
+    assert "older build" in str(caught.value)
+    assert wire.calls == []
+
+
+def test_teardown_still_removes_a_registration_without_the_retirement_fields(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        config.write_text(json.dumps(_legacy_registration(control)))
+        VoiceAgent(control, path=config).teardown()
+    assert not config.exists()
+    assert [(m, p) for m, p, _ in wire.calls] == [
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
+    ]
+
+
+def test_a_freshly_written_registration_reads_back_without_error(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        VoiceAgent(control, path=config).connection((_CLOCK,))
+        written = json.loads(config.read_text())
+        assert {"retired_agents", "retired_tools"} <= written.keys()
+        assert VoiceAgent(control, path=config).connection((_CLOCK,))[0] == _SIGNED_URL

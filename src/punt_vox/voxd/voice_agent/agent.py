@@ -104,7 +104,7 @@ class VoiceAgent:
         file per fake port is the price of that safety.
         """
         with self._store.locked():
-            if (stored := self._store.read()) is not None:
+            if (stored := self._store.read(for_teardown=True)) is not None:
                 self._delete(stored)
 
     def _provision(
