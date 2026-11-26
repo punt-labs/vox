@@ -13,7 +13,7 @@ or a torn connection.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Literal, Self, TypedDict, final
 
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.wire_fault import SafeFault
@@ -29,14 +29,28 @@ if TYPE_CHECKING:
 __all__ = ["CacheHandler"]
 
 
+class _CacheStatusReply(TypedDict):
+    type: Literal["cache_status"]
+    entries: int
+    size_bytes: int
+    path: str
+
+
+class _CacheClearedReply(TypedDict):
+    type: Literal["cache_cleared"]
+    cleared: int
+
+
 @final
 class CacheHandler:
     """Run a cache operation in a worker and return its result on the wire."""
 
     __slots__ = ("_operation",)
-    _operation: Callable[[], dict[str, object]]
+    _operation: Callable[[], _CacheStatusReply | _CacheClearedReply]
 
-    def __new__(cls, operation: Callable[[], dict[str, object]]) -> Self:
+    def __new__(
+        cls, operation: Callable[[], _CacheStatusReply | _CacheClearedReply]
+    ) -> Self:
         """Bind the operation and its success payload."""
         self = super().__new__(cls)
         self._operation = operation
@@ -46,7 +60,7 @@ class CacheHandler:
     def status(cls, status: Callable[[], CacheInfo]) -> Self:
         """Report the daemon cache's entries, size, and safe relative path."""
 
-        def payload() -> dict[str, object]:
+        def payload() -> _CacheStatusReply:
             info = status()
             # The bare name is the fail-closed fallback out of jail.
             rel = relativize_to_data_root(info.path)
@@ -62,7 +76,7 @@ class CacheHandler:
     @classmethod
     def clear(cls, clear: Callable[[], int]) -> Self:
         """Delete the daemon cache and report the delete count."""
-        return cls(lambda: {"type": "cache_cleared", "cleared": clear()})
+        return cls(lambda: _CacheClearedReply(type="cache_cleared", cleared=clear()))
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Reply with the result, or report an audited operational fault."""
@@ -72,4 +86,4 @@ class CacheHandler:
         except OSError as exc:
             await reply.fault(await asyncio.to_thread(SafeFault.from_exception, exc))
             return
-        await reply.send(payload)
+        await reply.send({**payload})
