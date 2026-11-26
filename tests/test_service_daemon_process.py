@@ -178,7 +178,9 @@ def test_identity_reads_a_command_line_wider_than_the_terminal(
     """``ps`` cuts its lines at ``$COLUMNS``; the identity must see past it.
 
     The script path alone is wider than 80 columns, so a cut line loses the
-    trailing ``voxd`` wherever the interpreter lives.
+    trailing ``voxd`` wherever the interpreter lives. Only the script path is
+    pinned: a macOS framework Python reports its own binary, not
+    ``sys.executable``.
     """
     monkeypatch.setenv("COLUMNS", "80")
     voxd = tmp_path / ("deep" * 25) / "voxd"
@@ -188,7 +190,7 @@ def test_identity_reads_a_command_line_wider_than_the_terminal(
     try:
         seen = ProcessManager().identity(proc.pid)
         assert seen is not None
-        assert seen.command == f"{sys.executable} {voxd}"
+        assert seen.command.endswith(f" {voxd}")
         assert seen.is_voxd()
     finally:
         proc.kill()
