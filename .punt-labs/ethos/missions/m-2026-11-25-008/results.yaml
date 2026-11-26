@@ -1,0 +1,109 @@
+results:
+    - mission: m-2026-11-25-008
+      round: 1
+      created_at: "2026-11-25T18:17:04Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 4
+          removed: 0
+        - path: .oo-baseline.json
+          added: 91
+          removed: 13
+        - path: .oo-coupling-audit.jsonl
+          added: 2
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 57
+          removed: 8
+        - path: CHANGELOG.md
+          added: 3
+          removed: 1
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 1
+          removed: 1
+        - path: src/punt_vox/service/lifecycle_status.py
+          added: 28
+          removed: 8
+        - path: src/punt_vox/service/published_health.py
+          added: 1
+          removed: 1
+        - path: tests/_lifecycle_fakes.py
+          added: 6
+          removed: 0
+        - path: tests/test_service_daemon_probe.py
+          added: 1
+          removed: 1
+        - path: tests/test_service_lifecycle_status.py
+          added: 40
+          removed: 2
+      evidence:
+        - name: commit 27cdf6e6 through .git/hooks/pre-commit (ethos-sealed), no --no-verify
+          status: pass
+        - name: 'failing-first on main''s lifecycle_status.py: test_status_asks_the_published_port_before_lsof_runs -> AssertionError: assert <DaemonState.UNKNOWN> is <DaemonState.RUNNING>, reason=''cannot run lsof: timed out after 1.81 seconds'''
+          status: pass
+        - name: 'uptime before pytest: load averages 6.04 4.69 6.27'
+          status: pass
+        - name: timeout 300 uv run pytest -q -p no:cacheprovider -n 2 tests/test_service_daemon_probe.py tests/test_service_lifecycle_status.py tests/test_service_published_port.py tests/test_service_health.py tests/test_service_backend.py tests/test_service_process.py tests/test_cli.py tests/test_service_daemon_process.py tests/test_service_lifecycle.py tests/test_service_lifecycle_start.py tests/test_service_lifecycle_stop.py tests/test_service_daemon_status.py -> 447 passed
+          status: pass
+        - name: uv run ruff check <changed files> -> All checks passed!; uv run ruff format --check -> 47 files already formatted
+          status: pass
+        - name: 'uv run mypy src/ tests/ -> Success: no issues found in 1198 source files'
+          status: pass
+        - name: uv run pyright <8 service modules, 4 test files> -> 0 errors, 0 warnings, 0 informations
+          status: pass
+        - name: uv run python tools/check_python_docs.py comments src tests tools scripts -> no output, exit 0; uv run ruff check --select ERA001 . -> All checks passed!
+          status: pass
+        - name: 'uv run oo-ratchet oo src/punt_vox/ --check -> PASS: at least one metric improved, no regressions'
+          status: pass
+        - name: 'uv run oo-ratchet coupling src/punt_vox/ --check -> PASS: no regressions'
+          status: pass
+        - name: 'uv run oo-ratchet suppressions src/punt_vox/ --check -> PASS: suppression count unchanged (168)'
+          status: pass
+        - name: 'make install -> Installed 3 executables: vox, vox-panel, voxd'
+          status: pass
+        - name: vox daemon restart -> voxd restarted (pid 84805, port 8421, version 5.1.0) (was pid 82790); launchctl kickstart timed out after 10s on this loaded machine but the unit came up
+          status: pass
+        - name: 'vox daemon status -> ''Daemon: ok on port 8421 / Uptime: 8.9s / Sessions: 1'', exit 0'
+          status: pass
+        - name: 'vox daemon status --json -> {"status": "ok", "port": 8421, "pid": 84805, "daemon_version": "5.1.0", "uptime_seconds": 9.6, "queued": 0, "active_sessions": 1}, exit 0'
+          status: pass
+        - name: 'slow lsof at the real entry point: a 10s lsof shim was written to .tmp/pl1497/slowlsof/lsof but the permission system declined running vox daemon status with it on PATH (two attempts); proven by the fake-based tests only'
+          status: fail
+      open_questions:
+        - 'Leader may run the entry-point slow-lsof case: env PATH="$PWD/.tmp/pl1497/slowlsof:$PATH" vox daemon status (expected ''Daemon: ok on port 8421'' in under 2s)'
+      prose: |
+        The WIP a943f114 was kept as designed: StatusCheck asks voxd first through
+        the port serve.port publishes (PublishedHealth, a reserved 1.5s of the 5s
+        deadline), falls back to lsof/fuser attribution (AttributedHealth) only
+        when that request misses, and both doors send the token through one
+        bounded HealthRequest. The module split carries weight: each new module
+        is one class with one gate, all wired, none speculative; ServiceCgroup is
+        the cgroup reader lifted out of DaemonProbe.
+
+        One required behaviour was missing from the WIP and is added: when the
+        fallback probe fails, the unknown reading names both steps
+        (StatusCheck._spent_on), for example "cannot run lsof: timed out after
+        0.5 seconds; voxd was asked first and gave no answer: connection reset"
+        or "...; voxd was not asked first: serve.port publishes no port; no token
+        sent unattributed". Ticket ids are removed from all .py prose.
+
+        Tests added: test_status_published_miss_then_attribution_is_running,
+        test_status_unknown_names_the_health_miss_and_the_probe_that_failed,
+        test_status_unknown_names_why_voxd_was_not_asked_first; the fakes gain
+        FakeWorld.published_health_error so the published request can fail while
+        the attributed one answers. The existing listener-check test now asserts
+        the reason's prefix, since the reason carries the step naming.
+
+        Ratchets: scoped blesses sourced PL-1497 on backend.py (protocol method),
+        lifecycle_status.py (step naming; avg_params and avg_complexity improved),
+        process.py (port_file property; avg_params and avg_complexity improved),
+        and the coupling baseline for daemon_probe.py (composes the extracted
+        requests). oo --update and coupling --update recorded the six new modules
+        and eight improved files. No hand edits to any baseline JSON.
+
+        Not touched: .punt-labs/vox/vox.md, vox.local.md, .claude/settings.json,
+        .punt-labs/ethos/missions.jsonl (left modified and unstaged), README.md
+        (its daemon status row already lists the four states).

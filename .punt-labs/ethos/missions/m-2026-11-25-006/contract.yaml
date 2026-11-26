@@ -1,0 +1,37 @@
+mission_id: m-2026-11-25-006
+status: abandoned
+type: design
+created_at: "2026-11-25T14:12:36Z"
+updated_at: "2026-11-25T14:12:51Z"
+closed_at: "2026-11-25T14:12:51Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mcg
+    pinned_at: "2026-11-25T14:12:36Z"
+    hash: 3d3adf5b8395a815c750416c259e61fa82e71b6f7e943339da20c25147a708f2
+inputs:
+    ticket: PL-1622
+write_set:
+    - DESIGN.md
+    - docs/conversation-mode-call-agent.tex
+    - docs/hook-context-gaps.tex
+extract_into:
+    - docs
+success_criteria:
+    - A design document under docs/ describes how the ethos identity is resolved and rendered into the call prompt, including what happens when ethos is not enabled in the repo
+    - The design names the exact hook snapshot fields the opener and the session_context tool carry, where they come from in the hook context store, and what the agent says when the store has nothing
+    - The design lists each non-essential capability as a tool with its name, arguments, reply shape, and which existing daemon RPC or module serves it
+    - 'The design specifies the silence policy: the ElevenLabs turn settings used, the prompt text, and the one-ask-after-long-silence rule, with a Z model if the policy is a state machine of 3+ modes or a stated reason it is not'
+    - An ADR in DESIGN.md records the decisions and alternatives; every open product question is a numbered decision with a recommendation
+    - A write set and test plan for the implementation missions, split into independent units that can run in parallel, naming the call_e2e tests that prove the prompt and tool surface
+    - No migration, compat, or shim element anywhere in the design
+    - Every commit on design/pl-1622-call-agent passes the commit hook
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+round_decisions:
+    version: 1
+    entries: []
+context: 'Design mission for PL-1622: the vox call agent gets the repo''s ethos identity, the caller''s main-session hand-off context, non-essential capabilities, and silence handling. Jim''s demo verdict on main 7ffccc28: the call worked but the agent could do almost nothing and kept asking whether he was there while he was just waiting. Direction: (1) the agent speaks as the repo''s ethos identity (agent: claude per .punt-labs/ethos.yaml): name, personality, writing style, temperament rendered into the role prompt at call start, with a matching ElevenLabs voice; Vox is the phone, not the person. (2) The opener and a session_context tool carry the caller''s most recent main-session hook snapshot (what finished, what is in flight, what failed, what question is open); the hook context store already receives it (vox call context --session) but the agent never sees it. (3) Non-essential capabilities: time and call duration, what music is playing and the music controls, vox status, a short recent-activity summary, small talk within the identity, ending the call (already shipped, PL-1620). (4) Silence is not a prompt: set the agent turn timeout and instruct it to wait when the caller is quiet, asking once after a long silence in the identity''s words, never repeatedly. Read first: docs/conversation-mode-call-agent.tex, docs/hook-context-gaps.tex, docs/voice-call.tex, DESIGN.md DES-068 to DES-075, src/punt_vox/voxd/voice_call/seed.py, worker_brief.py, boss_tools.py, opening.py, greeting.py, src/punt_vox/voxd/voice_agent/control.py (agent config, built_in_tools, turn settings). This is a DESIGN mission: no production code. Output is a design document under docs/ (a .tex Z model is required only if the design adds a stateful subsystem with 3+ modes; the silence policy is a candidate, decide and say why), an ADR in DESIGN.md, and a write set plus test plan for the implementation missions. Strike any migration, compat, or shim element. Each open product question goes in the design as a concrete decision with a recommendation for Jim. Work in the worktree <repo>/.claude/worktrees/pl-1622-call-agent-design on branch design/pl-1622-call-agent. Commit one logical step at a time; first commit within 30 minutes. Machine load rule: never run make check or pytest -n auto; if you run tests use uv run pytest -q -p no:cacheprovider -n 2 <files> and check uptime is under 40 first. Never read ~/.punt-labs identity or secret directories. Never edit .punt-labs/vox/vox.md or vox.local.md.'

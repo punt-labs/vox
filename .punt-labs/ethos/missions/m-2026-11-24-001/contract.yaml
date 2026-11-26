@@ -1,0 +1,52 @@
+mission_id: m-2026-11-24-001
+status: closed
+type: implement
+created_at: "2026-11-24T06:16:16Z"
+updated_at: "2026-11-25T07:02:47Z"
+closed_at: "2026-11-25T07:02:47Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-11-24T06:16:16Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: PL-1491
+write_set:
+    - src/punt_vox/voxd/conversation_mode/mic_audio_source.py
+    - src/punt_vox/voxd/voice_call/inputs.py
+    - src/punt_vox/voxd/voice_call/call.py
+    - src/punt_vox/voxd/voice_call/handlers.py
+    - src/punt_vox/voxd/voice_call/boss_tools.py
+    - tests/conversation_mode/test_mic_audio_source.py
+    - tests/conversation_mode/_mic_fakes.py
+    - tests/voice_call/test_inputs.py
+    - tests/voice_call/test_call.py
+    - tests/voice_call/test_call_events.py
+    - tests/voice_call/test_boss_tools.py
+    - tests/voice_call/fakes.py
+    - CHANGELOG.md
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+extract_into:
+    - src/punt_vox/voxd/conversation_mode
+    - src/punt_vox/voxd/voice_call
+    - tests/conversation_mode
+    - tests/voice_call
+success_criteria:
+    - A live call whose microphone delivers only zero samples for its first 3 seconds (the macOS denied-capture case) fails with a ValueError whose text names the cause (no microphone signal) and both remedies (System Settings Privacy and Security Microphone for the daemon's process, or running voxd from a terminal that holds the grant); the call state becomes failed and vox call prints that message and exits 1
+    - A test in tests/voice_call/test_inputs.py or a new test module fails on unfixed code by driving MicInput with a fake MicAudioSource that yields silence, and passes after the fix; a second test proves a stream with non-zero samples in the first 3 seconds is not failed
+    - 'The daemon logs at INFO on every call: call start with conversation id, input mode (mic or script), echo declaration, input device name and sample rate; one capture level line (peak and RMS of the first second); each client tool call by name with ok or error and the error text; call end with duration seconds, tool call count and the trace path. Silence in the first 3 seconds logs a WARNING before the call fails. Tests assert these log records with caplog'
+    - 'MicAudioSource reports the device it opened: sounddevice.query_devices on the default input gives the name and default_samplerate, exposed as a property or a small frozen dataclass and logged; the fake stream factory in tests covers it'
+    - Only exceptions the call already treats as expected (ValueError, OSError, RuntimeError, ConvAIError) are raised; no new broad excepts; no print
+    - make check passes in the worktree; make check-oo reports at least one improved metric on a touched file; CHANGELOG.md gains an Unreleased Fixed entry naming PL-1491 and PL-1494
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+round_decisions:
+    version: 1
+    entries: []
+context: 'Worktree: <repo>/.claude/worktrees/pl-1491-mic-silence on branch fix/pl-1491-call-mic-silence-and-logging. Fixes PL-1491 (silent mic) and PL-1494 (no call logging) together because both touch the same capture and call code. Evidence: on 2026-11-23 a launchd-started voxd had the mic denied by macOS TCC (Auth Right: Denied (System Set)); CoreAudio returned zeros, sounddevice raised nothing, the call sent 1602 silent 20 ms chunks and ElevenLabs transcribed ''...''; the daemon log had no line about the call. Capture is MicAudioSource.chunks in voxd/conversation_mode/mic_audio_source.py (RawInputStream, 16 kHz mono int16, 20 ms blocks) wrapped by MicInput in voxd/voice_call/inputs.py; VoiceAgentCall._pump in voxd/voice_call/call.py forwards chunks; CallHandlers._launch in voxd/voice_call/handlers.py builds the call and knows input mode and echo declaration; BossTools.answer in voxd/voice_call/boss_tools.py runs tools. Design is yours: a silence detector belongs in the input layer (a MicInput wrapper or a small class the pump uses), not in the ElevenLabs session. ScriptInput must never trip the silence check (scripts begin with speech but a test script may be short; gate the check on mic input only). Rules: .claude/rules/python-*.md, __new__ not __init__, @final, frozen slots dataclasses, no T | None without a justifying comment, no hasattr, no broad except, logger = logging.getLogger(__name__). Commit discipline: one logical step per commit, first commit within 30 minutes, commit hook must pass, run make update-oo and stage .oo-baseline.json and .oo-audit.jsonl before the final commit. Do not push, do not open a PR, do not touch other worktrees.'

@@ -1,0 +1,22 @@
+results:
+    - mission: m-2026-11-25-003
+      round: 1
+      created_at: "2026-11-25T08:02:31Z"
+      author: claude
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/voice_call/call.py
+          added: 0
+          removed: 0
+      evidence:
+        - name: Commits ee477027, 1bba67af, f8428a2f on fix/pl-1620-end-call; PR 764 opened 2026-11-25
+          status: pass
+        - name: 'call_e2e tier: test_the_agent_ending_the_call_is_a_clean_end_by_the_agent failed on the unfixed code with KeyError ended_by (1 failed, 8 passed); 9 passed after the fix; recorded in commit 1bba67af'
+          status: pass
+        - name: 'Leader re-ran the gates after the worker''s make check was terminated under machine load: ruff, format, mypy 1169 files, pyright, changed-module tests exit 0, OO coupling and suppression ratchets PASS'
+          status: pass
+      prose: |
+        Leader-recorded result. The worker rmh completed the three commits and was
+        terminated with the session before submitting; its commit message carries
+        both test outputs. Recorded to close the mission for PR 764.
