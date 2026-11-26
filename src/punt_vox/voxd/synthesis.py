@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextlib import ExitStack, nullcontext
 from typing import Self
 
 from punt_vox import usage
@@ -94,18 +95,14 @@ class SynthesisPipeline:
                     return cached
                 with ApiKeyEnv(provider_name, spec.api_key).applied():
                     provider = get_provider(provider_name, model=spec.model)
-                    output_path = await TempFileSynthesis(
-                        provider, request, len(text)
-                    ).run()
-
-                    # Report caching only when the anonymous write succeeds.
-                    cached_path = lookup.store(output_path)
-                    logger.info(
-                        "synthesized %d chars%s",
-                        len(text),
-                        ", cached" if cached_path else "",
-                    )
-                    return SynthesisOutcome(path=output_path, cached=False)
+                    temp = TempFileSynthesis(provider, request, len(text))
+                    outcome = SynthesisOutcome(path=await temp.run(), cached=False)
+                    with ExitStack() as unclaimed:
+                        unclaimed.callback(outcome.discard)
+                        suffix = ", cached" if lookup.store(outcome.path) else ""
+                        logger.info("synthesized %d chars%s", len(text), suffix)
+                        unclaimed.pop_all()
+                    return outcome
 
     async def try_direct_play(
         self,
@@ -168,8 +165,6 @@ class SynthesisPipeline:
         queue consumer holds it too -- so two hooks firing at once cannot overlap
         even though direct play bypasses the queue.
         """
-        if invocation.key_env.injects:
-            async with self._env_lock, self._playback_mutex:
-                return await asyncio.to_thread(invocation.run)
-        async with self._playback_mutex:
+        env_guard = self._env_lock if invocation.key_env.injects else nullcontext()
+        async with env_guard, self._playback_mutex:
             return await asyncio.to_thread(invocation.run)

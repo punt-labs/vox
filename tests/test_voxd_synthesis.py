@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -1187,6 +1188,36 @@ class TestSynthesizeCacheObservability:
         ):
             outcomes = asyncio.run(_drive())
         return outcomes, synth_calls
+
+    @pytest.mark.asyncio
+    async def test_cache_write_failure_discards_synthesized_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        monkeypatch.setattr("punt_vox.cache.CACHE_DIR", cache_dir)
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+        def synthesize(_: SynthesisRequest, path: Path) -> None:
+            path.write_bytes(_get_valid_mp3_bytes())
+
+        mock_client = MagicMock()
+        mock_client.synthesize.side_effect = synthesize
+        error = OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        with (
+            patch("punt_vox.voxd.synthesis.get_provider"),
+            patch("punt_vox.voxd.temp_synthesis.TTSClient", return_value=mock_client),
+            patch("punt_vox.cache.shutil.copy2", side_effect=error) as copy,
+            pytest.raises(OSError) as raised,
+        ):
+            await _make_pipeline().synthesize_to_file(
+                "hello", _default_spec(provider="openai")
+            )
+
+        assert raised.value is error
+        mock_client.synthesize.assert_called_once()
+        copy.assert_called_once()
+        assert list(cache_dir.iterdir()) == []
+        assert list(tmp_path.glob("*.mp3")) == []
 
     @pytest.mark.parametrize("api_key, expected_calls", [(None, 1), ("scoped", 2)])
     def test_concurrent_identical_requests(
