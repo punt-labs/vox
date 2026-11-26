@@ -238,6 +238,43 @@ class TestWritableConfigDir:
         assert status == ["?? .gitignore", "?? .punt-labs/vox/vox.md"]
         assert gitignore.read_text(encoding="utf-8").startswith(host_ignore)
 
+    @pytest.mark.subprocess
+    def test_first_local_write_ignores_state_with_committed_config(
+        self, no_config_dir: Path
+    ) -> None:
+        repo = no_config_dir
+        own = _config(repo, vox_md='---\nvoice: "roger"\n---\n')
+        child = repo / "a" / "b"
+        child.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "--template="], cwd=repo, check=True)
+        subprocess.run(["git", "add", str(own / "vox.md")], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "base",
+            ],
+            cwd=repo,
+            check=True,
+        )
+
+        ConfigStore(writable_config_dir(child)).write_field("vibe", "focused")
+
+        status = subprocess.check_output(
+            ["git", "-c", "core.excludesFile=", "status", "--short", "-uall"],
+            cwd=repo,
+            text=True,
+        ).splitlines()
+        assert (own / "vox.local.md").is_file()
+        assert status == ["?? .gitignore"]
+
     @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory", "locks"])
     @pytest.mark.parametrize("inherited", [False, True], ids=["fresh", "inherited"])
     def test_first_write_refuses_a_destination_outside_the_checkout(
