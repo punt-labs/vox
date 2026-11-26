@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,7 +36,9 @@ trace: /tmp/call.jsonl
 def _verdicts(
     report: str, *, search_key: bool = True, output: str = ""
 ) -> dict[str, str]:
-    judged = verify_call.Judge(report, output, search_key=search_key).verdicts()
+    judged = verify_call.Judge(
+        report, output, search_key=search_key, trace=_TRACE
+    ).verdicts()
     return {v.name: v.status for v in judged}
 
 
@@ -170,3 +173,101 @@ def test_a_live_status_fails_the_clean_end_even_if_it_looks_complete() -> None:
     }
     assert verdicts["clean end"].status == "FAIL"
     assert "still live" in verdicts["clean end"].why
+
+
+_TRACE = [
+    {"ms": 10, "dir": "recv", "type": "agent_response", "detail": {}},
+    {
+        "ms": 20,
+        "dir": "recv",
+        "type": "client_tool_call",
+        "detail": {"tool_name": "read_docs"},
+    },
+    {
+        "ms": 90,
+        "dir": "recv",
+        "type": "agent_tool_response",
+        "detail": {"tool_name": "read_docs", "is_error": False},
+    },
+    {"ms": 120, "dir": "recv", "type": "agent_response", "detail": {}},
+]
+
+
+def _with_trace(trace: list[dict[str, object]] | None) -> dict[str, str]:
+    judged = verify_call.Judge(_GOOD, "", search_key=True, trace=trace).verdicts()
+    return {v.name: v.status for v in judged}
+
+
+def test_docs_passes_when_an_agent_reply_follows_the_tool_result() -> None:
+    assert _with_trace(_TRACE)["docs"] == "PASS"
+
+
+def test_docs_fails_when_the_agent_said_nothing_after_the_tool_result() -> None:
+    assert _with_trace(_TRACE[:-1])["docs"] == "FAIL"
+
+
+def test_docs_fails_when_the_only_reply_came_before_the_tool_result() -> None:
+    assert _with_trace([_TRACE[0], _TRACE[1], _TRACE[2]])["docs"] == "FAIL"
+
+
+def test_docs_fails_when_there_is_no_trace_to_confirm_a_reply() -> None:
+    assert _with_trace(None)["docs"] == "FAIL"
+
+
+def test_docs_fails_when_the_tool_result_was_an_error() -> None:
+    errored = [dict(row) for row in _TRACE]
+    errored[2] = {**errored[2], "detail": {"tool_name": "read_docs", "is_error": True}}
+    assert _with_trace(errored)["docs"] == "FAIL"
+
+
+def test_a_quiet_agent_through_the_whole_silence_passes() -> None:
+    quiet = _GOOD.replace(
+        "user: Give me a minute, I need to think.\n",
+        "user: Give me a minute, I need to think.\n",
+    )
+    assert _verdicts(quiet)["silence"] == "PASS"
+
+
+class _Recorder:
+    """Stand in for subprocess.run: record every command, answer status as live."""
+
+    def __init__(self, status: str) -> None:
+        self.status = status
+        self.commands: list[list[str]] = []
+
+    def __call__(
+        self, command: list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        out = self.status if command[-2:] == ["call", "status"] else ""
+        return subprocess.CompletedProcess(command, 0, out, "")
+
+
+def test_an_existing_live_call_is_refused_and_left_running(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recorder = _Recorder(_LIVE)
+    monkeypatch.setattr(verify_call.subprocess, "run", recorder)
+    monkeypatch.setattr(verify_call.shutil, "which", lambda tool: f"/bin/{tool}")
+    assert verify_call.main() != 0
+    assert "already live" in capsys.readouterr().out
+    assert not any("stop" in command for command in recorder.commands)
+    assert not any("--script" in command for command in recorder.commands)
+
+
+def test_a_run_that_placed_no_call_never_stops_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = _Recorder(_LIVE)
+    monkeypatch.setattr(verify_call.subprocess, "run", recorder)
+    verify_call.CallRun(tmp_path)._stop()
+    assert recorder.commands == []
+
+
+def test_the_trace_named_by_the_status_text_is_read(tmp_path: Path) -> None:
+    trace = tmp_path / "call.jsonl"
+    trace.write_text('{"ms": 1, "type": "agent_response", "detail": {}}\n')
+    rows = verify_call.load_trace(f"call ended by caller\ntrace: {trace}\n")
+    assert rows == [{"ms": 1, "type": "agent_response", "detail": {}}]
+    assert verify_call.load_trace("call ended by caller\n") is None
+    assert verify_call.load_trace(f"trace: {tmp_path / 'missing'}\n") is None

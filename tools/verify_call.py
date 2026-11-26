@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self, final
 
-__all__ = ["Judge", "Verdict", "is_final", "script_plan"]
+__all__ = ["Judge", "Verdict", "is_final", "is_live", "load_trace", "script_plan"]
 
 _CALL_TIMEOUT_S: Final = 300
 _STOP_TIMEOUT_S: Final = 30
@@ -43,6 +43,24 @@ _SETTLE_POLLS: Final = 10
 _SETTLE_WAIT_S: Final = 2.0
 
 type Status = Literal["PASS", "FAIL", "SKIP"]
+
+
+def is_live(status: str) -> bool:
+    """Return whether ``vox call status`` text reports a call in progress."""
+    first = status.splitlines()[0] if status.strip() else ""
+    return first.startswith(("call live", "call connecting"))
+
+
+def load_trace(status: str) -> list[dict[str, object]] | None:
+    """Return the trace rows named by the status text's ``trace:`` line, if readable."""
+    for line in status.splitlines():
+        if line.startswith("trace: "):
+            try:
+                text = Path(line[len("trace: ") :]).read_text(encoding="utf-8")
+            except OSError:
+                return None
+            return [json.loads(row) for row in text.splitlines() if row.strip()]
+    return None
 
 
 def is_final(status: str) -> bool:
@@ -81,18 +99,35 @@ class Verdict:
 class Judge:
     """Read the end-of-call report ``vox call`` prints and judge six expectations."""
 
-    __slots__ = ("_agent", "_ended", "_output", "_report", "_search_key", "_tools")
+    __slots__ = (
+        "_agent",
+        "_ended",
+        "_output",
+        "_report",
+        "_search_key",
+        "_tools",
+        "_trace",
+    )
     _report: str
     _output: str
     _search_key: bool
     _agent: list[str]
     _tools: list[str]
     _ended: bool
+    _trace: list[dict[str, object]] | None  # None: no trace was read.
 
-    def __new__(cls, report: str, output: str, *, search_key: bool) -> Self:
+    def __new__(
+        cls,
+        report: str,
+        output: str,
+        *,
+        search_key: bool,
+        trace: list[dict[str, object]] | None = None,
+    ) -> Self:
         """Bind the report, the call's other output and whether search is set up."""
         self = super().__new__(cls)
         self._report, self._output, self._search_key = report, output, search_key
+        self._trace = trace
         self._agent, self._tools, self._ended = self._parse(report)
         return self
 
@@ -144,7 +179,46 @@ class Judge:
             return Verdict("docs", "FAIL", "read_docs was never called")
         if any(not c.endswith("-> ok") for c in calls):
             return Verdict("docs", "FAIL", f"read_docs errored: {calls}")
-        return Verdict("docs", "PASS", f"{len(calls)} read_docs call(s) ok")
+        if not self._replied_after("read_docs"):
+            return Verdict(
+                "docs", "FAIL", "no agent reply followed the read_docs result"
+            )
+        return Verdict(
+            "docs", "PASS", f"{len(calls)} read_docs call(s) ok, then a reply"
+        )
+
+    def _replied_after(self, tool: str) -> bool:
+        """Return whether an agent reply follows the tool's successful result."""
+        if self._trace is None:
+            return False
+        results = [
+            t for r in self._trace if (t := self._result_time(r, tool)) is not None
+        ]
+        if not results:
+            return False
+        first = min(results)
+        replies = [
+            float(r["ms"])
+            for r in self._trace
+            if r.get("type") == "agent_response"
+            and isinstance(r.get("ms"), int | float)
+        ]
+        return any(ms > first for ms in replies)
+
+    @staticmethod
+    def _result_time(row: dict[str, object], tool: str) -> float | None:
+        """Return the time of a successful result row for *tool*, else None."""
+        detail = row.get("detail")
+        ms = row.get("ms")
+        if (
+            row.get("type") != "agent_tool_response"
+            or not isinstance(detail, dict)
+            or detail.get("tool_name") != tool
+            or detail.get("is_error")
+            or not isinstance(ms, int | float)
+        ):
+            return None
+        return float(ms)
 
     def _plain_words(self) -> Verdict:
         marked = [t for t in self._agent if _MARKDOWN.search(t)]
@@ -182,18 +256,21 @@ class Judge:
 class CallRun:
     """Generate the caller's audio, place the call, and always stop it."""
 
-    __slots__ = ("_directory",)
+    __slots__ = ("_directory", "_placed")
     _directory: Path
+    _placed: bool  # True once this run started a call; only then may it stop one.
 
     def __new__(cls, directory: Path) -> Self:
         """Work inside *directory*, which holds the generated audio and script."""
         self = super().__new__(cls)
         self._directory = directory
+        self._placed = False
         return self
 
     def place(self, *, search: bool) -> tuple[str, str]:
         """Return the final ``vox call status`` text and the call's own output."""
         script = self._script(search=search)
+        self._placed = True
         try:
             done = subprocess.run(
                 [
@@ -260,16 +337,16 @@ class CallRun:
 
     def _settled_status(self) -> str:
         """Poll briefly until the call reports an ended state; return that text."""
-        status = self._status()
+        status = self.status()
         for _ in range(_SETTLE_POLLS):
             if is_final(status):
                 break
             time.sleep(_SETTLE_WAIT_S)
-            status = self._status()
+            status = self.status()
         return status
 
     @staticmethod
-    def _status() -> str:
+    def status() -> str:
         """Return the status text after the call, which is the full report."""
         done = subprocess.run(
             ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
@@ -279,8 +356,10 @@ class CallRun:
         )
         return done.stdout
 
-    @staticmethod
-    def _stop() -> None:
+    def _stop(self) -> None:
+        """Stop the call this run placed; never one it did not start."""
+        if not self._placed:
+            return
         subprocess.run(
             ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
             capture_output=True,
@@ -309,10 +388,14 @@ def main() -> int:
     if missing:
         print(f"FAIL setup: missing {', '.join(missing)}")
         return 2
+    if is_live(CallRun.status()):
+        print("FAIL setup: a call is already live; refusing to run or stop it")
+        return 3
     search = _search_configured()
     with tempfile.TemporaryDirectory(prefix="verify-call-") as directory:
         report, output = CallRun(Path(directory)).place(search=search)
-    verdicts = Judge(report, output, search_key=search).verdicts()
+    trace = load_trace(report)
+    verdicts = Judge(report, output, search_key=search, trace=trace).verdicts()
     for verdict in verdicts:
         print(f"{verdict.status} {verdict.name}: {verdict.why}")
     failed = [v.name for v in verdicts if v.status == "FAIL"]
