@@ -59,12 +59,12 @@ against the product.
   caller-controlled text into a command an agent runs, or weakens a gate
   that keeps a secret or the daemon token where it belongs). Security stays
   in scope in every file.
-- Working-tree noise. `.punt-labs/vox/vox.md`, `.punt-labs/vox/vox.local.md`
-  and `.claude/settings.json` are tracked files the daemon and `vox enable`
-  rewrite, so a local review often sees them changed when the PR did not
-  touch them; a change to them that is not in the PR's commits is never the
-  change under review. A committed change to them is in scope like any
-  other.
+- Working-tree noise. `.punt-labs/vox/vox.md` and `.claude/settings.json`
+  are tracked files the daemon and `vox enable` rewrite, so a local review
+  often sees them changed when the PR did not touch them; a change to them
+  that is not in the PR's commits is never the change under review. A
+  committed change to them is in scope like any other. (`vox.local.md` is
+  gitignored and never appears in a diff.)
 - Work tracked elsewhere. A limit this repository has recorded as a Linear
   issue, and names in the diff by its PL number, is known; do not raise it
   again. This never covers a security finding: raise those whatever the diff
