@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from punt_vox.commands.voice_call_follow import CallFollower
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 
 def test_the_event_loop_is_closed_with_sigint_ignored() -> None:
     """A second Ctrl-C during loop shutdown must not abandon its cleanup."""
-    seen: list[Callable[[int, object], object] | int | None] = []
+    seen: list[object] = []
     real_close = asyncio.Runner.close
 
     def close(self: asyncio.Runner) -> None:
