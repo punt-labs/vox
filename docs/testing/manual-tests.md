@@ -8,7 +8,7 @@ Referenced from `CLAUDE.md` inner-loop step 5 ("Exercise manually"). Run this wh
 
 Each step ends with a question to the operator about what they heard. **Ask immediately, not at the end.** Audio impressions decay within seconds — by the time the test flight is done the operator will not remember whether call 2 sounded identical to call 1, or whether the music ducked when voice played. If you batch the questions, the operator says "I don't remember" and the test result is unverifiable.
 
-Use `AskUserQuestion` after each audible step. Wait for the answer before proceeding to the next step. If an answer reveals a defect, file a bead before moving on so the finding is captured while the audio is still fresh in everyone's head.
+Use `AskUserQuestion` after each audible step. Wait for the answer before proceeding to the next step. If an answer reveals a defect, file a Linear issue (team PL, label `repo:vox`) before moving on so the finding is captured while the audio is still fresh in everyone's head.
 
 ## Pre-flight
 
@@ -98,7 +98,7 @@ Wait 15 seconds so the music has clearly started, then call `mcp__plugin_vox_mic
 
 **Ask the operator:** "While the voice played, was the voice clearly intelligible over the background music, and did the music continue after the voice finished?"
 
-> ⚠️ Current behavior is **static** ducking only — music plays at reduced volume (`--volume 0.3` / `-volume 30`) from music-on time and does not duck further during voice. Tracked in `vox-zuqr`. Note the operator's answer and file a bead if the behavior has regressed beyond the known baseline.
+> ⚠️ Current behavior is **static** ducking only — music plays at reduced volume (`--volume 0.3` / `-volume 30`) from music-on time and does not duck further during voice. Tracked in `vox-zuqr`. Note the operator's answer and file a Linear issue if the behavior has regressed beyond the known baseline.
 
 ### Step 7 — music stop
 
@@ -201,7 +201,7 @@ revisiting — see the design doc's fallback candidates). Repeat the
 ## Post-flight
 
 - Summarize: which steps passed, which raised findings.
-- For every operator answer that revealed a defect, confirm a bead was filed.
+- For every operator answer that revealed a defect, confirm a Linear issue was filed.
 - For every step that emitted unexpected error or warning log lines, capture them and decide whether to file.
 - Stop the temporary test-flight daemon if you launched one: `pkill -f 'voxd --port' 2>/dev/null || true`. (This kills only a manually-launched instance; the installed LaunchAgent/systemd daemon is managed by `vox daemon stop`, `vox daemon start`, and `vox daemon restart` -- `stop` would also terminate this unmanaged voxd once the service is down, reporting "killed unmanaged voxd pid N".)
 
