@@ -115,6 +115,7 @@ class TestApplyVibeForSynthesis:
             ),
             ("$1 million—€2 billion", "1 million dollars—2 billion euros"),
             ("$1million—€2billion", "1 million dollars—2 billion euros"),
+            ("$1million—_€2billion_", "1 million dollars—2 billion euros"),
             ("$1million\u2019s worth", "1 million dollars worth"),
             ("$1 million's worth", "1 million dollars worth"),
             ("¥2 million\u2019s worth", "2 million yen\u2019s worth"),

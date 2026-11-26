@@ -27,7 +27,7 @@ class CurrencySpeech:
             return core
         parts = [cls._render(match)]
         for part in rest:
-            next_match = pattern.fullmatch(part)
+            next_match = pattern.fullmatch(part.lstrip("_"))
             parts.append(cls._render(next_match) if next_match else part)
         return "—".join(parts)
 
