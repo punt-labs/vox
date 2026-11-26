@@ -239,12 +239,14 @@ class TestWritableConfigDir:
         assert gitignore.read_text(encoding="utf-8").startswith(host_ignore)
 
     @pytest.mark.subprocess
+    @pytest.mark.parametrize("scope", ["", "pkg"], ids=["root", "nested"])
     def test_first_local_write_ignores_state_with_committed_config(
-        self, no_config_dir: Path
+        self, no_config_dir: Path, scope: str
     ) -> None:
         repo = no_config_dir
-        own = _config(repo, vox_md='---\nvoice: "roger"\n---\n')
-        child = repo / "a" / "b"
+        base = repo / scope
+        own = _config(base, vox_md='---\nvoice: "roger"\n---\n')
+        child = base / "a" / "b"
         child.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", "--template="], cwd=repo, check=True)
         subprocess.run(["git", "add", str(own / "vox.md")], cwd=repo, check=True)
@@ -273,7 +275,8 @@ class TestWritableConfigDir:
             text=True,
         ).splitlines()
         assert (own / "vox.local.md").is_file()
-        assert status == ["?? .gitignore"]
+        ignore = (base / ".gitignore").relative_to(repo).as_posix()
+        assert status == [f"?? {ignore}"]
 
     @pytest.mark.parametrize("entry", ["vox.md", "vox.local.md", "directory", "locks"])
     @pytest.mark.parametrize("inherited", [False, True], ids=["fresh", "inherited"])
