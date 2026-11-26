@@ -19,9 +19,9 @@ _MAX_PAGES: Final = 100  # A bound, so a misbehaving cursor cannot spin the walk
 
 @dataclass(frozen=True, slots=True)
 class _Page:
-    """One page of a listing: ``(id, text)`` entries, and where the next is."""
+    """One page of a listing: the marked entries' ids, and where the next is."""
 
-    entries: tuple[tuple[str, str], ...]
+    ids: tuple[str, ...]
     next_cursor: str | None  # None on the last page.
 
 
@@ -73,15 +73,17 @@ class Listing:
                 items,
                 id_field,
                 text_field,
+                marker,
             )
-            found.extend(i for i, text in page.entries if marker in text)
+            found.extend(page.ids)
             cursor = page.next_cursor
             if cursor is None:
                 return tuple(found)
             if cursor in seen:
-                break
+                msg = f"ElevenLabs GET {path} repeated a cursor"
+                raise ConvAIError(msg)
             seen.add(cursor)
-        msg = f"ElevenLabs GET {path} did not end after {len(seen) + 1} pages"
+        msg = f"ElevenLabs GET {path} did not end after {_MAX_PAGES} pages"
         raise ConvAIError(msg)
 
     def _page(
@@ -90,28 +92,47 @@ class Listing:
         items: str,
         id_field: str,
         text_field: tuple[str, ...],
+        marker: str,
     ) -> _Page:
-        """Read one page; an entry with no text has no marker and is left out."""
+        """Read one page and keep the ids of the entries that carry *marker*.
+
+        An entry with no text cannot carry it and is skipped. Anything else
+        unreadable is an error: a skipped entry might be the resource to delete.
+        """
         raw = reply.value(items)
         if not isinstance(raw, list):
             msg = f"ElevenLabs reply is missing {items}"
             raise ConvAIError(msg)
-        entries: list[tuple[str, str]] = []
+        ids: list[str] = []
         for entry in cast("list[object]", raw):
             if not isinstance(entry, dict):
-                continue
+                msg = f"ElevenLabs {items} listing has an entry that is not an object"
+                raise ConvAIError(msg)
             fields = cast("dict[str, object]", entry)
             text = self._text(fields, text_field)
+            if text is None or marker not in text:
+                continue
             resource_id = fields.get(id_field)
-            if text is not None and isinstance(resource_id, str):
-                entries.append((Reply.resource_id(resource_id), text))
-        if reply.value("has_more") is not True:
-            return _Page(tuple(entries), None)
+            if not isinstance(resource_id, str):
+                msg = f"ElevenLabs {items} listing has a marked entry with no usable id"
+                raise ConvAIError(msg)
+            ids.append(Reply.resource_id(resource_id))
+        return _Page(tuple(ids), self._cursor(reply, items))
+
+    @staticmethod
+    def _cursor(reply: Reply, items: str) -> str | None:
+        """Return where the next page is; None when this was the last."""
+        has_more = reply.value("has_more")
+        if not isinstance(has_more, bool):
+            msg = f"ElevenLabs {items} listing has no boolean has_more"
+            raise ConvAIError(msg)
+        if not has_more:
+            return None
         cursor = reply.value("next_cursor")
         if not isinstance(cursor, str) or not cursor:
             msg = "ElevenLabs listing has more pages but no cursor"
             raise ConvAIError(msg)
-        return _Page(tuple(entries), cursor)
+        return cursor
 
     @staticmethod
     def _text(entry: object, path: tuple[str, ...]) -> str | None:

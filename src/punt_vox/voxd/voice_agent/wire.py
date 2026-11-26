@@ -62,8 +62,16 @@ class Wire:
             raise ConvAIError(msg) from None
         if response.is_success or (tolerate_404 and response.status_code == 404):
             return Reply(response)
-        msg = self._status_message(method, path, response.status_code)
-        raise ConvAIError(msg)
+        raise self._failure(method, path, response.status_code)
+
+    @staticmethod
+    def _failure(method: str, path: str, code: int) -> ConvAIError:
+        """Return the error for a failed reply; a POST may have committed."""
+        msg = Wire._status_message(method, path, code)
+        if method == "POST" and (code >= 500 or code == 408):
+            # The server may have committed the create before it failed.
+            return UnknownCreateError(msg + UNKNOWN_CREATE)
+        return ConvAIError(msg)
 
     @staticmethod
     def _status_message(method: str, path: str, code: int) -> str:

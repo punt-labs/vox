@@ -85,28 +85,29 @@ class Replacement:
             self._store.write(finished)
         except Exception as failure:
             try:
-                self._abandon(record, sweep=isinstance(failure, UnknownCreateError))
+                for problem in self._abandon(
+                    record, sweep=isinstance(failure, UnknownCreateError)
+                ):
+                    failure.add_note(problem)
             except (ConvAIError, OSError) as cleanup:
                 # Cleanup must never replace the failure that started it.
                 failure.add_note(f"cleanup after the failure also failed: {cleanup!r}")
             raise
         return finished, agent_id
 
-    def _abandon(self, record: Registration, *, sweep: bool) -> None:
+    def _abandon(self, record: Registration, *, sweep: bool) -> tuple[str, ...]:
         """Delete what the attempt created and restore the old registration.
 
         With *sweep*, a create whose reply was lost may have left a resource no
-        record names; the account is searched for it too. A failed search is
-        raised only after the rest of the rollback is done.
+        record names; the account is searched for it too. Returns what the
+        caller must still be told: a failed search, or ids left on ElevenLabs
+        that no file records.
         """
         agents, tools = record.pending_agents, record.pending_tools
-        sweep_failure: ConvAIError | None = None
+        problems: list[str] = []
         if sweep:
-            try:
-                found_agents, found_tools = self._unrecorded(record)
-                agents, tools = (*agents, *found_agents), (*tools, *found_tools)
-            except ConvAIError as exc:
-                sweep_failure = exc
+            found_agents, found_tools = self._unrecorded(record, problems)
+            agents, tools = (*agents, *found_agents), (*tools, *found_tools)
         kept_agents = Undeleted.ids(self._disposal.agents(agents))
         kept_tools = Undeleted.ids(self._disposal.tools(tools))
         base = self._base
@@ -123,31 +124,46 @@ class Replacement:
                     )
                 )
         except OSError as exc:
-            # The intent on disk still names what the file recorded, so the
-            # next retirement finishes the job.
+            # Only what the file already recorded survives for the next
+            # retirement; the ids kept here exist nowhere else, so name them.
             logger.warning("Could not restore the voice agent registration: %s", exc)
-        if sweep_failure is not None:
-            raise sweep_failure
+            if kept_agents or kept_tools:
+                problems.append(
+                    f"registration not restored ({exc!r}); still on ElevenLabs "
+                    f"and unrecorded: agents {list(kept_agents)}, "
+                    f"tools {list(kept_tools)}"
+                )
+        return tuple(problems)
 
     def _unrecorded(
-        self, record: Registration
+        self, record: Registration, problems: list[str]
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """Return this host's marked agents and tools that no record names."""
-        marker = self._marker.text()
-        named_agents = {*record.agents, *(self._base.agents if self._base else ())}
-        named_tools = {*record.tools, *(self._base.tools if self._base else ())}
-        return (
-            tuple(
-                a
-                for a in self._control.listing.marked_agents(marker)
-                if a not in named_agents
+        """Return this host's marked agents and tools that no record names.
+
+        A failed listing is added to *problems* and finds nothing, so the
+        other kind is still swept and what it found is still deleted.
+        """
+        base, listing = self._base, self._control.listing
+        found: list[tuple[str, ...]] = []
+        for kind, listed, named in (
+            (
+                "agents",
+                listing.marked_agents,
+                {*record.agents, *(base.agents if base else ())},
             ),
-            tuple(
-                t
-                for t in self._control.listing.marked_tools(marker)
-                if t not in named_tools
+            (
+                "tools",
+                listing.marked_tools,
+                {*record.tools, *(base.tools if base else ())},
             ),
-        )
+        ):
+            try:
+                ids = listed(self._marker.text())
+            except ConvAIError as exc:
+                problems.append(f"sweep of {kind} failed: {exc}")
+                ids = ()
+            found.append(tuple(i for i in ids if i not in named))
+        return found[0], found[1]
 
     def _checkpoint(
         self,

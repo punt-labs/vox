@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
 from punt_vox.voxd.voice_agent.host_marker import HostMarker
 
@@ -204,3 +205,122 @@ def test_a_failed_listing_on_first_provisioning_still_reports_and_cleans_up(
         VoiceAgent(control, path=config).connection((_CLOCK,))
     assert any("HTTP 500" in note for note in caught.value.__notes__)
     assert not config.exists()
+
+
+@pytest.mark.parametrize("status", [500, 504, 408])
+def test_a_server_error_after_a_tool_commit_is_swept_and_says_so(
+    tmp_path: Path, wire: Requests, status: int
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        before = dict(wire.tools), dict(wire.agents)
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.create_tool_status = status
+        wire.commit_failed_create = True
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert (wire.tools, wire.agents) == before
+
+
+def test_a_server_error_after_an_agent_commit_is_swept_with_its_tools(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        before = dict(wire.tools), dict(wire.agents)
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.next_agent_ids = ["agent_new"]
+        wire.create_agent_status = 504
+        wire.commit_failed_create = True
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert (wire.tools, wire.agents) == before
+
+
+def test_a_client_error_on_create_is_not_an_unknown_outcome(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.create_agent_status = 422
+        with pytest.raises(ConvAIError, match="HTTP 422") as caught:
+            agent.connection((_ALARM,))
+        assert _UNRECORDED not in str(caught.value)
+    assert wire.listings == []
+
+
+def _lost_agent_reply(wire: Requests) -> None:
+    """Arrange an agent create that commits, then loses its reply."""
+    wire.next_tool_ids = ["tool_alarm"]
+    wire.next_agent_ids = ["agent_new"]
+    wire.drop_reply_after_agent_commit = True
+
+
+def test_a_tools_listing_failure_keeps_the_agents_already_found(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        _lost_agent_reply(wire)
+        wire.failing_listings = {"tools"}
+        with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
+            agent.connection((_ALARM,))
+    assert "agent_new" not in wire.agents
+    assert any("/tools" in note for note in caught.value.__notes__)
+
+
+def test_both_listing_failures_are_attached(tmp_path: Path, wire: Requests) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        _lost_agent_reply(wire)
+        wire.failing_listings = {"agents", "tools"}
+        with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
+            agent.connection((_ALARM,))
+    notes = "\n".join(caught.value.__notes__)
+    assert "GET /agents" in notes
+    assert "GET /tools" in notes
+
+
+def test_a_found_agent_that_cannot_be_deleted_is_named_when_the_tools_listing_fails(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        _lost_agent_reply(wire)
+        wire.failing_listings = {"tools"}
+        wire.delete_agent_status = 403
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert _stored(config)["retired_agents"] == ["agent_new"]
+
+
+def test_ids_left_on_elevenlabs_are_named_when_the_registration_cannot_be_restored(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _REGISTRATION
+    original_replace = AtomicFile.replace
+
+    def fail_restore(file: AtomicFile, text: str, *, mode: int | None = None) -> None:
+        if json.loads(text)["retired_tools"]:
+            msg = "state directory no longer writable"
+            raise PermissionError(msg)
+        original_replace(file, text, mode=mode)
+
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        monkeypatch.setattr(AtomicFile, "replace", fail_restore)
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.drop_reply_after_tool_commit = True
+        wire.delete_tool_status = 403
+        with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
+            agent.connection((_ALARM,))
+    notes = "\n".join(caught.value.__notes__)
+    assert "tool_alarm" in notes
+    assert "not restored" in notes
