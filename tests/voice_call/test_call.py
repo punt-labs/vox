@@ -88,6 +88,10 @@ class _Connector:
     def __init__(self, url: str) -> None:
         self.url = url
         self.teardowns = 0
+        self.retirements = 0
+
+    def retire_stale(self) -> None:
+        self.retirements += 1
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
