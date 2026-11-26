@@ -277,15 +277,34 @@ function demo(pr):
     write down the expected outcome, then drive the real entry point
         (mic tool, CLI command, hook fire)
     capture machine evidence: mic:status, vox doctor, and grep of vox.log
+    if not audible(pr):                 # a reading, a refusal, an install:
+                                        #   nothing played, no ear to ask
+        if the output matches: comment "demo confirmed (not audible): H"
+            with the exact command and output pasted    # the leader's run
+                                                        #   IS the demo
+        else: comment "demo failed: H" with the output; a finding as below
+        return
+    run the roundtrip tier (make test-roundtrip; make test-roundtrip-live
+        where the credentials are present): speech is synthesized,
+        transcribed back and its word error rate checked, which is the
+        machine verification of what was said
     run the canonical flight in docs/testing/manual-tests.md and ask the
-        operator after EACH audible step — a log cannot judge whether the
-        audio sounded right; only the operator's ear can
-    if the operator confirms: comment "demo confirmed: H"   # demoed_head;
-                                    #   only a PR that changes a non-exempt
-                                    #   file reaches here (demo_ok is false)
+        operator after EACH audible step for what transcription cannot
+        judge: the voice, the delivery, the ducking, the chime and its
+        timing; the ear is asked only for those
+    if the operator confirms: comment "demo confirmed by ear: H" with the
+        operator's words and the roundtrip result
+                                    # demoed_head; only a PR that changes
+                                    #   a non-exempt file reaches here
+                                    #   (demo_ok is false)
     else: comment "demo failed: H" with what the operator heard; the
         failure is a finding like any other (fixed, local_review on the
         fix diff, pushed), and the next tick demos the new head
+    # A finding that surfaces after the merge (a hook verdict, a late
+    # review) is recorded on the merged PR with the reasoning and the next
+    # unit starts; it is never a blocking question to the operator. The
+    # operator's instruction to run a command is the ruling, not a request
+    # for another question.
 
 # Terms, all read from GitHub (Qodo's login is qodo-code-review[bot]).
 # The rules are model-checked in punt-kit standards/pr-review-model.tex and
@@ -423,8 +442,22 @@ function demo(pr):
 #                  and hooks there are behavior even when Markdown, because
 #                  Claude Code executes them; src/, a dependency, or an
 #                  install change can change what the operator hears
-#   demoed_head  = the commit named in the leader's latest "demo confirmed:"
-#                  comment, newer than any "demo failed:" comment
+#   audible(pr)  = some file the PR changes can change what is heard: under
+#                  src/punt_vox/providers/, src/punt_vox/voxd/ (except the
+#                  port and pid files), the cache, quips, normalize.py,
+#                  hooks.py, server.py, client.py, the call, plugin/, a
+#                  dependency or lock file, the Makefile, or the service
+#                  installer and its unit, environment and key files. A file
+#                  that only reads or reports state (service/*status*,
+#                  *health*, *probe*, lifecycle_*, doctor*, cli_status.py,
+#                  cli_doctor.py) is not audible. Anything not named here is
+#                  audible: the list fails closed
+#   demoed_head  = the commit named in the leader's latest "demo confirmed"
+#                  comment, newer than any "demo failed:" comment. The form
+#                  is checked: "demo confirmed by ear: H" counts for any PR;
+#                  "demo confirmed (not audible): H" with the command and
+#                  output pasted counts only when audible(pr) is false, so
+#                  the leader's own run can never confirm an audible PR
 #   demo_ok(pr)  = every file the PR changes is demo_exempt, or demoed_head
 #                  exists, is the head or an ancestor of it, and every file
 #                  changed since it is demo_exempt
@@ -725,6 +758,19 @@ and ask after each audible step, immediately, because audio impressions decay
 within seconds. This is the one human gate in the loops, and it is a demo, not
 a diff.
 
+The ear is asked only for what a machine cannot judge. A PR that plays nothing
+(`audible(pr)` is false: a status reading, `vox doctor`, a refusal) is demoed
+by the leader's own run of the real entry point, with the command and output
+pasted into a "demo confirmed (not audible)" comment; the operator is not
+asked to run or bless it, and when the operator does say to run the command,
+that is the ruling. An audible PR is verified first by the roundtrip tier,
+which synthesizes speech, transcribes it back and checks the word error rate;
+the operator then confirms only what transcription cannot: the voice, the
+delivery, the ducking, the chime and its timing. A finding that surfaces after
+the merge is recorded on the PR with the leader's reasoning and the next unit
+starts; it is never a blocking question, and the two-minute rule in the
+workspace `CLAUDE.md` applies to it as to any other.
+
 ## Level 3 — The mission loop (design, code, test)
 
 One iteration is one delegated mission: a single piece of design,
@@ -883,8 +929,11 @@ itself.
 5. **Defects flow inward, scope flows outward.** A defect found while a PR is
    open is fixed in that PR. Only genuinely new lines of work become issues;
    a review finding is never new work.
-6. **The operator gates the audio demo and direction, never diffs or
-   sequencing.**
+6. **The operator gates what only an ear can judge, and direction; never
+   diffs, sequencing, or paperwork.** A PR that plays nothing is confirmed by
+   the leader's own recorded run; an audible PR by the roundtrip tier and
+   then the operator's ear for voice, delivery, ducking and chimes. A gap a
+   hook or reviewer finds after the merge is recorded, not asked.
 7. **Close-out is inside the loop.** The recap email, branch hygiene, and
    starting the next unit are steps of the loop, not afterthoughts.
 8. **No migration, compat, shim, or version-bridge code.** Punt Labs products
