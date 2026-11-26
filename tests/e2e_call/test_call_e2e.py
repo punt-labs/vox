@@ -261,11 +261,12 @@ def _vox(
 def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[str]:
     """Place one scripted call; whatever happens, leave no call live in voxd.
 
-    The call's own outcome is primary: when it raised, a stop failure is
-    attached to that exception as a note, never raised over it. When the
-    call returned, the daemon is given time to finish the call before the
-    cleanup stop, and a call it never finished, or a stop that failed, is
-    the error.
+    The call's own outcome is primary: when it raised or exited non-zero, a
+    stop failure is attached to that exception as a note, never raised over
+    it, and a non-zero exit skips the end-line wait so a refused start
+    surfaces the CLI's own output immediately. When the call exited 0, the
+    daemon is given time to finish the call before the cleanup stop, and a
+    call it never finished, or a stop that failed, is the error.
     """
     try:
         result = _vox(env, "call", "--script", str(script), timeout=_CALL_TIMEOUT_S)
@@ -273,6 +274,13 @@ def _vox_call(env: dict[str, str], script: Path) -> subprocess.CompletedProcess[
         if (failure := _stop_failure(env)) is not None:
             exc.add_note(failure)
         raise
+    if result.returncode != 0:
+        err = AssertionError(
+            f"vox call exited {result.returncode}: {result.stdout}{result.stderr}"
+        )
+        if (failure := _stop_failure(env)) is not None:
+            err.add_note(failure)
+        raise err
     unfinished = _unfinished_failure(env, _STOP_TIMEOUT_S)
     unstopped = _stop_failure(env)
     if (failure := unfinished or unstopped) is not None:
@@ -477,6 +485,80 @@ def test_a_call_the_daemon_never_finished_is_the_error(
     with pytest.raises(AssertionError, match="did not log the call's end within 0s"):
         _vox_call(env, tmp_path / "turns.jsonl")
     assert stopped == ["call --script " + str(tmp_path / "turns.jsonl"), "call stop"]
+
+
+def test_a_nonzero_call_exit_surfaces_cli_output_without_waiting_for_end_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A refused start fails at once with CLI output and skips the end-line wait."""
+    calls: list[str] = []
+
+    def stub_vox(
+        env: dict[str, str], *args: str, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        del env, timeout
+        calls.append(" ".join(args))
+        if args[:2] == ("call", "stop"):
+            return subprocess.CompletedProcess(
+                ["vox", *args], 2, "", "no call is active\n"
+            )
+        return subprocess.CompletedProcess(
+            ["vox", *args],
+            1,
+            "starting call\n",
+            "Call unavailable: start refused by probe\n",
+        )
+
+    def fail_if_waited(env: dict[str, str], timeout_s: float) -> str | None:
+        del env, timeout_s
+        pytest.fail("_unfinished_failure must not run when vox call exited non-zero")
+
+    monkeypatch.setattr(f"{__name__}._vox", stub_vox)
+    monkeypatch.setattr(f"{__name__}._unfinished_failure", fail_if_waited)
+    script = tmp_path / "turns.jsonl"
+    with pytest.raises(AssertionError) as failure:
+        _vox_call({"HOME": str(tmp_path)}, script)
+    message = str(failure.value)
+    assert "vox call exited 1:" in message
+    assert "starting call\n" in message
+    assert "Call unavailable: start refused by probe\n" in message
+    assert not hasattr(failure.value, "__notes__")
+    assert calls == [f"call --script {script}", "call stop"]
+
+
+def test_a_stop_failure_after_a_nonzero_call_exit_is_a_note_on_the_call_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stop failure after a non-zero call exit rides along as a note."""
+    calls: list[str] = []
+
+    def stub_vox(
+        env: dict[str, str], *args: str, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        del env
+        calls.append(" ".join(args))
+        if args[:2] == ("call", "stop"):
+            raise subprocess.TimeoutExpired(["vox", *args], timeout)
+        return subprocess.CompletedProcess(
+            ["vox", *args], 2, "", "Error: start refused by probe\n"
+        )
+
+    def fail_if_waited(env: dict[str, str], timeout_s: float) -> str | None:
+        del env, timeout_s
+        pytest.fail("_unfinished_failure must not run when vox call exited non-zero")
+
+    monkeypatch.setattr(f"{__name__}._vox", stub_vox)
+    monkeypatch.setattr(f"{__name__}._unfinished_failure", fail_if_waited)
+    script = tmp_path / "turns.jsonl"
+    with pytest.raises(AssertionError) as failure:
+        _vox_call({"HOME": str(tmp_path)}, script)
+    message = str(failure.value)
+    assert "vox call exited 2:" in message
+    assert "Error: start refused by probe\n" in message
+    assert failure.value.__notes__ == [
+        f"vox call stop hung for {_STOP_TIMEOUT_S:.0f}s after the call"
+    ]
+    assert calls == [f"call --script {script}", "call stop"]
 
 
 def test_the_cleanup_waits_for_the_end_line_before_stopping(tmp_path: Path) -> None:
