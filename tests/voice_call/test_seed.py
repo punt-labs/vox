@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from punt_vox.voxd.voice_call.seed import CallSeed
 
@@ -107,3 +109,31 @@ def test_the_baseline_is_the_stable_role_with_no_call_state() -> None:
     assert "Workers right now" not in baseline
     assert "Repositories a worker may use" not in baseline
     assert baseline in CallSeed(("/repo",), []).prompt()
+
+
+def test_the_prompt_tells_the_agent_the_local_date_time_and_zone_at_call_start() -> (
+    None
+):
+    start = datetime(2026, 11, 26, 14, 3, tzinfo=ZoneInfo("America/Los_Angeles"))
+    prompt = CallSeed(("/repo",), [], now=start).prompt()
+    assert (
+        "At the start of this call it is Thursday 2026-11-26 14:03 "
+        "(America/Los_Angeles, UTC-08:00)." in prompt
+    )
+
+
+def test_two_calls_at_different_times_get_different_time_lines() -> None:
+    zone = ZoneInfo("Asia/Tokyo")
+    first = CallSeed((), [], now=datetime(2026, 1, 2, 9, 5, tzinfo=zone)).prompt()
+    later = CallSeed((), [], now=datetime(2026, 7, 4, 23, 59, tzinfo=zone)).prompt()
+    assert "2026-01-02 09:05" in first
+    assert "2026-07-04 23:59" in later
+    assert first != later
+
+
+def test_the_baseline_carries_no_time_line() -> None:
+    assert "At the start of this call" not in CallSeed.baseline()
+
+
+def test_a_call_with_no_clock_given_uses_the_host_clock_and_its_iana_zone() -> None:
+    assert "At the start of this call it is" in CallSeed((), []).prompt()

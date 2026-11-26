@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Final, Self, final
 
+from punt_vox.voxd.voice_call.call_clock import CallClock
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["CallSeed"]
@@ -84,14 +87,22 @@ _NO_REPOS: Final = (
 class CallSeed:
     """Render the prompt, capped so it never crowds out the conversation."""
 
-    __slots__ = ("_projects", "_workers")
+    __slots__ = ("_clock", "_projects", "_workers")
     _projects: tuple[str, ...]
     _workers: list[WorkerPayload]
+    _clock: CallClock
     LIMIT: Final = 10_000  # bytes, UTF-8
 
-    def __new__(cls, projects: tuple[str, ...], workers: list[WorkerPayload]) -> Self:
-        """Bind the allowlisted repositories and the registry snapshot."""
+    def __new__(
+        cls,
+        projects: tuple[str, ...],
+        workers: list[WorkerPayload],
+        *,
+        now: datetime | None = None,  # None reads the host clock.
+    ) -> Self:
+        """Bind the allowlisted repositories, the registry snapshot and the clock."""
         self = super().__new__(cls)
+        self._clock = CallClock(now)
         self._projects = projects
         self._workers = sorted(workers, key=lambda w: w["created_at"], reverse=True)
         return self
@@ -115,7 +126,11 @@ class CallSeed:
 
     def _render(self, briefs: list[dict[str, object]], labels: dict[str, str]) -> str:
         projects = json.dumps(list(self._projects), ensure_ascii=False)
-        lines = [_ROLE, f"Repositories a worker may use: {projects}"]
+        lines = [
+            _ROLE,
+            self._clock.line(),
+            f"Repositories a worker may use: {projects}",
+        ]
         if len(self._projects) == 1:
             lines.append("start_worker uses that repository when no project is given.")
         if not self._projects:
