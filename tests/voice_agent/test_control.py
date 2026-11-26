@@ -7,7 +7,9 @@ import httpx
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError
+from punt_vox.voxd.voice_agent.agent_body import AgentBody
 from punt_vox.voxd.voice_agent.call_overrides import LOOPBACK_HOSTS, PLACEHOLDER_KEY
+from punt_vox.voxd.voice_agent.settings import AgentSettings
 
 _API = "https://api.elevenlabs.io"
 _OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.call_overrides"
@@ -42,8 +44,9 @@ def test_blank_api_key_is_rejected_before_connecting() -> None:
 @pytest.mark.parametrize("names", [("",), ("clock", "clock")])
 def test_tool_catalog_requires_distinct_nonempty_names(names: tuple[str, ...]) -> None:
     with pytest.raises(ValueError, match="nonempty and unique"):
-        ConvAIControl.registration_fingerprint(
-            tuple(ClientTool(name, "Return time") for name in names)
+        AgentBody.fingerprint(
+            AgentSettings.minimal(),
+            tuple(ClientTool(name, "Return time") for name in names),
         )
 
 
@@ -152,13 +155,6 @@ def test_loopback_hosts_are_literal_ips_only() -> None:
     assert sorted(LOOPBACK_HOSTS) == ["127.0.0.1", "::1"]
 
 
-# The fingerprint of the boss catalog as provisioned before the agent had its
-# built-in end_call tool. A registration carrying it must not be reused.
-_FINGERPRINT_WITHOUT_END_CALL = (
-    "e103cca8572354fb8a99ca1e995d2a4b95b173af8f25e63ea5032ccac154a02c"
-)
-
-
 def test_the_agent_is_created_with_the_built_in_end_call_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -189,13 +185,3 @@ def test_the_agent_is_created_with_the_built_in_end_call_tool(
     assert end_call["name"] == "end_call"
     assert end_call["params"] == {"system_tool_type": "end_call"}
     assert "closing sentence" in str(end_call["description"])
-
-
-def test_the_fingerprint_no_longer_matches_a_registration_without_end_call() -> None:
-    """An agent provisioned before end_call is torn down, not reused."""
-    from punt_vox.voxd.voice_call.boss_tools import BossTools
-
-    ordered = tuple(sorted(BossTools.CATALOG, key=lambda tool: tool.name))
-    assert (
-        ConvAIControl.registration_fingerprint(ordered) != _FINGERPRINT_WITHOUT_END_CALL
-    )

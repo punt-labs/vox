@@ -62,20 +62,22 @@ class VoiceAgent:
         fingerprint = self._control.registration_fingerprint(ordered)
         with self._locked():
             stored = self._read()
-            if stored is not None and stored.agent_id is None:
-                self._delete(stored)
+            if stored is not None and self._is_stale(stored, fingerprint):
+                self._delete(stored)  # A changed spec replaces the agent.
                 stored = None
             if stored is None:
                 stored = self._provision(ordered, fingerprint)
-            agent_id = self._usable_agent_id(stored, fingerprint)
+            agent_id = self._usable_agent_id(stored)
         return self._control.signed_url(agent_id), stored.tool_ids
 
     @staticmethod
-    def _usable_agent_id(stored: Registration, fingerprint: str) -> str:
-        """Return the agent id of a registration that matches this catalog, or raise."""
-        if stored.configuration_hash != fingerprint:
-            msg = "Vox voice agent configuration changed; run `vox call teardown`"
-            raise ConvAIError(msg)
+    def _is_stale(stored: Registration, fingerprint: str) -> bool:
+        """Return whether the registration cannot serve this spec and must go."""
+        return stored.agent_id is None or stored.configuration_hash != fingerprint
+
+    @staticmethod
+    def _usable_agent_id(stored: Registration) -> str:
+        """Return the provisioned agent id, or raise."""
         if stored.agent_id is None:
             msg = "No provisioned ElevenLabs agent"
             raise ConvAIError(msg)

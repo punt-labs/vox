@@ -55,7 +55,9 @@ class CreateToolConfig(TypedDict):
 
 
 class _SystemToolParams(TypedDict):
-    system_tool_type: Literal["end_call"]
+    system_tool_type: Literal["end_call", "skip_turn"]
+    # How long Skip turn waits before the agent may speak; -1 waits indefinitely.
+    wait_timeout_secs: NotRequired[int]
 
 
 class SystemTool(TypedDict):
@@ -69,9 +71,13 @@ class SystemTool(TypedDict):
 
 class BuiltInTools(TypedDict):
     end_call: SystemTool
+    skip_turn: SystemTool
 
 
 class _RegisteredPrompt(TypedDict):
+    prompt: str
+    llm: str
+    timezone: str
     tool_ids: list[str]
     built_in_tools: BuiltInTools
 
@@ -83,7 +89,13 @@ class _RegisteredAgent(TypedDict):
 
 
 class _TTSConfig(TypedDict):
+    voice_id: str
     agent_output_audio_format: str
+
+
+class _TurnConfig(TypedDict):
+    turn_timeout: int
+    turn_eagerness: str
 
 
 class _ASRConfig(TypedDict):
@@ -98,7 +110,12 @@ class _AgentConfig(TypedDict):
     agent: _RegisteredAgent
     tts: _TTSConfig
     asr: _ASRConfig
+    turn: _TurnConfig
     conversation: _ClientEvents
+
+
+class _Privacy(TypedDict):
+    record_voice: bool
 
 
 class _Auth(TypedDict):
@@ -132,6 +149,7 @@ class _Overrides(TypedDict):
 class _PlatformSettings(TypedDict):
     auth: _Auth
     overrides: _Overrides
+    privacy: _Privacy
 
 
 class CreateAgentConfig(TypedDict):

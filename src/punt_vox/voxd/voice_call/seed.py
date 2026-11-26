@@ -96,6 +96,11 @@ class CallSeed:
         self._workers = sorted(workers, key=lambda w: w["created_at"], reverse=True)
         return self
 
+    @staticmethod
+    def baseline() -> str:
+        """Return the stable role alone: the agent's own prompt before any call."""
+        return _ROLE
+
     def prompt(self, labels: dict[str, str] | None = None) -> str:
         """Return the prompt, dropping the oldest workers until it fits LIMIT."""
         briefs = [WorkerBrief.detail(worker) for worker in self._workers]

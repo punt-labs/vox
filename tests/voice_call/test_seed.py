@@ -100,3 +100,10 @@ def test_seed_tells_the_agent_a_confirmation_is_the_daemons_to_read() -> None:
 
 def _prompt() -> str:
     return CallSeed(("/repo",), []).prompt()
+
+
+def test_the_baseline_is_the_stable_role_with_no_call_state() -> None:
+    baseline = CallSeed.baseline()
+    assert "Workers right now" not in baseline
+    assert "Repositories a worker may use" not in baseline
+    assert baseline in CallSeed(("/repo",), []).prompt()

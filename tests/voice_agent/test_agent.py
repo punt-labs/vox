@@ -176,8 +176,11 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         restarted = VoiceAgent(control, path=config)
         assert restarted.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
-        with pytest.raises(ConvAIError, match="configuration changed"):
-            restarted.connection((ClientTool("new", "Different tool"),))
+        # A changed catalog replaces the agent: no manual teardown first.
+        assert restarted.connection((ClientTool("new", "Different tool"),)) == (
+            _SIGNED_URL,
+            ("tool_clock",),
+        )
         restarted.teardown()
         restarted.teardown()
     assert not config.exists()
@@ -185,6 +188,11 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         ("POST", "/v1/convai/tools"),
         ("POST", "/v1/convai/agents/create"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
+        ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
+        ("POST", "/v1/convai/tools"),
+        ("POST", "/v1/convai/agents/create"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
         ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
         ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
@@ -220,55 +228,28 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     )
 
 
-def test_changed_agent_settings_require_teardown(
+def test_changed_agent_settings_replace_the_agent_without_a_teardown(
     tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
         agent.connection((_CLOCK,))
         monkeypatch.setattr(
-            "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
+            "punt_vox.voxd.voice_agent.agent_body._OVERRIDABLE",
             {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": False}},
         )
-        with pytest.raises(ConvAIError, match="configuration changed"):
-            agent.connection((_CLOCK,))
-        assert len(wire.calls) == 3
-        agent.teardown()
-
-
-def test_registration_without_first_message_permission_requires_explicit_teardown(
-    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = tmp_path / _COMPLETED_REGISTRATION
-    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config)
-        with monkeypatch.context() as legacy:
-            legacy.setattr(
-                "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
-                {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}},
-            )
-            agent.connection((_CLOCK,))
-        wire.calls.clear()
-
-        with pytest.raises(ConvAIError, match="vox call teardown"):
-            agent.connection((_CLOCK,))
-        assert wire.calls == []
-        agent.teardown()
-
-        assert VoiceAgent(control, path=config).connection((_CLOCK,)) == (
-            _SIGNED_URL,
-            ("tool_clock",),
-        )
+        assert agent.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
         assert [method for method, _, _ in wire.calls] == [
+            "POST",
+            "POST",
+            "GET",
             "DELETE",
             "DELETE",
             "POST",
             "POST",
             "GET",
         ]
-        wire.calls.clear()
-        agent.connection((_CLOCK,))
-        assert [method for method, _, _ in wire.calls] == ["GET"]
+        agent.teardown()
 
 
 def test_teardown_first_keeps_new_config_tree_private(tmp_path: Path) -> None:

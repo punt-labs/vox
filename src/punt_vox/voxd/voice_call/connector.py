@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Protocol, Self, final
 
 from punt_vox.voxd.voice_agent.agent import VoiceAgent
 from punt_vox.voxd.voice_agent.control import ConvAIControl
+from punt_vox.voxd.voice_agent.settings import AgentSettings
+from punt_vox.voxd.voice_call.seed import CallSeed
 
 if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import ClientTool
@@ -39,5 +41,6 @@ class CallConnector:
     def agent(self) -> AgentConnector:
         """Return the persistent connector; a missing credential is reported here."""
         if self._agent is None:
-            self._agent = VoiceAgent(ConvAIControl.from_environment())
+            settings = AgentSettings.for_host(CallSeed.baseline())
+            self._agent = VoiceAgent(ConvAIControl.from_environment(settings))
         return self._agent
