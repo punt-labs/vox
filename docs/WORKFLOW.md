@@ -288,13 +288,15 @@ function demo(pr):
         else: comment "demo failed: H" with the output; a finding as below
         return
     run the roundtrip tier (make test-roundtrip; make test-roundtrip-live
-        where the credentials are present): speech is synthesized,
-        transcribed back and its word error rate checked, which is the
-        machine verification of what was said
+        where the credentials are present): a fixed corpus is synthesized
+        through the providers, transcribed back and its word error rate
+        checked, which is the machine verification that the synthesis
+        path still produces intelligible speech
     run the canonical flight in docs/testing/manual-tests.md and ask the
-        operator after EACH audible step for what transcription cannot
-        judge: the voice, the delivery, the ducking, the chime and its
-        timing; the ear is asked only for those
+        operator after EACH audible step for what the corpus cannot judge:
+        that the step said the right words, in the right voice, with the
+        delivery, the ducking, the chime and its timing; the ear is asked
+        only for those
     if the operator confirms: comment "demo confirmed by ear: H" with the
         operator's words and the roundtrip result
                                     # demoed_head; only a PR that changes
@@ -453,8 +455,10 @@ function demo(pr):
 #                  lock file, the Makefile, or the service installer and
 #                  its unit, environment and key files. Outside voxd/, a
 #                  file that only reads or reports state (service/*status*,
-#                  *health*, *probe*, lifecycle_*, doctor*, cli_status.py,
-#                  cli_doctor.py) is not audible. Any other non-exempt file
+#                  *health*, *probe*, lifecycle_status.py, doctor*,
+#                  cli_status.py, cli_doctor.py) is not audible;
+#                  lifecycle_start.py and lifecycle_stop.py start and stop
+#                  the daemon that plays, so they are audible. Any other non-exempt file
 #                  is audible: the list fails closed
 #   demoed_head  = the commit named in the leader's latest "demo confirmed"
 #                  comment, newer than any "demo failed:" comment. The form
@@ -769,9 +773,11 @@ by the leader's own run of the real entry point, with the command and output
 pasted into a "demo confirmed (not audible)" comment; the operator is not
 asked to run or bless it, and when the operator does say to run the command,
 that is the ruling. An audible PR is verified first by the roundtrip tier,
-which synthesizes speech, transcribes it back and checks the word error rate;
-the operator then confirms only what transcription cannot: the voice, the
-delivery, the ducking, the chime and its timing. A finding that surfaces after
+which synthesizes a fixed corpus through the providers, transcribes it back and
+checks the word error rate, proving the synthesis path still speaks
+intelligibly; the operator then confirms only what that corpus cannot: that the
+demo step said the right words, in the right voice, with the delivery, the
+ducking, the chime and its timing. A finding that surfaces after
 the merge is recorded on the PR with the leader's reasoning and the next unit
 starts; it is never a blocking question, and the two-minute rule in the
 workspace `CLAUDE.md` applies to it as to any other.
