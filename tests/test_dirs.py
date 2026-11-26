@@ -249,7 +249,11 @@ class TestWritableConfigDir:
         child = base / "a" / "b"
         child.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", "--template="], cwd=repo, check=True)
-        subprocess.run(["git", "add", str(own / "vox.md")], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "-c", "core.excludesFile=", "add", str(own / "vox.md")],
+            cwd=repo,
+            check=True,
+        )
         subprocess.run(
             [
                 "git",
@@ -259,6 +263,8 @@ class TestWritableConfigDir:
                 "user.email=test@example.com",
                 "-c",
                 "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
                 "commit",
                 "-qm",
                 "base",

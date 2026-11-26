@@ -31,7 +31,7 @@ class InheritedConfig:
 
     __slots__ = ("_source",)
 
-    _source: Path | None
+    _source: Path | None  # None for ignore-only setup with no config to copy.
 
     def __new__(cls, source: Path | None) -> Self:
         """Wrap the inherited config directory *source*, if one exists."""
