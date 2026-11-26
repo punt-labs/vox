@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Self
+from typing import ClassVar, Self
 
 from punt_vox.paths import user_state_dir
 
@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 CACHE_DIR = user_state_dir() / "cache"
 MAX_ENTRIES = 500
-_LOCK = Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +83,7 @@ def cache_get(key: CacheKey) -> Path | None:
     bypass this layer entirely at the voxd call site so no sensitive
     data ever reaches this function.
     """
-    with _LOCK:
+    with _CacheFiles.lock():
         path = key.path_in(CACHE_DIR)
         try:
             if path.stat().st_size == 0:
@@ -112,15 +111,24 @@ def cache_put(key: CacheKey, source: Path) -> Path | None:
     if not source.exists() or source.stat().st_size == 0:
         return None
 
-    with _LOCK:
-        return _CacheWrite(source).publish(key.path_in(CACHE_DIR))
+    with _CacheFiles.lock():
+        return _CacheFiles(source).publish(key.path_in(CACHE_DIR))
 
 
-class _CacheWrite:
-    """Publish one synthesized file atomically before evicting stale entries."""
+class _CacheFiles:
+    """Coordinate cache file access and publish synthesized files atomically."""
 
     __slots__ = ("_source",)
+    _locks: ClassVar[dict[str, Lock]] = {}
     _source: Path
+
+    @classmethod
+    def lock(cls) -> Lock:
+        """Return the process-wide lock, publishing it once on concurrent first use."""
+        lock = cls._locks.get("cache")
+        if lock is None:
+            lock = cls._locks.setdefault("cache", Lock())
+        return lock
 
     def __new__(cls, source: Path) -> Self:
         """Bind the file to publish."""
@@ -167,7 +175,7 @@ def cache_clear() -> int:
 
     Returns the number of files deleted.
     """
-    with _LOCK:
+    with _CacheFiles.lock():
         if not CACHE_DIR.exists():
             return 0
         files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
@@ -188,7 +196,7 @@ class CacheInfo:
 
 def cache_status() -> CacheInfo:
     """Return current cache statistics (includes orphaned .tmp files)."""
-    with _LOCK:
+    with _CacheFiles.lock():
         if not CACHE_DIR.exists():
             return CacheInfo(entries=0, size_bytes=0, path=CACHE_DIR)
         files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))

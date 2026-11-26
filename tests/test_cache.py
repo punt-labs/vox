@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
+from threading import Barrier, Lock
 from unittest.mock import patch
 
+from punt_vox import cache
 from punt_vox.cache import (
     CacheInfo,
     CacheKey,
@@ -23,6 +26,24 @@ def _fake_mp3(path: Path, size: int = 100) -> None:
     """Write a fake MP3 file with the given size."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\xff" * size)
+
+
+def test_concurrent_first_access_uses_one_cache_lock() -> None:
+    owner = cache._CacheFiles  # pyright: ignore[reportPrivateUsage]
+    constructing = Barrier(2)
+
+    def allocate_lock() -> Lock:
+        constructing.wait(timeout=5)
+        return Lock()
+
+    with (
+        patch.object(owner, "_locks", {}),
+        patch.object(cache, "Lock", allocate_lock),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        first = executor.submit(owner.lock)
+        second = executor.submit(owner.lock)
+        assert first.result(timeout=5) is second.result(timeout=5)
 
 
 # ---------------------------------------------------------------------------
