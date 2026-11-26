@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -80,8 +81,9 @@ def main() -> int:
     if selected == []:
         print("No changed-module tests selected.")
         return 0
+    workers = os.environ.get("PYTEST_WORKERS", "4")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-n", "auto", *(selected or [])],
+        [sys.executable, "-m", "pytest", "-n", workers, *(selected or [])],
         check=False,
     )
     return 0 if result.returncode == 5 else result.returncode

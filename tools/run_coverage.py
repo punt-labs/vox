@@ -13,7 +13,7 @@ from pathlib import Path
 import coverage
 
 
-def run_coverage(rcfile: Path | None = None, workers: str = "auto") -> int:
+def run_coverage(rcfile: Path | None = None, workers: str | None = None) -> int:
     """Install startup hooks, run pytest-cov, and combine reports."""
     root = Path.cwd()
     config_file = str((rcfile or root / "pyproject.toml").resolve())
@@ -47,6 +47,8 @@ def run_coverage(rcfile: Path | None = None, workers: str = "auto") -> int:
         if hook.exists():
             raise FileExistsError(hook)
     env = dict(os.environ)
+    if workers is None:
+        workers = env.get("PYTEST_WORKERS", "4")
     env.pop("COVERAGE_RCFILE", None)
     env["COVERAGE_PROCESS_START"] = config_file
     env["COVERAGE_FILE"] = str(root / ".coverage")
@@ -92,7 +94,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rcfile", type=Path, help="Coverage configuration file")
     parser.add_argument(
-        "--workers", default="auto", help="xdist workers (0 for serial)"
+        "--workers", help="xdist workers (default: PYTEST_WORKERS or 4; 0 for serial)"
     )
     args = parser.parse_args()
     return run_coverage(args.rcfile, args.workers)

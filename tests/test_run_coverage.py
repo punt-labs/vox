@@ -33,10 +33,18 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Magic
 
 
 @pytest.mark.parametrize("returncode", [0, 1, 5])
+@pytest.mark.parametrize("workers", [None, "auto"])
 def test_runner_reports_and_preserves_exit(
-    runner: tuple[Path, MagicMock], monkeypatch: pytest.MonkeyPatch, returncode: int
+    runner: tuple[Path, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    workers: str | None,
 ) -> None:
     root, cov = runner
+    if workers is None:
+        monkeypatch.delenv("PYTEST_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("PYTEST_WORKERS", workers)
 
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if "pytest" in args:
@@ -44,7 +52,7 @@ def test_runner_reports_and_preserves_exit(
                 "not integration and not sdk and not roundtrip and not quarantine "
                 "and not playback and not levels"
             )
-            assert args[args.index("-n") + 1] == "auto"
+            assert args[args.index("-n") + 1] == ("4" if workers is None else workers)
             assert (
                 (root / "vox_coverage.pth").read_text().startswith("import coverage;")
             )
@@ -133,7 +141,7 @@ def test_cli_configuration(monkeypatch: pytest.MonkeyPatch, rcfile: str | None) 
     run = MagicMock(return_value=1)
     monkeypatch.setattr("tools.run_coverage.run_coverage", run)
     assert main() == 1
-    run.assert_called_once_with(None if rcfile is None else Path(rcfile), "auto")
+    run.assert_called_once_with(None if rcfile is None else Path(rcfile), None)
 
 
 def test_cli_requires_configuration_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,6 +155,7 @@ def test_cli_requires_configuration_value(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_cli_serial_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTEST_WORKERS", "auto")
     monkeypatch.setattr("sys.argv", ["run_coverage", "--workers", "0"])
     run = MagicMock(return_value=0)
     monkeypatch.setattr("tools.run_coverage.run_coverage", run)
