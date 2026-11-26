@@ -239,9 +239,9 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   _grandparent_pid="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d '[:space:]')" || true
   _grandparent_comm=""
   if [[ -n "$_grandparent_pid" ]]; then
-    _grandparent_comm="$(ps -o comm= -p "$_grandparent_pid" 2>/dev/null | tr -d '[:space:]')" || true
+    _grandparent_comm="$(ps -o comm= -p "$_grandparent_pid" 2>/dev/null)" || true
   fi
-  case "$_grandparent_comm" in
+  case "${_grandparent_comm##*/}" in
     claude) SESSION_WATCH_PID="$_grandparent_pid" ;;
     *) SESSION_WATCH_PID="$PPID" ;;
   esac

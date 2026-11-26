@@ -116,24 +116,26 @@ def test_stop_tolerates_a_pane_process_disappearing() -> None:
     finish.assert_not_called()
 
 
-def test_stop_refuses_its_own_process_group() -> None:
+def test_stop_does_not_report_an_unverified_pane_as_stopped() -> None:
     with (
-        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=42),
-        patch("punt_vox.voxd.workers.tmux_probe.os.killpg") as kill,
-        pytest.raises(RuntimeError, match="own process group"),
+        patch.object(
+            TmuxWorkerProvider,
+            "_run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CompletedProcess([], 0, stdout="123"),
+                subprocess.CompletedProcess([], 0),
+            ],
+        ) as run,
+        patch("punt_vox.voxd.workers.tmux.os.getpgid", return_value=42),
+        patch.object(
+            TmuxProbe, "wait_for_exit", side_effect=RuntimeError("unverified group")
+        ) as finish,
+        pytest.raises(RuntimeError, match="unverified group"),
     ):
-        TmuxProbe.wait_for_exit(42)
-    kill.assert_not_called()
-
-
-def test_stop_deadline_is_bounded() -> None:
-    with (
-        patch("punt_vox.voxd.workers.tmux_probe.os.getpgrp", return_value=1),
-        patch("punt_vox.voxd.workers.tmux_probe.os.killpg"),
-        patch("punt_vox.voxd.workers.tmux_probe.time.monotonic", side_effect=[0, 4]),
-        pytest.raises(RuntimeError, match="did not exit"),
-    ):
-        TmuxProbe.wait_for_exit(42)
+        TmuxWorkerProvider().stop("worker")
+    assert run.call_args.args == ("kill-session", "-t", "=worker")
+    finish.assert_called_once_with(42)
 
 
 def test_transport_forwards_the_selected_profiles_progress() -> None:
