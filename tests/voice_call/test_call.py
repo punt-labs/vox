@@ -1063,6 +1063,9 @@ class _SlowConnector:
         self.release.wait()
         raise ConvAIError("agent provisioning failed")
 
+    def retire_stale(self) -> None:
+        """Nothing is provisioned, so nothing was replaced."""
+
     def teardown(self) -> None:
         raise AssertionError("unexpected teardown")
 
