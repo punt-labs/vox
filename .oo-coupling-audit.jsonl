@@ -1064,3 +1064,6 @@
 {"ts":"2026-11-26T17:36:21Z","commit":"ee3ce63d","source":null,"files_scored":624,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-11-26T17:36:24Z","commit":"ee3ce63d","source":null,"files_scored":624,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
 {"ts":"2026-11-26T17:37:10Z","commit":"ee3ce63d","source":null,"files_scored":624,"files_improved":0,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{}}
+{"ts":"2026-11-26T17:39:44Z","commit":"0c4e3e1c","source":null,"files_scored":623,"files_improved":1,"files_regressed":1,"verdict":"fail","reason":null,"deltas":{"src/punt_vox/voxd/voice_call/greeting.py":{"efferent_coupling":[1.0,0.0]}},"removed":["src/punt_vox/voxd/voice_call/repository_names.py"]}
+{"ts":"2026-11-26T17:40:15Z","commit":"0c4e3e1c","source":null,"files_scored":1,"files_improved":0,"files_regressed":0,"verdict":"rebaseline-files","reason":"The research tools module exports the provider deadline constant the tool catalog uses.","deltas":{},"improved":{}}
+{"ts":"2026-11-26T17:40:23Z","commit":"0c4e3e1c","source":null,"files_scored":623,"files_improved":0,"files_regressed":0,"verdict":"pass","reason":null,"deltas":{}}
