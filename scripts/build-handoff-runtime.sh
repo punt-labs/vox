@@ -65,8 +65,11 @@ with open(sys.argv[1], "rb") as config:
 if set(project["build-system"]["requires"]) != set(project["dependency-groups"]["handoff-runtime"]):
     sys.exit("Update the handoff-runtime dependency group to match build-system.requires.")
 ' "$repo/pyproject.toml"
-"${uv_env[@]}" uv --directory "$repo" sync --locked --group docs \
-    --group handoff-runtime --no-install-project >&2
+"${uv_env[@]}" uv --directory "$repo" sync --locked --group docs --no-install-project >&2
+"${uv_env[@]}" uv --directory "$repo" export --locked --only-group handoff-runtime \
+    --output-file "$work/build-requirements.txt" --quiet
+"${uv_env[@]}" uv pip install --require-hashes --python "$work/venv/bin/python" \
+    --requirement "$work/build-requirements.txt" >&2
 
 "${isolated[@]}" "npm_config_cache=$runtime/cache/npm" npm_config_ignore_scripts=true \
     npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false \
