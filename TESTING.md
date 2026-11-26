@@ -507,6 +507,19 @@ make test-e2e
 make coverage
 ```
 
+## Verifying a real call
+
+`make verify-call` places one real scripted `vox call` through the installed
+voxd to the real ElevenLabs agent, under `timeout` and always stopping the call
+afterwards, and fails (naming each failed expectation) unless the call opens
+with the conversational greeting, answers a repository question through
+`read_docs` in plain words, calls `search_web` when `EXA_API_KEY` is set (a
+distinct SKIP, never a pass, when it is not), never asks "are you there" during
+a long silence, and ends without a `RuntimeWarning`. It needs macOS `say`,
+`ffmpeg`, an installed and restarted voxd and an ElevenLabs key; it spends
+credits and plays audio, so it is not part of `make check`. Run it after
+`make install` and `vox daemon restart`, before the demo.
+
 ## Integration Tests
 
 ### Stage five: playback capture
