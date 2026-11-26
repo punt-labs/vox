@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, ClassVar, Final, Protocol, Self, final
+from urllib.parse import urlsplit
 
 from punt_vox.voxd.voice_call.lookup.docs_lookup import DeepWikiDocs
 from punt_vox.voxd.voice_call.lookup.snippet import Snippet
@@ -15,7 +17,7 @@ from punt_vox.voxd.voice_call.lookup.web_search import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import AsyncGenerator, Awaitable
 
 __all__ = ["PROVIDER_DEADLINE_S", "DocsSource", "ResearchTools", "SearchSource"]
 
@@ -25,10 +27,42 @@ _TITLE_CHARS: Final = 120
 _TEXT_CHARS: Final = 600
 _ANSWER_CHARS: Final = 1800
 _BUDGET_S: Final = 20.0
+_DOCS_BUDGET_S: Final = 25.0  # Name lookup and documentation together.
 PROVIDER_DEADLINE_S: Final = 30  # Above the budget, so the result arrives.
 _REPO: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")
-_GITHUB: Final = re.compile(
-    r"github\.com/([A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*)"
+_GITHUB_HOSTS: Final = frozenset({"github.com", "www.github.com"})
+# First path segments on github.com that are site pages, not repository owners.
+_NOT_OWNERS: Final = frozenset(
+    {
+        "about",
+        "apps",
+        "collections",
+        "contact",
+        "customer-stories",
+        "enterprise",
+        "explore",
+        "features",
+        "issues",
+        "login",
+        "marketplace",
+        "new",
+        "notifications",
+        "orgs",
+        "organizations",
+        "pricing",
+        "pulls",
+        "readme",
+        "resources",
+        "search",
+        "security",
+        "settings",
+        "site",
+        "solutions",
+        "sponsors",
+        "topics",
+        "trending",
+        "users",
+    }
 )
 _NO_REPO: Final = (
     "repo must look like owner/name and none could be found from that name; "
@@ -62,6 +96,7 @@ class ResearchTools:
     """Run search and documentation lookups, shaping short quoted results."""
 
     BUDGET_SECONDS: ClassVar[float] = _BUDGET_S
+    DOCS_BUDGET_SECONDS: ClassVar[float] = _DOCS_BUDGET_S
 
     __slots__ = ("_docs", "_search")
     _search: SearchSource | None  # None: no key, so the tool says how to set it up.
@@ -100,11 +135,15 @@ class ResearchTools:
 
     async def read_docs(self, arguments: dict[str, object]) -> object:
         """Return a trimmed, quoted documentation answer for the repository."""
-        repo = await self._repo(self._text(arguments, "repo", _QUERY_CHARS))
+        named = self._text(arguments, "repo", _QUERY_CHARS)
         question = self._text(arguments, "question", _QUESTION_CHARS)
         if self._docs is None:
             raise ValueError(_NO_DOCS)
-        answer = await self._bounded(self._docs.ask(repo, question))
+        # One deadline over both stages, below the provider's, so the agent
+        # gets a spoken result instead of the provider abandoning the call.
+        async with self._deadline(self.DOCS_BUDGET_SECONDS):
+            repo = await self._repo(named)
+            answer = await self._docs.ask(repo, question)
         return {
             "source": f"documentation for {repo}",
             "note": _NOTE,
@@ -116,23 +155,41 @@ class ResearchTools:
         if _REPO.fullmatch(named) is not None:
             return named
         if self._search is not None:
-            found = await self._bounded(
-                self._search.search(f"{named} GitHub repository")
-            )
-            for snippet in found:
-                if (match := _GITHUB.search(snippet.url)) is not None:
-                    return match.group(1)
+            for snippet in await self._search.search(f"{named} GitHub repository"):
+                if (repo := self._github_repo(snippet.url)) is not None:
+                    return repo
         raise ValueError(_NO_REPO)
 
     @staticmethod
-    async def _bounded[T](lookup: Awaitable[T]) -> T:
+    def _github_repo(link: str) -> str | None:
+        """Return ``owner/name`` when *link* is a repository on github.com."""
         try:
-            async with asyncio.timeout(_BUDGET_S):
-                return await lookup
+            url = urlsplit(link)
+        except ValueError:
+            return None
+        if url.scheme != "https" or url.hostname not in _GITHUB_HOSTS or url.username:
+            return None
+        owner, _, rest = url.path.strip("/").partition("/")
+        name = rest.partition("/")[0]
+        if owner in _NOT_OWNERS or _REPO.fullmatch(f"{owner}/{name}") is None:
+            return None
+        return f"{owner}/{name}"
+
+    @classmethod
+    @asynccontextmanager
+    async def _deadline(cls, seconds: float) -> AsyncGenerator[None]:
+        try:
+            async with asyncio.timeout(seconds):
+                yield
         except TimeoutError:
             raise ValueError(
                 "the lookup timed out; say so and offer to retry"
             ) from None
+
+    @classmethod
+    async def _bounded[T](cls, lookup: Awaitable[T]) -> T:
+        async with cls._deadline(cls.BUDGET_SECONDS):
+            return await lookup
 
     @staticmethod
     def _text(arguments: dict[str, object], field: str, limit: int) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -13,7 +14,7 @@ from pydantic import Field
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.lookup.docs_lookup import DeepWikiDocs
 from punt_vox.voxd.voice_call.lookup.snippet import Snippet
-from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
+from punt_vox.voxd.voice_call.lookup.tools import PROVIDER_DEADLINE_S, ResearchTools
 from punt_vox.voxd.voice_call.lookup.web_search import ExaSearch
 
 from .fakes import FakeWorkers
@@ -352,3 +353,101 @@ async def test_a_name_that_is_already_owner_slash_name_makes_no_search() -> None
         "read_docs", {"repo": "pallets/flask", "question": "q"}
     )
     assert search.queries == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://docs.github.com/en/rest/repos",
+        "https://gist.github.com/someone/abcdef",
+        "https://github.com/features/copilot",
+        "https://github.com/orgs/acme/people",
+        "https://notgithub.com/acme/widget",
+        "https://github.com.evil.example/acme/widget",
+        "https://github.com/onlyowner",
+        "https://user@github.com/acme/widget",
+        "ftp://github.com/acme/widget",
+        "github.com/acme/widget",
+    ],
+)
+async def test_a_link_that_is_not_a_repository_is_skipped_for_the_next_result(
+    url: str,
+) -> None:
+    search = _Search(
+        [
+            Snippet("Help", "x", url=url),
+            Snippet("Repo", "y", url="https://github.com/acme/widget/tree/main"),
+        ]
+    )
+    docs = _Docs()
+    _, error = await _tools(search, docs).answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert not error
+    assert docs.asked == [("acme/widget", "q")]
+
+
+async def test_www_github_com_is_a_repository_host() -> None:
+    search = _Search([Snippet("R", "y", url="https://www.github.com/acme/widget")])
+    docs = _Docs()
+    await _tools(search, docs).answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert docs.asked == [("acme/widget", "q")]
+
+
+async def test_only_non_repository_links_leave_the_name_unresolved() -> None:
+    search = _Search([Snippet("Help", "x", url="https://docs.github.com/en")])
+    docs = _Docs()
+    result, error = await _tools(search, docs).answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert error
+    assert "ask the person" in result
+    assert docs.asked == []
+
+
+class _Slow:
+    """A source whose lookup takes ``seconds`` before it answers."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+
+    async def search(self, query: str) -> list[Snippet]:
+        await asyncio.sleep(self.seconds)
+        return [Snippet("R", "y", url="https://github.com/acme/widget")]
+
+    async def ask(self, repo: str, question: str) -> str:
+        await asyncio.sleep(self.seconds)
+        return "answer"
+
+
+async def test_a_name_lookup_and_the_docs_call_share_one_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither stage uses its whole budget alone; together they overrun it."""
+    monkeypatch.setattr(ResearchTools, "DOCS_BUDGET_SECONDS", 0.3)
+    slow = _Slow(0.2)
+    tools = BossTools(FakeWorkers(), FakeWorkers(), research=ResearchTools(slow, slow))
+    result, error = await tools.answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert error
+    assert "timed out" in result
+
+
+async def test_each_stage_alone_within_the_shared_deadline_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ResearchTools, "DOCS_BUDGET_SECONDS", 1.0)
+    slow = _Slow(0.1)
+    tools = BossTools(FakeWorkers(), FakeWorkers(), research=ResearchTools(slow, slow))
+    _, error = await tools.answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert not error
+
+
+def test_the_docs_deadline_is_under_the_provider_deadline() -> None:
+    assert ResearchTools.DOCS_BUDGET_SECONDS < PROVIDER_DEADLINE_S
+    assert ResearchTools.DOCS_BUDGET_SECONDS == 25
