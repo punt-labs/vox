@@ -49,8 +49,8 @@ predicates over declared terms, never as bare primed flags.
 The operator owns requirements and design direction, rules on genuine design
 forks, and confirms the audio demo by ear. Claude runs everything else: the
 backlog, the missions, the review cycles, and the merges. Review of code is
-done by agents — the local review agents, plus Qodo and Bugbot (one run per
-PR round) on the PR.
+done by agents — the local review agents, plus Qodo and Devin Review on
+the PR.
 There is no human review gate. The operator reads code in the IDE, but that
 inspection is separate, feeds design discussion only, and nothing in these
 loops waits on it.
@@ -231,7 +231,7 @@ size of a PR is an economic decision, not a hygiene one:
   is never held back or split out for tidiness.
 
 The control flow, the terms it reads from GitHub (`round`, `qodo_in`,
-`bugbot_in`, `pending`, `answered(f)`, `audible(pr)`, `demo_ok`,
+`pending`, `answered(f)`, `audible(pr)`, `demo_ok`,
 `reviewed_head`, and the rest), `merge_gate`, `close_out`, `local_review`, and
 the `EnterPR`/`ExitPR` Z schemas are specified in
 [`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md). It is the authoritative text for
@@ -264,7 +264,7 @@ others miss), so every full diff and every fix diff of 20 lines or more gets
 all three. A fix diff under 20 lines gets `qodo review` alone, and `djb`
 joins any diff touching its domain whatever its size.
 
-### Remote review: Qodo and Bugbot, at most two rounds
+### Remote review: Qodo and Devin Review, at most two rounds
 
 Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when the
 PR opens and never on push. High findings post inline as threads, and the
@@ -274,28 +274,22 @@ closed through the Qodo CLI (`mark-implemented` naming the fix sha, or
 `dismiss`), never a ledger line, except one reopened by a force-push or rebase
 (`answered(f)`). Lows are dropped by `comments_routing`.
 
-Bugbot reviews each PR once, on its own, when the PR opens (Cursor dashboard,
-2026-10-23); round 1 needs no `bugbot run` comment, and a push draws no Bugbot
-review. Its findings are handled whenever they arrive. The Cursor security
-automation ("Find vulnerabilities") also runs here; its threads are findings
-like any other.
+Devin Review also reviews each PR. Its findings are handled whenever they
+arrive. The Cursor security automation ("Find vulnerabilities") also runs
+here; its threads are findings like any other.
 
 Copilot is on a trial (operator ruling, 2026-10-23): one review, requested at
 open, on 5 vox PRs after #526, none on push. The trial counts how many real
 bugs Copilot alone finds on top of this local loop; the operator keeps it only
 if that count is not zero. Its findings are findings like any other.
 
-Round 1 is the review at open. Round 2 — one `/agentic_review` plus one
-`bugbot run` — happens only when round 1's fixes included a High, and it is
+Round 1 is the review at open. Round 2 — one `/agentic_review` — happens only when round 1's fixes included a High, and it is
 the last. A new High in round 2 goes to the operator.
 
-This holds only when four settings are in place: `.pr_agent.toml` is on `main`
+This holds only when three settings are in place: `.pr_agent.toml` is on `main`
 (Qodo reads it from the default branch); the `copilot_code_review` rule is gone
-from ruleset 13252005 (so Copilot reviews only when requested); Bugbot reviews
-each PR once at open (Cursor dashboard); and Qodo's "Review every push" is
-Disabled in the portal. If a push still starts a Bugbot run, its findings are
-findings like any other; round 2 posts `bugbot run`, and `bugbot_in(2)` falls
-back after 30 minutes if no run starts.
+from ruleset 13252005 (so Copilot reviews only when requested); and Qodo's
+"Review every push" is Disabled in the portal.
 
 ### The audio demo gate
 
@@ -421,7 +415,7 @@ bound to the same role — reviews the worker's result inside the mission before
 the leader accepts it. The pairings live in `CLAUDE.md`.
 
 **Remote review findings are the one delegation that is not a mission.** When
-Qodo or Bugbot reports on the PR, the leader reads each finding and hands
+Qodo or Devin Review reports on the PR, the leader reads each finding and hands
 the mechanical fix to a bare `Agent()`, then pushes and resolves the thread
 itself.
 

@@ -38,9 +38,7 @@ function pr_loop(unit):
     # C. SHIP — the PR opens before the demo, so remote review runs while
     #    the operator is away; the merge waits for the demo (merge_gate)
     push; create the PR (description carries the verification playbook)
-        # Qodo reviews once, on open (.pr_agent.toml); Bugbot reviews once,
-        #   on its own, at open (Cursor dashboard: once per PR) — no
-        #   "bugbot run" comment for round 1
+        # Qodo reviews once, on open (.pr_agent.toml)
     if copilot_trial(pr): request a Copilot review   # once, at open; none
                                                       #   on push
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
@@ -100,8 +98,7 @@ function demo(pr):
     # for another question.
 
 # Terms, all read from GitHub (Qodo's login is qodo-code-review[bot]).
-# The rules are model-checked in punt-kit standards/pr-review-model.tex and
-# pr-review-model-bugbot.tex.
+# The rules are model-checked in punt-kit standards/pr-review-model.tex.
 #   round(pr)    = 1 + the number of "/agentic_review" comments the leader
 #                  has posted on the PR
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
@@ -115,28 +112,6 @@ function demo(pr):
 #                  before trigger(N) — a round-1 session for N = 2 — never
 #                  completes round N, and a clean review counts like any
 #                  other.
-#   bugbot_in(N) = a "Cursor Bugbot" check run on head(N) or a later branch
-#                  commit, started at or after trigger(N) — the PR open for
-#                  N = 1 (Bugbot's automatic run), round 2's "bugbot run"
-#                  comment for N = 2 — and completed with a conclusion
-#                  showing the review finished (success or neutral). A run
-#                  that failed, timed out, or was cancelled reviewed
-#                  nothing, so it does not count; a later push does not
-#                  undo a completed run. A clean run posts no review, so
-#                  read the check run. Or: 30 minutes have passed since
-#                  trigger(N) (or since rerun(N), if later), bugbot_open is
-#                  false, and, if a run for round N failed, rerun(N) was
-#                  posted — the timeout covers an outage, never a live run
-#                  and never a skipped re-run.
-#   rerun(N)     = a "bugbot run" comment the leader posted because a
-#                  round-N run ended without a finished review, plus a
-#                  ledger comment `rerun(N): <failed check-run id>` posted
-#                  in the same tick. The ledger line is what records the
-#                  round: the comment text is the same for every round. One
-#                  "bugbot run" comment may serve several rounds, one
-#                  ledger line each. Round 2's trigger comment and a
-#                  stuck-run nudge use the same text, have no ledger line,
-#                  and are neither: a round has at most one rerun.
 #   copilot_trial(pr) = not skipped(pr), and fewer than 5 vox PRs that are
 #                  not skipped, numbered above #526 and below pr, carry a
 #                  Copilot review request (a ReviewRequestedEvent for
@@ -148,8 +123,7 @@ function demo(pr):
 #                  copilot-pull-request-reviewer exists or 30 minutes have
 #                  passed since the request); a trial PR with no request is
 #                  pending until the leader makes one
-#   pending(pr)  = (not skipped(pr) and (not qodo_in(round(pr))
-#                  or not bugbot_in(round(pr)))) or not copilot_in
+#   pending(pr)  = (not skipped(pr) and not qodo_in(round(pr))) or not copilot_in
 #                  # a Copilot review someone requests on a skipped
 #                  # (bot-authored) PR still counts
 #   finding      = any unresolved review thread, from any author, any
@@ -163,7 +137,7 @@ function demo(pr):
 #                    mark-implemented` (the explanation names the fix sha)
 #                    or `dismiss` plus the reason and file:line. A ledger
 #                    line does not close it, except a reopened one (below).
-#                  - any other finding — Bugbot, Cursor security, Copilot,
+#                  - any other finding — Devin Review, Cursor security, Copilot,
 #                    a human, the local outage fallback: fixed by a commit
 #                    on the PR head, or a ledger comment gives the reason
 #                    and file:line.
@@ -193,8 +167,7 @@ function demo(pr):
 #                  new — it takes the normal fix path
 #   escalation   = the leader's "escalated:" comment on one new round-2 High,
 #                  on a fix-ruled finding whose fix was blocked in
-#                  local_review, on a blocked local_review, or on a stuck
-#                  Bugbot run; closed by a
+#                  local_review, or on a blocked local_review; closed by a
 #                  later ledger entry recording the operator's ruling. The
 #                  entry closes the escalation, not the finding (see
 #                  answered(f))
@@ -222,13 +195,6 @@ function demo(pr):
 #                  the merge-base(base branch, head)..head diff. Excluding
 #                  the base branch keeps commits merged in from it out of
 #                  every range
-#   bugbot_open  = a Cursor Bugbot check run on any commit of the PR, not
-#                  only the head, whose status is not completed (queued or
-#                  in progress), whatever its age, and that has no recorded
-#                  "proceed" ruling; only the run ending or a "proceed"
-#                  ruling clears it, and a "wait" ruling does not
-#   bugbot_stuck = a Bugbot run queued or in progress for more than 60
-#                  minutes, with no recorded "proceed" ruling
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
@@ -277,34 +243,6 @@ function poll_tick(pr):
             error, re-run once, then report to the operator and stop;
             its findings have no Qodo id, so they take the ledger path
                                                    # outage fallback
-    if a Bugbot run of any round M <= N completed without a finished
-            review (failure, timeout, or cancelled — a fix push cancels an
-            in-progress run) and no rerun(M) was posted:
-        comment "bugbot run"; and, for each such M, a ledger comment
-            "rerun(M): <failed check-run id>"
-                                           # together rerun(M) for every such
-                                           #   M: once per round, even after
-                                           #   the 30-minute fallback
-                                           #   elapsed, and for round 1 even
-                                           #   after round 2 opened; it
-                                           #   restarts the window; if the
-                                           #   re-run fails too or none
-                                           #   starts, the fallback in
-                                           #   bugbot_in applies
-    if a bugbot_stuck run has no "bugbot run" comment since it got stuck:
-        comment "bugbot run"               # once; the leader cancels nothing
-    if a run is still bugbot_stuck 30 minutes after that comment and no
-            escalation has been posted for this run:
-        post an escalation comment         # once, ever, per run; the operator
-                                           #   rules: "proceed" — the run is
-                                           #   abandoned, the ledger entry
-                                           #   names its check-run id, and
-                                           #   bugbot_open ignores it; "wait" —
-                                           #   the escalation closes and
-                                           #   bugbot_open stays true until
-                                           #   the run ends or the operator
-                                           #   later rules "proceed" on it,
-                                           #   which needs no new escalation
     for each finding not answered(f) and not under an open escalation
             nor in a diff whose block escalation is open:
         if N == 2 and f is a new High with no ruling:
@@ -344,8 +282,7 @@ function poll_tick(pr):
         resolves, not the agent
     if not skipped(pr) and not pending(pr) and N == 1
             and a High was fixed since trigger(1):
-        comment "/agentic_review"; comment "bugbot run"   # opens round 2,
-                                                          #   the last
+        comment "/agentic_review"             # opens round 2, the last
     if not pending(pr) and no delta review is running
             and the PR head is neither reviewed_head nor delta_head:
         run code_reviewer locally on the delta range; its findings are
@@ -362,7 +299,7 @@ function poll_tick(pr):
         demo(pr)                           # first demo, a re-demo after a
                                            #   non-exempt push, or after a fix
                                            #   for a failed demo
-    if not pending(pr) and not bugbot_open and no finding is unanswered:
+    if not pending(pr) and no finding is unanswered:
         cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
     else: cadence = 3m
@@ -375,13 +312,6 @@ function poll_tick(pr):
 function merge_gate(state) -> bool:
     return docs, lint, and test green on the latest commit
        and not pending(pr)                 # no requested review outstanding
-       and not bugbot_open                 # any queued or in-progress run on
-                                           #   any commit, unless ruled
-                                           #   "proceed": its findings land
-                                           #   before the merge, until it
-                                           #   ends
-       and every round with a failed Bugbot run has its rerun(N)
-                                           # any round, not only round(pr)
        and reviewed_head is the PR head    # bot-authored PRs included
        and every finding is answered
        and zero unresolved review threads
@@ -471,10 +401,6 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   nothing non-exempt landed after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
-  ∧ ¬ bugbotOpen(pr)                      -- no Bugbot run on any commit of
-                                          --   the PR was open at merge
-  ∧ bugbotRerunsPosted(pr)                -- each round with a failed run
-                                          --   had its rerun(N)
   ∧ reviewedHead(pr) = head(pr)           -- merged code was reviewed, bot-
                                           --   authored PRs included
   ∧ (∀ f : findings(pr) • answered(f))    -- fixed on head, or reasoned

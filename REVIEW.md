@@ -1,7 +1,7 @@
 # REVIEW.md
 
 Instructions for code reviewers of this repository: Qodo, Devin Review,
-Bugbot, Copilot, and the local review agents (`code-reviewer`,
+Copilot, and the local review agents (`code-reviewer`,
 `silent-failure-hunter`, `invariant-completeness-reviewer`). Read this before
 raising a finding.
 
