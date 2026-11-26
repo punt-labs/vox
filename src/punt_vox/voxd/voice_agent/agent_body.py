@@ -57,6 +57,7 @@ _BUILT_IN_TOOLS: Final[BuiltInTools] = {
         },
     },
 }
+_AGENT_NAME: Final = "Vox voice agent"
 _FINGERPRINT_ZONE: Final = "UTC"  # A travelled host must not rebuild the agent.
 
 
@@ -67,13 +68,19 @@ class AgentBody:
     __slots__ = ()
 
     @staticmethod
-    def tool(tool: ClientTool) -> CreateToolConfig:
-        """Return the create body of one client tool."""
+    def tool(
+        tool: ClientTool,
+        marker: str | None = None,  # None is the unmarked form the fingerprint hashes.
+    ) -> CreateToolConfig:
+        """Return the create body of one client tool, marked as voxd's if asked."""
+        description = (
+            tool.description if marker is None else f"{tool.description}\n\n{marker}"
+        )
         config: CreateToolConfig = {
             "tool_config": {
                 "type": "client",
                 "name": tool.name,
-                "description": tool.description,
+                "description": description,
                 "expects_response": True,
                 "parameters": tool.parameters,
             }
@@ -83,10 +90,15 @@ class AgentBody:
         return config
 
     @staticmethod
-    def create(settings: AgentSettings, tool_ids: tuple[str, ...]) -> CreateAgentConfig:
+    def create(
+        settings: AgentSettings,
+        tool_ids: tuple[str, ...],
+        marker: str | None = None,  # None is the unmarked form the fingerprint hashes.
+    ) -> CreateAgentConfig:
         """Return the create-agent body: signed access, PCM at 16 kHz, no recording."""
+        name = _AGENT_NAME if marker is None else f"{_AGENT_NAME} {marker}"
         return {
-            "name": "Vox voice agent",
+            "name": name,
             "conversation_config": {
                 "agent": {
                     "first_message": settings.first_message,

@@ -9,41 +9,33 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
-from typing import TYPE_CHECKING, Self, cast, final
-
-import httpx
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_agent.agent_body import AgentBody
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
-from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.fault import ForeignResourceError
+from punt_vox.voxd.voice_agent.reply import Reply
 from punt_vox.voxd.voice_agent.settings import AgentSettings
+from punt_vox.voxd.voice_agent.wire import SIGNED_URL, UNKNOWN_CREATE, Wire
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from punt_vox.voxd.voice_agent.contracts import (
-        ClientTool,
-        CreateConfig,
-    )
+    from punt_vox.voxd.voice_agent.contracts import ClientTool
 
 __all__ = ["ConvAIControl"]
 
 _API = "https://api.elevenlabs.io"
-_CONVAI = "/v1/convai"
-_SIGNED_URL = "/conversation/get-signed-url"
-_RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
-_UNKNOWN_CREATE = "; check the ElevenLabs workspace for an unrecorded resource"
 
 
 @final
 class ConvAIControl:
     """Own the authenticated REST connection for one ElevenLabs workspace."""
 
-    __slots__ = ("_credential_id", "_http", "_settings")
+    __slots__ = ("_credential_id", "_settings", "_wire")
     _credential_id: str
-    _http: httpx.Client
     _settings: AgentSettings
+    _wire: Wire
 
     def __new__(
         cls,
@@ -67,9 +59,7 @@ class ConvAIControl:
             r=8,
             p=5,
         ).hex()
-        self._http = httpx.Client(
-            base_url=base_url, headers={"xi-api-key": api_key}, timeout=10.0
-        )
+        self._wire = Wire(base_url, api_key)
         return self
 
     @classmethod
@@ -102,25 +92,18 @@ class ConvAIControl:
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self._http.close()
+        self._wire.close()
 
-    def create_tool(self, tool: ClientTool) -> str:
-        """Register a client tool without adding any remote execution capability."""
-        response = self._request("POST", "/tools", AgentBody.tool(tool))
-        return self._created_id(response, "id")
+    def create_tool(self, tool: ClientTool, marker: str) -> str:
+        """Register a client tool, marked as voxd's, with no remote execution."""
+        response = self._wire.request("POST", "/tools", AgentBody.tool(tool, marker))
+        return response.created_id("id", UNKNOWN_CREATE)
 
-    def create_agent(self, tool_ids: tuple[str, ...]) -> str:
-        """Provision an agent that requires a signed connection and PCM at 16 kHz."""
-        body = AgentBody.create(self._settings, tool_ids)
-        response = self._request("POST", "/agents/create", body)
-        return self._created_id(response, "agent_id")
-
-    @classmethod
-    def _created_id(cls, response: httpx.Response, field: str) -> str:
-        try:
-            return cls.resource_id(cls._string_field(response, field))
-        except ConvAIError as exc:
-            raise ConvAIError(f"{exc}{_UNKNOWN_CREATE}") from None
+    def create_agent(self, tool_ids: tuple[str, ...], marker: str) -> str:
+        """Provision a marked agent that needs a signed connection and 16 kHz PCM."""
+        body = AgentBody.create(self._settings, tool_ids, marker)
+        response = self._wire.request("POST", "/agents/create", body)
+        return response.created_id("agent_id", UNKNOWN_CREATE)
 
     def registration_fingerprint(self, tools: tuple[ClientTool, ...]) -> str:
         """Identify the provisioned settings and ordered tool catalog."""
@@ -128,76 +111,41 @@ class ConvAIControl:
 
     def signed_url(self, agent_id: str) -> str:
         """Fetch a fresh, short-lived WebSocket URL; never cache it."""
-        response = self._request(
+        response = self._wire.request(
             "GET",
-            _SIGNED_URL,
-            params={"agent_id": self.resource_id(agent_id)},
+            SIGNED_URL,
+            params={"agent_id": Reply.resource_id(agent_id)},
         )
-        return self._string_field(response, "signed_url")
+        return response.string("signed_url")
 
-    def delete_agent(self, agent_id: str) -> None:
-        """Force-delete the agent, treating an absent agent as already deleted."""
-        self._force_delete(f"/agents/{self.resource_id(agent_id)}")
+    def delete_agent(self, agent_id: str, marker: str) -> None:
+        """Force-delete the agent if it carries *marker*; an absent one is done.
 
-    def delete_tool(self, tool_id: str) -> None:
-        """Force-delete a Vox-owned tool, treating 404 as already deleted."""
-        self._force_delete(f"/tools/{self.resource_id(tool_id)}")
+        Raises :class:`ForeignResourceError` for an agent without the marker.
+        """
+        path = f"/agents/{Reply.resource_id(agent_id)}"
+        if self._carries(path, marker, ("name",)):
+            self._force_delete(path)
+
+    def delete_tool(self, tool_id: str, marker: str) -> None:
+        """Force-delete the tool if it carries *marker*; an absent one is done.
+
+        Raises :class:`ForeignResourceError` for a tool without the marker.
+        """
+        path = f"/tools/{Reply.resource_id(tool_id)}"
+        if self._carries(path, marker, ("tool_config", "description")):
+            self._force_delete(path)
+
+    def _carries(self, path: str, marker: str, field: tuple[str, ...]) -> bool:
+        """Return whether the resource at *path* has *marker*; False if absent."""
+        reply = self._wire.request("GET", path, tolerate_404=True)
+        if reply.is_absent():
+            return False
+        text = reply.text_at(*field)
+        if text is not None and marker in text:
+            return True
+        msg = f"ElevenLabs {path} was not created by this host's voxd; not deleted"
+        raise ForeignResourceError(msg)
 
     def _force_delete(self, path: str) -> None:
-        self._request("DELETE", path, params={"force": "true"})
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        body: CreateConfig | None = None,  # Only create requests have a JSON body.
-        *,
-        params: dict[str, str] | None = None,  # Only GET and DELETE take query params.
-    ) -> httpx.Response:
-        try:
-            response = self._http.request(
-                method, _CONVAI + path, json=body, params=params
-            )
-        except httpx.HTTPError as exc:
-            msg = f"ElevenLabs {method} {path} failed ({type(exc).__name__})"
-            if method == "POST":
-                msg += _UNKNOWN_CREATE
-            raise ConvAIError(msg) from None
-        if response.is_success or (method == "DELETE" and response.status_code == 404):
-            return response
-        msg = self._status_message(method, path, response.status_code)
-        raise ConvAIError(msg)
-
-    @staticmethod
-    def _status_message(method: str, path: str, code: int) -> str:
-        if code == 404 and path == _SIGNED_URL:
-            return (
-                "The ElevenLabs agent no longer exists; tear down the Vox voice "
-                "agent to reprovision (HTTP 404)"
-            )
-        message = f"ElevenLabs {method} {path} returned HTTP {code}"
-        if code in (401, 403):
-            return f"{message}; check the key's ElevenLabs Agents access"
-        return message
-
-    @staticmethod
-    def _string_field(response: httpx.Response, field: str) -> str:
-        try:
-            data: object = response.json()
-        except (ValueError, RecursionError):
-            msg = "ElevenLabs returned invalid JSON"
-            raise ConvAIError(msg) from None
-        if isinstance(data, dict):
-            value = cast("dict[str, object]", data).get(field)
-            if isinstance(value, str) and value:
-                return value
-        msg = f"ElevenLabs reply is missing {field}"
-        raise ConvAIError(msg)
-
-    @staticmethod
-    def resource_id(value: str) -> str:
-        """Validate a remote resource ID before using it in a request path."""
-        if not _RESOURCE_ID.fullmatch(value):
-            msg = "Invalid ElevenLabs resource ID"
-            raise ConvAIError(msg)
-        return value
+        self._wire.request("DELETE", path, params={"force": "true"}, tolerate_404=True)

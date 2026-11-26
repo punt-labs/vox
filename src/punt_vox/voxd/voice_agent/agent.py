@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.paths import config_dir
 from punt_vox.voxd.voice_agent.contracts import Registration
 from punt_vox.voxd.voice_agent.control import ConvAIControl
-from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.disposal import Disposal
+from punt_vox.voxd.voice_agent.host_marker import HostMarker
 from punt_vox.voxd.voice_agent.registration_file import RegistrationFile
+from punt_vox.voxd.voice_agent.replacement import Replacement
 from punt_vox.voxd.voice_agent.retirement import Retirement
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from punt_vox.voxd.voice_agent.contracts import ClientTool
@@ -32,9 +33,11 @@ class VoiceAgent:
     a stable tool catalog; explicitly tear the agent down to replace that catalog.
     """
 
-    __slots__ = ("_control", "_retirement", "_store")
+    __slots__ = ("_control", "_disposal", "_marker", "_retirement", "_store")
     _control: ConvAIControl
     _store: RegistrationFile
+    _disposal: Disposal
+    _marker: HostMarker
     _retirement: Retirement
 
     def __new__(
@@ -52,11 +55,13 @@ class VoiceAgent:
         self._control = control
         live = config_dir() / "voice-agent.json"
         default = control.registration_path(live)
-        self._store = RegistrationFile(
-            path if path is not None else default, control.credential_id
-        )
+        where = path if path is not None else default
+        self._store = RegistrationFile(where, control.credential_id)
+        marker = HostMarker(where)
+        self._marker = marker
+        self._disposal = Disposal(control, marker)
         self._retirement = Retirement(
-            control, self._store.locked, self._store.read, self._store.write
+            self._disposal, self._store.locked, self._store.read, self._store.write
         )
         return self
 
@@ -74,8 +79,10 @@ class VoiceAgent:
             else:
                 # A changed spec replaces the agent; the old resources are
                 # deleted after the call connects, never in its way.
-                replaced = stored or Registration(None, (), "", "")
-                record, agent_id = self._provision(ordered, fingerprint, replaced)
+                replacement = Replacement(
+                    self._control, self._store, self._disposal, self._marker, stored
+                )
+                record, agent_id = replacement.build(ordered, fingerprint)
                 tool_ids = record.tool_ids
         return self._control.signed_url(agent_id), tool_ids
 
@@ -104,63 +111,12 @@ class VoiceAgent:
             if (stored := self._store.read(for_teardown=True)) is not None:
                 self._delete(stored)
 
-    def _provision(
-        self,
-        tools: tuple[ClientTool, ...],
-        fingerprint: str,
-        replaced: Registration,
-    ) -> tuple[Registration, str]:
-        record = Registration(
-            None,
-            (),
-            fingerprint,
-            self._control.credential_id,
-            (
-                *replaced.retired_agents,
-                *(() if replaced.agent_id is None else (replaced.agent_id,)),
-            ),
-            (*replaced.retired_tools, *replaced.tool_ids),
-        )
-        self._store.write(record)
-        for tool in tools:
-            tool_id = self._control.create_tool(tool)
-            record = replace(record, tool_ids=(*record.tool_ids, tool_id))
-            self._checkpoint(record, tool_id, "tool", self._control.delete_tool)
-        agent_id = self._control.create_agent(record.tool_ids)
-        record = replace(record, agent_id=agent_id)
-        self._checkpoint(record, agent_id, "agent", self._control.delete_agent)
-        return record, agent_id
-
-    def _checkpoint(
-        self,
-        record: Registration,
-        resource_id: str,
-        kind: str,
-        delete: Callable[[str], None],
-    ) -> None:
-        try:
-            self._store.write(record)
-        except OSError as write_error:
-            try:
-                delete(resource_id)
-            except ConvAIError as delete_error:
-                msg = (
-                    f"Could not record or delete the ElevenLabs {kind} {resource_id}; "
-                    "delete it manually in the workspace used to provision it"
-                )
-                raise ConvAIError(msg) from ExceptionGroup(
-                    msg, [write_error, delete_error]
-                )
-            raise
-
     def _delete(self, stored: Registration) -> None:
-        agents = (
-            *stored.retired_agents,
-            *(() if stored.agent_id is None else (stored.agent_id,)),
+        for agent_id in stored.agents:
+            self._disposal.agent(agent_id)
+        self._store.write(
+            replace(stored, agent_id=None, retired_agents=(), pending_agents=())
         )
-        for agent_id in agents:
-            self._control.delete_agent(agent_id)
-        self._store.write(replace(stored, agent_id=None, retired_agents=()))
-        for tool_id in (*stored.retired_tools, *stored.tool_ids):
-            self._control.delete_tool(tool_id)
+        for tool_id in stored.tools:
+            self._disposal.tool(tool_id)
         self._store.remove()
