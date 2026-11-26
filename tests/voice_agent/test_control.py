@@ -185,3 +185,29 @@ def test_the_agent_is_created_with_the_built_in_end_call_tool(
     assert end_call["name"] == "end_call"
     assert end_call["params"] == {"system_tool_type": "end_call"}
     assert "closing sentence" in str(end_call["description"])
+
+
+@pytest.mark.parametrize(
+    ("code", "text"),
+    [
+        (500, "returned HTTP 500"),
+        (401, "check the key's ElevenLabs Agents access"),
+        (404, "no longer exists"),
+    ],
+)
+def test_a_failed_request_says_what_the_status_means(
+    monkeypatch: pytest.MonkeyPatch, code: int, text: str
+) -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(code)
+
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(respond), base_url="https://test"
+        ) as client,
+        ConvAIControl("test-key") as control,
+        monkeypatch.context() as patch,
+    ):
+        patch.setattr(control, "_http", client)
+        with pytest.raises(ConvAIError, match=text):
+            control.signed_url("agent_vox")

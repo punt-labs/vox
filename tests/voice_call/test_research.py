@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -451,3 +452,88 @@ async def test_each_stage_alone_within_the_shared_deadline_succeeds(
 def test_the_docs_deadline_is_under_the_provider_deadline() -> None:
     assert ResearchTools.DOCS_BUDGET_SECONDS < PROVIDER_DEADLINE_S
     assert ResearchTools.DOCS_BUDGET_SECONDS == 25
+
+
+def test_a_blank_exa_key_is_refused() -> None:
+    with pytest.raises(ValueError, match="EXA_API_KEY is empty"):
+        ExaSearch("  ")
+
+
+async def test_a_search_timeout_is_a_timeout_not_a_failure_message() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(TimeoutError):
+        await _exa(handler).search("flask")
+
+
+async def test_a_transport_failure_names_only_its_type() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private host detail", request=request)
+
+    with pytest.raises(
+        ValueError, match=r"web search failed \(ConnectError\)"
+    ) as caught:
+        await _exa(handler).search("flask")
+    assert "private host detail" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        httpx.Response(200, content=b"not json"),
+        httpx.Response(200, json=["no", "object"]),
+        httpx.Response(200, json={"results": "not a list"}),
+    ],
+)
+async def test_an_unusable_reply_is_unreadable_or_empty(reply: httpx.Response) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return reply
+
+    if reply.content == b"not json":
+        with pytest.raises(ValueError, match="unreadable reply"):
+            await _exa(handler).search("flask")
+    else:
+        assert await _exa(handler).search("flask") == []
+
+
+async def test_a_result_row_that_is_not_an_object_is_skipped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"results": ["junk", {"title": "T", "text": "t", "url": "u"}]}
+        )
+
+    assert await _exa(handler).search("flask") == [Snippet("T", "t", "u")]
+
+
+async def test_a_timeout_from_the_documentation_server_stays_a_timeout() -> None:
+    docs = DeepWikiDocs(FastMCPTransport(FastMCP("docs")))
+
+    class _Raises:
+        async def __aenter__(self) -> None:
+            raise TimeoutError
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    with (
+        patch(
+            "punt_vox.voxd.voice_call.lookup.docs_lookup.Client", lambda _t: _Raises()
+        ),
+        pytest.raises(TimeoutError),
+    ):
+        await docs.ask("pallets/flask", "q")
+
+
+async def test_a_malformed_link_in_a_result_is_skipped() -> None:
+    search = _Search(
+        [
+            Snippet("Broken", "x", url="https://[::1"),
+            Snippet("Repo", "y", url="https://github.com/acme/widget"),
+        ]
+    )
+    docs = _Docs()
+    await _tools(search, docs).answer(
+        "read_docs", {"repo": "the widget library", "question": "q"}
+    )
+    assert docs.asked == [("acme/widget", "q")]

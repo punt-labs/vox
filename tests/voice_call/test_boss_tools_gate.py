@@ -224,3 +224,21 @@ async def test_remaining_silent_and_reading_nothing_leave_the_call_untainted() -
     tools = _tools(FakeWorkers())
     await tools.answer("remain_silent", {})
     assert not tools.guard.provenance.tainted
+
+
+@pytest.mark.parametrize("pending", [{"seq": 4}, {"seq": 4, "message": "   "}, "text"])
+async def test_an_approval_with_no_readable_prompt_says_so(pending: object) -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", pending_decision=pending, prompt_epoch=4)]
+    tools = _tools(workers)
+    tools.guard.provenance.taint()
+    approve = {
+        "worker_id": "abcd1234",
+        "words": "Yes.",
+        "choice": "approve",
+        "prompt_seq": 4,
+    }
+    result, _ = await tools.answer("steer_worker", approve)
+    assert (
+        "a permission request voxd cannot read" in json.loads(result)["voxd_readback"]
+    )

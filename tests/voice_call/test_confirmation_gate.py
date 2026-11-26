@@ -202,3 +202,15 @@ def test_a_voxd_client_tool_response_alone_does_not_taint() -> None:
     provenance = CallProvenance()
     provenance.observe_tool_response("start_worker", "client", {"start_worker"})
     assert not provenance.tainted
+
+
+def test_only_the_newest_pending_requests_are_kept() -> None:
+    gate, provenance = _gate()
+    provenance.taint()
+    for n in range(12):
+        gate.check(f'["start_worker",{{"task":"t{n}"}}]', f"Start t{n}.")
+    gate.agent_spoke("Start t11.")
+    gate.heard("yes")
+    assert gate.check('["start_worker",{"task":"t11"}]', "Start t11.") is None
+    # The oldest was dropped: it is held again, with a fresh read-back.
+    assert gate.check('["start_worker",{"task":"t0"}]', "Start t0.") is not None

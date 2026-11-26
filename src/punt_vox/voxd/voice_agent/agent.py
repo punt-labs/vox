@@ -66,27 +66,24 @@ class VoiceAgent:
         fingerprint = self._control.registration_fingerprint(ordered)
         with self._store.locked():
             stored = self._store.read()
-            retired = Registration(None, (), "", "")
-            if stored is not None and self._is_stale(stored, fingerprint):
+            reusable = (
+                None if stored is None else self._reusable_id(stored, fingerprint)
+            )
+            if stored is not None and reusable is not None:
+                agent_id, tool_ids = reusable, stored.tool_ids
+            else:
                 # A changed spec replaces the agent; the old resources are
                 # deleted after the call connects, never in its way.
-                retired, stored = stored, None
-            if stored is None:
-                stored = self._provision(ordered, fingerprint, retired)
-            agent_id = self._usable_agent_id(stored)
-        return self._control.signed_url(agent_id), stored.tool_ids
+                replaced = stored or Registration(None, (), "", "")
+                record, agent_id = self._provision(ordered, fingerprint, replaced)
+                tool_ids = record.tool_ids
+        return self._control.signed_url(agent_id), tool_ids
 
     @staticmethod
-    def _is_stale(stored: Registration, fingerprint: str) -> bool:
-        """Return whether the registration cannot serve this spec and must go."""
-        return stored.agent_id is None or stored.configuration_hash != fingerprint
-
-    @staticmethod
-    def _usable_agent_id(stored: Registration) -> str:
-        """Return the provisioned agent id, or raise."""
-        if stored.agent_id is None:
-            msg = "No provisioned ElevenLabs agent"
-            raise ConvAIError(msg)
+    def _reusable_id(stored: Registration, fingerprint: str) -> str | None:
+        """Return the agent id if the registration serves this spec, else None."""
+        if stored.configuration_hash != fingerprint:
+            return None
         return stored.agent_id
 
     def retire_stale(self) -> None:
@@ -112,7 +109,7 @@ class VoiceAgent:
         tools: tuple[ClientTool, ...],
         fingerprint: str,
         replaced: Registration,
-    ) -> Registration:
+    ) -> tuple[Registration, str]:
         record = Registration(
             None,
             (),
@@ -132,7 +129,7 @@ class VoiceAgent:
         agent_id = self._control.create_agent(record.tool_ids)
         record = replace(record, agent_id=agent_id)
         self._checkpoint(record, agent_id, "agent", self._control.delete_agent)
-        return record
+        return record, agent_id
 
     def _checkpoint(
         self,

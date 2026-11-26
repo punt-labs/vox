@@ -737,3 +737,40 @@ def test_a_freshly_written_registration_reads_back_without_error(
         written = json.loads(config.read_text())
         assert {"retired_agents", "retired_tools"} <= written.keys()
         assert VoiceAgent(control, path=config).connection((_CLOCK,))[0] == _SIGNED_URL
+
+
+def test_an_unreadable_registration_is_logged_by_retirement_not_raised(
+    tmp_path: Path, wire: Requests, caplog: pytest.LogCaptureFixture
+) -> None:
+    target = tmp_path / "real.json"
+    target.write_text("{}")
+    link = tmp_path / _COMPLETED_REGISTRATION
+    link.symlink_to(target)
+    with (
+        ConvAIControl(_API_KEY, base_url=wire.url) as control,
+        caplog.at_level("WARNING"),
+    ):
+        VoiceAgent(control, path=link).retire_stale()
+    assert "not retired this time" in caplog.text
+    assert "symbolic link" in caplog.text
+    assert wire.calls == []
+
+
+def test_a_teardown_during_retirement_wins_and_nothing_is_rewritten(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        monkeypatch.undo()
+        agent.teardown()
+        release.set()
+        retiring.join(10)
+    assert not config.exists()
