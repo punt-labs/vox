@@ -174,3 +174,5 @@ spikes/vox-bst7-el-convai/agent.json
 
 # Leftover local state from the retired beads tracker
 .beads/
+/.CLAUDE.md.punt-import.lock
+/.claude/.settings.json.punt-import.lock

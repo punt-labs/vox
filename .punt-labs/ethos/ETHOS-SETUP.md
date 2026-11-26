@@ -120,10 +120,10 @@ Ethos upgrades its own storage. Every CLI command, hook and MCP call first
 checks a stamp (`S/.punt-labs/local/ethos/layout.yaml` and
 `~/.punt-labs/ethos/layout.yaml`); when a stamp is missing, ethos converts
 older layouts into the shared local zone and appends what it did to
-`~/.punt-labs/ethos/logs/repair.log`. The only output is one line, and only
+`~/.punt-labs/ethos/logs/ethos.log`. The only output is one line, and only
 when something changed:
 
-`ethos: upgraded storage (N items; see ~/.punt-labs/ethos/logs/repair.log)`
+`ethos: upgraded storage (N items; see ~/.punt-labs/ethos/logs/ethos.log)`
 
 No command is needed, and none exists. A busy lock defers the upgrade to the
 next run. Losses are logged, never fatal.
