@@ -18,6 +18,51 @@ from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 
+@pytest.mark.parametrize("fails", [False, True])
+async def test_cancelled_cache_store_keeps_audio_until_worker_finishes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, *, fails: bool
+) -> None:
+    source = tmp_path / "output.mp3"
+    source.write_bytes(b"audio")
+    output = SynthesisOutcome(source, False)
+    lookup = SynthesisCache(CacheKey("hello", "", "openai"), SynthesisSpec(), 5)
+    loop = asyncio.get_running_loop()
+    started, discarded = asyncio.Event(), asyncio.Event()
+    resume = threading.Event()
+    discard_after = SynthesisOutcome.discard_after
+
+    def delayed_put(_key: CacheKey, path: Path) -> Path:
+        loop.call_soon_threadsafe(started.set)
+        assert resume.wait(5), "cache store did not resume"
+        assert path.read_bytes() == b"audio"
+        if fails:
+            raise OSError("cache write denied")
+        return path
+
+    def discard_output(
+        result: SynthesisOutcome, work: asyncio.Future[Path], *, operation: str
+    ) -> None:
+        discard_after(result, work, operation=operation)
+        discarded.set()
+
+    with (
+        patch("punt_vox.voxd.synthesis_cache.cache_put", delayed_put),
+        patch.object(SynthesisOutcome, "discard_after", discard_output),
+    ):
+        store = asyncio.create_task(lookup.store(output))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            store.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await store
+            assert source.exists()
+        finally:
+            resume.set()
+        await asyncio.wait_for(discarded.wait(), timeout=5)
+    assert not source.exists()
+    assert ("Abandoned cache write failed: cache write denied" in caplog.text) is fails
+
+
 @pytest.mark.parametrize("result", ["success", "error", "evicted"])
 async def test_cancelled_cache_copy_is_released(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, result: str
@@ -154,7 +199,7 @@ class TestSynthesisCache:
         ):
             assert await lookup.outcome() is None
             assert await lookup.outcome() is None
-            assert lookup.store(Path("unused")) is None
+            assert await lookup.store(SynthesisOutcome(Path("unused"), False)) is None
         get.assert_not_called()
         put.assert_not_called()
 
@@ -169,6 +214,22 @@ class TestSynthesisCache:
         ):
             await lookup.outcome()
 
+    async def test_store_error_removes_output_and_propagates(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "output.mp3"
+        source.write_bytes(b"audio")
+        output = SynthesisOutcome(source, False)
+        lookup = SynthesisCache(CacheKey("hello", "", "openai"), SynthesisSpec(), 5)
+        denied = PermissionError("cache write denied")
+        with (
+            patch("punt_vox.voxd.synthesis_cache.cache_put", side_effect=denied),
+            pytest.raises(PermissionError, match="cache write denied") as raised,
+        ):
+            await lookup.store(output)
+        assert raised.value is denied
+        assert not source.exists()
+
     async def test_store_then_lookup(self, tmp_path: Path) -> None:
         lookup = SynthesisCache.for_request(
             "hello", SynthesisSpec(provider="openai"), 5
@@ -176,7 +237,7 @@ class TestSynthesisCache:
         source = tmp_path / "source.mp3"
         source.write_bytes(b"audio")
         with patch("punt_vox.cache.CACHE_DIR", tmp_path / "cache"):
-            stored = lookup.store(source)
+            stored = await lookup.store(SynthesisOutcome(source, False))
             outcome = await lookup.outcome()
         assert outcome is not None
         try:
@@ -190,5 +251,5 @@ class TestSynthesisCache:
         source = tmp_path / "empty.mp3"
         source.touch()
         with patch("punt_vox.cache.CACHE_DIR", tmp_path / "cache"):
-            assert lookup.store(source) is None
+            assert await lookup.store(SynthesisOutcome(source, False)) is None
             assert await lookup.outcome() is None

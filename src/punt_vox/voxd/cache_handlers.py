@@ -12,6 +12,7 @@ or a torn connection.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
@@ -24,75 +25,52 @@ if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
     from punt_vox.cache import CacheInfo
+    from punt_vox.voxd.cache_reply_types import CacheReply, CacheStatusReply
 
-__all__ = ["CacheClearHandler", "CacheStatusHandler"]
+__all__ = ["CacheHandler"]
 
 
 @final
-class CacheStatusHandler:
-    """Handle ``cache_status``: reply with the daemon cache's entries/size/path."""
+class CacheHandler:
+    """Run a cache operation in a worker and return its result on the wire."""
 
-    __slots__ = ("_status",)
-    _status: Callable[[], CacheInfo]
+    __slots__ = ("_operation",)
+    _operation: Callable[[], CacheReply]
 
-    def __new__(cls, status: Callable[[], CacheInfo]) -> Self:
-        """Create a cache status handler."""
+    def __new__(cls, operation: Callable[[], CacheReply]) -> Self:
+        """Bind the operation and its success payload."""
         self = super().__new__(cls)
-        self._status = status
+        self._operation = operation
         return self
 
-    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Read the daemon cache's status and reply -- or fault on an I/O error.
+    @classmethod
+    def status(cls, status: Callable[[], CacheInfo]) -> Self:
+        """Report the daemon cache's entries, size, and safe relative path."""
 
-        ``cache_status`` sizes every entry with a ``stat``; a fault reading the
-        cache directory (a permission change mid-scan) is a server-side
-        operational failure, so it routes through ``fault`` (ERROR), never a
-        client rejection, and replies an id-stamped frame instead of escaping to
-        a router teardown.
-        """
-        reply = WireReply(websocket, str(msg.get("id", "")))
-        try:
-            info = self._status()
-        except OSError as exc:
-            await reply.fault(SafeFault.from_exception(exc))
-            return
-        # The in-jail cache dir crosses relativized (`cache`), never a host
-        # prefix; the bare name is the fail-closed fallback out of jail.
-        rel = relativize_to_data_root(info.path)
-        await reply.send(
-            {
+        def payload() -> CacheStatusReply:
+            info = status()
+            # The bare name is the fail-closed fallback out of jail.
+            rel = relativize_to_data_root(info.path)
+            return {
                 "type": "cache_status",
                 "entries": info.entries,
                 "size_bytes": info.size_bytes,
                 "path": str(rel.path) if rel is not None else info.path.name,
             }
-        )
 
+        return cls(payload)
 
-@final
-class CacheClearHandler:
-    """Handle ``cache_clear``: delete the daemon cache and reply with the count."""
-
-    __slots__ = ("_clear",)
-    _clear: Callable[[], int]
-
-    def __new__(cls, clear: Callable[[], int]) -> Self:
-        """Create a cache clear handler."""
-        self = super().__new__(cls)
-        self._clear = clear
-        return self
+    @classmethod
+    def clear(cls, clear: Callable[[], int]) -> Self:
+        """Delete the daemon cache and report the delete count."""
+        return cls(lambda: {"type": "cache_cleared", "cleared": clear()})
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Clear the daemon cache and reply with the delete count -- or fault.
-
-        An ``OSError`` unlinking a cache entry (a denied delete, a device error)
-        is a server-side operational failure routed through ``fault`` (ERROR), so
-        a partial clear is audited rather than mislabeled a success.
-        """
+        """Reply with the result, or report an audited operational fault."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            cleared = self._clear()
+            payload = await asyncio.to_thread(self._operation)
         except OSError as exc:
-            await reply.fault(SafeFault.from_exception(exc))
+            await reply.fault(await asyncio.to_thread(SafeFault.from_exception, exc))
             return
-        await reply.send({"type": "cache_cleared", "cleared": cleared})
+        await reply.send({**payload})

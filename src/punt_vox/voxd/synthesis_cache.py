@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Self
@@ -55,15 +56,29 @@ class SynthesisCache:
         )
         return cls(key, spec, chars_in)
 
-    def store(self, source: Path) -> Path | None:
-        """Store anonymous audio, never audio from a credential override."""
-        return cache_put(self._key, source) if self._anonymous else None
+    async def store(self, output: SynthesisOutcome) -> Path | None:
+        """Store anonymous audio; discard the output if the store cannot finish."""
+        if not self._anonymous:
+            return None
+        work = asyncio.get_running_loop().run_in_executor(
+            None, cache_put, self._key, output.path
+        )
+        try:
+            return await asyncio.shield(work)
+        except asyncio.CancelledError:
+            work.add_done_callback(
+                lambda done: output.discard_after(done, operation="cache write")
+            )
+            raise
+        except Exception:
+            output.discard()
+            raise
 
     async def outcome(self) -> SynthesisOutcome | None:
         """Return reusable audio, or None for a miss or credential override."""
         if not self._anonymous:
             return None
-        cached = cache_get(self._key)
+        cached = await asyncio.to_thread(cache_get, self._key)
         if (
             cached is None
             or (outcome := await SynthesisOutcome.from_cache(cached)) is None
