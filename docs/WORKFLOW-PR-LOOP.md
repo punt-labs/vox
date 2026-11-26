@@ -124,7 +124,12 @@ function demo(pr):
 #                  copilot-pull-request-reviewer exists or 30 minutes have
 #                  passed since the request); a trial PR with no request is
 #                  pending until the leader makes one
-#   pending(pr)  = (not skipped(pr) and not qodo_in(round(pr))) or not copilot_in
+#   devin_in     = a review or review comment by devin-ai-integration
+#                  exists on pr, or 30 minutes have passed since the PR
+#                  opened (a clean Devin run may post nothing; the timeout
+#                  covers that and an outage)
+#   pending(pr)  = (not skipped(pr) and not qodo_in(round(pr)))
+#                  or not copilot_in or not devin_in
 #                  # a Copilot review someone requests on a skipped
 #                  # (bot-authored) PR still counts
 #   finding      = any unresolved review thread, from any author, any
@@ -197,9 +202,9 @@ function demo(pr):
 #                  the base branch keeps commits merged in from it out of
 #                  every range
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
-#                  file (.oo-*, .suppression-*), is review or repository
-#                  hygiene configuration (.pr_agent.toml, .gitignore,
-#                  .cursor/), or is a top-level *.md,
+#                  file (.oo-*, .suppression-*), is one of the
+#                  files .pr_agent.toml, .gitignore, .cursor/BUGBOT.md,
+#                  or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
 #                  and hooks there are behavior even when Markdown, because
 #                  Claude Code executes them; src/, a dependency, or an

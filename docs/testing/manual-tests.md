@@ -98,7 +98,7 @@ Wait 15 seconds so the music has clearly started, then call `mcp__plugin_vox_mic
 
 **Ask the operator:** "While the voice played, was the voice clearly intelligible over the background music, and did the music continue after the voice finished?"
 
-> ⚠️ Current behavior is **static** ducking only — music plays at reduced volume (`--volume 0.3` / `-volume 30`) from music-on time and does not duck further during voice. Tracked in `vox-zuqr`. Note the operator's answer and file a Linear issue if the behavior has regressed beyond the known baseline.
+> ⚠️ Current behavior is **static** ducking only — music plays at reduced volume (`--volume 0.3` / `-volume 30`) from music-on time and does not duck further during voice. Tracked in Linear (PL-823). Note the operator's answer and file a Linear issue if the behavior has regressed beyond the known baseline.
 
 ### Step 7 — music stop
 

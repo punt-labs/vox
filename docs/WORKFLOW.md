@@ -274,11 +274,11 @@ closed through the Qodo CLI (`mark-implemented` naming the fix sha, or
 `dismiss`), never a ledger line, except one reopened by a force-push or rebase
 (`answered(f)`). Lows are dropped by `comments_routing`.
 
-Devin Review also reviews each PR. It is outside the round limit and outside
-`pending(pr)`: no term counts its reviews or waits for one, so the merge gate
-does not hold for it. Its findings are findings like any other, handled
-whenever they arrive; one that arrives after the merge is recorded on the
-merged PR.
+Devin Review also reviews each PR, once, when it opens. It is outside the round
+limit, but `pending(pr)` waits for it (`devin_in`): a review or review comment
+from it, or 30 minutes after the PR opened, since a clean run may post
+nothing. Its findings are findings like any other, handled whenever they
+arrive; one that arrives after the merge is recorded on the merged PR.
 
 Copilot is on a trial (operator ruling, 2026-10-23): one review, requested at
 open, on 5 vox PRs after #526, none on push. The trial counts how many real
