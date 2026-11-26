@@ -105,6 +105,63 @@ class TestModelSupportsExpressiveTags:
 class TestApplyVibeForSynthesis:
     """Normalization gates vibe-tag handling on model capability."""
 
+    @pytest.mark.parametrize("model", ["eleven_v3", "eleven_multilingual_v2"])
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "We saved $1million—enough to retire",
+                "We saved 1 million dollars—enough to retire",
+            ),
+            ("$1 million—€2 billion", "1 million dollars—2 billion euros"),
+            ("$1million—€2billion", "1 million dollars—2 billion euros"),
+            ("$1million—_€2billion_", "1 million dollars—2 billion euros"),
+            ("$1million\u2019s worth", "1 million dollars worth"),
+            ("$1 million's worth", "1 million dollars worth"),
+            ("¥2 million\u2019s worth", "2 million yen\u2019s worth"),
+            (
+                "Use `$1million—€2billion` here.",
+                "Use dollar sign 1 million—euro sign 2 billion here.",
+            ),
+            (
+                "https://example.org/price—$1million",
+                "https://example.org/price—$1 million",
+            ),
+            ("/tmp/price—$1million", "/tmp/price—$1million"),
+        ],
+    )
+    def test_scaled_currency_at_punctuation(
+        self, text: str, expected: str, model: str
+    ) -> None:
+        request = SpeechPreparation.audio_request(
+            text, SynthesisSpec(provider="elevenlabs", model=model)
+        )
+        assert request.text == expected
+
+    @pytest.mark.parametrize(
+        ("text", "left", "right"),
+        [
+            ("$1million[pause]€2million", "1 million dollars", "2 million euros"),
+            ("$1 million [pause] €2 million", "1 million dollars", "2 million euros"),
+            ("$1 million,[pause]€2 million", "1 million dollars,", "2 million euros"),
+            ("$1 million[pause]2€", "1 million dollars", "2 euros"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("model", "pause"),
+        [
+            ("eleven_v3", "[pause] "),
+            ("eleven_multilingual_v2", ""),
+        ],
+    )
+    def test_scaled_currency_at_pause_tag(
+        self, text: str, left: str, right: str, model: str, pause: str
+    ) -> None:
+        request = SpeechPreparation.audio_request(
+            text, SynthesisSpec(provider="elevenlabs", model=model)
+        )
+        assert request.text == f"{left} {pause}{right}"
+
     @pytest.mark.parametrize(
         ("provider", "model", "expected"),
         [

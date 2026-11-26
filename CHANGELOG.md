@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep scaled currency units next to em dashes and possessives, and keep
+  amounts separate when a pause tag is stripped. (PL-1606)
+
 - `vox daemon status` asks voxd for health first, through the port voxd
   published in `serve.port`, with a reserved share of its deadline that the
   `lsof`/`fuser` attribution probes cannot consume. On a loaded Mac, where

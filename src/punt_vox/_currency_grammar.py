@@ -57,7 +57,7 @@ class CurrencyGrammar:
             rf"(?:[-\u2013]{_RANGE_END_AMOUNT}(?P<end_word>{amount_word})?"
             rf"|{CurrencyPatterns.BARE_RANGE}"
             rf"(?P<bare_scale>(?i:{_SCALE_PATTERN})|{spaced_scale})?)?"
-            rf"(?P<rates>(?:/{word})*)"
+            rf"(?P<rates>(?:/{word})*)(?P<possessive>['\u2019][sS])?"
             rf"(?(bare_end)(?![{_SYMBOLS}]))"
         )
 

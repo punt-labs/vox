@@ -29,33 +29,34 @@ class ProseCurrency:
         if not _CURRENCY_SYMBOL.search(prose):
             return prose
         tag_pattern = tag.pattern if tag is not None else r"(?!)"
-        boundary = rf"(?P<boundary>(?<!\S)|{tag_pattern})"
-        return re.sub(
-            rf"{boundary}{_SUFFIX_AMOUNT}"
+        prefixed = re.sub(
+            rf"(?P<boundary>(?<!\S)|{tag_pattern}){_SUFFIX_AMOUNT}"
             rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
             rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d))"
             rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))",
             cls._prefix_amount,
-            cls._attach_scale(prose, tag_pattern),
+            prose,
         )
+        return cls._attach_scale(prefixed, tag_pattern)
 
-    @staticmethod
-    def _attach_scale(prose: str, tag_pattern: str) -> str:
-        boundary = rf"(?P<boundary>(?<![^\s\u2014])|{tag_pattern})"
-        leading = rf"[^\w\s~/.,`{_SYMBOLS}]*"
-        currency = CurrencyGrammar.spaced_prose_pattern(prose).pattern
-        end = r"(?![^\W_]|-[^\W\d_])"
+    @classmethod
+    def _attach_scale(cls, prose: str, tag_pattern: str) -> str:
         return re.sub(
-            rf"{boundary}(?P<price>_*{leading}{currency}){end}",
+            rf"(?:(?<![^\s\u2014])|{tag_pattern})_*[^\w\s~/.,`{_SYMBOLS}]*"
+            rf"{CurrencyGrammar.spaced_prose_pattern(prose).pattern}(?![^\W_]|-[^\W\d_])"
+            rf"(?:(?P<before_tag>[.,?!:;]*)"
+            rf"(?=(?:{tag_pattern})+[-+\u2212]?[{_SYMBOLS}]))?",
             lambda match: (
-                match["boundary"]
-                + CurrencyGrammar.HORIZONTAL_GAP.sub("", match["price"])
+                CurrencyGrammar.HORIZONTAL_GAP.sub("", match[0]) + cls._tag_gap(match)
             ),
             prose,
         )
 
-    @staticmethod
-    def _prefix_amount(match: re.Match[str]) -> str:
+    @classmethod
+    def _prefix_amount(cls, match: re.Match[str]) -> str:
         amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
-        before_tag = match["before_tag"]
-        return amount if before_tag is None else f"{amount}{before_tag} "
+        return amount + (match["before_tag"] or "") + cls._tag_gap(match)
+
+    @staticmethod
+    def _tag_gap(match: re.Match[str]) -> str:
+        return "" if match["before_tag"] is None else " "

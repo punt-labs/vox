@@ -15,6 +15,10 @@ from punt_vox._currency_speech import CurrencySpeech
         ("$1million", "1 million dollars"),
         ("€1\u2013£2", "1 euro to 2 pounds"),
         ("$5/2", "$5/2"),
+        ("$5—great", "5 dollars—great"),
+        ("$1million—_€2million", "1 million dollars—2 million euros"),
+        ("$1's", "1 dollar's"),
+        ("$5's", "5 dollars"),
     ],
 )
 def test_speak_prose(core: str, expected: str) -> None:
