@@ -21,7 +21,7 @@ _CONFIG_FILES = ("vox.md", "vox.local.md")
 
 @final
 class InheritedConfig:
-    """A config directory a repo reads from above its own root.
+    """The optional config directory a repo reads from above its own root.
 
     A repo with no ``.punt-labs/vox/`` config of its own reads its
     workspace's.  A setting write from inside it must not edit that shared
@@ -31,16 +31,16 @@ class InheritedConfig:
 
     __slots__ = ("_source",)
 
-    _source: Path
+    _source: Path | None
 
-    def __new__(cls, source: Path) -> Self:
-        """Wrap the inherited config directory *source*."""
+    def __new__(cls, source: Path | None) -> Self:
+        """Wrap the inherited config directory *source*, if one exists."""
         self = super().__new__(cls)
         self._source = source
         return self
 
     def seed(self, repo: Path, own: Path) -> None:
-        """Create *own* (in *repo*) holding copies of the inherited files.
+        """Ignore local state and seed *own* with any inherited files.
 
         The copies are staged in a sibling directory and renamed into place,
         so an interrupted or failed seed never leaves *own* with only some of
@@ -52,15 +52,17 @@ class InheritedConfig:
         ``vox.local.md`` is never committed.
         """
         self._ignore_local_state(repo)
+        if self._source is None:
+            return
         own.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".vox-seed-", dir=own.parent))
-        try:
+        with tempfile.TemporaryDirectory(
+            prefix=".vox-seed-", dir=own.parent, ignore_cleanup_errors=True
+        ) as directory:
+            staging = Path(directory)
             for name in _CONFIG_FILES:
                 with contextlib.suppress(FileNotFoundError):
                     shutil.copy2(self._source / name, staging / name)
             self._move_into(staging, own)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
 
     @staticmethod
     def _ignore_local_state(repo: Path) -> None:
@@ -73,9 +75,9 @@ class InheritedConfig:
     @staticmethod
     def _move_into(staging: Path, own: Path) -> None:
         """Rename *staging* to *own*, or link its files into an existing *own*."""
-        try:
+        with contextlib.suppress(OSError):
             staging.rename(own)
-        except OSError:
-            for copy in staging.iterdir():
-                with contextlib.suppress(FileExistsError):
-                    os.link(copy, own / copy.name)
+            return
+        for copy in staging.iterdir():
+            with contextlib.suppress(FileExistsError):
+                os.link(copy, own / copy.name)
