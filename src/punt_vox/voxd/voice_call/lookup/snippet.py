@@ -18,6 +18,7 @@ class Snippet:
 
     title: str
     text: str
+    url: str = ""  # Where it came from; empty when the source gave none.
 
     @staticmethod
     def clean(text: str, limit: int) -> str:

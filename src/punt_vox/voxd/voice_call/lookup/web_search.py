@@ -96,7 +96,9 @@ class ExaSearch:
                 fields = cast("dict[str, object]", row)
                 found.append(
                     Snippet(
-                        str(fields.get("title") or ""), str(fields.get("text") or "")
+                        str(fields.get("title") or ""),
+                        str(fields.get("text") or ""),
+                        str(fields.get("url") or ""),
                     )
                 )
         return found

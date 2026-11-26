@@ -116,12 +116,18 @@ class BossTools:
         ClientTool(
             "read_docs",
             "Ask a question about a public code repository's documentation. "
-            "Returns a short, quoted answer.",
+            "Returns a short, quoted answer. Infer the repository owner/name "
+            "yourself for well-known projects; never ask the person for an owner "
+            "or a name you can work out.",
             _schema(
                 {
                     "repo": {
                         "type": "string",
-                        "description": "Public repository as owner/name",
+                        "description": (
+                            "Public repository as owner/name, such as "
+                            "modelcontextprotocol/python-sdk. A plain name is "
+                            "looked up for you; if unsure, call search_web first"
+                        ),
                     },
                     "question": {"type": "string", "description": "The question"},
                 },

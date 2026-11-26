@@ -108,10 +108,8 @@ async def test_docs_answer_is_trimmed_and_quoted() -> None:
     assert docs.asked == [("pallets/flask", "app factories?")]
 
 
-@pytest.mark.parametrize(
-    "repo", ["flask", "pallets/flask/extra", "../etc", "https://x.io/a/b", ""]
-)
-async def test_docs_refuse_anything_but_owner_slash_name(repo: str) -> None:
+@pytest.mark.parametrize("repo", ["", "x" * 201])
+async def test_docs_refuse_a_blank_or_oversized_repo(repo: str) -> None:
     docs = _Docs()
     result, error = await _tools(docs=docs).answer(
         "read_docs", {"repo": repo, "question": "q"}
@@ -119,6 +117,17 @@ async def test_docs_refuse_anything_but_owner_slash_name(repo: str) -> None:
     assert error
     assert docs.asked == []
     assert "repo" in result
+
+
+@pytest.mark.parametrize("repo", ["flask", "pallets/flask/extra", "../etc"])
+async def test_docs_without_a_search_cannot_resolve_a_loose_name(repo: str) -> None:
+    docs = _Docs()
+    result, error = await _tools(docs=docs).answer(
+        "read_docs", {"repo": repo, "question": "q"}
+    )
+    assert error
+    assert docs.asked == []
+    assert "owner/name" in result
 
 
 async def test_docs_without_a_source_say_they_are_unavailable() -> None:
@@ -173,7 +182,7 @@ async def test_exa_sends_the_key_as_a_header_and_asks_for_three_short_texts() ->
         )
 
     snippets = await _exa(handler).search("flask")
-    assert snippets == [Snippet("T", "body")]
+    assert snippets == [Snippet("T", "body", "u")]
     assert seen["url"] == "https://api.exa.ai/search"
     assert seen["key"] == "exa-secret-key"
     body = cast("dict[str, object]", seen["body"])
@@ -293,3 +302,53 @@ async def test_a_failed_search_still_closes_its_connection_pool() -> None:
     with pytest.raises(ValueError, match="web search failed"):
         await ExaSearch("k", client_factory=factory).search("x")
     assert made[0].is_closed
+
+
+def test_the_read_docs_description_says_to_infer_the_repository() -> None:
+    tool = next(t for t in BossTools.CATALOG if t.name == "read_docs")
+    assert "Infer" in tool.description
+    assert "never ask the person for an owner or a name" in tool.description
+    assert tool.parameters is not None
+    properties = cast("dict[str, dict[str, str]]", tool.parameters["properties"])
+    assert "search_web" in properties["repo"]["description"]
+
+
+async def test_a_plain_language_repo_name_is_resolved_not_rejected() -> None:
+    search = _Search(
+        [
+            Snippet("Docs", "x", url="https://example.com/sdk"),
+            Snippet(
+                "python-sdk",
+                "The Python SDK",
+                url="https://github.com/modelcontextprotocol/python-sdk/blob/main/README.md",
+            ),
+        ]
+    )
+    docs = _Docs("It is the MCP Python SDK.")
+    result, error = await _tools(search, docs).answer(
+        "read_docs", {"repo": "the Model Context Protocol Python SDK", "question": "q"}
+    )
+    assert not error
+    assert docs.asked == [("modelcontextprotocol/python-sdk", "q")]
+    assert json.loads(result)["source"] == (
+        "documentation for modelcontextprotocol/python-sdk"
+    )
+
+
+async def test_an_unresolvable_name_tells_the_agent_to_ask_the_person_last() -> None:
+    search = _Search([Snippet("Blog", "x", url="https://example.com/post")])
+    docs = _Docs()
+    result, error = await _tools(search, docs).answer(
+        "read_docs", {"repo": "that thing", "question": "q"}
+    )
+    assert error
+    assert "ask the person" in result
+    assert docs.asked == []
+
+
+async def test_a_name_that_is_already_owner_slash_name_makes_no_search() -> None:
+    search = _Search()
+    await _tools(search, _Docs()).answer(
+        "read_docs", {"repo": "pallets/flask", "question": "q"}
+    )
+    assert search.queries == []

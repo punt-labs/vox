@@ -137,3 +137,17 @@ def test_the_baseline_carries_no_time_line() -> None:
 
 def test_a_call_with_no_clock_given_uses_the_host_clock_and_its_iana_zone() -> None:
     assert "At the start of this call it is" in CallSeed((), []).prompt()
+
+
+def test_the_prompt_tells_the_agent_to_work_out_owner_and_name_itself() -> None:
+    prompt = _prompt()
+    assert "Work out the owner/name yourself" in prompt
+    assert "Never ask the person for an owner or a name" in prompt
+
+
+def test_the_prompt_tells_the_agent_to_search_when_unsure_then_look_up_docs() -> None:
+    prompt = _prompt()
+    assert (
+        "call search_web to find its GitHub repository, then call read_docs" in prompt
+    )
+    assert "ask only if it is still ambiguous after a search" in prompt
