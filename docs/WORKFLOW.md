@@ -288,10 +288,12 @@ function demo(pr):
         else: comment "demo failed: H" with the output; a finding as below
         return
     run the roundtrip tier (make test-roundtrip; make test-roundtrip-live
-        where the credentials are present): a fixed corpus is synthesized
+        where the credentials are present; make test-roundtrip-say on
+        macOS when the say provider changed): a fixed corpus is synthesized
         through the providers, transcribed back and its word error rate
         checked, which is the machine verification that the synthesis
-        path still produces intelligible speech
+        path still produces intelligible speech; a failed roundtrip is a
+        finding and the ear is not asked until it passes
     run the canonical flight in docs/testing/manual-tests.md and ask the
         operator after EACH audible step for what the corpus cannot judge:
         that the step said the right words, in the right voice, with the
@@ -306,8 +308,10 @@ function demo(pr):
         failure is a finding like any other (fixed, local_review on the
         fix diff, pushed), and the next tick demos the new head
     # A finding that surfaces after the merge (a hook verdict, a late
-    # review) is recorded on the merged PR with the reasoning and the next
-    # unit starts; it is never a blocking question to the operator. The
+    # review) is recorded on the merged PR with the reasoning, by its
+    # source's path in answered(f) (a Qodo id through the Qodo CLI, any
+    # other by a ledger comment), and the next unit starts; it is never a
+    # blocking question to the operator. The
     # operator's instruction to run a command is the ruling, not a request
     # for another question.
 
@@ -449,8 +453,9 @@ function demo(pr):
 #                  install change can change what the operator hears
 #   audible(pr)  = some non-exempt file the PR changes can change what is
 #                  heard (demo_exempt files are not counted): under
-#                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file
-#                  but port_file.py), the cache, quips, normalize.py,
+#                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file:
+#                  port_file.py publishes the port clients need to speak),
+#                  the cache, quips, normalize.py,
 #                  hooks.py, server.py, client.py, plugin/, a dependency or
 #                  lock file, the Makefile, or the service installer and
 #                  its unit, environment and key files. Outside voxd/, a
@@ -462,8 +467,9 @@ function demo(pr):
 #                  is audible: the list fails closed
 #   demoed_head  = the commit named in the leader's latest "demo confirmed"
 #                  comment, newer than any "demo failed:" comment. The form
-#                  is checked: "demo confirmed by ear: H" counts for any PR;
-#                  "demo confirmed (not audible): H" with the command and
+#                  is checked: "demo confirmed by ear: H" counts for any PR
+#                  when it records a passed roundtrip result; "demo
+#                  confirmed (not audible): H" with the command and
 #                  output pasted counts only when audible(pr) is false, so
 #                  the leader's own run can never confirm an audible PR
 #   demo_ok(pr)  = every file the PR changes is demo_exempt, or demoed_head
@@ -778,8 +784,9 @@ checks the word error rate, proving the synthesis path still speaks
 intelligibly; the operator then confirms only what that corpus cannot: that the
 demo step said the right words, in the right voice, with the delivery, the
 ducking, the chime and its timing. A finding that surfaces after
-the merge is recorded on the PR with the leader's reasoning and the next unit
-starts; it is never a blocking question, and the two-minute rule in the
+the merge is recorded on the PR with the leader's reasoning, by its source's
+path in `answered(f)` (a Qodo finding through the Qodo CLI, any other by a
+ledger comment), and the next unit starts; it is never a blocking question, and the two-minute rule in the
 workspace `CLAUDE.md` applies to it as to any other.
 
 ## Level 3 — The mission loop (design, code, test)
