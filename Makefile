@@ -77,11 +77,12 @@ type: ## Type check with mypy and pyright
 	uv run mypy src/ tests/
 	uv run pyright src/ tests/
 
+# Keep this pin equal to the cli2 version bundled by the markdownlint-cli2-action
+# tag in .github/workflows/docs.yml.
+MARKDOWNLINT_CLI := markdownlint-cli2@0.24.0
+
 docs: ## Lint markdown files (matches CI docs job)
-	# Keep this pin equal to the cli2 version bundled by the markdownlint-cli2-action
-	# tag in .github/workflows/docs.yml. A lower pin here lets a rule the newer
-	# linter enforces pass locally and fail in CI.
-	npx --yes markdownlint-cli2@0.24.0 "**/*.md"
+	npx --yes $(MARKDOWNLINT_CLI) "**/*.md"
 
 # Base-comparison flags injected by CI (e.g. --base-ref <merge-base> --require-base).
 # Empty locally, where the tools default base to `git merge-base origin/main HEAD`.
@@ -96,6 +97,13 @@ design-shadow: ## Report advisory design changes; never part of check
 	uv run oo-ratchet design src/punt_vox --shadow-check "$(DESIGN_BASE)"
 
 check: lint type docs build-api-docs test check-oo check-coupling check-suppressions ## Run all quality gates
+
+.PHONY: handoff-runtime handoff-runtime-npm-cache
+handoff-runtime: ## Install the pinned offline runtime for Ethos handoff checks
+	bash scripts/install-handoff-runtime.sh
+
+handoff-runtime-npm-cache:
+	npx --yes --package=$(MARKDOWNLINT_CLI) -- node --version
 
 check-oo: ## OO ratchet — must improve over baseline, never regress
 	uv run oo-ratchet oo src/punt_vox/ --check $(OO_BASE)

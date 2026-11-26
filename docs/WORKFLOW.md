@@ -62,6 +62,17 @@ and shellcheck, plus the OO, coupling and suppression ratchets when their
 file scopes match). Full `make check` runs at handoff or before opening a PR,
 not before every commit.
 
+For snapshot-enabled Ethos, `make handoff-runtime` installs the version pinned
+by this checkout on Linux x86-64 or macOS ARM64. Run it once on a new machine
+and again when the pin changes. It checks the release archive's SHA-256 before
+installing it under `~/.punt-labs/ethos/runtimes/`. The gate never downloads it.
+
+To refresh the pins after a toolchain or dependency change, dispatch **Handoff
+runtime** on `main` with the next `handoff-runtime-vN` tag. Use the release
+asset URLs and their companion SHA-256 files to update the profile. Do not
+derive a pin by rebuilding locally: the archive headers are normalized, but
+package-manager caches can record fetch metadata.
+
 ## Level 1 — The backlog loop
 
 The backlog loop keeps the Linear backlog true and decides what to work on
