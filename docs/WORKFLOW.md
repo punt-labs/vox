@@ -279,7 +279,7 @@ limit, but `pending(pr)` waits for it (`devin_in`): a review or review comment
 from it, or 30 minutes after the PR opened, since a clean run may post
 nothing. `pending(pr)` also gates opening round two and the local delta
 review, so a round starts only after every requested review has reported or
-timed out; that batches the findings into one fix push. Its findings are
+timed out. Its findings are
 findings like any other, handled whenever they arrive; one that arrives after
 the merge is recorded on the merged PR.
 
