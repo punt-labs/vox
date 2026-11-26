@@ -60,12 +60,20 @@ PY
 )
 read -r url sha <<< "$pin"
 
-store=$HOME/.punt-labs/ethos/runtimes
+local_root=$HOME/.punt-labs
+ethos_root=$local_root/ethos
+store=$ethos_root/runtimes
 archive=$store/$sha.tar.gz
 umask 077
-mkdir -p -- "$store"
-if [[ ! -O $store || -L $store ]]; then
-    echo 'Vox runtime store must be a directory owned by the current user, not a symlink.' >&2
+for dir in "$local_root" "$ethos_root" "$store"; do
+    if [[ -L $dir ]]; then
+        printf 'Vox runtime store path must not be a symlink: %s\n' "$dir" >&2
+        exit 1
+    fi
+    mkdir -p -- "$dir"
+done
+if [[ ! -O $store ]]; then
+    echo 'Vox runtime store must be owned by the current user.' >&2
     exit 1
 fi
 chmod 700 -- "$store"
@@ -82,14 +90,14 @@ print(sha.hexdigest())
 PY
 }
 
-if [[ -e $archive || -L $archive ]]; then
-    if [[ ! -L $archive && -f $archive && $(digest "$archive") == "$sha" ]]; then
+if [[ -L $archive || ( -e $archive && ! -f $archive ) ]]; then
+    printf 'Vox runtime archive path must be a regular file, not a symlink: %s\n' "$archive" >&2
+    exit 1
+fi
+if [[ -f $archive ]]; then
+    if [[ $(digest "$archive") == "$sha" ]]; then
         printf '%s\n' "$archive"
         exit 0
-    fi
-    if [[ -d $archive ]]; then
-        printf 'Vox runtime archive path is a directory: %s\n' "$archive" >&2
-        exit 1
     fi
     echo 'Cached Vox runtime failed verification; downloading a fresh copy.' >&2
 fi
