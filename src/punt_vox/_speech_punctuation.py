@@ -33,10 +33,8 @@ class SpeechPunctuation:
         except the ``#`` and ``++`` that name languages such as C# and C++, and
         a ``%`` after a number, which is spoken as "percent".
         """
-        currency = CurrencySpeech.prose_pattern(token).pattern
-        leading = (
-            rf"^(?:[-\u2212]{{2,}}|(?!(?:{currency}[\W_]*$|[-\u2212]\.?\d))[^\w~/.])+"
-        )
+        money = rf"{CurrencySpeech.prose_pattern(token).pattern}(?:[\W_]*$|—)"
+        leading = rf"^(?:[-\u2212]{{2,}}|(?!(?:{money}|[-\u2212]\.?\d))[^\w~/.])+"
         core_candidate = re.sub(leading, "", token)
         if named := _SYMBOL_NAME_RE.fullmatch(core_candidate):
             joined, name, mark, raw_suffix = named.groups(default="")

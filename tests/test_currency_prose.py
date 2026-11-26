@@ -23,10 +23,11 @@ def test_prefix_suffix_amounts(prose: str, expected: str) -> None:
     ("spaced", "attached"),
     [
         ("$1 million-[pause]$2 million", "$1million-[pause]$2million"),
-        ("$1 million[pause]€2 million", "$1million[pause]€2million"),
+        ("$1 million[pause]€2 million", "$1million [pause]€2million"),
+        ("$1 million[pause]2€", "$1million [pause]€2"),
         ("$1 million—€2 billion", "$1million—€2billion"),
         ("$1 million—enough", "$1million—enough"),
     ],
 )
-def test_scale_join_only_removes_whitespace(spaced: str, attached: str) -> None:
+def test_scale_join_preserves_amount_boundaries(spaced: str, attached: str) -> None:
     assert ProseCurrency.canonicalize(spaced, tag=VIBE_TAG_RE) == attached
