@@ -4,9 +4,12 @@ The executable specification of Level 2 of [`WORKFLOW.md`](WORKFLOW.md): the
 `pr_loop`, `demo`, `poll_tick`, `merge_gate`, `close_out` and `local_review`
 pseudocode, the terms they read from GitHub, and the `EnterPR`/`ExitPR` Z
 schemas. It is linked from `WORKFLOW.md`, not `@`-imported, so a session's
-instruction load stays under the harness limit. Read it before changing or
-running any step of the PR loop, and whenever a merge gate, review round,
-demo or escalation question comes up.
+instruction load stays under the harness limit. Read it before starting a unit
+of work (step A holds the design-ratification gate for architectural units),
+before changing or running any step of the PR loop, and whenever a local
+review, merge gate, review round, demo or escalation question comes up.
+`LoopState`, which `EnterPR` and `ExitPR` read, and the sizing rule behind
+`inThroughputBand` are defined in `WORKFLOW.md`.
 
 ```text
 function pr_loop(unit):

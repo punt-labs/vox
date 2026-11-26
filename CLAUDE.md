@@ -30,8 +30,9 @@ start. Read it before writing code.
 The PR-loop pseudocode, its GitHub terms and the `EnterPR`/`ExitPR` schemas
 are in [`docs/WORKFLOW-PR-LOOP.md`](docs/WORKFLOW-PR-LOOP.md), a non-autoloaded
 reference: linked, not `@`-imported, so the session's instruction load stays
-under the harness 150k-character limit. Read it before opening a PR, driving
-remote review, running the demo, or deciding a merge.
+under the harness 150k-character limit. Read it before starting a unit of work (step A holds the design-ratification gate for
+architectural units), running a local review or pushing a fix, opening a PR,
+driving remote review, running the demo, or deciding a merge.
 
 The org-wide `punt-kit` standards are the canonical source for how Punt Labs
 tools are built. They are non-autoloaded references — linked, not `@`-imported,
@@ -158,7 +159,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 ## Development Loop
 
-The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
+The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves. Level 2's pseudocode and schemas are in **[`docs/WORKFLOW-PR-LOOP.md`](docs/WORKFLOW-PR-LOOP.md)**, which does not load at session start (see Mandatory Reading).
 
 The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: commit-hook checks green for every commit, full `make check` green at handoff or before opening a PR; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test`, plus `make test-e2e` against the installed wheel; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
@@ -247,7 +248,7 @@ Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses 
 
 **One mission = one task.** Never give an agent multiple steps in a single prompt. Agent timeouts on multi-step prompts leave partial work and cause manual cleanup. One focused task per delegation.
 
-**The COO does not write code.** Every code change, no matter how small, is delegated. There is no threshold below which a change is "too small to delegate." The only files the COO edits directly: `CHANGELOG.md`, `CLAUDE.md`, `DESIGN.md`, `README.md`, design docs, and plan files.
+**The COO does not write code.** Every code change, no matter how small, is delegated. There is no threshold below which a change is "too small to delegate." The only files the COO edits directly: `CHANGELOG.md`, `CLAUDE.md`, `DESIGN.md`, `README.md`, `docs/WORKFLOW.md`, `docs/WORKFLOW-PR-LOOP.md`, design docs, and plan files.
 
 ### Why these pairings
 

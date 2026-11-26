@@ -20,7 +20,10 @@ never sent back to the backlog.
 
 The pseudocode at each level gives the control flow; a small Z schema at each
 level gives the doorway conditions — what must be true to enter an iteration
-and what must be true to leave it. The state those schemas observe:
+and what must be true to leave it. Level 1 and Level 3 are in this file;
+Level 2's are in [`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md), and its
+`EnterPR`/`ExitPR` read the state defined here. The state those schemas
+observe:
 
 ```text
 LoopState
@@ -228,12 +231,14 @@ size of a PR is an economic decision, not a hygiene one:
   is never held back or split out for tidiness.
 
 The control flow, the terms it reads from GitHub (`round`, `qodo_in`,
-`bugbot_in`, `pending`, `answered`, `demo_ok`, `reviewed_head`, and the rest),
-`merge_gate`, `close_out`, `local_review`, and the `EnterPR`/`ExitPR` Z schemas
-are specified in [`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md). It is the
-authoritative text for every PR-loop step and is **not** auto-loaded: read it
-before opening a PR, driving remote review, running the demo, or deciding a
-merge. The summary that follows (local review, remote review, the demo gate)
+`bugbot_in`, `pending`, `answered(f)`, `audible(pr)`, `demo_ok`,
+`reviewed_head`, and the rest), `merge_gate`, `close_out`, `local_review`, and
+the `EnterPR`/`ExitPR` Z schemas are specified in
+[`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md). It is the authoritative text for
+every PR-loop step and is **not** auto-loaded: read it
+before starting a unit of work (step A holds the design-ratification gate for
+architectural units), running a local review or pushing a fix, opening a PR,
+driving remote review, running the demo, or deciding a merge. The summary that follows (local review, remote review, the demo gate)
 stays here.
 
 ### Local review before the PR
@@ -402,7 +407,7 @@ on the full diff), the audio demo, and every git and GitHub operation:
 branches, pushes, opening the PR, driving remote review, resolving threads,
 merging, and closing out. The leader does not write production code. The only
 files the leader authors directly are the doc set — `CHANGELOG.md`,
-`CLAUDE.md`, `DESIGN.md`, `README.md`, this `WORKFLOW.md`, design docs, and
+`CLAUDE.md`, `DESIGN.md`, `README.md`, this `WORKFLOW.md` and `WORKFLOW-PR-LOOP.md`, design docs, and
 plan files — and those still ship through PRs.
 
 **The worker owns the work.** The thinking and the code inside its mission —
