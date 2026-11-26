@@ -1,0 +1,60 @@
+{
+  "checks": {
+    "full-gate": {
+      "profile": "linux-worktree-v1",
+      "epoch": "vox-v1",
+      "sources": {
+        "mode": "worktree"
+      },
+      "env": {
+        "LANG": "C",
+        "UV_PYTHON": "{runtime}/python/bin/python3",
+        "UV_OFFLINE": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "UV_LINK_MODE": "copy",
+        "UV_CACHE_DIR": "{scratch}/uv-cache",
+        "npm_config_cache": "{scratch}/npm-cache",
+        "npm_config_offline": "true",
+        "npm_config_update_notifier": "false",
+        "MYPY_CACHE_DIR": "{scratch}/mypy-cache",
+        "RUFF_CACHE_DIR": "{scratch}/ruff-cache",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "COLUMNS": "200",
+        "GIT_OPTIONAL_LOCKS": "0"
+      },
+      "system": {
+        "tools": ["bash", "espeak-ng", "ffmpeg", "ffprobe", "git", "jq", "make", "mpv", "ps", "rg", "tmux"]
+      },
+      "runtime": {
+        "platforms": {
+          "linux-amd64": {
+            "bundle": "vox-handoff-linux-amd64.tar.gz",
+            "url": "https://github.com/punt-labs/vox/releases/download/handoff-runtime-v1/vox-handoff-linux-amd64.tar.gz",
+            "sha256": "7bf2224e294866f0f6c5fa4ed1370282266c400946713069041b47cfdf938679",
+            "path": ["{runtime}/bin", "{runtime}/node/bin"],
+            "env": {"LC_CTYPE": "C.UTF-8"}
+          },
+          "darwin-arm64": {
+            "bundle": "vox-handoff-darwin-arm64.tar.gz",
+            "url": "https://github.com/punt-labs/vox/releases/download/handoff-runtime-v1/vox-handoff-darwin-arm64.tar.gz",
+            "sha256": "0b6578c25411293ee1b0a9fd06cc8c96e21ef3857f5cbed7325a72f99854e6e2",
+            "path": ["{runtime}/bin", "{runtime}/node/bin", "/opt/homebrew/bin"],
+            "env": {"LC_CTYPE": "en_US.UTF-8"}
+          }
+        }
+      },
+      "scratch": {
+        "checkout": [".venv", ".pytest_cache", ".tmp/api-site"],
+        "seed": {
+          "{scratch}/uv-cache": "{runtime}/cache/uv",
+          "{scratch}/npm-cache": "{runtime}/cache/npm"
+        }
+      },
+      "git": {"base_ref": "refs/remotes/origin/main"},
+      "network": "loopback",
+      "prehydrate": {
+        "run": ["uv", "sync", "--offline", "--locked", "--group", "docs"]
+      }
+    }
+  }
+}
