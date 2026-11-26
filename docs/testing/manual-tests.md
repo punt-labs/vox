@@ -208,6 +208,6 @@ revisiting — see the design doc's fallback candidates). Repeat the
 ## Known issues affecting this flight
 
 - `vox-ekmx` — small clipping artifact at end of synthesized audio (missing trailing silence)
-- `vox-zuqr` — music ducking is static, not dynamic during voice playback
+- `PL-823` — music ducking is static, not dynamic during voice playback
 
 When these are open, factor them in when interpreting operator answers. A "yes, clipping at the end" answer for step 1 is the known issue, not a new regression — unless the clipping is markedly worse or in a different place.
