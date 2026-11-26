@@ -26,6 +26,7 @@ from punt_vox import cache, dirs, paths
 from punt_vox.cache import CacheInfo, CacheKey
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.cache_handlers import CacheHandler
+from punt_vox.voxd.cache_reply_types import CacheClearedReply, CacheStatusReply
 from punt_vox.voxd.synthesis_cache import SynthesisCache
 from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
@@ -71,6 +72,29 @@ async def test_slow_scan_does_not_block_the_loop(verb: str) -> None:
         release.set()
         await work
     assert sent[-1]["id"] == "r1"
+
+
+@pytest.mark.parametrize(
+    ("handler", "contract"),
+    [
+        (
+            CacheHandler.status(lambda: CacheInfo(2, 128, Path("cache"))),
+            CacheStatusReply(
+                type="cache_status", entries=2, size_bytes=128, path="cache"
+            ),
+        ),
+        (
+            CacheHandler.clear(lambda: 2),
+            CacheClearedReply(type="cache_cleared", cleared=2),
+        ),
+    ],
+)
+async def test_wire_reply_fields_match_contract(
+    handler: CacheHandler, contract: CacheStatusReply | CacheClearedReply
+) -> None:
+    ws, sent = _capturing_ws()
+    await handler({"id": "contract"}, ws)
+    assert sent == [{**contract, "id": "contract"}]
 
 
 @pytest.mark.asyncio
