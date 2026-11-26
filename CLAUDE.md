@@ -180,6 +180,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 2 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 11 |
 | `call_e2e` | A real `voxd` subprocess places a `vox call --script` call against a fake ElevenLabs Conversational AI agent and fake REST on loopback; scripted PCM in, agent audio through a silent device, no microphone, no credentials | `make test-call-e2e` | Yes, inside the combined coverage job and again as its own step | 2 |
+| `live_call` | An installed `voxd` places a scripted call to the real ElevenLabs agent with the real research tools, judged on the transcript and tool results | `make verify-call` | No: run by the leader before every real-call demo | 6 expectations |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 40 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 37 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
