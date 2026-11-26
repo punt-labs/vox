@@ -24,6 +24,10 @@ class AgentConnector(Protocol):
         """Delete a previously provisioned agent and its tools."""
         ...
 
+    def retire_stale(self) -> None:
+        """Delete replaced agents and tools, logging a failure instead of raising."""
+        ...
+
 
 @final
 class CallConnector:

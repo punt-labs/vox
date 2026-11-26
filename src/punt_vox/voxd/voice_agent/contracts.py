@@ -41,6 +41,10 @@ class Registration:
     tool_ids: tuple[str, ...]
     configuration_hash: str
     credential_id: str
+    # Replaced agents and tools awaiting deletion, retried after each call
+    # connects so a slow delete never blocks a call.
+    retired_agents: tuple[str, ...] = ()
+    retired_tools: tuple[str, ...] = ()
 
 
 class ToolConfig(TypedDict):

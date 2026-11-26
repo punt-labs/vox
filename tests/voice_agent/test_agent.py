@@ -189,12 +189,13 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         ("POST", "/v1/convai/agents/create"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
-        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
-        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
         ("POST", "/v1/convai/tools"),
         ("POST", "/v1/convai/agents/create"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
+        # Teardown deletes the replaced agent and tool too, then the current.
         ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
         ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
     ]
     tool = wire.calls[0][2]
@@ -243,8 +244,6 @@ def test_changed_agent_settings_replace_the_agent_without_a_teardown(
             "POST",
             "POST",
             "GET",
-            "DELETE",
-            "DELETE",
             "POST",
             "POST",
             "GET",
@@ -357,7 +356,7 @@ def test_unusable_create_response_warns_about_unrecorded_resource(
     assert "unusable/opaque-id" not in str(error.value)
 
 
-def test_partial_provision_is_cleaned_before_retry(
+def test_partial_provision_is_retired_not_deleted_in_the_calls_way(
     tmp_path: Path, wire: Requests
 ) -> None:
     wire.create_agent_status = 403
@@ -368,11 +367,19 @@ def test_partial_provision_is_cleaned_before_retry(
             agent.connection((_CLOCK,))
         assert json.loads(config.read_text())["tool_ids"] == ["tool_clock"]
         wire.create_agent_status = 200
+        wire.calls.clear()
         agent.connection((_CLOCK,))
-        assert wire.calls[2][:2] == ("DELETE", "/v1/convai/tools/tool_clock?force=true")
+        assert [method for method, _, _ in wire.calls] == ["POST", "POST", "GET"]
+        assert json.loads(config.read_text())["retired_tools"] == ["tool_clock"]
+        wire.delete_tool_status = 200
+        agent.retire_stale()
+        assert wire.calls[-1][:2] == (
+            "DELETE",
+            "/v1/convai/tools/tool_clock?force=true",
+        )
 
 
-def test_failed_partial_cleanup_blocks_reprovisioning(
+def test_a_failed_cleanup_of_a_partial_provision_does_not_block_the_call(
     tmp_path: Path, wire: Requests
 ) -> None:
     wire.create_agent_status = 403
@@ -381,16 +388,11 @@ def test_failed_partial_cleanup_blocks_reprovisioning(
         agent = VoiceAgent(control, path=config)
         with pytest.raises(ConvAIError, match="HTTP 403"):
             agent.connection((_CLOCK,))
-        partial = config.read_bytes()
         wire.create_agent_status = 200
         wire.delete_tool_status = 403
-        with pytest.raises(ConvAIError, match="HTTP 403"):
-            agent.connection((_CLOCK,))
-
-    assert config.read_bytes() == partial
-    assert [request[:2] for request in wire.calls[2:]] == [
-        ("DELETE", "/v1/convai/tools/tool_clock?force=true")
-    ]
+        assert agent.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
+        agent.retire_stale()
+    assert json.loads(config.read_text())["retired_tools"] == ["tool_clock"]
 
 
 def test_failed_delete_keeps_config_for_retry(tmp_path: Path, wire: Requests) -> None:
@@ -492,3 +494,112 @@ def test_provisioning_compensates_after_checkpoint_failure(
         "DELETE",
         f"/v1/convai/{kind}s/{resource_id}?force=true",
     )
+
+
+def _replace_agent_with_failing_deletes(agent: VoiceAgent, wire: Requests) -> None:
+    """Provision once; from then on every delete the endpoint is asked fails."""
+    agent.connection((_CLOCK,))
+    wire.delete_agent_status = wire.delete_tool_status = 403
+
+
+def test_a_timed_out_delete_of_the_old_agent_never_blocks_the_new_call(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        url, tool_ids = agent.connection((ClientTool("new", "Different tool"),))
+        assert url == _SIGNED_URL
+        assert tool_ids == ("tool_clock",)
+
+
+def test_the_new_agent_is_recorded_before_the_old_one_is_deleted(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+    stored = json.loads(config.read_text())
+    assert stored["agent_id"] == "agent_vox"
+    assert stored["retired_agents"] == ["agent_vox"]
+    assert stored["retired_tools"] == ["tool_clock"]
+
+
+def test_connecting_after_a_change_makes_no_delete_request(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        wire.calls.clear()
+        agent.connection((ClientTool("new", "Different tool"),))
+    assert [method for method, _, _ in wire.calls] == ["POST", "POST", "GET"]
+
+
+def test_retiring_deletes_the_old_resources_and_clears_the_record(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        wire.calls.clear()
+        agent.retire_stale()
+    assert [(m, p) for m, p, _ in wire.calls] == [
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
+    ]
+    stored = json.loads(config.read_text())
+    assert stored["retired_agents"] == []
+    assert stored["retired_tools"] == []
+
+
+def test_a_failed_retirement_is_logged_kept_and_never_raised(
+    tmp_path: Path,
+    wire: Requests,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+        with caplog.at_level("WARNING"):
+            agent.retire_stale()
+    assert "HTTP 403" in caplog.text
+    assert _API_KEY not in caplog.text
+    assert json.loads(config.read_text())["retired_agents"] == ["agent_vox"]
+
+
+def test_retiring_with_nothing_retired_makes_no_request(
+    tmp_path: Path, wire: Requests
+) -> None:
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        wire.calls.clear()
+        agent.retire_stale()
+    assert wire.calls == []
+
+
+def test_teardown_also_deletes_what_is_still_retired(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        wire.calls.clear()
+        agent.teardown()
+    deleted = [p for m, p, _ in wire.calls if m == "DELETE"]
+    assert len(deleted) == 4
+    assert not config.exists()

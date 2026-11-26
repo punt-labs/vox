@@ -19,3 +19,14 @@ async def test_teardown_can_retry_after_connection_failure() -> None:
         await operations.teardown()
 
     agent.teardown.assert_called_once_with()
+
+
+async def test_retiring_never_raises_into_the_caller() -> None:
+    agent = Mock()
+    agent.retire_stale.side_effect = RuntimeError("boom")
+    operations = AgentOperations(agent)
+
+    async with asyncio.timeout(5):
+        await operations.retire()
+
+    agent.retire_stale.assert_called_once_with()

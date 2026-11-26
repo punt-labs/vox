@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Self, cast, final
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import ClientTool
 
 __all__ = ["VoiceAgent"]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -62,11 +65,13 @@ class VoiceAgent:
         fingerprint = self._control.registration_fingerprint(ordered)
         with self._locked():
             stored = self._read()
+            retired = Registration(None, (), "", "")
             if stored is not None and self._is_stale(stored, fingerprint):
-                self._delete(stored)  # A changed spec replaces the agent.
-                stored = None
+                # A changed spec replaces the agent; the old resources are
+                # deleted after the call connects, never in its way.
+                retired, stored = stored, None
             if stored is None:
-                stored = self._provision(ordered, fingerprint)
+                stored = self._provision(ordered, fingerprint, retired)
             agent_id = self._usable_agent_id(stored)
         return self._control.signed_url(agent_id), stored.tool_ids
 
@@ -82,6 +87,43 @@ class VoiceAgent:
             msg = "No provisioned ElevenLabs agent"
             raise ConvAIError(msg)
         return stored.agent_id
+
+    def retire_stale(self) -> None:
+        """Delete the replaced agents and tools; log and keep any that fail.
+
+        Runs after a call connects. A delete that times out is retried on the
+        next call and never raised, so it cannot fail a call.
+        """
+        try:
+            with self._locked():
+                stored = self._read()
+                if stored is None or not (
+                    stored.retired_agents or stored.retired_tools
+                ):
+                    return
+                agents = self._still_retired(
+                    "agent", stored.retired_agents, self._control.delete_agent
+                )
+                tools = self._still_retired(
+                    "tool", stored.retired_tools, self._control.delete_tool
+                )
+                self._write(replace(stored, retired_agents=agents, retired_tools=tools))
+        except (ConvAIError, OSError) as exc:
+            logger.warning("Old ElevenLabs resources not retired this time: %s", exc)
+
+    @staticmethod
+    def _still_retired(
+        kind: str, ids: tuple[str, ...], delete: Callable[[str], None]
+    ) -> tuple[str, ...]:
+        """Delete each id; return the ones that could not be deleted."""
+        remaining: list[str] = []
+        for resource_id in ids:
+            try:
+                delete(resource_id)
+            except ConvAIError as exc:
+                logger.warning("Could not delete old %s %s: %s", kind, resource_id, exc)
+                remaining.append(resource_id)
+        return tuple(remaining)
 
     def teardown(self) -> None:
         """Delete managed resources; retain the config if deletion must be retried.
@@ -109,9 +151,22 @@ class VoiceAgent:
             yield
 
     def _provision(
-        self, tools: tuple[ClientTool, ...], fingerprint: str
+        self,
+        tools: tuple[ClientTool, ...],
+        fingerprint: str,
+        replaced: Registration,
     ) -> Registration:
-        record = Registration(None, (), fingerprint, self._control.credential_id)
+        record = Registration(
+            None,
+            (),
+            fingerprint,
+            self._control.credential_id,
+            (
+                *replaced.retired_agents,
+                *(() if replaced.agent_id is None else (replaced.agent_id,)),
+            ),
+            (*replaced.retired_tools, *replaced.tool_ids),
+        )
         self._write(record)
         for tool in tools:
             tool_id = self._control.create_tool(tool)
@@ -145,10 +200,14 @@ class VoiceAgent:
             raise
 
     def _delete(self, stored: Registration) -> None:
-        if stored.agent_id is not None:
-            self._control.delete_agent(stored.agent_id)
-            self._write(replace(stored, agent_id=None))
-        for tool_id in stored.tool_ids:
+        agents = (
+            *stored.retired_agents,
+            *(() if stored.agent_id is None else (stored.agent_id,)),
+        )
+        for agent_id in agents:
+            self._control.delete_agent(agent_id)
+        self._write(replace(stored, agent_id=None, retired_agents=()))
+        for tool_id in (*stored.retired_tools, *stored.tool_ids):
             self._control.delete_tool(tool_id)
         self._file.path.unlink()
 
@@ -190,6 +249,8 @@ class VoiceAgent:
                     self._tool_ids(ids),
                     fingerprint,
                     credential_id,
+                    self._tool_ids(fields.get("retired_agents", [])),
+                    self._tool_ids(fields.get("retired_tools", [])),
                 )
             case _:
                 msg = "Invalid Vox voice agent config"

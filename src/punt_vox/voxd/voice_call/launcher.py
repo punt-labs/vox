@@ -51,6 +51,7 @@ class CallLauncher:
         "_playback",
         "_progress",
         "_projects",
+        "_retiring",
         "_trace_dir",
         "_workers",
     )
@@ -62,6 +63,7 @@ class CallLauncher:
     _hold_music: Callable[[], AbstractContextManager[None]]
     _trace_dir: Path
     _opener: Opener
+    _retiring: set[asyncio.Task[None]]
 
     def __new__(
         cls,
@@ -79,6 +81,7 @@ class CallLauncher:
         self = super().__new__(cls)
         self._workers, self._projects, self._playback = workers, projects, playback
         self._operations, self._progress = operations, progress
+        self._retiring = set()
         self._hold_music, self._trace_dir, self._opener = hold_music, trace_dir, opener
         return self
 
@@ -179,6 +182,10 @@ class CallLauncher:
 
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)
+        # Old agents are deleted in the background, after the new one is in use.
+        retiring = asyncio.create_task(self._operations.retire())
+        self._retiring.add(retiring)
+        retiring.add_done_callback(self._retiring.discard)
         repos, workers = self._projects.repos(), await self._workers.workers()
         return url, await asyncio.to_thread(returning.options, workers, repos, tool_ids)
 

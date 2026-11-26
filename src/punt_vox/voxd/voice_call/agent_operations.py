@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_call.connector import CallConnector
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.voice_agent.contracts import ClientTool
     from punt_vox.voxd.voice_call.connector import AgentConnector
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -41,6 +44,13 @@ class AgentOperations:
     ) -> tuple[str, tuple[str, ...]]:
         """Sign a conversation URL without blocking the event loop."""
         return await self._run(lambda: self._connector.agent().connection(tools))
+
+    async def retire(self) -> None:
+        """Delete replaced agents and tools after a call connects; never raise."""
+        try:
+            await self._run(lambda: self._connector.agent().retire_stale())
+        except Exception:  # Background cleanup: no failure may reach a caller.
+            logger.exception("Retiring old ElevenLabs resources failed")
 
     async def teardown(self) -> None:
         """Delete registration after any outstanding connection settles."""
