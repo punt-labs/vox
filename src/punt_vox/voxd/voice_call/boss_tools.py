@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
+from punt_vox.voxd.voice_call.provenance import CallProvenance
+from punt_vox.voxd.voice_call.request_guard import RequestGuard
 from punt_vox.voxd.voice_call.steering import SteeringTool
 from punt_vox.voxd.voice_call.tool_answer import ToolAnswer
+from punt_vox.voxd.voice_call.tool_fields import ToolFields
 from punt_vox.voxd.voice_call.worker_brief import WorkerBrief
 from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
@@ -24,12 +27,6 @@ _ID: Final = {
         "A worker_id a tool returned, or a spoken worker label from this call's opener"
     ),
 }
-
-
-_NO_REPOS: Final = (
-    "no repository is allowlisted for workers; "
-    "run `vox worker allow <path>` on the daemon host"
-)
 
 
 def _schema(properties: dict[str, object], *required: str) -> dict[str, object]:
@@ -111,11 +108,27 @@ class BossTools:
         {"start_worker", "steer_worker", "stop_worker"}
     )
 
-    __slots__ = ("_answer", "_directory", "_projects", "_workers")
+    # Tools that start, change or stop a worker: held for the person's spoken
+    # yes whenever untrusted text has reached the conversation.
+    _CONFIRMED: ClassVar[frozenset[str]] = frozenset(
+        {"start_worker", "steer_worker", "stop_worker"}
+    )
+
+    # Tools whose results carry worker-written text.
+    _UNTRUSTED: ClassVar[frozenset[str]] = frozenset({"worker_status", "list_workers"})
+
+    __slots__ = (
+        "_answer",
+        "_directory",
+        "_guard",
+        "_projects",
+        "_workers",
+    )
     _directory: WorkerDirectory
     _workers: WorkerControl
     _projects: ProjectAllowlist
     _answer: ToolAnswer
+    _guard: RequestGuard
 
     def __new__(
         cls,
@@ -129,7 +142,18 @@ class BossTools:
         self._workers, self._projects = workers, projects
         self._directory = WorkerDirectory(workers, spoken_labels)
         self._answer = ToolAnswer()
+        self._guard = RequestGuard(CallProvenance(), self._directory, projects)
         return self
+
+    @property
+    def guard(self) -> RequestGuard:
+        """Return the guard that holds the call's provenance and its gate."""
+        return self._guard
+
+    @classmethod
+    def tool_names(cls) -> frozenset[str]:
+        """Return the names of the client tools voxd runs itself."""
+        return frozenset(tool.name for tool in cls.CATALOG)
 
     @property
     def replayed(self) -> int:
@@ -162,9 +186,13 @@ class BossTools:
             resolved = self._with_defaults(name, arguments)
             return resolved, resolved
 
-        return await self._answer.run(
-            name, request, operation, durable=name in self._DURABLE
+        guard = self._guard.for_tool(name) if name in self._CONFIRMED else None
+        answered = await self._answer.run(
+            name, request, operation, durable=name in self._DURABLE, guard=guard
         )
+        if name in self._UNTRUSTED:  # Worker text is now in the conversation.
+            self._guard.provenance.taint()
+        return answered
 
     def _with_defaults(
         self, name: str, arguments: dict[str, object]
@@ -176,35 +204,20 @@ class BossTools:
         return {**defaults, **arguments}
 
     async def _start(self, arguments: dict[str, object]) -> object:
-        task = self._text(arguments, "task")
-        allowlisted = list(self._projects.repos())
-        if not allowlisted:  # Whatever was named: nothing can start.
-            raise ValueError(_NO_REPOS)
-        project = arguments.get("project")
-        if project is None:  # Several repos, so no default was filled in.
-            raise ValueError(f"name a project; allowlisted: {allowlisted}")
-        if not isinstance(project, str):
-            raise ValueError("project must be a string")
+        task, project = ToolFields.start(arguments, self._projects)
         return WorkerBrief.summary(await self._workers.start(task, project))
 
     async def _status(self, arguments: dict[str, object]) -> object:
-        worker = await self._directory.find(self._text(arguments, "worker_id"))
+        worker = await self._directory.find(ToolFields.text(arguments, "worker_id"))
         return WorkerBrief.detail(worker)
 
     async def _list(self, _arguments: dict[str, object]) -> object:
         return [WorkerBrief.summary(w) for w in await self._workers.workers()]
 
     async def _stop(self, arguments: dict[str, object]) -> object:
-        worker = await self._directory.find(self._text(arguments, "worker_id"))
+        worker = await self._directory.find(ToolFields.text(arguments, "worker_id"))
         return WorkerBrief.summary(await self._workers.stop(worker["id"]))
 
     @staticmethod
     async def _silent(_arguments: dict[str, object]) -> object:
         return {"silent": True}
-
-    @staticmethod
-    def _text(arguments: dict[str, object], field: str) -> str:
-        value = arguments.get(field)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{field} must be a non-empty string")
-        return value
