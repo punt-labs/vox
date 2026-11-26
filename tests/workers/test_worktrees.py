@@ -262,6 +262,12 @@ def test_discard_keeps_edits_in_a_worktree_linked_by_a_relative_path(
     _git(repo, "add", "README.md")
     _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "r")
     _git(repo, "config", "worktree.useRelativePaths", "true")
+    probe = tmp_path / "relative-path-probe"
+    _git(repo, "worktree", "add", "--detach", "--quiet", str(probe))
+    probe_link = (probe / ".git").read_text().removeprefix("gitdir:").strip()
+    if Path(probe_link).is_absolute():
+        pytest.skip(f"{_git(repo, '--version')} does not write relative gitdir links")
+
     worker_id = str(uuid4())
     worktree = tmp_path / "workers" / worker_id / "worktree"
     WorkerWorktrees().create(repo, worktree, f"vox-worker/{worker_id}")
