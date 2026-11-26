@@ -19,7 +19,7 @@ _UNCHOSEN_ITEM: Final = "(none)"
 @final
 @dataclass(frozen=True, slots=True)
 class ChoiceList:
-    """One combo's items, its current value, and the wire view of both."""
+    """One combo's items, its current value, and their serialized Lux combo."""
 
     items: tuple[str, ...]
     current: str | None
@@ -61,6 +61,19 @@ class ChoiceList:
         if self.is_empty or self._unchosen:
             return 0
         return self.items.index(self.current) + 1
+
+    def to_combo(self, *, element_id: str, label: str, topic: str) -> dict[str, object]:
+        """Serialize a labeled combo; an empty list has no change handler."""
+        combo: dict[str, object] = {
+            "kind": "combo",
+            "id": element_id,
+            "label": label,
+            "items": self.wire_items(),
+            "selected": self.selected_index(),
+        }
+        if not self.is_empty:
+            combo["handlers"] = [{"event": "changed", "publish": [topic]}]
+        return combo
 
     def name_for_index(self, index: int, *, noun: str) -> str:
         """Return the entry a clicked *index* names, or raise if it names none.

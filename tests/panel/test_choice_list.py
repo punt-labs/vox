@@ -13,6 +13,37 @@ def _choices(current: str | None) -> ChoiceList:
     return ChoiceList(items=_ITEMS, current=current, empty_label="(nothing)")
 
 
+class TestToCombo:
+    @pytest.mark.parametrize(
+        ("current", "selected"), [("beta", 2), (None, 0), ("missing", 0)]
+    )
+    def test_populated_combo_publishes_even_when_unchosen(
+        self, current: str | None, selected: int
+    ) -> None:
+        assert _choices(current).to_combo(
+            element_id="combo.rev", label="Choice", topic="on-choice"
+        ) == {
+            "kind": "combo",
+            "id": "combo.rev",
+            "label": "Choice",
+            "items": ["(none)", "alpha", "beta", "gamma"],
+            "selected": selected,
+            "handlers": [{"event": "changed", "publish": ["on-choice"]}],
+        }
+
+    def test_empty_combo_is_inert(self) -> None:
+        empty = ChoiceList(items=(), current=None, empty_label="(nothing)")
+        assert empty.to_combo(
+            element_id="combo.rev", label="Choice", topic="on-choice"
+        ) == {
+            "kind": "combo",
+            "id": "combo.rev",
+            "label": "Choice",
+            "items": ["(nothing)"],
+            "selected": 0,
+        }
+
+
 class TestSomethingChosen:
     def test_the_sentinel_still_leads_the_list(self) -> None:
         assert _choices("beta").wire_items() == ["(none)", "alpha", "beta", "gamma"]
