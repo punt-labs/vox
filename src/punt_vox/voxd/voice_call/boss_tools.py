@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
+from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
 from punt_vox.voxd.voice_call.provenance import CallProvenance
 from punt_vox.voxd.voice_call.request_guard import RequestGuard
 from punt_vox.voxd.voice_call.steering import SteeringTool
@@ -102,6 +103,31 @@ class BossTools:
             "Stay quiet: the person is not talking to you or asked for quiet.",
             _schema({}),
         ),
+        ClientTool(
+            "search_web",
+            "Search the web for current facts and news. Returns a few short, "
+            "quoted results.",
+            _schema(
+                {"query": {"type": "string", "description": "What to search for"}},
+                "query",
+            ),
+        ),
+        ClientTool(
+            "read_docs",
+            "Ask a question about a public code repository's documentation. "
+            "Returns a short, quoted answer.",
+            _schema(
+                {
+                    "repo": {
+                        "type": "string",
+                        "description": "Public repository as owner/name",
+                    },
+                    "question": {"type": "string", "description": "The question"},
+                },
+                "repo",
+                "question",
+            ),
+        ),
     )
     # Tools that change a worker: a re-ask must replay, never repeat, them.
     _DURABLE: ClassVar[frozenset[str]] = frozenset(
@@ -115,13 +141,18 @@ class BossTools:
     )
 
     # Tools whose results carry worker-written text.
-    _UNTRUSTED: ClassVar[frozenset[str]] = frozenset({"worker_status", "list_workers"})
+    _UNTRUSTED: ClassVar[frozenset[str]] = frozenset(
+        {"worker_status", "list_workers", "search_web", "read_docs"}
+    )
+    # Tools whose arguments the call never keeps in its status or trace.
+    _PRIVATE: ClassVar[frozenset[str]] = frozenset({"search_web", "read_docs"})
 
     __slots__ = (
         "_answer",
         "_directory",
         "_guard",
         "_projects",
+        "_research",
         "_workers",
     )
     _directory: WorkerDirectory
@@ -129,6 +160,7 @@ class BossTools:
     _projects: ProjectAllowlist
     _answer: ToolAnswer
     _guard: RequestGuard
+    _research: ResearchTools
 
     def __new__(
         cls,
@@ -136,12 +168,14 @@ class BossTools:
         projects: ProjectAllowlist,
         *,
         spoken_labels: dict[str, str] | None = None,
+        research: ResearchTools | None = None,  # None: no search or docs set up.
     ) -> Self:
         """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
         self._directory = WorkerDirectory(workers, spoken_labels)
         self._answer = ToolAnswer()
+        self._research = research if research is not None else ResearchTools()
         self._guard = RequestGuard(CallProvenance(), self._directory, projects)
         return self
 
@@ -149,6 +183,11 @@ class BossTools:
     def guard(self) -> RequestGuard:
         """Return the guard that holds the call's provenance and its gate."""
         return self._guard
+
+    @classmethod
+    def keeps_arguments(cls, name: str) -> bool:
+        """Return whether a call may show a tool's arguments in its status."""
+        return name not in cls._PRIVATE
 
     @classmethod
     def tool_names(cls) -> frozenset[str]:
@@ -174,6 +213,8 @@ class BossTools:
             "list_workers": self._list,
             "stop_worker": self._stop,
             "remain_silent": self._silent,
+            "search_web": self._research.search_web,
+            "read_docs": self._research.read_docs,
         }
         operation = operations.get(name)
         if operation is None:

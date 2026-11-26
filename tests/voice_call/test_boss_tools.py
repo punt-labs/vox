@@ -23,7 +23,7 @@ from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 from .fakes import FakeWorkers, payload
 
 
-def test_catalog_names_the_six_boss_tools() -> None:
+def test_catalog_names_the_boss_and_research_tools() -> None:
     assert {tool.name for tool in BossTools.CATALOG} == {
         "start_worker",
         "steer_worker",
@@ -31,6 +31,8 @@ def test_catalog_names_the_six_boss_tools() -> None:
         "list_workers",
         "stop_worker",
         "remain_silent",
+        "search_web",
+        "read_docs",
     }
 
 

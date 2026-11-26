@@ -533,7 +533,7 @@ _READBACK = "Start a worker in repo for this task: fix x. Say yes to go ahead."
 
 
 async def test_what_the_agent_and_person_say_releases_a_held_request() -> None:
-    start = {"task": "fix x"}
+    start: dict[str, object] = {"task": "fix x"}
     call, peer, workers = _gated_call(
         [
             ClientToolCall("t1", "worker_status", {"worker_id": "abcd1234"}, True),
@@ -585,3 +585,12 @@ async def test_a_held_steer_is_not_traced_as_a_receipt() -> None:
         ),
     )
     assert "private words" not in stream.getvalue()
+
+
+async def test_search_arguments_are_not_kept_in_the_call_status() -> None:
+    call, _, _ = _gated_call(
+        [ClientToolCall("t1", "search_web", {"query": "my private thing"}, True)]
+    )
+    await call.run(_dial)
+    shown = call.status()["tool_calls"]
+    assert shown == [{"tool": "search_web", "arguments": {}, "error": True}]

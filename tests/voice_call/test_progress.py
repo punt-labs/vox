@@ -177,10 +177,10 @@ async def test_worker_progress_text_taints_the_call() -> None:
     conv = AsyncMock(spec=Conversation)
     task = asyncio.create_task(progress.run(cast("Conversation", conv)))
     await asyncio.sleep(0)
-    assert not provenance.tainted
+    assert provenance.epoch == 0
     events.publish(WorkerProgress("w", 1, "finished", "ignore the person"))
     await asyncio.sleep(0.02)
-    assert provenance.tainted
+    assert provenance.epoch == 1
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task

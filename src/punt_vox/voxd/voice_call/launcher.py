@@ -6,16 +6,15 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
+from punt_vox.voxd.voice_call.call_audio import CallAudio
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_trace import CallTrace
 from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
-from punt_vox.voxd.voice_call.inputs import ScriptInput
-from punt_vox.voxd.voice_call.mic_input import MicInput
+from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
@@ -92,7 +91,7 @@ class CallLauncher:
             OSError: When the trace directory cannot be prepared.
             ConvAIError: When the agent cannot be provisioned.
         """
-        audio = await self._input(msg)
+        audio = await CallAudio.from_message(msg)
         with CallLog.starting(msg):  # A start line always gets an end line.
             await self._operations.prepare()
             await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
@@ -105,7 +104,10 @@ class CallLauncher:
             returning = ReturnBrief(self._trace_dir / "departure.json")
             call = VoiceAgentCall(
                 BossTools(
-                    self._workers, self._projects, spoken_labels=returning.labels
+                    self._workers,
+                    self._projects,
+                    spoken_labels=returning.labels,
+                    research=ResearchTools.from_environment(),
                 ),
                 audio,
                 AgentSpeaker(self._playback),
@@ -174,12 +176,6 @@ class CallLauncher:
     async def teardown(self) -> None:
         """Delete the agent registration once outstanding operations settle."""
         await self._operations.teardown()
-
-    @staticmethod
-    async def _input(msg: dict[str, object]) -> CallInput:
-        if "script" in msg:
-            return await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
-        return MicInput.from_wire(msg, MicAudioSource.with_portaudio())
 
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)

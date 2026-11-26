@@ -19,6 +19,7 @@ from punt_vox.voxd.voice_agent.events import (
     UserTranscript,
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_outcome import CallEnd, CallOutcome
 from punt_vox.voxd.voice_call.progress import CallProgress
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
     from punt_vox.voxd.voice_agent.session import Conversation
     from punt_vox.voxd.voice_agent.trace import EventTrace
-    from punt_vox.voxd.voice_call.boss_tools import BossTools
     from punt_vox.voxd.voice_call.call_outcome import CallState
     from punt_vox.voxd.voice_call.contracts import CallInput
     from punt_vox.voxd.voice_call.progress import ProgressEvents
@@ -314,7 +314,9 @@ class VoiceAgentCall:
         self._tool_calls.append(
             {
                 "tool": call.tool_name,
-                "arguments": call.parameters,
+                "arguments": call.parameters
+                if BossTools.keeps_arguments(call.tool_name)
+                else {},
                 "error": answer.is_error,
             }
         )
