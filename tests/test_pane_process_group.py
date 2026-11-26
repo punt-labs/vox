@@ -20,6 +20,26 @@ from punt_vox.voxd.workers.records import WorkerRecords
 _PS = ["/bin/ps", "-ax", "-o", "pgid=,stat="]
 
 
+def test_wait_refuses_its_own_process_group() -> None:
+    with (
+        patch("os.getpgrp", return_value=42),
+        patch("os.killpg") as kill,
+        pytest.raises(RuntimeError, match="own process group"),
+    ):
+        PaneProcessGroup(42).wait_for_exit()
+    kill.assert_not_called()
+
+
+def test_wait_deadline_is_bounded() -> None:
+    with (
+        patch("os.getpgrp", return_value=1),
+        patch("os.killpg"),
+        patch("time.monotonic", side_effect=[0, 4]),
+        pytest.raises(RuntimeError, match="did not exit"),
+    ):
+        PaneProcessGroup(42).wait_for_exit()
+
+
 @pytest.mark.parametrize(
     ("stdout", "stderr", "error"),
     [
