@@ -172,6 +172,29 @@ def test_handle_terminates_a_real_process(
         proc.wait()
 
 
+def test_identity_reads_a_command_line_wider_than_the_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ps`` cuts its lines at ``$COLUMNS``; the identity must see past it.
+
+    The script path alone is wider than 80 columns, so a cut line loses the
+    trailing ``voxd`` wherever the interpreter lives.
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+    voxd = tmp_path / ("deep" * 25) / "voxd"
+    voxd.parent.mkdir()
+    voxd.write_text("import time; time.sleep(30)\n")
+    proc = subprocess.Popen([sys.executable, str(voxd)])
+    try:
+        seen = ProcessManager().identity(proc.pid)
+        assert seen is not None
+        assert seen.command == f"{sys.executable} {voxd}"
+        assert seen.is_voxd()
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 # ---------------------------------------------------------------------------
 # StartTimeProcess, the macOS and pre-pidfd handle
 # ---------------------------------------------------------------------------
