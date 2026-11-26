@@ -29,6 +29,13 @@ class CallControl:
         "stop_scoped": 30.0,
     }
 
+    # Teardown deletes the agent and the eight catalog tools of the current
+    # registration and of one replaced one, serially. Each delete is an
+    # ownership read then a delete, each up to the provider's 10 s limit:
+    # 2 generations x 9 resources x 2 requests x 10 s, plus a minute for
+    # locking and I/O, so a slow batch still returns the ids it refused.
+    _TEARDOWN_S: ClassVar[float] = 2 * 9 * 2 * 10.0 + 60.0
+
     def __new__(cls) -> Self:
         """Bind the call RPC family."""
         self = super().__new__(cls)
@@ -62,5 +69,4 @@ class CallControl:
 
     async def teardown(self) -> None:
         """Remove the managed agent without interpreting the unused call status."""
-        # Seven serial provider deletes at 10 seconds each, plus locking and I/O.
-        await self._rpc.request("teardown", timeout=90.0)
+        await self._rpc.request("teardown", timeout=self._TEARDOWN_S)

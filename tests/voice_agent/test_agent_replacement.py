@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
 from punt_vox.voxd.voice_agent.disposal import Disposal
 from punt_vox.voxd.voice_agent.fault import ForeignResourceError
@@ -453,3 +454,33 @@ def test_a_host_marker_that_cannot_be_written_leaves_no_file(
 def test_the_host_marker_token_is_stable_once_created(tmp_path: Path) -> None:
     config = tmp_path / _REGISTRATION
     assert HostMarker(config).text() == HostMarker(config).text()
+
+
+def test_an_id_whose_checkpoint_and_ownership_lookup_both_fail_stays_recorded(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _REGISTRATION
+    original_replace = AtomicFile.replace
+    armed = {"on": False}
+
+    def fail_checkpoint(
+        file: AtomicFile, text: str, *, mode: int | None = None
+    ) -> None:
+        if armed["on"] and json.loads(text)["pending_tools"]:
+            armed["on"] = False  # Only the checkpoint fails; the rollback may write.
+            msg = "state directory no longer writable"
+            raise PermissionError(msg)
+        original_replace(file, text, mode=mode)
+
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = _provision_clock(control, config, wire)
+        monkeypatch.setattr(AtomicFile, "replace", fail_checkpoint)
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.lookup_body = b"<html>gateway error</html>"
+        wire.delete_tool_status = 200
+        armed["on"] = True
+        with pytest.raises(ConvAIError, match="delete it manually"):
+            agent.connection((_ALARM,))
+    stored = _stored(config)
+    assert stored["retired_tools"] == ["tool_alarm"]
+    assert stored["tool_ids"] == ["tool_clock"]

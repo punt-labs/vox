@@ -46,3 +46,11 @@ def test_failure_names_an_exception_by_type_and_safe_message(
     exc: BaseException, expected: str
 ) -> None:
     assert LogText.failure(exc) == expected
+
+
+def test_failure_includes_the_notes_attached_to_the_exception() -> None:
+    exc = RuntimeError("create failed")
+    exc.add_note("cleanup after the failure also failed: ConvAIError('tool t')")
+    rendered = LogText.failure(exc)
+    assert rendered.startswith("RuntimeError: create failed")
+    assert "cleanup after the failure also failed" in rendered

@@ -27,9 +27,12 @@ class LogText:
         """Name an exception as ``Type: message``, the message made safe.
 
         An ``OSError`` that carries an errno has it appended, so a line whose
-        path was redacted still says which system failure it was.
+        path was redacted still says which system failure it was. Notes added
+        to the exception follow in brackets, so a secondary failure noted
+        during cleanup is not lost.
         """
         named = cls.reason(f"{type(exc).__name__}: {exc}").removesuffix(": ")
         if isinstance(exc, OSError) and exc.errno is not None:
-            return f"{named}, errno {exc.errno}"
-        return named
+            named = f"{named}, errno {exc.errno}"
+        notes = getattr(exc, "__notes__", ())
+        return named + "".join(f" [{cls.reason(note)}]" for note in notes)

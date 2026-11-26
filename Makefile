@@ -177,7 +177,7 @@ coverage: install ## Measure line and branch coverage across all credential-free
 
 COVERAGE_BASE ?=
 
-coverage-compare: ## Publish coverage; reject regressions when COVERAGE_BASE names a base JSON report
+coverage-compare: ## Publish coverage and enforce the 95% line and branch floor
 	uv run python tools/compare_coverage.py coverage.json $(if $(COVERAGE_BASE),--base "$(COVERAGE_BASE)")
 
 # LaTeX intermediate files to remove after compilation

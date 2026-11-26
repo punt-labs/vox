@@ -67,13 +67,13 @@ class Replacement:
             marker = self._marker.text()
             for tool in tools:
                 tool_id = self._control.create_tool(tool, marker)
-                grown = replace(record, pending_tools=(*record.pending_tools, tool_id))
-                self._checkpoint(grown, tool_id, "tool", self._disposal.tool)
-                record = grown
+                # Held in memory before it is saved, so a failed save still
+                # leaves the id in the rollback record.
+                record = replace(record, pending_tools=(*record.pending_tools, tool_id))
+                self._checkpoint(record, tool_id, "tool", self._disposal.tool)
             agent_id = self._control.create_agent(record.pending_tools, marker)
-            grown = replace(record, pending_agents=(agent_id,))
-            self._checkpoint(grown, agent_id, "agent", self._disposal.agent)
-            record = grown
+            record = replace(record, pending_agents=(agent_id,))
+            self._checkpoint(record, agent_id, "agent", self._disposal.agent)
             finished = Registration(
                 agent_id,
                 record.pending_tools,

@@ -12,10 +12,11 @@ from punt_vox.voxd.voice_agent.reply import Reply
 if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import CreateConfig
 
-__all__ = ["SIGNED_URL", "UNKNOWN_CREATE", "Wire"]
+__all__ = ["REQUEST_TIMEOUT_S", "SIGNED_URL", "UNKNOWN_CREATE", "Wire"]
 
 SIGNED_URL: Final = "/conversation/get-signed-url"
 UNKNOWN_CREATE: Final = "; check the ElevenLabs workspace for an unrecorded resource"
+REQUEST_TIMEOUT_S: Final = 10.0  # Per request; a delete is a read, then a delete.
 _CONVAI: Final = "/v1/convai"
 
 
@@ -30,7 +31,9 @@ class Wire:
         """Connect to *base_url*, sending *api_key* with every request."""
         self = super().__new__(cls)
         self._http = httpx.Client(
-            base_url=base_url, headers={"xi-api-key": api_key}, timeout=10.0
+            base_url=base_url,
+            headers={"xi-api-key": api_key},
+            timeout=REQUEST_TIMEOUT_S,
         )
         return self
 
