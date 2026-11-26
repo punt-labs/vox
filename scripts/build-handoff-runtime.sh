@@ -43,36 +43,48 @@ ln -s ../lib/node_modules/npm/bin/npx-cli.js "$runtime/node/bin/npx"
 isolated=(env -i "HOME=$work/home" "TMPDIR=$work/tmp"
     "PATH=$runtime/bin:$runtime/node/bin:/usr/bin:/bin" LC_ALL=C TZ=UTC PYTHONDONTWRITEBYTECODE=1)
 python_env=("${isolated[@]}" "UV_PYTHON_INSTALL_DIR=$work/python" "UV_CACHE_DIR=$work/python-cache")
-"${python_env[@]}" uv --no-config python install "${VOX_RUNTIME_PYTHON:-$python_version}" --no-bin >&2
+"${python_env[@]}" uv --no-config python install "$python_version" --no-bin >&2
 python_tool=$("${python_env[@]}" uv --no-config python find --managed-python --no-project --system "$python_version")
-python_home=$("$python_tool" -I -c 'import sys; print(sys.base_prefix)')
+python_home=$("${isolated[@]}" "$python_tool" -I -c 'import sys; print(sys.base_prefix)')
 mv -- "$python_home" "$runtime/python"
-python_tool=$runtime/python/bin/python$python_version
-uv_env=("${isolated[@]}" "UV_PYTHON=$runtime/python/bin/python$python_version"
+python_tool=$runtime/python/bin/python3
+if [[ ! -x $python_tool ]]; then
+    printf 'Managed Python has no bin/python3: %s\n' "$python_home" >&2
+    exit 1
+fi
+uv_env=("${isolated[@]}" "UV_PYTHON=$python_tool"
     UV_PYTHON_DOWNLOADS=never "UV_CACHE_DIR=$runtime/cache/uv"
     "UV_PROJECT_ENVIRONMENT=$work/venv" UV_LINK_MODE=copy)
 
 # Seed only locked dependencies and the build backend, not the checkout's
 # editable wheel. The gate creates that wheel at the actual snapshot path.
-"${uv_env[@]}" uv --directory "$repo" sync --locked --group docs --no-install-project >&2
-"$python_tool" -c '
+"${isolated[@]}" "$python_tool" -I -c '
 import sys, tomllib
 with open(sys.argv[1], "rb") as config:
-    print(*tomllib.load(config)["build-system"]["requires"], sep="\n")
-' "$repo/pyproject.toml" > "$work/build-requirements.txt"
-"${uv_env[@]}" uv pip install --python "$work/venv/bin/python" \
-    --requirement "$work/build-requirements.txt" >&2
+    project = tomllib.load(config)
+if set(project["build-system"]["requires"]) != set(project["dependency-groups"]["handoff-runtime"]):
+    sys.exit("Update the handoff-runtime dependency group to match build-system.requires.")
+' "$repo/pyproject.toml"
+"${uv_env[@]}" uv --directory "$repo" sync --locked --group docs \
+    --group handoff-runtime --no-install-project >&2
 
 "${isolated[@]}" "npm_config_cache=$runtime/cache/npm" npm_config_ignore_scripts=true \
     npm_config_audit=false npm_config_fund=false npm_config_update_notifier=false \
     make -C "$repo" handoff-runtime-npm-cache >&2
 rm -rf -- "$runtime/cache/npm/_logs"
 rm -f -- "$runtime/cache/npm/_update-notifier-last-checked"
+{
+    "${isolated[@]}" uv --version
+    "${isolated[@]}" "$python_tool" --version
+    "${isolated[@]}" node --version
+    "${isolated[@]}" npm --version
+    "${isolated[@]}" shellcheck --version
+} > "$runtime/versions.txt"
 
 # Normalize archive headers; package-manager cache contents can change on a
 # fresh fetch. Pin the digest of the published bytes, not a local rebuild.
 LC_ALL=C "$tar_tool" --sort=name --format=gnu --mtime=@0 --numeric-owner \
-    --owner=0 --group=0 --hard-dereference -C "$runtime" -cf - bin cache node python \
+    --owner=0 --group=0 --hard-dereference -C "$runtime" -cf - bin cache node python versions.txt \
     | gzip -n > "$work/runtime.tar.gz"
 sha=$("$python_tool" -c '
 import hashlib, sys

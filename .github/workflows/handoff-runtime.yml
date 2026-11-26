@@ -37,6 +37,15 @@ jobs:
             shellcheck-platform: darwin.aarch64
             shellcheck-sha: 339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f
     steps:
+      - name: Validate runtime release request
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main || ! "$TAG" =~ ^handoff-runtime-v[1-9][0-9]*$ ]]; then
+            echo 'Dispatch on main with a new handoff-runtime-vN tag.' >&2
+            exit 2
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -56,7 +65,8 @@ jobs:
         run: |
           cd "$RUNNER_TEMP"
           asset="shellcheck-v0.11.0.$SHELLCHECK_PLATFORM.tar.gz"
-          curl --fail --silent --show-error --location --output "$asset" \
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error \
+            --connect-timeout 15 --max-time 180 --location --output "$asset" \
             "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/$asset"
           printf '%s  %s\n' "$SHELLCHECK_SHA" "$asset" | shasum -a 256 --check
           tar -xzf "$asset"
@@ -64,7 +74,6 @@ jobs:
       - name: Package the offline runtime
         env:
           PLATFORM: ${{ matrix.platform }}
-          VOX_RUNTIME_PYTHON: "3.13.18"
         run: |
           mkdir runtime-assets
           archive=$(scripts/build-handoff-runtime.sh runtime-assets)
@@ -81,10 +90,14 @@ jobs:
           mkdir "$scratch/runtime" "$scratch/home" "$scratch/tmp"
           tar -xzf "runtime-assets/vox-handoff-$PLATFORM.tar.gz" -C "$scratch/runtime"
           runtime="$scratch/runtime"
-          python_version=$(cat .python-version)
-          env -i HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+          if [[ $RUNNER_OS == Linux ]]; then
+            offline=(sudo unshare --net --setuid "$(id -u)" --setgid "$(id -g)" --)
+          else
+            offline=(sandbox-exec -p '(version 1) (allow default) (deny network*)')
+          fi
+          "${offline[@]}" env -i HOME="$scratch/home" TMPDIR="$scratch/tmp" \
             PATH="$runtime/bin:$runtime/node/bin:/usr/bin:/bin" \
-            UV_PYTHON="$runtime/python/bin/python$python_version" \
+            UV_PYTHON="$runtime/python/bin/python3" \
             UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
             UV_CACHE_DIR="$runtime/cache/uv" UV_PROJECT_ENVIRONMENT="$scratch/venv" \
             npm_config_cache="$runtime/cache/npm" npm_config_offline=true \
@@ -117,14 +130,15 @@ jobs:
         run: |
           [[ "$TAG" =~ ^handoff-runtime-v[1-9][0-9]*$ ]] || { echo 'Invalid runtime tag' >&2; exit 2; }
           cd runtime-assets
-          sha256sum --check ./*.sha256
+          sha256sum --check vox-handoff-linux-amd64.tar.gz.sha256 vox-handoff-darwin-arm64.tar.gz.sha256
           gh release create "$TAG" ./*.tar.gz ./*.sha256 --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --target "$GITHUB_SHA" --draft --prerelease --latest=false \
             --title "Vox handoff runtime $TAG" --notes-file - <<'NOTES'
           Offline toolchains for the Vox Ethos handoff gate.
 
           Upstream tool sources: [ShellCheck](https://github.com/koalaman/shellcheck/tree/v0.11.0),
           [uv](https://github.com/astral-sh/uv/tree/0.13.9),
-          [Python](https://github.com/python/cpython/tree/v3.13.18),
+          [Python](https://github.com/python/cpython),
           [Node.js](https://github.com/nodejs/node/tree/v24.22.3).
           NOTES
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false

@@ -64,14 +64,17 @@ not before every commit.
 
 For snapshot-enabled Ethos, `make handoff-runtime` installs the version pinned
 by this checkout on Linux x86-64 or macOS ARM64. Run it once on a new machine
-and again when the pin changes. It checks the release archive's SHA-256 before
-installing it under `~/.punt-labs/ethos/runtimes/`. The gate never downloads it.
+and again when the pin changes. It needs Python 3 and curl, and checks the
+archive's SHA-256 before installing it under `~/.punt-labs/ethos/runtimes/`.
+The gate never downloads it.
 
 To refresh the pins after a toolchain or dependency change, dispatch **Handoff
 runtime** on `main` with the next `handoff-runtime-vN` tag. Use the release
 asset URLs and their companion SHA-256 files to update the profile. Do not
 derive a pin by rebuilding locally: the archive headers are normalized, but
 package-manager caches can record fetch metadata.
+Keep the sidecar in JSON syntax (valid YAML) so the installer can read it
+using the standard library, with no download before it verifies the runtime.
 
 ## Level 1 — The backlog loop
 

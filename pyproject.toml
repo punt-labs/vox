@@ -130,6 +130,10 @@ docs = [
     "mkdocstrings[python]>=1.0.8",
 ]
 
+# Keep this group's pin equal to build-system.requires. The runtime builder
+# seeds the locked backend wheel for offline editable installs.
+handoff-runtime = ["uv_build==0.13.1"]
+
 [build-system]
 requires = ["uv_build==0.13.1"]
 build-backend = "uv_build"

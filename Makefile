@@ -100,7 +100,7 @@ check: lint type docs build-api-docs test check-oo check-coupling check-suppress
 
 .PHONY: handoff-runtime handoff-runtime-npm-cache
 handoff-runtime: ## Install the pinned offline runtime for Ethos handoff checks
-	bash scripts/install-handoff-runtime.sh
+	./scripts/install-handoff-runtime.sh
 
 handoff-runtime-npm-cache:
 	npx --yes --package=$(MARKDOWNLINT_CLI) -- node --version
