@@ -215,6 +215,7 @@ class TestWritableConfigDir:
         assert writable_config_dir(child) == no_config_dir / DEFAULT_CONFIG_DIR
         assert not (no_config_dir / DEFAULT_CONFIG_DIR).exists()
 
+    @pytest.mark.subprocess
     def test_first_write_ignores_local_state(self, no_config_dir: Path) -> None:
         repo = no_config_dir
         child = repo / "a" / "b"
