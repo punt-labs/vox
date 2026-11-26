@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import Registration
 from punt_vox.voxd.voice_agent.disposal import Undeleted
-from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.fault import ConvAIError, UnknownCreateError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,34 +85,69 @@ class Replacement:
             self._store.write(finished)
         except Exception as failure:
             try:
-                self._abandon(record)
+                self._abandon(record, sweep=isinstance(failure, UnknownCreateError))
             except (ConvAIError, OSError) as cleanup:
                 # Cleanup must never replace the failure that started it.
                 failure.add_note(f"cleanup after the failure also failed: {cleanup!r}")
             raise
         return finished, agent_id
 
-    def _abandon(self, record: Registration) -> None:
-        """Delete what the attempt created and restore the old registration."""
-        kept_agents = Undeleted.ids(self._disposal.agents(record.pending_agents))
-        kept_tools = Undeleted.ids(self._disposal.tools(record.pending_tools))
+    def _abandon(self, record: Registration, *, sweep: bool) -> None:
+        """Delete what the attempt created and restore the old registration.
+
+        With *sweep*, a create whose reply was lost may have left a resource no
+        record names; the account is searched for it too. A failed search is
+        raised only after the rest of the rollback is done.
+        """
+        agents, tools = record.pending_agents, record.pending_tools
+        sweep_failure: ConvAIError | None = None
+        if sweep:
+            try:
+                found_agents, found_tools = self._unrecorded(record)
+                agents, tools = (*agents, *found_agents), (*tools, *found_tools)
+            except ConvAIError as exc:
+                sweep_failure = exc
+        kept_agents = Undeleted.ids(self._disposal.agents(agents))
+        kept_tools = Undeleted.ids(self._disposal.tools(tools))
         base = self._base
         try:
             if base is None and not (kept_agents or kept_tools):
                 self._store.remove()
-                return
-            base = base or Registration(None, (), "", self._control.credential_id)
-            self._store.write(
-                replace(
-                    base,
-                    retired_agents=(*base.retired_agents, *kept_agents),
-                    retired_tools=(*base.retired_tools, *kept_tools),
+            else:
+                base = base or Registration(None, (), "", self._control.credential_id)
+                self._store.write(
+                    replace(
+                        base,
+                        retired_agents=(*base.retired_agents, *kept_agents),
+                        retired_tools=(*base.retired_tools, *kept_tools),
+                    )
                 )
-            )
         except OSError as exc:
             # The intent on disk still names what the file recorded, so the
             # next retirement finishes the job.
             logger.warning("Could not restore the voice agent registration: %s", exc)
+        if sweep_failure is not None:
+            raise sweep_failure
+
+    def _unrecorded(
+        self, record: Registration
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Return this host's marked agents and tools that no record names."""
+        marker = self._marker.text()
+        named_agents = {*record.agents, *(self._base.agents if self._base else ())}
+        named_tools = {*record.tools, *(self._base.tools if self._base else ())}
+        return (
+            tuple(
+                a
+                for a in self._control.listing.marked_agents(marker)
+                if a not in named_agents
+            ),
+            tuple(
+                t
+                for t in self._control.listing.marked_tools(marker)
+                if t not in named_tools
+            ),
+        )
 
     def _checkpoint(
         self,

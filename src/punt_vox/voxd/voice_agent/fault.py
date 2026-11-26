@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ConvAIError", "ForeignResourceError"]
+__all__ = ["ConvAIError", "ForeignResourceError", "UnknownCreateError"]
 
 
 class ConvAIError(RuntimeError):
@@ -11,3 +11,7 @@ class ConvAIError(RuntimeError):
 
 class ForeignResourceError(ConvAIError):
     """Refuse to delete a remote resource that voxd on this host did not create."""
+
+
+class UnknownCreateError(ConvAIError):
+    """Report a create whose outcome is unknown: it may have committed remotely."""

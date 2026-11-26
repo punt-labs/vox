@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 import httpx
 
-from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.fault import ConvAIError, UnknownCreateError
 from punt_vox.voxd.voice_agent.reply import Reply
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ class Wire:
         except httpx.HTTPError as exc:
             msg = f"ElevenLabs {method} {path} failed ({type(exc).__name__})"
             if method == "POST":
-                msg += UNKNOWN_CREATE
+                raise UnknownCreateError(msg + UNKNOWN_CREATE) from None
             raise ConvAIError(msg) from None
         if response.is_success or (tolerate_404 and response.status_code == 404):
             return Reply(response)
