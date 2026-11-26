@@ -94,18 +94,17 @@ class SynthesisPipeline:
                     return cached
                 with ApiKeyEnv(provider_name, spec.api_key).applied():
                     provider = get_provider(provider_name, model=spec.model)
-                    output_path = await TempFileSynthesis(
-                        provider, request, len(text)
-                    ).run()
+                    path = await TempFileSynthesis(provider, request, len(text)).run()
+                    output = SynthesisOutcome(path=path, cached=False)
 
                     # Report caching only when the anonymous write succeeds.
-                    cached_path = lookup.store(output_path)
+                    cached_path = await lookup.store(output)
                     logger.info(
                         "synthesized %d chars%s",
                         len(text),
                         ", cached" if cached_path else "",
                     )
-                    return SynthesisOutcome(path=output_path, cached=False)
+                    return output
 
     async def try_direct_play(
         self,

@@ -26,6 +26,8 @@ import shutil
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import Lock
+from typing import Self
 
 from punt_vox.paths import user_state_dir
 
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_DIR = user_state_dir() / "cache"
 MAX_ENTRIES = 500
+_LOCK = Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,16 +84,19 @@ def cache_get(key: CacheKey) -> Path | None:
     bypass this layer entirely at the voxd call site so no sensitive
     data ever reaches this function.
     """
-    path = key.path_in(CACHE_DIR)
-    try:
-        if path.stat().st_size == 0:
-            logger.debug("Cache hit but empty file, treating as miss: %s", path.name)
-            path.unlink(missing_ok=True)
+    with _LOCK:
+        path = key.path_in(CACHE_DIR)
+        try:
+            if path.stat().st_size == 0:
+                logger.debug(
+                    "Cache hit but empty file, treating as miss: %s", path.name
+                )
+                path.unlink(missing_ok=True)
+                return None
+            os.utime(path, None)
+        except FileNotFoundError:
             return None
-        os.utime(path, None)
-    except FileNotFoundError:
-        return None
-    logger.debug("Cache hit: %s", path.name)
+        logger.debug("Cache hit: %s", path.name)
     return path
 
 
@@ -106,42 +112,54 @@ def cache_put(key: CacheKey, source: Path) -> Path | None:
     if not source.exists() or source.stat().st_size == 0:
         return None
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    dest = key.path_in(CACHE_DIR)
-
-    # Reject symlinks to prevent local symlink attacks
-    if dest.is_symlink():
-        logger.warning("Cache put: refusing symlink target %s", dest)
-        return None
-
-    # Atomic write: copy to unique temp, then rename into place.
-    # mkstemp guarantees no race if multiple processes cache concurrently.
-    fd, tmp_str = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tmp")
-    tmp = Path(tmp_str)
-    try:
-        os.close(fd)
-        shutil.copy2(source, tmp)
-        tmp.rename(dest)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    logger.debug("Cache put: %s -> %s", source.name, dest.name)
-
-    _evict_if_needed()
-    return dest
+    with _LOCK:
+        return _CacheWrite(source).publish(key.path_in(CACHE_DIR))
 
 
-def _evict_if_needed() -> None:
-    """Delete oldest entries by mtime when cache exceeds MAX_ENTRIES."""
-    if not CACHE_DIR.exists():
-        return
-    entries = sorted(CACHE_DIR.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
-    excess = len(entries) - MAX_ENTRIES
-    if excess <= 0:
-        return
-    for path in entries[:excess]:
-        path.unlink(missing_ok=True)
-        logger.debug("Cache evict: %s", path.name)
+class _CacheWrite:
+    """Publish one synthesized file atomically before evicting stale entries."""
+
+    __slots__ = ("_source",)
+    _source: Path
+
+    def __new__(cls, source: Path) -> Self:
+        """Bind the file to publish."""
+        self = super().__new__(cls)
+        self._source = source
+        return self
+
+    def publish(self, dest: Path) -> Path | None:
+        """Commit the staged copy and keep the destination directory bounded."""
+        dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Reject symlinks to prevent local symlink attacks
+        if dest.is_symlink():
+            logger.warning("Cache put: refusing symlink target %s", dest)
+            return None
+        self._stage(dest)
+        logger.debug("Cache put: %s -> %s", self._source.name, dest.name)
+        self._evict_if_needed(dest.parent)
+        return dest
+
+    def _stage(self, dest: Path) -> None:
+        # Atomic write: copy to unique temp, then rename into place.
+        # mkstemp guarantees no race if multiple processes cache concurrently.
+        fd, tmp_str = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
+        tmp = Path(tmp_str)
+        try:
+            os.close(fd)
+            shutil.copy2(self._source, tmp)
+            tmp.rename(dest)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _evict_if_needed(directory: Path) -> None:
+        """Delete oldest entries by mtime when cache exceeds MAX_ENTRIES."""
+        entries = sorted(directory.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+        for path in entries[: max(0, len(entries) - MAX_ENTRIES)]:
+            path.unlink(missing_ok=True)
+            logger.debug("Cache evict: %s", path.name)
 
 
 def cache_clear() -> int:
@@ -149,11 +167,12 @@ def cache_clear() -> int:
 
     Returns the number of files deleted.
     """
-    if not CACHE_DIR.exists():
-        return 0
-    files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
-    for f in files:
-        f.unlink(missing_ok=True)
+    with _LOCK:
+        if not CACHE_DIR.exists():
+            return 0
+        files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
+        for f in files:
+            f.unlink(missing_ok=True)
     logger.info("Cache cleared: %d files", len(files))
     return len(files)
 
@@ -169,8 +188,9 @@ class CacheInfo:
 
 def cache_status() -> CacheInfo:
     """Return current cache statistics (includes orphaned .tmp files)."""
-    if not CACHE_DIR.exists():
-        return CacheInfo(entries=0, size_bytes=0, path=CACHE_DIR)
-    files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
-    total_size = sum(f.stat().st_size for f in files)
-    return CacheInfo(entries=len(files), size_bytes=total_size, path=CACHE_DIR)
+    with _LOCK:
+        if not CACHE_DIR.exists():
+            return CacheInfo(entries=0, size_bytes=0, path=CACHE_DIR)
+        files = list(CACHE_DIR.glob("*.mp3")) + list(CACHE_DIR.glob("*.tmp"))
+        total_size = sum(f.stat().st_size for f in files)
+        return CacheInfo(entries=len(files), size_bytes=total_size, path=CACHE_DIR)

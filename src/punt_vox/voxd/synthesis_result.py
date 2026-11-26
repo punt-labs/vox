@@ -68,11 +68,13 @@ class SynthesisOutcome:
         except OSError as exc:
             logger.warning("Could not remove synthesized audio %s: %s", self.path, exc)
 
-    def discard_after[T](self, work: asyncio.Future[T]) -> None:
+    def discard_after[T](
+        self, work: asyncio.Future[T], *, operation: str = "recording write"
+    ) -> None:
         """Release audio when a worker is done, even if its caller cancelled."""
         self.discard()
         if not work.cancelled() and (exc := work.exception()) is not None:
-            logger.warning("Abandoned recording write failed: %s", exc)
+            logger.warning("Abandoned %s failed: %s", operation, exc)
 
     @staticmethod
     def _discard_unclaimed[T: SynthesisOutcome](work: asyncio.Future[T | None]) -> None:

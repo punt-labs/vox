@@ -14,15 +14,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING, cast, final
 
-from punt_vox import dirs, paths
-from punt_vox.cache import CacheInfo
-from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
+import pytest
+
+from punt_vox import cache, dirs, paths
+from punt_vox.cache import CacheInfo, CacheKey
+from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.voxd.cache_handlers import CacheHandler
+from punt_vox.voxd.synthesis_cache import SynthesisCache
+from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 if TYPE_CHECKING:
-    import pytest
     from starlette.websockets import WebSocket
 
 
@@ -35,6 +42,77 @@ def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
             sent.append(payload)
 
     return cast("WebSocket", _WS()), sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verb", ["status", "clear"])
+async def test_slow_scan_does_not_block_the_loop(verb: str) -> None:
+    """The loop must release the scan while the offloaded handler is waiting."""
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = Event()
+
+    def scan[T](result: T) -> T:
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(1), "cache scan blocked the event loop"
+        return result
+
+    handler: Callable[[dict[str, object], WebSocket], Coroutine[None, None, None]]
+    if verb == "status":
+        handler = CacheHandler.status(lambda: scan(CacheInfo(0, 0, Path("cache"))))
+    else:
+        handler = CacheHandler.clear(lambda: scan(0))
+    ws, sent = _capturing_ws()
+    work = asyncio.create_task(handler({"id": "r1"}, ws))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert not work.done()
+    finally:
+        release.set()
+        await work
+    assert sent[-1]["id"] == "r1"
+
+
+@pytest.mark.asyncio
+async def test_clear_waits_for_synthesis_cache_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clear must not remove a live cache staging file or miss its published MP3."""
+    directory = tmp_path / "cache"
+    monkeypatch.setattr(cache, "CACHE_DIR", directory)
+    source = tmp_path / "output.mp3"
+    source.write_bytes(b"audio")
+    loop = asyncio.get_running_loop()
+    writing, clearing = asyncio.Event(), asyncio.Event()
+    release = Event()
+    copy2 = shutil.copy2
+
+    def pause_write(src: Path, dst: Path) -> None:
+        loop.call_soon_threadsafe(writing.set)
+        assert release.wait(5), "test did not release the cache writer"
+        copy2(src, dst)
+
+    def clear() -> int:
+        loop.call_soon_threadsafe(clearing.set)
+        return cache.cache_clear()
+
+    monkeypatch.setattr(shutil, "copy2", pause_write)
+    lookup = SynthesisCache(CacheKey("text", None, None), SynthesisSpec(), 4)
+    ws, sent = _capturing_ws()
+    store = asyncio.create_task(lookup.store(SynthesisOutcome(source, False)))
+    try:
+        await asyncio.wait_for(writing.wait(), timeout=5)
+        request = asyncio.create_task(CacheHandler.clear(clear)({"id": "c3"}, ws))
+        await asyncio.wait_for(clearing.wait(), timeout=5)
+        done, _ = await asyncio.wait({request}, timeout=0.05)
+        assert not done
+    finally:
+        release.set()
+        published = await store
+    await request
+    assert published is not None
+    assert not list(directory.iterdir())
+    assert sent == [{"type": "cache_cleared", "id": "c3", "cleared": 1}]
 
 
 class TestCacheStatus:
@@ -53,7 +131,7 @@ class TestCacheStatus:
         monkeypatch.setattr(dirs, "default_output_dir", lambda: state / "out")
         info = CacheInfo(entries=3, size_bytes=2048, path=state / "cache")
         ws, sent = _capturing_ws()
-        asyncio.run(CacheStatusHandler(lambda: info)({"id": "s1"}, ws))
+        asyncio.run(CacheHandler.status(lambda: info)({"id": "s1"}, ws))
         assert sent[-1] == {
             "type": "cache_status",
             "id": "s1",
@@ -67,7 +145,7 @@ class TestCacheStatus:
         """A path under neither root falls back to the bare name, never a prefix."""
         info = CacheInfo(entries=0, size_bytes=0, path=Path("/daemon/home/user/cache"))
         ws, sent = _capturing_ws()
-        asyncio.run(CacheStatusHandler(lambda: info)({"id": "s2"}, ws))
+        asyncio.run(CacheHandler.status(lambda: info)({"id": "s2"}, ws))
         assert sent[-1]["path"] == "cache"  # bare name, no home/username prefix
         assert sent[-1]["entries"] == 0
         assert sent[-1]["size_bytes"] == 0
@@ -89,7 +167,7 @@ class TestCacheStatus:
 
         ws, sent = _capturing_ws()
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            asyncio.run(CacheStatusHandler(boom)({"id": "s9"}, ws))
+            asyncio.run(CacheHandler.status(boom)({"id": "s9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "s9"
         # An OSError with no in-jail filename carries no relative form -- the wire
@@ -107,12 +185,12 @@ class TestCacheStatus:
 class TestCacheClear:
     def test_reply_mirrors_delete_count(self) -> None:
         ws, sent = _capturing_ws()
-        asyncio.run(CacheClearHandler(lambda: 7)({"id": "c1"}, ws))
+        asyncio.run(CacheHandler.clear(lambda: 7)({"id": "c1"}, ws))
         assert sent[-1] == {"type": "cache_cleared", "id": "c1", "cleared": 7}
 
     def test_nothing_to_clear_reports_zero(self) -> None:
         ws, sent = _capturing_ws()
-        asyncio.run(CacheClearHandler(lambda: 0)({"id": "c2"}, ws))
+        asyncio.run(CacheHandler.clear(lambda: 0)({"id": "c2"}, ws))
         assert sent[-1] == {"type": "cache_cleared", "id": "c2", "cleared": 0}
 
     def test_unlink_io_error_is_an_operational_fault(
@@ -130,7 +208,7 @@ class TestCacheClear:
 
         ws, sent = _capturing_ws()
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
-            asyncio.run(CacheClearHandler(boom)({"id": "c9"}, ws))
+            asyncio.run(CacheHandler.clear(boom)({"id": "c9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "c9"
         # No in-jail filename on the OSError -- the wire is the generic verdict,

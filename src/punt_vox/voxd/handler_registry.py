@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.cache import cache_clear, cache_status
 from punt_vox.logging_config import apply_log_level
-from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
+from punt_vox.voxd.cache_handlers import CacheHandler
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
@@ -74,8 +74,8 @@ class HandlerRegistry:
             **RecordingHandlers.build(
                 self._synthesis, self._playback, self._programs.library
             ),
-            "cache_status": CacheStatusHandler(cache_status),
-            "cache_clear": CacheClearHandler(cache_clear),
+            "cache_status": CacheHandler.status(cache_status),
+            "cache_clear": CacheHandler.clear(cache_clear),
             "set_log_level": LogLevelHandler(apply_log_level),
             **SystemRoutes.build(
                 playback=self._playback,
