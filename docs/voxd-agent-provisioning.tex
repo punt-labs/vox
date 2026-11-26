@@ -1,0 +1,244 @@
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage{fuzz}
+
+\begin{document}
+\title{Voxd Voice Agent Provisioning Lifecycle}
+\maketitle
+
+\section{Scope}
+
+Voxd provisions ElevenLabs resources for the voice call: one agent at a
+time that new calls use, plus the tools that agent owns. The model covers
+what the registration file records, what exists remotely, and the gap
+between them that a lost file or a crash leaves behind. Replacing the
+configuration builds a new agent beside the active one and swaps it in;
+the old agent is deleted only when no call rides it. Voxd never writes to
+an existing agent, so it cannot replace a person's unpublished dashboard
+draft. Tools are created for one agent and deleted with it. A deleted
+agent's tools go with it.
+
+Resources voxd did not create are outside the model. \texttt{tagged} holds
+the agents whose name carries voxd's marker, so a sweep can only ever
+reach an agent voxd named.
+
+\begin{zed}
+  [AGENTID, TOOLID]
+\end{zed}
+
+\begin{schema}{Lifecycle}
+  active, building, retired : \power AGENTID \\
+  fileTools : \power TOOLID \\
+  busy : \power AGENTID \\
+  remoteAgents, tagged : \power AGENTID \\
+  remoteTools : \power TOOLID \\
+  attached : AGENTID \pfun \power TOOLID
+\where
+  \# active \leq 1 \land \# building \leq 1 \\
+  active \cap building = \emptyset \\
+  active \cap retired = \emptyset \\
+  building \cap retired = \emptyset \\
+  active \cup building \cup retired \subseteq tagged \\
+  tagged \subseteq remoteAgents \\
+  \dom attached = remoteAgents \\
+  \bigcup (\ran attached) \subseteq remoteTools \\
+  fileTools \subseteq remoteTools \\
+  busy \subseteq remoteAgents
+\end{schema}
+
+\texttt{active} is the agent new calls use, \texttt{building} the one
+being provisioned, \texttt{retired} the replaced agents awaiting deletion.
+The registration file is absent exactly when all three are empty and
+\texttt{fileTools} is empty. \texttt{busy} holds the agents a call is
+using now; it is daemon memory, not a file field.
+
+\begin{schema}{InitLifecycle}
+  Lifecycle'
+\where
+  active' = \emptyset \land building' = \emptyset \land retired' = \emptyset \\
+  fileTools' = \emptyset \land busy' = \emptyset \\
+  remoteAgents' = \emptyset \land tagged' = \emptyset \\
+  remoteTools' = \emptyset \land attached' = \emptyset
+\end{schema}
+
+\section{Building and swapping}
+
+The agent is created first, marked, and recorded; each tool is then
+created for it. A crash after a create and before its record is the only
+way a remote resource goes unrecorded while the file survives.
+
+\begin{schema}{BeginBuild}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  building = \emptyset \land agent? \notin remoteAgents \\
+  building' = \{agent?\} \\
+  remoteAgents' = remoteAgents \cup \{agent?\} \\
+  tagged' = tagged \cup \{agent?\} \\
+  attached' = attached \cup \{agent? \mapsto \emptyset\} \\
+  active' = active \land retired' = retired \\
+  fileTools' = fileTools \land busy' = busy \\
+  remoteTools' = remoteTools
+\end{schema}
+
+\begin{schema}{BuildTool}
+  \Delta Lifecycle \\
+  agent? : AGENTID \\
+  tool? : TOOLID
+\where
+  agent? \in building \land tool? \notin remoteTools \\
+  remoteTools' = remoteTools \cup \{tool?\} \\
+  fileTools' = fileTools \cup \{tool?\} \\
+  attached' = attached \oplus
+    \{agent? \mapsto attached~agent? \cup \{tool?\}\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  busy' = busy \\
+  remoteAgents' = remoteAgents \land tagged' = tagged
+\end{schema}
+
+\begin{schema}{Publish}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in building \\
+  building' = \emptyset \land active' = \{agent?\} \\
+  retired' = retired \cup active \\
+  fileTools' = fileTools \land busy' = busy \\
+  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  remoteTools' = remoteTools \land attached' = attached
+\end{schema}
+
+\section{Calls}
+
+A call rides the agent that was active when it started. A replacement
+therefore never ends a call, and a deletion never touches a busy agent.
+
+\begin{schema}{StartCall}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in active \\
+  busy' = busy \cup \{agent?\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  fileTools' = fileTools \\
+  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  remoteTools' = remoteTools \land attached' = attached
+\end{schema}
+
+\texttt{EndLastCall} models the end of the last call on the agent; the
+implementation counts calls and runs this when the count reaches zero.
+
+\begin{schema}{EndLastCall}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in busy \\
+  busy' = busy \setminus \{agent?\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  fileTools' = fileTools \\
+  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  remoteTools' = remoteTools \land attached' = attached
+\end{schema}
+
+\section{Deletion}
+
+\begin{schema}{DeleteRecorded}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in active \cup building \cup retired \\
+  agent? \notin busy \\
+  active' = active \setminus \{agent?\} \\
+  building' = building \setminus \{agent?\} \\
+  retired' = retired \setminus \{agent?\} \\
+  remoteAgents' = remoteAgents \setminus \{agent?\} \\
+  tagged' = tagged \setminus \{agent?\} \\
+  attached' = \{agent?\} \ndres attached \\
+  remoteTools' = remoteTools \setminus attached~agent? \\
+  fileTools' = fileTools \setminus attached~agent? \\
+  busy' = busy
+\end{schema}
+
+\texttt{DeleteRecorded} serves teardown (every recorded agent in turn),
+the retirement of a replaced agent, and cleanup after a failed build.
+
+\section{Lost registration and crashes}
+
+\begin{schema}{LoseFile}
+  \Delta Lifecycle
+\where
+  active' = \emptyset \land building' = \emptyset \land retired' = \emptyset \\
+  fileTools' = \emptyset \\
+  busy' = busy \\
+  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  remoteTools' = remoteTools \land attached' = attached
+\end{schema}
+
+\begin{schema}{CrashAfterAgentCreate}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \notin remoteAgents \\
+  remoteAgents' = remoteAgents \cup \{agent?\} \\
+  tagged' = tagged \cup \{agent?\} \\
+  attached' = attached \cup \{agent? \mapsto \emptyset\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  fileTools' = fileTools \land busy' = busy \\
+  remoteTools' = remoteTools
+\end{schema}
+
+\begin{schema}{CrashAfterToolCreate}
+  \Delta Lifecycle \\
+  tool? : TOOLID
+\where
+  tool? \notin remoteTools \\
+  remoteTools' = remoteTools \cup \{tool?\} \\
+  active' = active \land building' = building \land retired' = retired \\
+  fileTools' = fileTools \land busy' = busy \\
+  remoteAgents' = remoteAgents \land tagged' = tagged \\
+  attached' = attached
+\end{schema}
+
+\subsection{Sweep}
+
+A sweep is a person's act. It deletes one agent the person chose from the
+listing, and only a marked agent the file does not record. It never
+deletes a recorded agent, an unmarked agent, or a tool no marked agent
+owns.
+
+\begin{schema}{SweepAgent}
+  \Delta Lifecycle \\
+  agent? : AGENTID
+\where
+  agent? \in tagged \setminus (active \cup building \cup retired) \\
+  agent? \notin busy \\
+  remoteAgents' = remoteAgents \setminus \{agent?\} \\
+  tagged' = tagged \setminus \{agent?\} \\
+  attached' = \{agent?\} \ndres attached \\
+  remoteTools' = remoteTools \setminus attached~agent? \\
+  active' = active \land building' = building \land retired' = retired \\
+  fileTools' = fileTools \setminus attached~agent? \land busy' = busy
+\end{schema}
+
+\begin{schema}{ListOrphanTools}
+  \Xi Lifecycle \\
+  orphans! : \power TOOLID
+\where
+  orphans! = remoteTools \setminus \bigcup (\ran attached)
+\end{schema}
+
+\texttt{ListOrphanTools} only reports. Deleting an orphan tool is the
+person's act, by tool identifier, because a tool alone does not show who
+created it.
+
+\section{Correspondence}
+
+\begin{tabular}{ll}
+Z & Design section \\
+\texttt{BeginBuild}, \texttt{BuildTool}, \texttt{Publish} & Provisioning order \\
+\texttt{StartCall}, \texttt{EndLastCall} & Calls ride their agent \\
+\texttt{DeleteRecorded} & Teardown and retirement \\
+\texttt{LoseFile}, \texttt{CrashAfter*} & Failure table \\
+\texttt{SweepAgent}, \texttt{ListOrphanTools} & Lost registration \\
+\end{tabular}
+
+\end{document}
