@@ -264,7 +264,7 @@ others miss), so every full diff and every fix diff of 20 lines or more gets
 all three. A fix diff under 20 lines gets `qodo review` alone, and `djb`
 joins any diff touching its domain whatever its size.
 
-### Remote review: Qodo and Devin Review, at most two rounds
+### Remote review: Qodo, at most two rounds; Devin Review
 
 Qodo is the primary remote reviewer (`.pr_agent.toml`). It reviews when the
 PR opens and never on push. High findings post inline as threads, and the
@@ -274,9 +274,11 @@ closed through the Qodo CLI (`mark-implemented` naming the fix sha, or
 `dismiss`), never a ledger line, except one reopened by a force-push or rebase
 (`answered(f)`). Lows are dropped by `comments_routing`.
 
-Devin Review also reviews each PR. Its findings are handled whenever they
-arrive. The Cursor security automation ("Find vulnerabilities") also runs
-here; its threads are findings like any other.
+Devin Review also reviews each PR. It is outside the round limit and outside
+`pending(pr)`: no term counts its reviews or waits for one, so the merge gate
+does not hold for it. Its findings are findings like any other, handled
+whenever they arrive; one that arrives after the merge is recorded on the
+merged PR.
 
 Copilot is on a trial (operator ruling, 2026-10-23): one review, requested at
 open, on 5 vox PRs after #526, none on push. The trial counts how many real

@@ -98,7 +98,8 @@ function demo(pr):
     # for another question.
 
 # Terms, all read from GitHub (Qodo's login is qodo-code-review[bot]).
-# The rules are model-checked in punt-kit standards/pr-review-model.tex.
+# The rules are model-checked in punt-kit standards/pr-review-model.tex,
+# which still models Bugbot; this loop drops its Bugbot conjuncts.
 #   round(pr)    = 1 + the number of "/agentic_review" comments the leader
 #                  has posted on the PR
 #   trigger(N)   = PR open for N = 1; the leader's (N-1)th
@@ -137,7 +138,7 @@ function demo(pr):
 #                    mark-implemented` (the explanation names the fix sha)
 #                    or `dismiss` plus the reason and file:line. A ledger
 #                    line does not close it, except a reopened one (below).
-#                  - any other finding — Devin Review, Cursor security, Copilot,
+#                  - any other finding — Devin Review, Copilot,
 #                    a human, the local outage fallback: fixed by a commit
 #                    on the PR head, or a ledger comment gives the reason
 #                    and file:line.
