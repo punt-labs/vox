@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import platform
-import subprocess
 import time
 from typing import Self, final
 
+from punt_vox.voxd.workers.darwin_process_table import DarwinProcessTable
 from punt_vox.voxd.workers.startup_probes import StartupProbes
 
 
@@ -45,19 +45,8 @@ class PaneProcessGroup:
             if (
                 platform.system() != "Darwin"
                 or remaining <= 0
-                or self._has_live_members(remaining)
+                or DarwinProcessTable.has_live_members(self._group, remaining)
             ):
                 raise
             return True
-        return False
-
-    def _has_live_members(self, timeout: float) -> bool:
-        rows = subprocess.check_output(
-            ["/bin/ps", "-ax", "-o", "pgid=,stat="], text=True, timeout=timeout
-        ).splitlines()
-        group = str(self._group)
-        for row in rows:
-            pgid, state = row.split()
-            if pgid == group and not state.startswith("Z"):
-                return True
         return False

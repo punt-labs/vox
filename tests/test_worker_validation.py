@@ -142,8 +142,8 @@ def test_stop_accepts_a_darwin_group_with_only_zombies() -> None:
         patch("platform.system", return_value="Darwin"),
         patch("os.killpg", side_effect=PermissionError),
         patch(
-            "subprocess.check_output",
-            return_value="42 ZN\n43 S\n",
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, "42 ZN\n43 S\n", ""),
         ),
     ):
         TmuxProbe.wait_for_exit(42)
@@ -155,8 +155,8 @@ def test_stop_does_not_ignore_eperm_for_a_live_darwin_group() -> None:
         patch("platform.system", return_value="Darwin"),
         patch("os.killpg", side_effect=PermissionError),
         patch(
-            "subprocess.check_output",
-            return_value="42 Z\n42 S\n",
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, "42 Z\n42 S\n", ""),
         ),
         pytest.raises(PermissionError),
     ):
