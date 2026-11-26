@@ -262,14 +262,17 @@ function pr_loop(unit):
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
                                               # never foreground sleep loops
 
-    # D. AUDIO DEMO — confirmed by ear, the one human gate. poll_tick is
+    # D. DEMO — confirmed by ear when audible(pr), the one human gate;
+    #    otherwise by the leader's recorded run. poll_tick is
     #    its only caller, so it runs at most once at a time, and it runs
     #    again after a non-exempt push or a failed demo
 
 function demo(pr):
     no push to the branch, and no other demo, while this one runs
-    if the operator is not available: return    # no comment; a later tick
-                                                #   tries again
+    if audible(pr) and the operator is not available: return
+                                                # no comment; a later tick
+                                                #   tries again; a PR that
+                                                #   plays nothing needs no one
     from a clean worktree at the PR head H:
         make install; vox daemon restart  # the daemon serves old code until
                                           #   restarted; a stale daemon demos
@@ -277,8 +280,8 @@ function demo(pr):
     write down the expected outcome, then drive the real entry point
         (mic tool, CLI command, hook fire)
     capture machine evidence: mic:status, vox doctor, and grep of vox.log
-    if not audible(pr):                 # a reading, a refusal, an install:
-                                        #   nothing played, no ear to ask
+    if not audible(pr):                 # a reading or a refusal: nothing
+                                        #   played, no ear to ask
         if the output matches: comment "demo confirmed (not audible): H"
             with the exact command and output pasted    # the leader's run
                                                         #   IS the demo
@@ -442,16 +445,17 @@ function demo(pr):
 #                  and hooks there are behavior even when Markdown, because
 #                  Claude Code executes them; src/, a dependency, or an
 #                  install change can change what the operator hears
-#   audible(pr)  = some file the PR changes can change what is heard: under
-#                  src/punt_vox/providers/, src/punt_vox/voxd/ (except the
-#                  port and pid files), the cache, quips, normalize.py,
-#                  hooks.py, server.py, client.py, the call, plugin/, a
-#                  dependency or lock file, the Makefile, or the service
-#                  installer and its unit, environment and key files. A file
-#                  that only reads or reports state (service/*status*,
+#   audible(pr)  = some non-exempt file the PR changes can change what is
+#                  heard (demo_exempt files are not counted): under
+#                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file
+#                  but port_file.py), the cache, quips, normalize.py,
+#                  hooks.py, server.py, client.py, plugin/, a dependency or
+#                  lock file, the Makefile, or the service installer and
+#                  its unit, environment and key files. Outside voxd/, a
+#                  file that only reads or reports state (service/*status*,
 #                  *health*, *probe*, lifecycle_*, doctor*, cli_status.py,
-#                  cli_doctor.py) is not audible. Anything not named here is
-#                  audible: the list fails closed
+#                  cli_doctor.py) is not audible. Any other non-exempt file
+#                  is audible: the list fails closed
 #   demoed_head  = the commit named in the leader's latest "demo confirmed"
 #                  comment, newer than any "demo failed:" comment. The form
 #                  is checked: "demo confirmed by ear: H" counts for any PR;
@@ -462,7 +466,8 @@ function demo(pr):
 #                  exists, is the head or an ancestor of it, and every file
 #                  changed since it is demo_exempt
 #   finding also = the leader's latest "demo failed:" comment, until a
-#                  later "demo confirmed:" comment
+#                  later demo-confirmed comment whose form counts under
+#                  demoed_head
 
 function poll_tick(pr):
     state = current reviews, threads, checks   # prefix gh with
@@ -667,9 +672,9 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   to fix, BEFORE the PR opened and
                                           --   before every fix push
   ∧ demoOk(pr)                            -- demo_ok: a non-exempt PR was
-                                          --   confirmed by ear on demoed_head,
-                                          --   and nothing non-exempt landed
-                                          --   after
+                                          --   confirmed on demoed_head, by
+                                          --   ear when audible(pr), and
+                                          --   nothing non-exempt landed after
   ∧ ciGreen(head(pr))                     -- docs + lint + test
   ∧ ¬ pending(pr)                         -- every requested review is in
   ∧ ¬ bugbotOpen(pr)                      -- no Bugbot run on any commit of
@@ -750,8 +755,8 @@ that only a human can judge. Before the PR merges, the feature is driven
 through its real entry point — a `mic` tool call, a CLI command, a hook fire —
 with the expected outcome written down first, after `make install` and
 `vox daemon restart` so the running daemon is the just-built code. Machine
-evidence comes from `mic:status`, `vox doctor`, and a grep of `vox.log`. Then
-the operator confirms what no introspection API can attest: that the audio
+evidence comes from `mic:status`, `vox doctor`, and a grep of `vox.log`. For
+an audible PR, the operator then confirms what no introspection API can attest: that the audio
 sounded right — clean, the correct voice, the music ducked, the chime fired.
 Run the canonical flight in [`docs/testing/manual-tests.md`](testing/manual-tests.md)
 and ask after each audible step, immediately, because audio impressions decay
