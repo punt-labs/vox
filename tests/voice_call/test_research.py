@@ -516,10 +516,11 @@ async def test_a_timeout_from_the_documentation_server_stays_a_timeout() -> None
         async def __aexit__(self, *exc: object) -> None:
             return None
 
+    def hung_client(_transport: object) -> _Raises:
+        return _Raises()
+
     with (
-        patch(
-            "punt_vox.voxd.voice_call.lookup.docs_lookup.Client", lambda _t: _Raises()
-        ),
+        patch("punt_vox.voxd.voice_call.lookup.docs_lookup.Client", hung_client),
         pytest.raises(TimeoutError),
     ):
         await docs.ask("pallets/flask", "q")

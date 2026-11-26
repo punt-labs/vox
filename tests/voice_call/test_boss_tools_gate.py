@@ -232,7 +232,7 @@ async def test_an_approval_with_no_readable_prompt_says_so(pending: object) -> N
     workers.known = [payload("abcd1234", pending_decision=pending, prompt_epoch=4)]
     tools = _tools(workers)
     tools.guard.provenance.taint()
-    approve = {
+    approve: dict[str, object] = {
         "worker_id": "abcd1234",
         "words": "Yes.",
         "choice": "approve",
