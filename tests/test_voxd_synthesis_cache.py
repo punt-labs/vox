@@ -214,6 +214,22 @@ class TestSynthesisCache:
         ):
             await lookup.outcome()
 
+    async def test_store_error_removes_output_and_propagates(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "output.mp3"
+        source.write_bytes(b"audio")
+        output = SynthesisOutcome(source, False)
+        lookup = SynthesisCache(CacheKey("hello", "", "openai"), SynthesisSpec(), 5)
+        denied = PermissionError("cache write denied")
+        with (
+            patch("punt_vox.voxd.synthesis_cache.cache_put", side_effect=denied),
+            pytest.raises(PermissionError, match="cache write denied") as raised,
+        ):
+            await lookup.store(output)
+        assert raised.value is denied
+        assert not source.exists()
+
     async def test_store_then_lookup(self, tmp_path: Path) -> None:
         lookup = SynthesisCache.for_request(
             "hello", SynthesisSpec(provider="openai"), 5
