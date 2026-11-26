@@ -51,24 +51,38 @@ against the product.
   review rounds, delegation, issue tracking, demo and merge gates. They are
   not code. Do not grade a diff against them, do not grade their pseudocode
   as if it ran, and do not ask them to specify mechanisms they do not claim.
-  A finding on one of these files is in scope only when it states something
-  false about the code it describes (a command, a file, a module or a state
-  that does not exist or does not behave as written).
-- Uncommitted working-tree files. `.punt-labs/vox/vox.md`,
-  `.punt-labs/vox/vox.local.md` and `.claude/settings.json` are written by
-  the daemon and by `vox enable`; they are never the change under review.
+  A finding on one of these files is in scope in two cases only: the text
+  states something false about the code it describes (a command, a file, a
+  module or a state that does not exist or does not behave as written); or
+  the change is a security defect in an instruction an agent follows (it
+  tells an agent to run a destructive or unconfirmed command, interpolates
+  caller-controlled text into a command an agent runs, or weakens a gate
+  that keeps a secret or the daemon token where it belongs). Security stays
+  in scope in every file.
+- Working-tree noise. `.punt-labs/vox/vox.md`, `.punt-labs/vox/vox.local.md`
+  and `.claude/settings.json` are tracked files the daemon and `vox enable`
+  rewrite, so a local review often sees them changed when the PR did not
+  touch them; a change to them that is not in the PR's commits is never the
+  change under review. A committed change to them is in scope like any
+  other.
 - Work tracked elsewhere. A limit this repository has recorded as a Linear
   issue, and names in the diff by its PL number, is known; do not raise it
-  again.
+  again. This never covers a security finding: raise those whatever the diff
+  cites.
 
 ## Docs-only pull requests
 
-A pull request that changes only `*.md`, `docs/` or `tests/` gets one review
-round. Raise a finding only when the text is false about the code, when two
-passages of the same file contradict each other, or when the change removes
-a rule without saying what replaces it. Do not propose additional mechanisms,
-edge-case handling or process steps; the repository decides its process, the
-review checks that it is stated consistently.
+A pull request that changes only `*.md` or `docs/` is reviewed for three
+things: text that is false about the code, two passages of the same file that
+contradict each other, and a rule removed without saying what replaces it. Do
+not propose additional mechanisms, edge-case handling or process steps; the
+repository decides its process, the review checks that it is stated
+consistently. This limits the kind of finding, not the number of rounds: the
+remote rounds follow `docs/WORKFLOW.md` (round two only after a High fix).
+
+A pull request that changes only `tests/` is not docs-only. It gets the test
+rules above: an assertion made vacuous, a regression test deleted, or a test
+that can no longer fail is in scope.
 
 ## Severity
 
