@@ -27,14 +27,34 @@ _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
 _OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
 _NAG: Final = re.compile(r"are you (still )?there|still there", re.I)
 _MARKDOWN: Final = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|^\s*[-*]\s", re.M)
-_TURNS: Final = (
-    # (text, seconds of silence after it)
-    ("What does the pallets slash flask repository say about app factories?", 45),
-    ("Search the web for the current weather in Tokyo.", 30),
-    ("Give me a minute, I need to think.", 40),
+_LEAD_IN_S: Final = 6  # Silence before the caller speaks, so the greeting is whole.
+_DOCS_TURN: Final = (
+    "What is the Python SDK repository for the Model Context Protocol? "
+    "Look it up in the docs."
 )
+_SEARCH_TURN: Final = (
+    "Please search the web for the latest open source language models."
+)
+_SILENCE_TURN: Final = "Give me a minute, I need to think."
 
 type Status = Literal["PASS", "FAIL", "SKIP"]
+
+
+@dataclass(frozen=True, slots=True)
+class Turn:
+    """One scripted caller turn: what is said ("" is silence) and the pause after."""
+
+    text: str
+    pause_s: int
+
+
+def script_plan(*, search: bool) -> list[Turn]:
+    """Return the caller's turns: a silent lead-in, docs, search if set up, silence."""
+    plan = [Turn("", _LEAD_IN_S), Turn(_DOCS_TURN, 45)]
+    if search:
+        plan.append(Turn(_SEARCH_TURN, 30))
+    plan.append(Turn(_SILENCE_TURN, 40))
+    return plan
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +82,29 @@ class Judge:
         """Bind the report, the call's other output and whether search is set up."""
         self = super().__new__(cls)
         self._report, self._output, self._search_key = report, output, search_key
-        lines = report.splitlines()
-        self._agent = [ln.split(": ", 1)[1] for ln in lines if ln.startswith("agent: ")]
-        self._tools = [ln for ln in lines if ln.startswith("tool: ")]
-        self._ended = any(ln.startswith("ended by ") for ln in lines)
+        self._agent, self._tools, self._ended = self._parse(report)
         return self
+
+    @staticmethod
+    def _parse(report: str) -> tuple[list[str], list[str], bool]:
+        """Return agent replies (continuation lines joined), tool lines, ended."""
+        agent: list[str] = []
+        tools: list[str] = []
+        ended = False
+        in_reply = False
+        for line in report.splitlines():
+            if line.startswith("agent: "):
+                agent.append(line[len("agent: ") :])
+                in_reply = True
+            elif line.startswith(("user: ", "tool: ", "trace: ", "call ")):
+                in_reply = False
+                if line.startswith("tool: "):
+                    tools.append(line)
+            elif line.startswith("ended by "):
+                in_reply, ended = False, True
+            elif line.strip() and in_reply:
+                agent[-1] += " " + line.strip()
+        return agent, tools, ended
 
     def verdicts(self) -> list[Verdict]:
         """Return the six expectations in order."""
@@ -141,7 +179,7 @@ class CallRun:
         return self
 
     def place(self, *, search: bool) -> tuple[str, str]:
-        """Return the call's report and the rest of its output."""
+        """Return the final ``vox call status`` text and the call's own output."""
         script = self._script(search=search)
         try:
             done = subprocess.run(
@@ -158,23 +196,33 @@ class CallRun:
                 check=False,
                 timeout=_CALL_TIMEOUT_S + 15,
             )
+            status = self._status()
         finally:
             self._stop()
-        return done.stdout, done.stderr
+        return status, done.stdout + done.stderr
 
     def _script(self, *, search: bool) -> Path:
-        turns = [t for t in _TURNS if search or "weather" not in t[0]]
         rows = []
-        for index, (text, pause) in enumerate(turns):
-            pcm = self._pcm(index, text)
-            rows.append(json.dumps({"pcm_path": pcm.name, "pause_s": pause}))
+        for index, turn in enumerate(script_plan(search=search)):
+            pcm = self._pcm(index, turn.text, turn.pause_s)
+            rows.append(
+                json.dumps(
+                    {
+                        "pcm_path": pcm.name,
+                        "pause_s": 0 if not turn.text else turn.pause_s,
+                    }
+                )
+            )
         script = self._directory / "script.jsonl"
         script.write_text("\n".join(rows) + "\n")
         return script
 
-    def _pcm(self, index: int, text: str) -> Path:
+    def _pcm(self, index: int, text: str, pause_s: int) -> Path:
         aiff = self._directory / f"turn{index}.aiff"
         pcm = self._directory / f"turn{index}.pcm"
+        if not text:  # Silence: 16 kHz mono s16le zeros for the lead-in.
+            pcm.write_bytes(bytes(16000 * 2 * pause_s))
+            return pcm
         subprocess.run(["say", "-o", str(aiff), text], check=True)
         subprocess.run(
             [
@@ -195,6 +243,17 @@ class CallRun:
             check=True,
         )
         return pcm
+
+    @staticmethod
+    def _status() -> str:
+        """Return the status text after the call, which is the full report."""
+        done = subprocess.run(
+            ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done.stdout
 
     @staticmethod
     def _stop() -> None:

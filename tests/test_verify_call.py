@@ -95,3 +95,49 @@ def test_a_runtime_warning_on_hang_up_fails_a_clean_end() -> None:
 
 def test_a_call_that_never_ended_fails_a_clean_end() -> None:
     assert _verdicts(_GOOD.replace("ended by caller\n", ""))["clean end"] == "FAIL"
+
+
+_STATUS = (Path(__file__).parent / "fixtures" / "vox_call_status_ended.txt").read_text()
+
+
+def test_the_real_status_text_passes_every_expectation() -> None:
+    assert set(_verdicts(_STATUS).values()) == {"PASS"}
+
+
+def test_markdown_on_a_continuation_line_of_an_agent_reply_fails_plain_words() -> None:
+    marked = _STATUS.replace("It covers tools", "## It covers tools")
+    assert _verdicts(marked)["plain words"] == "FAIL"
+
+
+def test_a_nag_on_a_continuation_line_fails_silence() -> None:
+    nagged = _STATUS.replace("It covers tools", "Are you still there? It covers tools")
+    assert _verdicts(nagged)["silence"] == "FAIL"
+
+
+def test_the_first_agent_turn_is_judged_even_after_a_live_header_line() -> None:
+    assert (
+        verify_call.Judge(_STATUS, "", search_key=True).verdicts()[0].status == "PASS"
+    )
+
+
+def test_the_script_starts_with_a_silent_lead_in_so_the_greeting_is_not_clipped() -> (
+    None
+):
+    first = verify_call.script_plan(search=True)[0]
+    assert first.text == ""
+    assert first.pause_s >= 6
+
+
+def test_the_docs_turn_is_unmistakable_to_speech_recognition() -> None:
+    texts = [t.text for t in verify_call.script_plan(search=True)]
+    assert (
+        "What is the Python SDK repository for the Model Context Protocol? "
+        "Look it up in the docs."
+    ) in texts
+    assert not any("flask" in t.lower() for t in texts)
+
+
+def test_without_search_the_plan_leaves_out_the_search_turn() -> None:
+    assert not any(
+        "search the web" in t.text for t in verify_call.script_plan(search=False)
+    )
