@@ -63,7 +63,8 @@ file scopes match). Full `make check` runs at handoff or before opening a PR,
 not before every commit.
 
 For snapshot-enabled Ethos, `make handoff-runtime` installs the version pinned
-by this checkout on Linux x86-64 or Apple Silicon with macOS 13.5 or newer.
+by this checkout on Linux x86-64 or Apple Silicon with macOS 15 or newer.
+The macOS minimum follows the release workflow's offline smoke runner.
 Run it once on a new machine and again when the pin changes. It needs Python 3
 and curl, and checks the archive's SHA-256 before installing it under
 `~/.punt-labs/ethos/runtimes/`. The gate never downloads it.
