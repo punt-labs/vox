@@ -27,6 +27,12 @@ start. Read it before writing code.
 
 @docs/WORKFLOW.md
 
+The PR-loop pseudocode, its GitHub terms and the `EnterPR`/`ExitPR` schemas
+are in [`docs/WORKFLOW-PR-LOOP.md`](docs/WORKFLOW-PR-LOOP.md), a non-autoloaded
+reference: linked, not `@`-imported, so the session's instruction load stays
+under the harness 150k-character limit. Read it before opening a PR, driving
+remote review, running the demo, or deciding a merge.
+
 The org-wide `punt-kit` standards are the canonical source for how Punt Labs
 tools are built. They are non-autoloaded references — linked, not `@`-imported,
 because each is already carried for per-turn work by a mechanism this repo
