@@ -197,7 +197,9 @@ function demo(pr):
 #                  the base branch keeps commits merged in from it out of
 #                  every range
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
-#                  file (.oo-*, .suppression-*), or is a top-level *.md,
+#                  file (.oo-*, .suppression-*), is review or repository
+#                  hygiene configuration (.pr_agent.toml, .gitignore,
+#                  .cursor/), or is a top-level *.md,
 #                  and is not under plugin/ — commands, skills, agents,
 #                  and hooks there are behavior even when Markdown, because
 #                  Claude Code executes them; src/, a dependency, or an
