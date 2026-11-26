@@ -59,7 +59,7 @@ class TestGet:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # A caller passing no name would be the substitution defect this
-        # bead closes: the daemon has no session, so a "guess for me" call
+        # guard prevents: the daemon has no session, so a "guess for me" call
         # cannot answer. The signature enforces the requirement at the type
         # level, and passing an empty string still raises.
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
