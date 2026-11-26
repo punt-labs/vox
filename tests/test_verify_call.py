@@ -175,7 +175,7 @@ def test_a_live_status_fails_the_clean_end_even_if_it_looks_complete() -> None:
     assert "still live" in verdicts["clean end"].why
 
 
-_TRACE = [
+_TRACE: list[dict[str, object]] = [
     {"ms": 10, "dir": "recv", "type": "agent_response", "detail": {}},
     {
         "ms": 20,
@@ -228,6 +228,10 @@ def test_a_quiet_agent_through_the_whole_silence_passes() -> None:
     assert _verdicts(quiet)["silence"] == "PASS"
 
 
+def _which(tool: str) -> str:
+    return f"/bin/{tool}"
+
+
 class _Recorder:
     """Stand in for subprocess.run: record every command, answer status as live."""
 
@@ -248,7 +252,7 @@ def test_an_existing_live_call_is_refused_and_left_running(
 ) -> None:
     recorder = _Recorder(_LIVE)
     monkeypatch.setattr(verify_call.subprocess, "run", recorder)
-    monkeypatch.setattr(verify_call.shutil, "which", lambda tool: f"/bin/{tool}")
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
     assert verify_call.main() != 0
     assert "already live" in capsys.readouterr().out
     assert not any("stop" in command for command in recorder.commands)
