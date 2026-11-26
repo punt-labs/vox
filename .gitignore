@@ -90,7 +90,8 @@ uv.toml
 .envrc.local
 MagicMock/
 .idea/
-.cursor/
+**/.cursor/*
+!/.cursor/BUGBOT.md
 .punt-labs/quarry/
 
 # Vendored ethos (project-local): vox tracks the identity registry
