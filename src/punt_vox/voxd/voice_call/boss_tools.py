@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
-from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
+from punt_vox.voxd.voice_call.lookup.tools import PROVIDER_DEADLINE_S, ResearchTools
 from punt_vox.voxd.voice_call.provenance import CallProvenance
 from punt_vox.voxd.voice_call.request_guard import RequestGuard
 from punt_vox.voxd.voice_call.steering import SteeringTool
@@ -111,6 +111,7 @@ class BossTools:
                 {"query": {"type": "string", "description": "What to search for"}},
                 "query",
             ),
+            response_timeout_secs=PROVIDER_DEADLINE_S,
         ),
         ClientTool(
             "read_docs",
@@ -127,6 +128,7 @@ class BossTools:
                 "repo",
                 "question",
             ),
+            response_timeout_secs=PROVIDER_DEADLINE_S,
         ),
     )
     # Tools that change a worker: a re-ask must replay, never repeat, them.

@@ -19,6 +19,8 @@ class ClientTool:
     description: str
     # Callers supply arbitrary JSON Schema; the provider allows null for no schema.
     parameters: dict[str, object] | None = None
+    # How long the provider waits for the result; None keeps its own default.
+    response_timeout_secs: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,7 @@ class ToolConfig(TypedDict):
     expects_response: bool
     # The JSON Schema belongs to the tool author; null means no parameters.
     parameters: dict[str, object] | None
+    response_timeout_secs: NotRequired[int]
 
 
 class CreateToolConfig(TypedDict):

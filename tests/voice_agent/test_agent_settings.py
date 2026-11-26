@@ -136,3 +136,31 @@ def test_the_host_zone_falls_back_to_the_tz_variable_then_utc(tmp_path: Path) ->
 def test_a_zone_that_is_not_an_iana_name_is_refused(zone: str) -> None:
     with pytest.raises(ValueError, match="IANA"):
         AgentSettings("p", timezone=zone)
+
+
+def test_the_research_tools_get_a_deadline_longer_than_the_lookup_budget() -> None:
+    from punt_vox.voxd.voice_agent.contracts import ClientTool
+    from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
+
+    slow = ClientTool("search_web", "d", {"type": "object"}, response_timeout_secs=30)
+    config = cast("dict[str, dict[str, object]]", AgentBody.tool(slow))
+    assert config["tool_config"]["response_timeout_secs"] == 30
+    assert ResearchTools.BUDGET_SECONDS < 30
+
+
+def test_the_boss_catalog_gives_only_the_research_tools_a_longer_deadline() -> None:
+    from punt_vox.voxd.voice_call.boss_tools import BossTools
+
+    deadlines = {
+        tool.name: tool.response_timeout_secs
+        for tool in BossTools.CATALOG
+        if tool.response_timeout_secs is not None
+    }
+    assert deadlines == {"search_web": 30, "read_docs": 30}
+
+
+def test_a_tool_without_a_deadline_sends_none_to_the_provider() -> None:
+    from punt_vox.voxd.voice_agent.contracts import ClientTool
+
+    config = cast("dict[str, dict[str, object]]", AgentBody.tool(ClientTool("a", "d")))
+    assert "response_timeout_secs" not in config["tool_config"]

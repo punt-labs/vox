@@ -69,7 +69,7 @@ class AgentBody:
     @staticmethod
     def tool(tool: ClientTool) -> CreateToolConfig:
         """Return the create body of one client tool."""
-        return {
+        config: CreateToolConfig = {
             "tool_config": {
                 "type": "client",
                 "name": tool.name,
@@ -78,6 +78,9 @@ class AgentBody:
                 "parameters": tool.parameters,
             }
         }
+        if tool.response_timeout_secs is not None:
+            config["tool_config"]["response_timeout_secs"] = tool.response_timeout_secs
+        return config
 
     @staticmethod
     def create(settings: AgentSettings, tool_ids: tuple[str, ...]) -> CreateAgentConfig:
