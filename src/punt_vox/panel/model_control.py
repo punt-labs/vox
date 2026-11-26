@@ -38,19 +38,9 @@ class ModelControl:
 
     def to_dict(self, *, element_id: str) -> dict[str, object]:
         """Return the combo's wire dict; a modelless provider renders inert."""
-        choices = self._choices()
-        combo: dict[str, object] = {
-            "kind": "combo",
-            "id": element_id,
-            "label": "Model",
-            "items": choices.wire_items(),
-            "selected": choices.selected_index(),
-        }
-        if not choices.is_empty:
-            combo["handlers"] = [
-                {"event": "changed", "publish": [PanelTopic.MODEL.value]}
-            ]
-        return combo
+        return self._choices().to_combo(
+            element_id=element_id, label="Model", topic=PanelTopic.MODEL.value
+        )
 
     def model_for_index(self, index: int) -> str:
         """Return the model name a clicked ``index`` selects, or raise if invalid."""

@@ -5,8 +5,9 @@ the glyph-only preview button sit side by side in one ``columns`` group, so
 picking a voice is try-before-you-set rather than blind.
 
 The two absent states differ. An empty roster means nothing to preview and
-nothing to pick, so both halves go inert. A roster with no voice chosen keeps
-both live and shows ``(none)`` as the selection --
+nothing to pick, so neither the preview button nor the combo can publish.
+A roster with no voice chosen keeps both live and shows ``(none)`` as the
+selection --
 :class:`~punt_vox.panel.choice_list.ChoiceList` owns that entry for all three
 of the panel's combos, and resolves clicks against the same object it built
 the list from.
@@ -38,11 +39,14 @@ class VoiceControl:
 
     def to_dict(self, *, element_id: str) -> dict[str, object]:
         """Return the combo and its preview button as one ``columns`` group."""
+        combo = self._choices().to_combo(
+            element_id=element_id, label="Voice", topic=PanelTopic.VOICE.value
+        )
         return {
             "kind": "group",
             "id": _ROW_ID,
             "layout": "columns",
-            "children": [self._combo(element_id), self._preview_button()],
+            "children": [combo, self._preview_button()],
         }
 
     def voice_for_index(self, index: int) -> str:
@@ -53,26 +57,6 @@ class VoiceControl:
         return ChoiceList(
             items=self.roster, current=self.current, empty_label=_EMPTY_LABEL
         )
-
-    def _combo(self, element_id: str) -> dict[str, object]:
-        """Return the voice combo; an empty roster renders it inert.
-
-        A control with nothing to pick does not publish, so it cannot send
-        back an index :meth:`voice_for_index` would refuse.
-        """
-        choices = self._choices()
-        combo: dict[str, object] = {
-            "kind": "combo",
-            "id": element_id,
-            "label": "Voice",
-            "items": choices.wire_items(),
-            "selected": choices.selected_index(),
-        }
-        if not choices.is_empty:
-            combo["handlers"] = [
-                {"event": "changed", "publish": [PanelTopic.VOICE.value]}
-            ]
-        return combo
 
     def _preview_button(self) -> dict[str, object]:
         """Return the preview button; it goes inert alongside an empty roster.

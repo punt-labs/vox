@@ -39,15 +39,9 @@ class ProviderControl:
 
     def to_dict(self) -> dict[str, object]:
         """Return the combo's wire dict, selected at ``current``'s entry."""
-        choices = self._choices()
-        return {
-            "kind": "combo",
-            "id": _COMBO_ID,
-            "label": "Provider",
-            "items": choices.wire_items(),
-            "selected": choices.selected_index(),
-            "handlers": [{"event": "changed", "publish": [PanelTopic.PROVIDER.value]}],
-        }
+        return self._choices().to_combo(
+            element_id=_COMBO_ID, label="Provider", topic=PanelTopic.PROVIDER.value
+        )
 
     def provider_for_index(self, index: int) -> str:
         """Return the provider name a clicked ``index`` selects, or raise if invalid."""
