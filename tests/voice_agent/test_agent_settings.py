@@ -25,11 +25,10 @@ def _body(
     return cast("dict[str, object]", AgentBody.create(settings, tool_ids))
 
 
-def _at(body: dict[str, object], *path: str) -> object:
-    node: object = body
-    for key in path:
-        node = cast("dict[str, object]", node)[key]
-    return node
+def _at(node: object, *path: str) -> object:
+    if not path:
+        return node
+    return _at(cast("dict[str, object]", node)[path[0]], *path[1:])
 
 
 def test_the_whole_agent_is_defined_by_one_create_body() -> None:
