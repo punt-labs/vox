@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 import pytest
 
 from punt_vox.voxd.pcm_output import DeviceCall
 from punt_vox.voxd.pcm_release import StreamRelease
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.pcm_output import OutputStream
 
 
 @final
@@ -99,14 +102,18 @@ class TestRun:
 class TestAfterCancelledOpen:
     async def test_a_started_stream_is_aborted_and_closed(self) -> None:
         stream = Stream()
-        starting = await DeviceCall.run(lambda: stream)
+
+        def started() -> OutputStream:
+            return stream
+
+        starting = await DeviceCall.run(started)
         await StreamRelease.after_cancelled_open(starting)
         assert stream.calls == ["abort", "close"]
 
     async def test_a_failed_start_is_logged_and_nothing_is_released(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        def failing() -> Stream:
+        def failing() -> OutputStream:
             msg = "device busy"
             raise RuntimeError(msg)
 
