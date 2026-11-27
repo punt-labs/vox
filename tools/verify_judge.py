@@ -267,8 +267,9 @@ class Judge:
         cleanup = self._cleanup
         if cleanup is None:
             return Verdict(name, "FAIL", "no worker cleanup was attempted")
-        if cleanup.problems:
-            return Verdict(name, "FAIL", "; ".join(cleanup.problems))
+        found = [*cleanup.problems, *(row.describe() for row in cleanup.unproven)]
+        if found:
+            return Verdict(name, "FAIL", "; ".join(found))
         if not cleanup.started:
             return Verdict(name, "FAIL", "the call started no worker to stop")
         if cleanup.left_running:

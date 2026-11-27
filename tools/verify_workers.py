@@ -10,56 +10,103 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from typing import Final, Self, final
+from typing import Final, Self, cast, final
 
 __all__ = ["Cleanup", "WorkerFleet"]
 
 _TIMEOUT_S: Final = 30
 _ENDED: Final = ("stopped", "exited")  # Registry phases with nothing to stop.
 _STDERR_CHARS: Final = 200
+_TASK_CHARS: Final = 80
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerRow:
+    """One worker as ``vox worker list`` reports it."""
+
+    id: str
+    state: str
+    task: str
+
+    @property
+    def running(self) -> bool:
+        """Return whether the worker still has something to stop."""
+        return self.state not in _ENDED
+
+    def describe(self) -> str:
+        """Say why this worker was not stopped and how to stop it by hand."""
+        task = self.task[:_TASK_CHARS] + ("..." if len(self.task) > _TASK_CHARS else "")
+        return (
+            f"worker {self.id} ({self.state}, task {task!r}) appeared during the "
+            "call but this call's trace does not name it, so ownership is unproven "
+            f"and it was not stopped; stop it by hand with: vox worker stop {self.id}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class Cleanup:
-    """What became of the workers one call started."""
+    """What became of the workers one call started, and of any it may not own."""
 
     started: tuple[str, ...]
     left_running: tuple[
         str, ...
     ]  # Still running after the call; this run stopped them.
     problems: tuple[str, ...]  # Each thing that could not be checked or stopped.
+    unproven: tuple[WorkerRow, ...] = ()  # New during the call, absent from its trace.
 
 
 @final
 class WorkerFleet:
-    """The workers one call started, found and stopped through the ``vox`` CLI."""
+    """The workers one call started, found and stopped through the ``vox`` CLI.
 
-    __slots__ = ("_started",)
-    _started: tuple[str, ...]
+    Built from the workers that existed before the call, so a worker that
+    appears during it and that the call's trace does not name is reported and
+    never stopped: it may belong to another session.
+    """
 
-    def __new__(cls, started: tuple[str, ...]) -> Self:
-        """Bind the worker IDs the call's own trace says it started."""
+    __slots__ = ("_before",)
+    _before: frozenset[str]
+
+    def __new__(cls, before: frozenset[str]) -> Self:
+        """Bind the IDs of the workers that existed before the call."""
         self = super().__new__(cls)
-        self._started = started
+        self._before = before
         return self
 
-    def sweep(self) -> Cleanup:
-        """Stop each started worker still running; report what could not be done."""
-        if not self._started:
-            return Cleanup((), (), ())
+    @classmethod
+    def observe(cls) -> Self:
+        """List the workers now, before the call is placed.
+
+        Raises:
+            ValueError: If the list could not be read, naming why and the CLI's stderr.
+        """
+        return cls(frozenset(row.id for row in cls._rows()))
+
+    def sweep(self, started: tuple[str, ...]) -> Cleanup:
+        """Stop each started worker still running; name every other new worker."""
         try:
-            left = tuple(w for w in self._started if w in self._running())
+            rows = self._rows()
         except ValueError as exc:
-            return Cleanup(self._started, (), (str(exc),))
-        problems = [fault for worker in left if (fault := self._stop(worker))]
+            return Cleanup(started, (), (str(exc),))
+        unproven = tuple(
+            row for row in rows if row.id not in self._before and row.id not in started
+        )
+        running = {row.id for row in rows if row.running}
+        foreign = tuple(w for w in started if w in self._before)
+        left = tuple(w for w in started if w in running and w not in foreign)
+        problems = [
+            f"worker {w} existed before the call, so it was not stopped"
+            for w in foreign
+        ]
+        problems += [fault for worker in left if (fault := self._stop(worker))]
         if left and not problems:
             problems = self._still_running(left)
-        return Cleanup(self._started, left, tuple(problems))
+        return Cleanup(started, left, tuple(problems), unproven)
 
     def _still_running(self, stopped: tuple[str, ...]) -> list[str]:
         """Return a problem for each worker a successful stop left running."""
         try:
-            running = self._running()
+            running = {row.id for row in self._rows() if row.running}
         except ValueError as exc:
             return [str(exc)]
         return [
@@ -68,13 +115,14 @@ class WorkerFleet:
             if w in running
         ]
 
-    def _running(self) -> set[str]:
-        """Return the IDs of workers voxd reports as running.
+    @classmethod
+    def _rows(cls) -> list[WorkerRow]:
+        """Return every worker voxd reports.
 
         Raises:
             ValueError: If the list could not be read, naming why and the CLI's stderr.
         """
-        done = self._vox("list")
+        done = cls._vox("list")
         if isinstance(done, str):
             raise ValueError(f"vox worker list failed: {done}")
         try:
@@ -86,10 +134,13 @@ class WorkerFleet:
             raise ValueError(
                 f"vox worker list printed not a list: {type(rows).__name__}"
             )
-        entries = [row for row in rows if isinstance(row, dict)]
+        entries = [cast("dict[str, object]", r) for r in rows if isinstance(r, dict)]
         if len(entries) != len(rows):
             raise ValueError("vox worker list printed not a list of workers")
-        return {str(row["id"]) for row in entries if row.get("state") not in _ENDED}
+        return [
+            WorkerRow(str(e["id"]), str(e.get("state", "")), str(e.get("task", "")))
+            for e in entries
+        ]
 
     def _stop(self, worker_id: str) -> str:
         """Stop one worker; return what went wrong, or '' when it stopped."""

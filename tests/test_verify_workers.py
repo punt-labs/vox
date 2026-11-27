@@ -29,6 +29,21 @@ class _Result(Protocol):
     @property
     def problems(self) -> tuple[str, ...]: ...
 
+    @property
+    def unproven(self) -> tuple[_Row, ...]: ...
+
+
+class _Row(Protocol):
+    """The fields of a WorkerRow these tests read."""
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def state(self) -> str: ...
+
+    def describe(self) -> str: ...
+
 
 class _Voxd:
     """Stand in for subprocess.run: a worker list that changes as stops land."""
@@ -68,7 +83,10 @@ class _Voxd:
             out = self.list_out
             if out is None:
                 out = json.dumps(
-                    [{"id": i, "state": s} for i, s in self.workers.items()]
+                    [
+                        {"id": i, "state": s, "task": f"task of {i}"}
+                        for i, s in self.workers.items()
+                    ]
                 )
             return subprocess.CompletedProcess(
                 command, self.list_code, out, "list broke"
@@ -78,19 +96,24 @@ class _Voxd:
         return subprocess.CompletedProcess(command, self.stop_code, "", "stop broke")
 
 
-def _sweep(monkeypatch: pytest.MonkeyPatch, voxd: _Voxd, *started: str) -> _Result:
+def _sweep(
+    monkeypatch: pytest.MonkeyPatch,
+    voxd: _Voxd,
+    *started: str,
+    before: tuple[str, ...] = (),
+) -> _Result:
     monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
-    cleanup: _Result = verify_workers.WorkerFleet(started).sweep()
+    cleanup: _Result = verify_workers.WorkerFleet(frozenset(before)).sweep(started)
     return cleanup
 
 
-def test_no_started_worker_means_no_voxd_command(
+def test_no_started_worker_means_nothing_is_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     voxd = _Voxd({"old": "ready"})
-    cleanup = _sweep(monkeypatch, voxd)
-    assert voxd.commands == []
-    assert (cleanup.left_running, cleanup.problems) == ((), ())
+    cleanup = _sweep(monkeypatch, voxd, before=("old",))
+    assert [c[4] for c in voxd.commands] == ["list"]
+    assert (cleanup.left_running, cleanup.problems, cleanup.unproven) == ((), (), ())
 
 
 def test_a_started_worker_the_agent_stopped_is_left_alone(
@@ -116,7 +139,7 @@ def test_a_worker_this_call_did_not_start_is_never_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     voxd = _Voxd({"old": "ready", "new": "ready"})
-    _sweep(monkeypatch, voxd, "new")
+    _sweep(monkeypatch, voxd, "new", before=("old",))
     stopped = [c[-1] for c in voxd.commands if c[4] == "stop"]
     assert stopped == ["new"]
     assert voxd.workers["old"] == "ready"
@@ -178,3 +201,65 @@ def test_every_voxd_command_runs_under_a_timeout(
     _sweep(monkeypatch, voxd, "new")
     assert voxd.commands
     assert all(c[:2] == ["timeout", "30"] for c in voxd.commands)
+
+
+def test_a_new_worker_the_trace_does_not_name_is_reported_and_not_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({"old": "ready", "new": "ready", "other": "ready"})
+    cleanup = _sweep(monkeypatch, voxd, "new", before=("old",))
+    assert [row.id for row in cleanup.unproven] == ["other"]
+    assert [c[-1] for c in voxd.commands if c[4] == "stop"] == ["new"]
+    assert voxd.workers["other"] == "ready"
+
+
+def test_a_worker_that_was_there_before_the_call_is_never_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup = _sweep(monkeypatch, _Voxd({"old": "ready"}), before=("old",))
+    assert cleanup.unproven == ()
+
+
+def test_an_unproven_worker_is_named_with_its_state_task_and_how_to_stop_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup = _sweep(monkeypatch, _Voxd({"w1": "ready"}))
+    text = cleanup.unproven[0].describe()
+    assert "w1" in text
+    assert "ready" in text
+    assert "task of w1" in text
+    assert "vox worker stop w1" in text
+    assert "not stopped" in text
+
+
+def test_a_long_task_is_clipped_in_the_description() -> None:
+    row = verify_workers.WorkerRow("w1", "ready", "x" * 500)
+    assert len(row.describe()) < 400
+
+
+def test_observing_the_workers_before_the_call_names_a_failed_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(verify_workers.subprocess, "run", _Voxd({}, list_code=1))
+    with pytest.raises(ValueError, match="list broke"):
+        verify_workers.WorkerFleet.observe()
+
+
+def test_observing_records_the_workers_that_exist_before_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({"old": "ready"})
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    fleet = verify_workers.WorkerFleet.observe()
+    assert fleet.sweep(()).unproven == ()
+
+
+def test_a_trace_naming_a_worker_that_existed_before_the_call_stops_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({"old": "ready"})
+    cleanup = _sweep(monkeypatch, voxd, "old", before=("old",))
+    assert [c[4] for c in voxd.commands] == ["list"]
+    assert voxd.workers["old"] == "ready"
+    assert len(cleanup.problems) == 1
+    assert "existed before the call" in cleanup.problems[0]

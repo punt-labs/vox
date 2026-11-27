@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Self, cast, final
 
@@ -61,16 +61,23 @@ def is_live(status: str) -> bool:
     return first.startswith(("call live", "call connecting"))
 
 
-def load_trace(status: str) -> list[dict[str, object]] | None:
-    """Return the trace rows named by the status text's ``trace:`` line, if readable."""
+def trace_path(status: str) -> str:
+    """Return the file named by the text's ``trace:`` line, or '' if it has none."""
     for line in status.splitlines():
         if line.startswith("trace: "):
-            try:
-                text = Path(line[len("trace: ") :]).read_text(encoding="utf-8")
-            except OSError:
-                return None
-            return [json.loads(row) for row in text.splitlines() if row.strip()]
-    return None
+            return line[len("trace: ") :]
+    return ""
+
+
+def load_trace(status: str) -> list[dict[str, object]] | None:
+    """Return the trace rows named by the status text's ``trace:`` line, if readable."""
+    if not (path := trace_path(status)):
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return [json.loads(row) for row in text.splitlines() if row.strip()]
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,12 +133,22 @@ class CallRun:
         return self._cleanup
 
     def place(self, *, search: bool) -> tuple[str, str]:
-        """Return the final ``vox call status`` text and the call's own output."""
+        """Return the report of the call this run launched and the launch's output.
+
+        The report is empty when the launch never yielded a call. Which workers
+        the call started comes from that call's own trace, never from a status
+        another call may have replaced.
+
+        Raises:
+            ValueError: If the workers cannot be listed before anything is spent.
+        """
+        fleet = WorkerFleet.observe()
         script = self._script(search=search)
         self._placed = True
+        launch: subprocess.CompletedProcess[str] | None = None
         status = ""
         try:
-            done = subprocess.run(
+            launch = subprocess.run(
                 [
                     "timeout",
                     str(_CALL_TIMEOUT_S),
@@ -146,22 +163,30 @@ class CallRun:
                 timeout=_CALL_TIMEOUT_S + 15,
             )
             self._stop()
-            status = self._settled_status()
+            if trace_path(launch.stdout):
+                status = self._settled_status(launch.stdout)
         finally:
             self._stop()
-            self._cleanup = self._sweep(status or self.status())
-        return status, done.stdout + done.stderr
+            self._cleanup = self._sweep(fleet, launch)
+        return status, launch.stdout + launch.stderr
 
     @staticmethod
-    def _sweep(status: str) -> Cleanup:
-        """Stop the workers the call's trace says it started, and no others."""
+    def _sweep(
+        fleet: WorkerFleet, launch: subprocess.CompletedProcess[str] | None
+    ) -> Cleanup:
+        """Stop the workers the launched call's trace names, and name any others."""
+        if launch is None or not trace_path(launch.stdout):
+            how = "no result" if launch is None else f"exit {launch.returncode}"
+            err = "" if launch is None else f": {launch.stderr.strip()[:200]}"
+            return CallRun._failed(fleet, f"the call did not start ({how}{err})")
         try:
-            rows = load_trace(status)
+            rows = load_trace(launch.stdout)
         except ValueError as exc:
-            return Cleanup((), (), (f"the call trace was unreadable: {exc}",))
+            return CallRun._failed(fleet, f"the call trace was unreadable: {exc}")
         if rows is None:
-            msg = "no call trace, so the workers this call started are unknown"
-            return Cleanup((), (), (msg,))
+            return CallRun._failed(
+                fleet, "the call trace could not be read, so its workers are unknown"
+            )
         details = [
             cast("dict[str, object]", row["detail"])
             for row in rows
@@ -171,7 +196,13 @@ class CallRun:
         ids = tuple(
             d["worker_id"] for d in details if isinstance(d.get("worker_id"), str)
         )
-        return WorkerFleet(cast("tuple[str, ...]", ids)).sweep()
+        return fleet.sweep(cast("tuple[str, ...]", ids))
+
+    @staticmethod
+    def _failed(fleet: WorkerFleet, problem: str) -> Cleanup:
+        """Report a problem with no worker proven started; still name new workers."""
+        found = fleet.sweep(())
+        return replace(found, problems=(problem, *found.problems))
 
     def _script(self, *, search: bool) -> Path:
         rows = []
@@ -216,15 +247,24 @@ class CallRun:
         )
         return pcm
 
-    def _settled_status(self) -> str:
-        """Poll briefly until the call reports an ended state; return that text."""
+    def _settled_status(self, launched: str) -> str:
+        """Return the ended report of the launched call, never another call's.
+
+        ``launched`` is the launch's own output; its trace line identifies the
+        call. A status naming a different trace belongs to another call, and
+        then the launch output, itself the call's report, stands in.
+        """
+        mine = trace_path(launched)
         status = self.status()
         for _ in range(_SETTLE_POLLS):
-            if is_final(status):
-                break
+            theirs = trace_path(status)
+            if theirs and theirs != mine:
+                return launched
+            if is_final(status) and theirs == mine:
+                return status
             time.sleep(_SETTLE_WAIT_S)
             status = self.status()
-        return status
+        return status if trace_path(status) == mine else launched
 
     @staticmethod
     def status() -> str:
@@ -275,7 +315,11 @@ def main() -> int:
     search = _search_configured()
     with tempfile.TemporaryDirectory(prefix="verify-call-") as directory:
         run = CallRun(Path(directory))
-        report, output = run.place(search=search)
+        try:
+            report, output = run.place(search=search)
+        except ValueError as exc:
+            print(f"FAIL setup: {exc}")
+            return 4
     trace = load_trace(report)
     verdicts = Judge(
         report, output, search_key=search, trace=trace, cleanup=run.cleanup
@@ -287,6 +331,8 @@ def main() -> int:
         print(f"verify-call FAILED: {', '.join(failed)}")
         print("--- call report ---")
         print(report)
+        print("--- launch output ---")
+        print(output)
         return 1
     skipped = [v.name for v in verdicts if v.status == "SKIP"]
     print(
