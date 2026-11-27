@@ -230,14 +230,19 @@ function demo(pr):
 #                  voice, notify and speak). Outside plugin/ and
 #                  src/, every documentation update is demo-exempt
 #                  (operator ruling, 2026-11-27): such a file is written
-#                  for people and agents. One vox code path reads one:
+#                  for people and agents. Three vox commands read one:
 #                  the guide row of `vox doctor` compares
 #                  .punt-labs/vox/CLAUDE.md with the packaged template
-#                  and reports drift; it plays nothing, and the guide
-#                  stays exempt
+#                  and reports drift, and `vox enable` and `vox disable`
+#                  read the root CLAUDE.md to add or remove the guide's
+#                  import line; none plays anything, and both files
+#                  stay exempt
 #   coverage(pr) = the leader's latest "tier coverage: H" comment, valid
 #                  when H is the head, or an ancestor of it and every file
-#                  changed since H is demo_exempt. A later change
+#                  changed since H is a demo_exempt documentation file
+#                  (*.md, *.tex, *.bib or a *.pdf built from one). tests/
+#                  and .github/ are demo_exempt but are not documentation:
+#                  a later change
 #                  to a test, a workflow or any non-exempt file ends its
 #                  validity, so removing or weakening a named test, or
 #                  dropping its tier from CI, forces a new comment. With no
@@ -262,7 +267,7 @@ function demo(pr):
 #                  playback, levels, agent, live_call), the leader's run
 #                  at H of the valid coverage comment, with the command
 #                  and output pasted in that comment (every file changed
-#                  since H is demo_exempt, so the run still describes the
+#                  since H is documentation, so the run still describes the
 #                  head). A covered row on such a tier with no pasted run
 #                  makes the comment invalid, so the next tick runs the
 #                  tier and posts the comment again. A tier that is red or still running is a CI

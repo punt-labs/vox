@@ -335,11 +335,13 @@ the ruling.
 **The ear is asked only for a gap a machine cannot judge.** The roundtrip tier
 proves the synthesis path still speaks intelligibly. It cannot judge that a
 step said the right words, in the right voice, with the delivery, the ducking,
-the chime and its timing, and no tier judges what the Lux display shows. When
-a PR changes one of those, it is a gap, and the operator confirms it by ear: run the canonical flight in
+the chime and its timing. When a PR changes one of those, it is an audible
+gap, and the operator confirms it by ear: run the canonical flight in
 [`docs/testing/manual-tests.md`](testing/manual-tests.md) and ask after each
 audible step, immediately, because audio impressions decay within seconds.
-This is the one human gate in the loops, and it is a demo, not a diff.
+This is the one human gate in the loops, and it is a demo, not a diff. No tier
+judges what the Lux display shows either; a display change that plays nothing
+is a silent gap, closed by the leader's recorded run like any other.
 
 **A gap is also a finding about the tiers.** Where a test could close it, the
 PR adds that test and the row becomes covered, so neither this change nor the
