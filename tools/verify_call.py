@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Self, cast, final
 
-from verify_judge import NO_EXIT, Judge, is_final
+from verify_judge import NO_EXIT, TIMEOUT_EXIT, Judge, is_final
 from verify_workers import Cleanup, WorkerFleet
 
 __all__ = [
@@ -33,8 +33,11 @@ __all__ = [
     "script_plan",
 ]
 
-_TIMEOUT_EXIT: Final = 124  # What ``timeout`` exits with when it kills its command.
-_LAUNCH_MARGIN_S: Final = 240  # Speech, agent latency and retries on top of the pauses.
+# ``vox call --script`` never returns on its own once the script ends: it idles
+# on pings until ``timeout`` kills it, so exit 124 is the normal end of a call.
+# The timeout is therefore the script itself plus a short drain, not a margin.
+_SPEECH_ESTIMATE_S: Final = 3  # Per spoken turn, on top of its pause.
+_DRAIN_S: Final = 45  # For the agent's last reply and any worker stop in flight.
 _STOP_TIMEOUT_S: Final = 30
 _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
 _LEAD_IN_S: Final = 6  # Silence before the caller speaks, so the greeting is whole.
@@ -114,8 +117,10 @@ def script_plan(*, search: bool) -> list[Turn]:
 
 
 def launch_timeout_s(*, search: bool) -> int:
-    """Return how long ``vox call`` may run: the script's own pauses plus a margin."""
-    return sum(turn.pause_s for turn in script_plan(search=search)) + _LAUNCH_MARGIN_S
+    """Return when ``vox call`` is cut off: the script's length plus a short drain."""
+    plan = script_plan(search=search)
+    spoken = sum(1 for turn in plan if turn.text)
+    return sum(t.pause_s for t in plan) + _SPEECH_ESTIMATE_S * spoken + _DRAIN_S
 
 
 @final
@@ -217,12 +222,13 @@ class CallRun:
         """Return this run's call trace, its report and what could not be shown.
 
         A launch that printed its report named its call and has ended, so there
-        is nothing to stop. Otherwise the call is found from the status and
-        accepted only when its trace is new, and a live one is stopped.
+        is nothing to stop. A scripted call normally ends by ``timeout`` killing
+        the launch (exit 124): its call is then found from the status, accepted
+        only when its trace is new, and a live one is hung up.
         """
         if launch is not None and (mine := trace_path(launch.stdout)):
             return mine, self._settled_status(mine, launch.stdout), []
-        if launch is not None and launch.returncode != _TIMEOUT_EXIT:
+        if launch is not None and launch.returncode != TIMEOUT_EXIT:
             err = launch.stderr.strip()[:200]
             msg = f"vox call exited {launch.returncode} without a report ({err})"
             return "", "", [msg]  # Not killed: no call is this run's to adopt.
@@ -232,7 +238,7 @@ class CallRun:
         mine = trace_path(found)
         if not mine or mine == before:
             return "", "", ["the call timed out and could not be found from status"]
-        problems = ["vox call timed out; its report was recovered from status"]
+        problems: list[str] = []  # Recovery is the normal end of a scripted call.
         if fault := self._stop(mine):
             problems.append(fault)
         status = self._settled_status(mine, "")

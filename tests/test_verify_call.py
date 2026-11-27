@@ -882,8 +882,7 @@ def test_a_timed_out_launch_still_stops_its_own_live_call_and_its_workers(
     assert len(voxd.call_stops()) == 1
     assert voxd.stops() == ["new"]
     assert cleanup.started == ("new",)
-    assert all("did not start" not in p for p in cleanup.problems)
-    assert any("timed out" in p for p in cleanup.problems)
+    assert cleanup.problems == ()
     assert str(mine) in status
 
 
@@ -901,11 +900,53 @@ def test_a_timed_out_launch_whose_call_already_ended_recovers_its_report(
     assert cleanup.unproven == ()
 
 
-def test_the_launch_timeout_covers_the_script_plus_a_margin() -> None:
+def test_the_launch_timeout_is_the_script_plus_a_short_drain() -> None:
     for search in (True, False):
         plan = verify_call.script_plan(search=search)
         total = sum(turn.pause_s for turn in plan)
-        assert verify_call.launch_timeout_s(search=search) >= total + 120
+        timeout = verify_call.launch_timeout_s(search=search)
+        assert total + 30 <= timeout <= total + 90
+
+
+def test_a_scripted_call_that_runs_to_the_timeout_is_a_clean_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _trace_file(tmp_path, "abcd1234")
+    voxd = _Voxd(trace, {}, {"abcd1234": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace), _live(trace), _report(trace)]
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 0
+    out = capsys.readouterr().out
+    assert "PASS clean end" in out
+    assert "PASS worker cleanup" in out
+
+
+def test_a_call_that_never_ends_after_the_timeout_still_fails_clean_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _trace_file(tmp_path, "abcd1234")
+    voxd = _Voxd(trace, {}, {"abcd1234": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace)]
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 1
+    assert "FAIL clean end" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("code", [1, 2, 130])
+def test_any_other_non_zero_launch_exit_still_fails_clean_end(code: int) -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, launch_exit=code, trace=_TRACE, cleanup=_CLEAN
+    ).verdicts()
+    assert next(v for v in judged if v.name == "clean end").status == "FAIL"
+
+
+def test_the_timeout_exit_of_a_scripted_launch_is_an_expected_end() -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, launch_exit=124, trace=_TRACE, cleanup=_CLEAN
+    ).verdicts()
+    assert next(v for v in judged if v.name == "clean end").status == "PASS"
 
 
 def test_the_launch_runs_under_that_timeout(
@@ -1073,7 +1114,7 @@ def test_a_killed_launch_still_adopts_the_call_that_appeared(
     cleanup, _ = _place(tmp_path, monkeypatch, voxd)
     assert len(voxd.call_stops()) == 1
     assert voxd.stops() == ["new"]
-    assert any("timed out" in p for p in cleanup.problems)
+    assert cleanup.problems == ()
 
 
 def test_a_call_that_ended_before_the_stop_is_not_a_failed_stop(
