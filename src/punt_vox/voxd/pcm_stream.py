@@ -37,6 +37,7 @@ from punt_vox.voxd.pcm_audio import (
 )
 from punt_vox.voxd.pcm_gap import GapSmoother
 from punt_vox.voxd.pcm_output import DeviceCall, OutputDeviceLostError
+from punt_vox.voxd.pcm_release import StreamRelease
 from punt_vox.voxd.pcm_report import FlushReport, StreamReport
 
 if TYPE_CHECKING:
@@ -145,7 +146,7 @@ class PcmStreamSink:
         self._opened_at = time.monotonic()
         starting = await DeviceCall.run(self._start_device, factory)
         if starting.cancelled:
-            await self._release_cancelled_open(starting)
+            await StreamRelease.after_cancelled_open(starting)
             raise asyncio.CancelledError
         self._stream = starting.result()
         logger.info("PCM stream open in %.1f ms", self._since_open_ms())
@@ -246,7 +247,16 @@ class PcmStreamSink:
         if self._phase == "closed":
             msg = "PCM sink is already closed"
             raise ValueError(msg)
-        is_tail_played = await self._play_flush_tail()
+        try:
+            is_tail_played = await self._play_flush_tail()
+        except asyncio.CancelledError:
+            # The device must still be released: nobody calls close() again.
+            await self._release(is_tail_played=False)
+            raise
+        return await self._release(is_tail_played=is_tail_played)
+
+    async def _release(self, *, is_tail_played: bool) -> StreamReport:
+        """Close the sink, release its device, and report how the stream ended."""
         ending, self._phase = self._phase, "closed"
         pending = self._buffer.clear()
         self._dropped += pending
@@ -255,10 +265,7 @@ class PcmStreamSink:
         try:
             if stream is not None:
                 drain = is_tail_played or (ending == "finished" and not pending)
-                releasing = await DeviceCall.run(
-                    self._release_device, stream, drain=drain
-                )
-                self._raise_release_outcome(releasing)
+                await StreamRelease.run(stream, drain=drain)
         finally:
             report = self._report(interrupted=ending == "interrupted")
         return report
@@ -278,20 +285,6 @@ class PcmStreamSink:
                 await self._tail_played.wait()
             return True
         return False
-
-    @staticmethod
-    def _raise_release_outcome(releasing: DeviceCall[None]) -> None:
-        """Re-raise a cancelled close or a failed release, logging the one lost."""
-        error = releasing.error()
-        if releasing.cancelled:
-            if error is not None:
-                logger.error(
-                    "releasing the PCM device during a cancelled close",
-                    exc_info=error,
-                )
-            raise asyncio.CancelledError
-        if error is not None:
-            raise error
 
     def _report(self, *, interrupted: bool) -> StreamReport:
         """Build and log the closing report, at WARNING if playback degraded."""
@@ -316,20 +309,6 @@ class PcmStreamSink:
         )
         return report
 
-    @classmethod
-    async def _release_cancelled_open(cls, starting: DeviceCall[OutputStream]) -> None:
-        """Close the device a cancelled :meth:`open` was still starting."""
-        error = starting.error()
-        if error is None:
-            releasing = await DeviceCall.run(
-                cls._release_device, starting.result(), drain=False
-            )
-            error = releasing.error()
-        if error is not None:
-            logger.error(
-                "releasing the PCM device after a cancelled open", exc_info=error
-            )
-
     def _start_device(self, factory: OutputStreamFactory) -> OutputStream:
         """Worker thread: create and start the stream, closing it on failure."""
         stream = factory(
@@ -347,17 +326,6 @@ class PcmStreamSink:
                 logger.exception("closing the PCM device after a failed start")
             raise
         return stream
-
-    @staticmethod
-    def _release_device(stream: OutputStream, *, drain: bool) -> None:
-        """Worker thread: stop or abort the stream, then always close it."""
-        try:
-            if drain:
-                stream.stop()
-            else:
-                stream.abort()
-        finally:
-            stream.close()
 
     def _since_open_ms(self) -> float:
         return (time.monotonic() - self._opened_at) * 1000

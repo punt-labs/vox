@@ -438,6 +438,19 @@ class TestTheFlushTailIsPlayedBeforeTheDeviceIsReleased:
         await sink.close()
         assert device.opened.aborted
 
+    async def test_a_cancelled_close_still_releases_the_device(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        sink.flush()
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.005)  # inside the wait for the tail
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert device.opened.closed
+        assert device.opened.aborted or device.opened.stopped
+
     async def test_a_barge_in_through_the_speaker_plays_the_tail(self) -> None:
         device = FakeDevice()
 
