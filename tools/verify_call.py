@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self, cast, final
 
+from verify_workers import Cleanup, WorkerFleet
+
 __all__ = ["Judge", "Verdict", "is_final", "is_live", "load_trace", "script_plan"]
 
 _CALL_TIMEOUT_S: Final = 420
@@ -53,7 +55,6 @@ _WORKER_STOP_TURN: Final = (
 _WORKER_CONFIRM_TURN: Final = "Yes."
 # The words the agent may speak for a worker; the launch phase is not one.
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
-_WORKER_ENDED: Final = ("stopped", "exited")  # Registry phases with nothing to stop.
 
 _FINAL_STATES: Final = ("call ended", "call failed")
 _SETTLE_POLLS: Final = 10
@@ -121,10 +122,11 @@ class Verdict:
 
 @final
 class Judge:
-    """Read the end-of-call report ``vox call`` prints and judge seven expectations."""
+    """Read the end-of-call report ``vox call`` prints and judge eight expectations."""
 
     __slots__ = (
         "_agent",
+        "_cleanup",
         "_ended",
         "_output",
         "_report",
@@ -139,6 +141,7 @@ class Judge:
     _tools: list[str]
     _ended: bool
     _trace: list[dict[str, object]] | None  # None: no trace was read.
+    _cleanup: Cleanup | None  # None: no worker cleanup was attempted.
 
     def __new__(
         cls,
@@ -147,11 +150,12 @@ class Judge:
         *,
         search_key: bool,
         trace: list[dict[str, object]] | None = None,
+        cleanup: Cleanup | None = None,
     ) -> Self:
         """Bind the report, the call's other output and whether search is set up."""
         self = super().__new__(cls)
         self._report, self._output, self._search_key = report, output, search_key
-        self._trace = trace
+        self._trace, self._cleanup = trace, cleanup
         self._agent, self._tools, self._ended = self._parse(report)
         return self
 
@@ -177,13 +181,14 @@ class Judge:
         return agent, tools, ended
 
     def verdicts(self) -> list[Verdict]:
-        """Return the seven expectations in order."""
+        """Return the eight expectations in order."""
         return [
             self._greeting(),
             self._docs(),
             self._plain_words(),
             self._search(),
             self._worker_status(),
+            self._worker_cleanup(),
             self._silence(),
             self._clean_end(),
         ]
@@ -313,6 +318,27 @@ class Judge:
             return "activity is not an object"
         return ""
 
+    def _worker_cleanup(self) -> Verdict:
+        name = "worker cleanup"
+        cleanup = self._cleanup
+        if cleanup is None:
+            return Verdict(name, "FAIL", "no worker cleanup was attempted")
+        if cleanup.problems:
+            return Verdict(name, "FAIL", "; ".join(cleanup.problems))
+        if not cleanup.started:
+            return Verdict(name, "FAIL", "the call started no worker to stop")
+        if cleanup.left_running:
+            return Verdict(
+                name,
+                "FAIL",
+                f"the agent left {', '.join(cleanup.left_running)} running; "
+                "this run stopped it",
+            )
+        stops = [t for t in self._tools if t.startswith("tool: stop_worker(")]
+        if not any(t.endswith("-> ok") for t in stops):
+            return Verdict(name, "FAIL", f"stop_worker never succeeded: {stops}")
+        return Verdict(name, "PASS", "stop_worker ok; no started worker still running")
+
     def _silence(self) -> Verdict:
         nags = [t for t in self._agent if _NAG.search(t)]
         if nags:
@@ -333,29 +359,35 @@ class Judge:
 class CallRun:
     """Generate the caller's audio, place the call, and always stop it."""
 
-    __slots__ = ("_directory", "_leftover", "_placed")
+    __slots__ = ("_cleanup", "_directory", "_placed")
     _directory: Path
     _placed: bool  # True once this run started a call; only then may it stop one.
-    _leftover: list[str]  # Workers this run's call started and the agent left running.
+    _cleanup: Cleanup | None  # None until the call has been placed and swept.
 
     def __new__(cls, directory: Path) -> Self:
         """Work inside *directory*, which holds the generated audio and script."""
         self = super().__new__(cls)
         self._directory = directory
         self._placed = False
-        self._leftover = []
+        self._cleanup = None
         return self
 
     @property
-    def leftover_workers(self) -> list[str]:
-        """Return the IDs of workers the call started that this run had to stop."""
-        return list(self._leftover)
+    def cleanup(self) -> Cleanup:
+        """Return what became of the workers the call started.
+
+        Raises:
+            ValueError: If no call has been placed and swept yet.
+        """
+        if self._cleanup is None:
+            raise ValueError("no call has been placed")
+        return self._cleanup
 
     def place(self, *, search: bool) -> tuple[str, str]:
         """Return the final ``vox call status`` text and the call's own output."""
         script = self._script(search=search)
-        known = self._worker_ids()
         self._placed = True
+        status = ""
         try:
             done = subprocess.run(
                 [
@@ -375,43 +407,29 @@ class CallRun:
             status = self._settled_status()
         finally:
             self._stop()
-            self._stop_new_workers(known)
+            self._cleanup = self._sweep(status or self.status())
         return status, done.stdout + done.stderr
 
     @staticmethod
-    def _worker_ids() -> set[str]:
-        """Return the IDs of workers still running.
-
-        Raises:
-            ValueError: If ``vox worker list`` printed something unreadable;
-                guessing would risk stopping a worker this run did not start.
-        """
-        done = subprocess.run(
-            ["timeout", str(_STOP_TIMEOUT_S), "vox", "worker", "list"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    def _sweep(status: str) -> Cleanup:
+        """Stop the workers the call's trace says it started, and no others."""
         try:
-            rows = json.loads(done.stdout)
-        except json.JSONDecodeError as exc:
-            msg = f"vox worker list was unreadable: {done.stdout!r}"
-            raise ValueError(msg) from exc
-        return {
-            str(row["id"])
+            rows = load_trace(status)
+        except ValueError as exc:
+            return Cleanup((), (), (f"the call trace was unreadable: {exc}",))
+        if rows is None:
+            msg = "no call trace, so the workers this call started are unknown"
+            return Cleanup((), (), (msg,))
+        details = [
+            cast("dict[str, object]", row["detail"])
             for row in rows
-            if isinstance(row, dict) and row.get("state") not in _WORKER_ENDED
-        }
-
-    def _stop_new_workers(self, known: set[str]) -> None:
-        """Stop each worker that appeared during the call; never one already there."""
-        for worker_id in sorted(self._worker_ids() - known):
-            self._leftover.append(worker_id)
-            subprocess.run(
-                ["timeout", str(_STOP_TIMEOUT_S), "vox", "worker", "stop", worker_id],
-                capture_output=True,
-                check=False,
-            )
+            if row.get("type") == "worker_started"
+            and isinstance(row.get("detail"), dict)
+        ]
+        ids = tuple(
+            d["worker_id"] for d in details if isinstance(d.get("worker_id"), str)
+        )
+        return WorkerFleet(cast("tuple[str, ...]", ids)).sweep()
 
     def _script(self, *, search: bool) -> Path:
         rows = []
@@ -516,10 +534,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="verify-call-") as directory:
         run = CallRun(Path(directory))
         report, output = run.place(search=search)
-    if run.leftover_workers:
-        print(f"stopped a worker the call left running: {run.leftover_workers}")
     trace = load_trace(report)
-    verdicts = Judge(report, output, search_key=search, trace=trace).verdicts()
+    verdicts = Judge(
+        report, output, search_key=search, trace=trace, cleanup=run.cleanup
+    ).verdicts()
     for verdict in verdicts:
         print(f"{verdict.status} {verdict.name}: {verdict.why}")
     failed = [v.name for v in verdicts if v.status == "FAIL"]

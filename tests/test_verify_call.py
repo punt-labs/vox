@@ -7,18 +7,28 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from punt_vox.voxd.voice_call.spoken_answer import SpokenAnswer
 
-_PATH = Path(__file__).resolve().parents[1] / "tools" / "verify_call.py"
-_SPEC = importlib.util.spec_from_file_location("verify_call", _PATH)
-assert _SPEC is not None
-assert _SPEC.loader is not None
-verify_call = importlib.util.module_from_spec(_SPEC)
-sys.modules["verify_call"] = verify_call
-_SPEC.loader.exec_module(verify_call)
+_TOOLS = Path(__file__).resolve().parents[1] / "tools"
+
+
+def _load(name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, _TOOLS / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+verify_workers = _load("verify_workers")  # verify_call imports it by name.
+verify_call = _load("verify_call")
+_CLEAN = verify_workers.Cleanup(started=("abcd1234",), left_running=(), problems=())
 
 _GOOD = """\
 call ended by caller | 2 tool calls | agent: Hi
@@ -46,7 +56,7 @@ def _verdicts(
     report: str, *, search_key: bool = True, output: str = ""
 ) -> dict[str, str]:
     judged = verify_call.Judge(
-        report, output, search_key=search_key, trace=_TRACE
+        report, output, search_key=search_key, trace=_TRACE, cleanup=_CLEAN
     ).verdicts()
     return {v.name: v.status for v in judged}
 
@@ -113,10 +123,20 @@ def test_a_call_that_never_ended_fails_a_clean_end() -> None:
 _STATUS = (Path(__file__).parent / "fixtures" / "vox_call_status_ended.txt").read_text()
 
 
-def test_the_real_status_text_passes_every_expectation_but_the_worker_one() -> None:
-    # The captured call predates the worker turns, so it holds no worker call.
+_WORKER_STATUS = (
+    Path(__file__).parent / "fixtures" / "vox_call_status_worker.txt"
+).read_text()
+
+
+def test_the_real_status_text_with_worker_turns_passes_every_expectation() -> None:
+    assert set(_verdicts(_WORKER_STATUS).values()) == {"PASS"}
+
+
+def test_a_real_status_text_without_worker_turns_fails_only_the_worker_ones() -> None:
+    # The older capture predates the worker turns, so it holds no worker call.
     verdicts = _verdicts(_STATUS)
     assert verdicts.pop("worker status") == "FAIL"
+    assert verdicts.pop("worker cleanup") == "FAIL"
     assert set(verdicts.values()) == {"PASS"}
 
 
@@ -230,7 +250,9 @@ _TRACE: list[dict[str, object]] = [
 
 
 def _with_trace(trace: list[dict[str, object]] | None) -> dict[str, str]:
-    judged = verify_call.Judge(_GOOD, "", search_key=True, trace=trace).verdicts()
+    judged = verify_call.Judge(
+        _GOOD, "", search_key=True, trace=trace, cleanup=_CLEAN
+    ).verdicts()
     return {v.name: v.status for v in judged}
 
 
@@ -316,7 +338,9 @@ def test_the_trace_named_by_the_status_text_is_read(tmp_path: Path) -> None:
 def _worker_status(
     report: str = _GOOD, trace: list[dict[str, object]] | None = _TRACE
 ) -> str:
-    judged = verify_call.Judge(report, "", search_key=True, trace=trace).verdicts()
+    judged = verify_call.Judge(
+        report, "", search_key=True, trace=trace, cleanup=_CLEAN
+    ).verdicts()
     return str(next(v.status for v in judged if v.name == "worker status"))
 
 
@@ -447,95 +471,163 @@ def _stub_script(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     monkeypatch.setattr(verify_call.CallRun, "_script", script)
 
 
-class _Fleet:
-    """Stand in for subprocess.run with a worker list that grows once."""
+def _cleanup_verdict(cleanup: object, report: str = _GOOD) -> tuple[str, str]:
+    judged = verify_call.Judge(
+        report, "", search_key=True, trace=_TRACE, cleanup=cleanup
+    ).verdicts()
+    verdict = next(v for v in judged if v.name == "worker cleanup")
+    return str(verdict.status), str(verdict.why)
 
-    def __init__(self) -> None:
+
+def test_a_started_worker_the_agent_stopped_passes_worker_cleanup() -> None:
+    assert _cleanup_verdict(_CLEAN)[0] == "PASS"
+
+
+def test_worker_cleanup_fails_without_a_cleanup_report() -> None:
+    assert _cleanup_verdict(None)[0] == "FAIL"
+
+
+def test_a_worker_the_agent_left_running_fails_worker_cleanup() -> None:
+    left = verify_workers.Cleanup(("abcd1234",), ("abcd1234",), ())
+    status, why = _cleanup_verdict(left)
+    assert status == "FAIL"
+    assert "abcd1234" in why
+
+
+def test_a_cleanup_problem_fails_worker_cleanup_and_is_shown() -> None:
+    broken = verify_workers.Cleanup(("abcd1234",), (), ("vox worker list failed: x",))
+    status, why = _cleanup_verdict(broken)
+    assert status == "FAIL"
+    assert "vox worker list failed: x" in why
+
+
+def test_worker_cleanup_fails_when_stop_worker_never_succeeded() -> None:
+    report = _GOOD.replace("stop_worker({'worker_id': 'abcd1234'}) -> ok", "x() -> ok")
+    assert _cleanup_verdict(_CLEAN, report)[0] == "FAIL"
+
+
+def test_worker_cleanup_fails_when_the_call_started_no_worker() -> None:
+    assert _cleanup_verdict(verify_workers.Cleanup((), (), ()))[0] == "FAIL"
+
+
+class _Voxd:
+    """Stand in for subprocess.run around one placed call."""
+
+    def __init__(self, trace: Path | None, workers: dict[str, str]) -> None:
+        self.trace = trace
+        self.workers = workers
+        self.list_code = 0
         self.commands: list[list[str]] = []
-        self.listed = 0
 
     def __call__(
         self, command: list[str], **_: object
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
-        if command[-2:] == ["worker", "list"]:
-            self.listed += 1
-            ids = ["old"] if self.listed == 1 else ["old", "new"]
+        if command[-2:] == ["call", "status"]:
+            trace = f"trace: {self.trace}\n" if self.trace else ""
             return subprocess.CompletedProcess(
-                command, 0, json.dumps([{"id": i} for i in ids]), ""
+                command, 0, _GOOD.replace("trace: /tmp/call.jsonl\n", trace), ""
             )
-        out = _ENDED_STATUS if command[-2:] == ["call", "status"] else ""
-        return subprocess.CompletedProcess(command, 0, out, "")
+        if command[-2:] == ["worker", "list"]:
+            rows = [{"id": i, "state": s} for i, s in self.workers.items()]
+            out = json.dumps(rows) if self.list_code == 0 else ""
+            return subprocess.CompletedProcess(command, self.list_code, out, "no voxd")
+        if command[3:5] == ["worker", "stop"]:
+            self.workers[command[-1]] = "stopped"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def stops(self) -> list[str]:
+        return [c[-1] for c in self.commands if c[3:5] == ["worker", "stop"]]
 
 
-_ENDED_STATUS = "call ended by caller | 0 tool calls\nended by caller\n"
+def _trace_file(directory: Path, *worker_ids: str) -> Path:
+    path = directory / "call.jsonl"
+    rows = [
+        {"ms": 1, "dir": "note", "type": "worker_started", "detail": {"worker_id": i}}
+        for i in worker_ids
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return path
 
 
-def test_a_call_stops_a_worker_it_started_and_never_one_it_found(
+def test_a_call_stops_only_the_workers_its_trace_says_it_started(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fleet = _Fleet()
-    run = verify_call.CallRun(tmp_path)
-    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    _stub_script(monkeypatch, tmp_path)
-    run.place(search=False)
-    stops = [c for c in fleet.commands if c[-3:-1] == ["worker", "stop"]]
-    assert [c[-1] for c in stops] == ["new"]
-    assert run.leftover_workers == ["new"]
-
-
-def test_a_worker_the_agent_already_stopped_is_not_stopped_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class _Stopped(_Fleet):
-        def __call__(
-            self, command: list[str], **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            done = super().__call__(command, **kwargs)
-            if command[-2:] != ["worker", "list"]:
-                return done
-            rows = json.loads(done.stdout)
-            stopped = [
-                {**r, "state": "stopped"} if r["id"] == "new" else r for r in rows
-            ]
-            return subprocess.CompletedProcess(command, 0, json.dumps(stopped), "")
-
-    fleet = _Stopped()
-    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    voxd = _Voxd(_trace_file(tmp_path, "new"), {"old": "ready", "new": "ready"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
     _stub_script(monkeypatch, tmp_path)
     run = verify_call.CallRun(tmp_path)
     run.place(search=False)
-    assert run.leftover_workers == []
+    assert voxd.stops() == ["new"]
+    assert run.cleanup.left_running == ("new",)
 
 
-def test_an_unreadable_worker_list_refuses_to_place_the_call(
+def test_a_new_worker_the_trace_does_not_name_is_never_stopped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _Garbled(_Fleet):
-        def __call__(
-            self, command: list[str], **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            super().__call__(command, **kwargs)
-            out = "not json" if command[-2:] == ["worker", "list"] else ""
-            return subprocess.CompletedProcess(command, 0, out, "")
-
-    fleet = _Garbled()
-    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    voxd = _Voxd(_trace_file(tmp_path), {"someone-elses": "ready"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
     _stub_script(monkeypatch, tmp_path)
-    with pytest.raises(ValueError, match="unreadable"):
-        verify_call.CallRun(tmp_path).place(search=False)
-    assert not any("--script" in c for c in fleet.commands)
-    assert not any(c[-2:-1] == ["stop"] for c in fleet.commands)
+    verify_call.CallRun(tmp_path).place(search=False)
+    assert voxd.stops() == []
 
 
-def test_worker_commands_run_under_a_timeout(
+def test_a_call_with_no_trace_cannot_name_its_workers_and_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fleet = _Fleet()
+    voxd = _Voxd(None, {"old": "ready"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    _stub_script(monkeypatch, tmp_path)
     run = verify_call.CallRun(tmp_path)
-    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    _stub_script(monkeypatch, tmp_path)
     run.place(search=False)
-    worker = [c for c in fleet.commands if "worker" in c]
-    assert worker
-    assert all(c[0] == "timeout" for c in worker)
+    assert voxd.stops() == []
+    assert "no call trace" in run.cleanup.problems[0]
+
+
+def test_a_worker_list_failing_after_the_call_does_not_hide_the_verdicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "abcd1234"), {})
+    voxd.list_code = 1
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: False)
+    _stub_script(monkeypatch, tmp_path)
+    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    assert verify_call.main() == 1
+    out = capsys.readouterr().out
+    assert "PASS greeting" in out
+    assert "FAIL worker cleanup" in out
+    assert "no voxd" in out
+
+
+def test_a_clean_run_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "abcd1234"), {"abcd1234": "stopped"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
+    _stub_script(monkeypatch, tmp_path)
+    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    assert verify_call.main() == 0
+    assert "PASS worker cleanup" in capsys.readouterr().out
+
+
+def test_a_leftover_worker_makes_the_run_exit_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "abcd1234"), {"abcd1234": "ready"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
+    _stub_script(monkeypatch, tmp_path)
+    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    assert verify_call.main() == 1
+    assert "left" in capsys.readouterr().out
