@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import lzma
 import math
 import os
 import re
@@ -105,7 +106,14 @@ class Verdicts:
             with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
                 bad_member = archive.testzip()
                 members = len(archive.namelist())
-        except (zipfile.BadZipFile, zlib.error, NotImplementedError, EOFError) as exc:
+        except (
+            zipfile.BadZipFile,
+            zlib.error,
+            lzma.LZMAError,
+            NotImplementedError,
+            EOFError,
+            RuntimeError,  # an encrypted member needs a password
+        ) as exc:
             self.check(name, ok=False, detail=f"unreadable zip: {exc!r}")
             return False
         ok = bad_member is None and members >= 1

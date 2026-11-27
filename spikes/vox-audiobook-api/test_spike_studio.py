@@ -183,6 +183,26 @@ def corrupted_deflated_zip() -> bytes:
     return bytes(data)
 
 
+def encrypted_zip() -> bytes:
+    """A zip whose member claims encryption (flag bit 0): RuntimeError on read."""
+    data = bytearray(make_zip())
+    data[6] |= 1  # local header general-purpose flags
+    central = data.index(b"PK\x01\x02")
+    data[central + 8] |= 1  # central directory general-purpose flags
+    return bytes(data)
+
+
+def corrupted_lzma_zip() -> bytes:
+    """An lzma member with a damaged stream: lzma.LZMAError on read."""
+    name = "chapter-1.txt"
+    data = bytearray(
+        make_zip({name: b"hello world " * 500}, compression=zipfile.ZIP_LZMA)
+    )
+    # 30-byte local header, the name, then 4 bytes of lzma header and 5 of props.
+    data[30 + len(name) + 9] ^= 0xFF
+    return bytes(data)
+
+
 @pytest.mark.parametrize(
     ("body", "verdict"),
     [
@@ -192,6 +212,8 @@ def corrupted_deflated_zip() -> bytes:
         pytest.param(make_zip({}), "FAIL", id="empty-archive"),
         pytest.param(corrupted_zip(), "FAIL", id="crc-mismatch"),
         pytest.param(corrupted_deflated_zip(), "FAIL", id="zlib-error"),
+        pytest.param(encrypted_zip(), "FAIL", id="encrypted-member"),
+        pytest.param(corrupted_lzma_zip(), "FAIL", id="lzma-error"),
     ],
 )
 def test_studio_archive_must_be_a_readable_non_empty_zip(
@@ -230,3 +252,25 @@ def test_studio_archive_read_errors_fail_instead_of_crashing(
     out = capsys.readouterr().out
     assert "[studio-archive] FAIL unreadable zip" in out
     assert "[studio-chapters] PASS" in out  # the probe went on to its last step
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        pytest.param(encrypted_zip(), "RuntimeError", id="encrypted-member"),
+        pytest.param(corrupted_lzma_zip(), "LZMAError", id="lzma-error"),
+    ],
+)
+def test_studio_archive_unreadable_member_is_recorded_and_probe_continues(
+    body: bytes,
+    error: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeClock().install(monkeypatch)
+    api = studio_api(snapshots=SNAP, archive=body)
+    assert exit_code("studio", api, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert f"[studio-archive] FAIL unreadable zip: {error}(" in out
+    assert "[studio-chapters] PASS" in out
