@@ -2,11 +2,11 @@
 
 > Voice and audio for your AI coding assistant.
 
-[![License](https://img.shields.io/github/license/punt-labs/vox)](LICENSE)
+[![License](https://img.shields.io/github/license/punt-labs/vox)](https://github.com/punt-labs/vox/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/punt-labs/vox/test.yml?label=CI)](https://github.com/punt-labs/vox/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/punt-vox)](https://pypi.org/project/punt-vox/)
 [![Python](https://img.shields.io/pypi/pyversions/punt-vox)](https://pypi.org/project/punt-vox/)
-[![Working Backwards](https://img.shields.io/badge/Working_Backwards-hypothesis-lightgrey)](./prfaq.pdf)
+[![Working Backwards](https://img.shields.io/badge/Working_Backwards-hypothesis-lightgrey)](https://github.com/punt-labs/vox/blob/main/prfaq.pdf)
 
 vox adds text-to-speech (TTS) and background music to Claude Code and to your own scripts. It speaks when a task finishes, hits an error, or needs approval, with a voice you choose and a mood (the "vibe") that sets ElevenLabs expressive tags. It works with five TTS providers and falls back to the operating system's voice (`say` on macOS, `espeak-ng` on Linux) with no setup. It can also generate instrumental background music in a genre you describe.
 
@@ -243,7 +243,7 @@ vox rec new --from segments.json --json
 
 A rejected segment or a lost connection ends the output with a final
 `{"error": "..."}` object and a nonzero exit; earlier results stay in the
-output. See [docs/guide-batch-output.md](docs/guide-batch-output.md) for the
+output. See [docs/guide-batch-output.md](https://github.com/punt-labs/vox/blob/main/docs/guide-batch-output.md) for the
 failure cases and a script that reads partial results.
 
 #### Music
@@ -309,10 +309,11 @@ vox is also a Python library. It talks to the same `voxd` daemon as the plugin a
 ```python
 from punt_vox import SynthesisSpec, VoxClientSync
 
-VoxClientSync().synthesize("Build finished", SynthesisSpec(voice="sarah"))
+spec = SynthesisSpec(voice="sarah", provider="elevenlabs")
+VoxClientSync().synthesize("Build finished", spec)
 ```
 
-`VoxClientSync` connects per call; `VoxClient` is the async version. Every failure raises a `VoxError` subclass, results are typed, and the package ships type information (`py.typed`). See the [Python Library Guide](docs/guide-python-library.md) for both clients, recording to MP3 bytes, voice listing, and the full list of public names, and the [API Reference](docs/api-reference/index.md) for every signature.
+The spec must name a provider; the daemon rejects a request without one. `VoxClientSync` connects per call; `VoxClient` is the async version. Every failure raises a `VoxError` subclass, results are typed, and the package ships type information (`py.typed`). See the [Python Library Guide](https://github.com/punt-labs/vox/blob/main/docs/guide-python-library.md) for both clients, recording and fetching MP3 bytes, voice listing, and the full list of public names.
 
 ## Setup
 
@@ -564,7 +565,7 @@ All three ways use the same `voxd` audio daemon, so vox also works outside Claud
 
 ## Remote Audio
 
-You can run Claude Code on a headless server or cloud VM and hear the audio on your own machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point it at the `voxd` on your machine. See [docs/guide-remote-setup.md](docs/guide-remote-setup.md) for direct-network and SSH-tunnel setups.
+You can run Claude Code on a headless server or cloud VM and hear the audio on your own machine. Set `VOXD_HOST`, `VOXD_PORT`, and `VOXD_TOKEN` on the remote host to point it at the `voxd` on your machine. See [docs/guide-remote-setup.md](https://github.com/punt-labs/vox/blob/main/docs/guide-remote-setup.md) for direct-network and SSH-tunnel setups.
 
 ## Background Music
 
@@ -578,7 +579,7 @@ Each album is saved under `~/Music/vox/<name>/`, named by `--title` or else by t
 
 ## Music Player
 
-When [lux](https://github.com/punt-labs/lux) is running on the same machine, `voxd` adds a **voxd ▸ Music** menu entry to the lux display. It shows your saved albums as a list, each with a Play control, above play/pause, previous, next, and stop controls. Clicking an album plays it through your speakers, and the display shows what is playing and the track number (read from the album's ID3 tags). If the lux display restarts, `voxd` reconnects and adds the menu again. Without lux, the rest of vox works the same; only the player needs it.
+When [lux](https://github.com/punt-labs/lux) is running on the same machine, `voxd` adds a **voxd ▸ Music** menu entry to the lux display. It shows your saved albums as a list, each with a Play control, above play/pause, previous, next, and stop controls. Clicking an album plays it through your speakers, and the display shows what is playing and the track number. If the lux display restarts, `voxd` reconnects and adds the menu again. Without lux, the rest of vox works the same; only the player needs it.
 
 ## Control Panel
 
@@ -724,15 +725,14 @@ The connection between Claude Code and `vox mcp` does not depend on the daemon, 
 
 ## Documentation
 
-[Architecture (PDF)](docs/architecture.pdf) |
-[Remote Setup](docs/guide-remote-setup.md) |
-[Python Library](docs/guide-python-library.md) |
-[API Reference](docs/api-reference/index.md) |
-[Batch Output](docs/guide-batch-output.md) |
-[Design Log](DESIGN.md) |
-[Testing](TESTING.md) |
-[Contributing](CONTRIBUTING.md) |
-[Changelog](CHANGELOG.md)
+[Architecture (PDF)](https://github.com/punt-labs/vox/blob/main/docs/architecture.pdf) |
+[Remote Setup](https://github.com/punt-labs/vox/blob/main/docs/guide-remote-setup.md) |
+[Python Library](https://github.com/punt-labs/vox/blob/main/docs/guide-python-library.md) |
+[Batch Output](https://github.com/punt-labs/vox/blob/main/docs/guide-batch-output.md) |
+[Design Log](https://github.com/punt-labs/vox/blob/main/DESIGN.md) |
+[Testing](https://github.com/punt-labs/vox/blob/main/TESTING.md) |
+[Contributing](https://github.com/punt-labs/vox/blob/main/CONTRIBUTING.md) |
+[Changelog](https://github.com/punt-labs/vox/blob/main/CHANGELOG.md)
 
 ## License
 
