@@ -387,6 +387,31 @@ class TestMarksAreFrameAccurate:
         report = await sink.close()
         assert (report.underflows, report.idle_gaps) == (1, 0)
 
+    async def test_a_mark_later_in_the_resumed_block_leaves_the_stall_starvation(
+        self,
+    ) -> None:
+        """The same utterance resumes at the block start; a new one begins later."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        device.opened.pull(1 + 10)  # 200 ms dry
+        sink.feed(tone(100))  # the same utterance resumes
+        sink.feed(tone(BLOCK), starts_utterance=True)  # a new one, 100 frames in
+        device.opened.pull(2)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (1, 0)
+        assert report.gap_total.ms == pytest.approx(200.0)
+        assert report.degraded
+
+    async def test_a_mark_at_the_resume_point_is_still_a_pause(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        device.opened.pull(1 + 10)
+        sink.feed(tone(BLOCK), starts_utterance=True)  # begins where audio resumes
+        sink.feed(tone(100))
+        device.opened.pull(2)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 1)
+
     async def test_a_tool_pause_of_three_seconds_is_a_pause(self) -> None:
         """Marked by the tool call, though the turn's event id never changed."""
         sink, device = await open_sink()

@@ -173,14 +173,17 @@ class GapSmoother:
             self._fade_out(out, frames)
 
     def _take_marks(self, start: int, end: int) -> bool:
-        """Pop the marks this block pulls; return whether one starts in it.
+        """Pop the marks this block pulls; return whether one is at its start.
 
-        A mark below *start* belongs to audio an earlier block pulled and
-        decides nothing now.
+        A spell opens where the previous audio ended, which is where this
+        block's audio begins, so only a mark at *start* says the audio that
+        resumes is a new utterance. A mark later in the block begins one
+        after the resumed audio, and a mark below *start* belongs to audio an
+        earlier block pulled: neither decides the spell.
         """
         hit = False
         while self._marks and self._marks[0] < end:
-            hit |= self._marks.popleft() >= start
+            hit |= self._marks.popleft() == start
         return hit
 
     def _begin_tail(self, mode: _Mode) -> None:
