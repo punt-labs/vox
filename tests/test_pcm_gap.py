@@ -543,6 +543,23 @@ class TestFinishNeverWaitsOnADeadDevice:
             await asyncio.wait_for(sink.wait(), timeout=2)
         assert "made no progress" in caplog.text
 
+    async def test_a_stalled_device_with_nothing_queued_is_aborted_not_stopped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """stop() can block on a frozen device: the hang this wait exists to avoid."""
+        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.01)
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 2, ends_at_peak=True), starts_utterance=True)
+        device.opened.pull(2)  # the buffer is empty; the fade-out owes a callback
+        sink.finish()
+        with pytest.raises(OutputDeviceLostError):
+            await asyncio.wait_for(sink.wait(), timeout=2)
+        report = await sink.close()
+        assert device.opened.aborted
+        assert not device.opened.stopped
+        assert report.device_lost
+        assert report.degraded
+
     async def test_a_slow_but_live_device_is_waited_for(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

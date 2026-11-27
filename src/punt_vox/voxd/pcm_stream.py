@@ -257,6 +257,8 @@ class PcmStreamSink:
                     "PCM output made no progress for %.1f s; giving up the wait",
                     2 * _STALL_WAIT_S,
                 )
+                # Release with abort(): stop() waits on the device to drain.
+                self._device_lost = True
                 msg = "output device made no progress; the PCM stream stalled"
                 raise OutputDeviceLostError(msg) from None
         return self._callbacks
@@ -289,7 +291,8 @@ class PcmStreamSink:
         stream, self._stream = self._stream, None
         try:
             if stream is not None:
-                drain = is_tail_played or (ending == "finished" and not pending)
+                is_drained = ending == "finished" and not pending
+                drain = (is_tail_played or is_drained) and not self._device_lost
                 await StreamRelease.run(stream, drain=drain)
         finally:
             report = self._report(interrupted=ending == "interrupted")
