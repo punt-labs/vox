@@ -498,8 +498,10 @@ Restart Claude Code and type \texttt{/vox enable}.
   \texttt{\texttildelow/Music/vox/} (configurable via
   \texttt{VOX\_OUTPUT\_DIR}), and local usage telemetry in
   \texttt{\texttildelow/.punt-labs/vox/telemetry.db}. The telemetry records
-  which commands and tools ran and whether they succeeded, never their
-  text. It is kept for 90 days, stays on your machine unless you opt in to
+  which commands, tools and hooks ran, which provider synthesized, whether
+  each succeeded, whether the cache was hit, and the length of the text. It
+  never records the text itself, prompts, paths or credentials. It is kept
+  for 90 days, stays on your machine unless you opt in to
   export, and \texttt{VOX\_TELEMETRY=off} turns it off. There is no punt-labs
   cloud service.
 
