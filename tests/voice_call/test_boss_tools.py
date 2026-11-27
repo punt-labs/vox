@@ -227,7 +227,8 @@ async def test_start_defaults_to_the_only_allowlisted_repo() -> None:
     workers = FakeWorkers()
     result, error = await _tools(workers).answer("start_worker", {"task": "fix x"})
     assert not error
-    assert json.loads(result)["state"] == "ready"
+    started = json.loads(result)
+    assert (started["state"], started["lifecycle"]) == ("idle", "ready")
     assert workers.started == [("fix x", "/repo")]
 
 
@@ -339,7 +340,10 @@ async def test_list_stop_and_silence() -> None:
     tools.guard.gate.agent_spoke(json.loads(held)["voxd_readback"])
     tools.guard.gate.heard("yes")
     stopped, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
-    assert json.loads(stopped)["state"] == "stopped"
+    assert (json.loads(stopped)["state"], json.loads(stopped)["lifecycle"]) == (
+        "finished",
+        "stopped",
+    )
     assert await tools.answer("remain_silent", {}) == (
         '{"silent": true}',
         False,
@@ -488,3 +492,25 @@ async def test_status_says_what_the_worker_is_doing_now() -> None:
         "open_failure": {"tool": "Edit", "result": "no match"},
         "seconds_since_last_event": 42,
     }
+
+
+async def test_every_tool_names_a_worker_by_spoken_state_and_lifecycle() -> None:
+    workers = FakeWorkers()
+    workers.known = [payload("abcd1234", worker_seq=3, prompt_epoch=0)]
+    tools = BossTools(workers, workers, clock=lambda: 1.0)
+    listed, _ = await tools.answer("list_workers", {})
+    status, _ = await tools.answer("worker_status", {"worker_id": "abcd1234"})
+    for brief in (json.loads(listed)[0], json.loads(status)):
+        assert (brief["state"], brief["lifecycle"]) == ("working", "ready")
+
+
+async def test_the_open_failure_text_appears_once_in_a_status() -> None:
+    workers = FakeWorkers()
+    failure = {"relay_seq": 2, "tool": "Edit", "result": "no match for that text"}
+    workers.known = [payload("abcd1234", open_failure=failure, worker_seq=3)]
+    tools = BossTools(workers, workers, clock=lambda: 1.0)
+    result, _ = await tools.answer("worker_status", {"worker_id": "abcd1234"})
+    assert result.count("no match for that text") == 1
+    assert json.loads(result)["activity"]["open_failure"]["result"] == (
+        "no match for that text"
+    )

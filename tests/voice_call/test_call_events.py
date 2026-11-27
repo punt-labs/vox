@@ -132,10 +132,12 @@ async def _dial() -> tuple[str, SessionOptions]:
     return "ws://peer", SessionOptions("prompt", ())
 
 
-def _receipt_call() -> tuple[VoiceAgentCall, FakeWorkers, io.StringIO]:
+def _receipt_call(
+    stream: io.StringIO | None = None,
+) -> tuple[VoiceAgentCall, FakeWorkers, io.StringIO]:
     workers = FakeWorkers()
     workers.known = [payload("abcd1234", prompt_epoch=4)]
-    stream = io.StringIO()
+    stream = io.StringIO() if stream is None else stream
     call = VoiceAgentCall(
         BossTools(workers, workers),
         _Silent(),
@@ -402,16 +404,13 @@ async def test_a_silence_failure_still_closes_the_speaker_and_departs() -> None:
     assert departures == [{}]
 
 
-async def test_the_outcome_counts_every_tool_call_past_the_status_history() -> None:
-    """The status keeps the last 20 tool calls; the end line counts them all."""
+async def test_the_outcome_counts_every_tool_call() -> None:
     call = _call(_Peer([]))
     conv = AsyncMock(spec=Conversation)
     for n in range(25):
         await call._answer(
             conv, ClientToolCall(f"t{n}", "list_workers", {}, expects_response=False)
         )
-    shown = cast("list[dict[str, object]]", call.status()["tool_calls"])
-    assert len(shown) == 20
     assert str(call.outcome()) == "connecting, 25 tool calls"
 
 
@@ -654,3 +653,65 @@ async def test_a_started_worker_is_traced_by_id_without_its_task() -> None:
     assert row["type"] == "worker_started"
     assert row["detail"] == {"worker_id": workers.known[-1]["id"]}
     assert "private task words" not in stream.getvalue()
+
+
+class _BrokenTrace(io.StringIO):
+    """A trace file that cannot be written, as a full disk would be."""
+
+    def write(self, text: str, /) -> int:
+        raise OSError("disk full")
+
+
+async def test_a_trace_that_cannot_be_written_still_answers_the_tool() -> None:
+    call, _, _ = _receipt_call(_BrokenTrace())
+    conv = AsyncMock(spec=Conversation)
+    await call._answer(
+        conv,
+        ClientToolCall("status", "worker_status", {"worker_id": "abcd1234"}, True),
+    )
+    conv.send_tool_result.assert_awaited_once()
+    assert conv.send_tool_result.await_args.args[0] == "status"
+    assert call.status()["state"] == "connecting"
+
+
+async def test_the_tool_result_is_sent_before_the_trace_is_written() -> None:
+    order: list[str] = []
+    stream = io.StringIO()
+    call, _, _ = _receipt_call(stream)
+    conv = AsyncMock(spec=Conversation)
+
+    async def sent(*_: object, **__: object) -> None:
+        order.append(f"sent:{bool(stream.getvalue())}")
+
+    conv.send_tool_result.side_effect = sent
+    await call._answer(
+        conv,
+        ClientToolCall("status", "worker_status", {"worker_id": "abcd1234"}, True),
+    )
+    assert order == ["sent:False"]
+    assert stream.getvalue()
+
+
+async def test_a_trace_failure_is_logged_by_type_and_tool_without_its_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call, _, _ = _receipt_call(_BrokenTrace())
+    with caplog.at_level(logging.INFO):
+        await call._answer(
+            AsyncMock(spec=Conversation),
+            ClientToolCall("status", "worker_status", {"worker_id": "abcd1234"}, True),
+        )
+    assert "worker_status" in caplog.text
+    assert "OSError" in caplog.text
+    assert "disk full" not in caplog.text
+
+
+async def test_the_status_keeps_every_tool_call_the_call_made() -> None:
+    call = _call(_Peer([]))
+    conv = AsyncMock(spec=Conversation)
+    for n in range(25):
+        await call._answer(
+            conv, ClientToolCall(f"t{n}", "list_workers", {}, expects_response=False)
+        )
+    shown = cast("list[dict[str, object]]", call.status()["tool_calls"])
+    assert len(shown) == 25

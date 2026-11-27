@@ -26,7 +26,7 @@ async def test_an_untainted_call_starts_a_worker_as_before() -> None:
     result, error = await _tools(workers).answer("start_worker", _START)
     assert not error
     assert workers.started == [("fix x", "/repo")]
-    assert json.loads(result)["state"] == "ready"
+    assert json.loads(result)["lifecycle"] == "ready"
 
 
 async def test_a_tainted_start_is_held_and_nothing_starts() -> None:
@@ -49,7 +49,7 @@ async def test_the_refusal_is_never_cached_and_a_yes_runs_the_request_once() -> 
     await _confirm(tools, held)
     ran, error = await tools.answer("start_worker", _START)
     assert not error
-    assert json.loads(ran)["state"] == "ready"
+    assert json.loads(ran)["lifecycle"] == "ready"
     assert await tools.answer("start_worker", _START) == (ran, False)
     assert workers.started == [("fix x", "/repo")]
 
