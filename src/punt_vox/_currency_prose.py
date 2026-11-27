@@ -6,12 +6,10 @@ import re
 from typing import final
 
 from punt_vox._currency_grammar import UNITS, CurrencyGrammar
-from punt_vox._currency_patterns import CurrencyPatterns
+from punt_vox._currency_suffix import SuffixCurrency
 
 _SYMBOLS = "".join(UNITS)
 _CURRENCY_SYMBOL = re.compile(rf"[{_SYMBOLS}]")
-_SUFFIX_AMOUNT = CurrencyPatterns.suffix_amount(_SYMBOLS)
-_TRAILING_PUNCTUATION = rf"(?:[^\w\s`{_SYMBOLS}]|_)*"
 
 
 @final
@@ -29,33 +27,24 @@ class ProseCurrency:
         if not _CURRENCY_SYMBOL.search(prose):
             return prose
         tag_pattern = tag.pattern if tag is not None else r"(?!)"
-        boundary = rf"(?P<boundary>(?<!\S)|{tag_pattern})"
-        return re.sub(
-            rf"{boundary}{_SUFFIX_AMOUNT}"
-            rf"(?:(?P<before_tag>{_TRAILING_PUNCTUATION})"
-            rf"(?=(?:{tag_pattern})+(?:\w|[.,]\d))"
-            rf"|(?={_TRAILING_PUNCTUATION}(?:(?!\S)|{tag_pattern})))",
-            cls._prefix_amount,
-            cls._attach_scale(prose, tag_pattern),
+        return SuffixCurrency.move_signs(
+            cls._attach_scale(prose, tag_pattern), tag_pattern
         )
 
-    @staticmethod
-    def _attach_scale(prose: str, tag_pattern: str) -> str:
+    @classmethod
+    def _attach_scale(cls, prose: str, tag_pattern: str) -> str:
         boundary = rf"(?P<boundary>(?<![^\s\u2014])|{tag_pattern})"
         leading = rf"[^\w\s~/.,`{_SYMBOLS}]*"
         currency = CurrencyGrammar.spaced_prose_pattern(prose).pattern
         end = r"(?![^\W_]|-[^\W\d_])"
         return re.sub(
             rf"{boundary}(?P<price>_*{leading}{currency}){end}",
-            lambda match: (
-                match["boundary"]
-                + CurrencyGrammar.HORIZONTAL_GAP.sub("", match["price"])
-            ),
+            cls._remove_scale_gap,
             prose,
         )
 
     @staticmethod
-    def _prefix_amount(match: re.Match[str]) -> str:
-        amount = match.expand(r"\g<boundary>\g<leading>\g<sign>\g<symbol>\g<amount>")
-        before_tag = match["before_tag"]
-        return amount if before_tag is None else f"{amount}{before_tag} "
+    def _remove_scale_gap(match: re.Match[str]) -> str:
+        return match["boundary"] + CurrencyGrammar.HORIZONTAL_GAP.sub(
+            "", match["price"]
+        )

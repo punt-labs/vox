@@ -156,7 +156,7 @@ mpv --idle=yes \
     --no-video --vo=null \
     --input-ipc-server=<run_dir>/mpv.sock \
     --no-config \
-    --volume=30 \
+    --volume=60 \
     --gapless-audio=yes \
     --terminal=no --msg-level=all=warn
 ```
@@ -167,8 +167,9 @@ mpv --idle=yes \
   under the run dir.
 - `--no-config` — ignore `~/.config/mpv`; reproducible behaviour, no
   user keybindings, scripts, or profiles leaking in.
-- `--volume=30` — the reduced music volume that replaces `ffplay -volume 30`, so
-  speech and chimes overlay it (§5). mpv volume is 0–100.
+- `--volume=60` — the reduced music volume (`_MUSIC_VOLUME` in
+  `programs/mpv/mpv_launcher.py`), so speech and chimes at 80 overlay it (§5).
+  mpv volume is 0–100.
 - `--gapless-audio=yes` — mpv default; stated for intent.
 - `--terminal=no --msg-level=all=warn` — quiet, non-interactive.
 
@@ -424,8 +425,8 @@ Exactly which code is which:
 
 | Tier | Backend | Code | Volume |
 |------|---------|------|--------|
-| **Programs** (music, later audiobooks/podcasts) | one persistent **mpv** + JSON IPC | `programs/` — the loop, `MpvSupervisor`, `MpvClient`, `MpvProgramPlayer` | reduced (`--volume=30`) |
-| **Notifications** (speech + chimes) | **afplay** (macOS) / **ffplay** (Linux), `say`/`espeak` | `voxd/playback.py` (`PlaybackQueue._player_command`), `providers/say.py`, `providers/espeak.py` | full |
+| **Programs** (music, later audiobooks/podcasts) | one persistent **mpv** + JSON IPC | `programs/` — the loop, `MpvSupervisor`, `MpvClient`, `MpvProgramPlayer` | reduced (`--volume=60`) |
+| **Notifications** (speech + chimes) | **afplay** (macOS) / **ffplay** (Linux), `say`/`espeak` | `voxd/playback.py` (`PlaybackQueue._player_command`), `providers/say.py`, `providers/espeak.py` | 80 |
 
 The notification tier is untouched by this change. `ffplay` is removed from the
 *program* tier only; it remains the notification tier's Linux player.
@@ -433,7 +434,10 @@ The notification tier is untouched by this change. `ffplay` is removed from the
 ### They overlay — two OS-level streams
 
 A chime over ducked music is **two independent processes** writing to the shared
-system output: mpv (music, ducked to 30%) and afplay (chime, full). The OS mixer
+system output: mpv (music, at `--volume=60`) and afplay (chime, at `-v 0.8`).
+The two numbers are on different scales and are not directly comparable: mpv's
+volume curve is not linear, so music sits further below the chime than 60
+against 80 suggests. The OS mixer
 sums them — CoreAudio on macOS, PulseAudio/PipeWire on Linux — exactly as
 ffplay-music + afplay-chime do today. No cross-tier coordination and no shared
 handle. The duck is **static** (a constant reduced mpv volume), as it is today.
@@ -646,11 +650,11 @@ consensus, gvr + kpz agree. They are recorded here as rulings, not open items.
    is benign (§3). Routing them through the channel buys no invariant and makes
    pause touch the player from two paths. **Resolved: direct IPC calls.**
 
-3. **`--volume=30` static duck.** The reduced music volume is a constant for this
-   change (matching today's `_MUSIC_VOLUME = 30`). Dynamic ducking — lowering mpv
-   volume while speech plays, raising it after — is trivial under mpv and a
-   worthwhile **follow-up**, not part of this design (§5). **Resolved: static
-   `--volume=30` now; dynamic ducking later.**
+3. **`--volume=60` static duck.** The reduced music volume is a constant
+   (`_MUSIC_VOLUME = 60`). Dynamic ducking — lowering mpv volume while speech
+   plays, raising it after — is trivial under mpv and a worthwhile
+   **follow-up**, not part of this design (§5); it is tracked as PL-823.
+   **Resolved: static `--volume=60` now; dynamic ducking later.**
 
 4. **Eager spawn with a client-observable fault; never fail the daemon over mpv.**
    mpv is spawned at bring-up; a spawn failure records a standing
