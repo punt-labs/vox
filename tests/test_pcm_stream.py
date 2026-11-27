@@ -40,6 +40,7 @@ class FakeOutputStream:
 
     __slots__ = (
         "_callback",
+        "abort_error",
         "aborted",
         "closed",
         "finished_callback",
@@ -54,6 +55,7 @@ class FakeOutputStream:
 
     _callback: OutputCallback
     release_gate: threading.Event | None
+    abort_error: Exception | None
     aborted: bool
     closed: bool
     finished_callback: Callable[[], None]
@@ -76,6 +78,7 @@ class FakeOutputStream:
         self.stopped = False
         self.start_error = None
         self.stop_error = None
+        self.abort_error = None
         self.release_gate = None
         self.heard = bytearray()
         self.heard_at_release = None
@@ -108,6 +111,8 @@ class FakeOutputStream:
             self.release_gate.wait(timeout=5)
         self.heard_at_release = len(self.heard)
         self.aborted = True
+        if self.abort_error is not None:
+            raise self.abort_error
         self.finished_callback()
 
     def close(self) -> None:

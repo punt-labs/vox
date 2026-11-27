@@ -454,6 +454,23 @@ class TestTheFlushTailIsPlayedBeforeTheDeviceIsReleased:
         assert device.opened.closed
         assert device.opened.aborted or device.opened.stopped
 
+    async def test_a_failing_release_does_not_replace_a_cancellation(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        sink.flush()
+        device.opened.abort_error = OSError("device unplugged")
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.005)  # inside the wait for the tail
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert closing.cancelled()
+        assert device.opened.closed
+        assert "device unplugged" in caplog.text
+
     async def test_a_barge_in_through_the_speaker_plays_the_tail(self) -> None:
         device = FakeDevice()
 

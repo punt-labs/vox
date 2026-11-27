@@ -278,7 +278,11 @@ class PcmStreamSink:
             is_tail_played = await self._play_flush_tail()
         except asyncio.CancelledError:
             # The device must still be released: nobody calls close() again.
-            await self._release(is_tail_played=False)
+            # A failed release is logged; it must not replace the cancellation.
+            try:
+                await self._release(is_tail_played=False)
+            except Exception:
+                logger.exception("releasing the PCM device during a cancelled close")
             raise
         return await self._release(is_tail_played=is_tail_played)
 
