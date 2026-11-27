@@ -44,12 +44,17 @@ function pr_loop(unit):
     schedule a background poll with /loop 3m  # never gh pr checks --watch,
                                               # never foreground sleep loops
 
-    # D. DEMO — confirmed by ear when audible(pr), the one human gate;
+    # D. EXERCISE BEFORE MERGE — a green automated tier that drives the
+    #    changed behavior through its real entry point is the proof
+    #    (tier_covered); a demo runs only for a tier gap. The demo is
+    #    confirmed by ear when audible(pr), the one human gate;
     #    otherwise by the leader's recorded run. poll_tick is
     #    its only caller, so it runs at most once at a time, and it runs
     #    again after a non-exempt push or a failed demo
 
 function demo(pr):
+    # called only when demo_ok(pr) is false, so some changed behavior has
+    # no automated tier exercising it; the demo covers those gaps only
     no push to the branch, and no other demo, while this one runs
     if audible(pr) and the operator is not available: return
                                                 # no comment; a later tick
@@ -207,17 +212,46 @@ function demo(pr):
 #                  or is a documentation file wherever it sits (*.md,
 #                  *.tex, *.bib, or a *.pdf built from one: README.md,
 #                  DESIGN.md, CHANGELOG.md, the PR/FAQs prfaq*.tex with
-#                  their .bib and .pdf, a deposited CLAUDE.md guide),
+#                  their .bib and .pdf, the guide copies this repo keeps
+#                  under .punt-labs/),
 #                  and is not under plugin/ or src/ — commands, skills,
 #                  agents, and hooks under plugin/ are behavior even when
 #                  Markdown, because Claude Code executes them, and a
 #                  Markdown file under src/ ships in the package (the
-#                  guide `vox enable` deposits); src/, a dependency, or an
-#                  install change can change what the operator hears.
-#                  Every documentation update is demo-exempt (operator
-#                  ruling, 2026-11-27): a document cannot change what vox
-#                  plays or prints
-#   audible(pr)  = some non-exempt file the PR changes can change what is
+#                  guide template `vox enable` writes into other repos);
+#                  src/, a dependency, or an install change can change
+#                  what the operator hears. A settings file is not
+#                  documentation whatever its extension:
+#                  .punt-labs/vox/vox.md and vox.local.md are vox's own
+#                  configuration (provider, voice, notify, speak), so a
+#                  change to either is never exempt. Outside plugin/ and
+#                  src/, every documentation update is demo-exempt
+#                  (operator ruling, 2026-11-27): such a file is written
+#                  for people and agents. One vox code path reads one:
+#                  the guide row of `vox doctor` compares
+#                  .punt-labs/vox/CLAUDE.md with the packaged template
+#                  and reports drift; it plays nothing, and the guide
+#                  stays exempt
+#   tier_covered(pr) = the leader's latest "tier coverage: H" comment, for
+#                  an H that is the head or an ancestor of it with only
+#                  demo_exempt files changed since, names, for every
+#                  behavior the PR changes in a non-exempt file, an
+#                  automated tier (e2e, subprocess, call_e2e, roundtrip,
+#                  or a default-tier test that runs the real entry point)
+#                  and a test in it that exercises that behavior through
+#                  its real entry point, and that tier is green on H (in
+#                  CI, or run by the leader with the output pasted). A
+#                  test against mocks does not count: it exercises the
+#                  code, not the entry point. A changed behavior with no
+#                  such test is listed in the comment as a gap; with a gap
+#                  listed, tier_covered(pr) is false and the demo covers
+#                  the gaps only. The gate exists to exercise the code
+#                  before the merge; a green tier that does so is the
+#                  proof, and a demo is for a tier gap (operator ruling,
+#                  2026-11-27)
+#   audible(pr)  = read only when a demo is due (tier_covered(pr) is
+#                  false), over the gaps: some non-exempt file with a gap
+#                  behavior can change what is
 #                  heard (demo_exempt files are not counted): under
 #                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file:
 #                  port_file.py publishes the port clients need to speak),
@@ -238,7 +272,8 @@ function demo(pr):
 #                  confirmed (not audible): H" with the command and
 #                  output pasted counts only when audible(pr) is false, so
 #                  the leader's own run can never confirm an audible PR
-#   demo_ok(pr)  = every file the PR changes is demo_exempt, or demoed_head
+#   demo_ok(pr)  = every file the PR changes is demo_exempt, or
+#                  tier_covered(pr), or demoed_head
 #                  exists, is the head or an ancestor of it, and every file
 #                  changed since it is demo_exempt
 #   finding also = the leader's latest "demo failed:" comment, until a
@@ -310,11 +345,20 @@ function poll_tick(pr):
             that delta review raised is answered(f):
         set reviewed_head to delta_head  # bounded rounds, but no unreviewed
                                          #   merge, bot-authored PRs included
+    if some changed file is not demo_exempt and no "tier coverage: H"
+            comment names the head, or an ancestor of it with only
+            demo_exempt files changed since:
+        comment "tier coverage: H": for each changed behavior, the tier
+            and test that exercise it through its real entry point, or
+            "gap" with what is not exercised; where a test could close a
+            gap, add that test in this PR, so the next change to the same
+            behavior needs no demo
     if demo_ok(pr) is false and nothing was pushed this tick
             and no demo is running:
-        demo(pr)                           # first demo, a re-demo after a
-                                           #   non-exempt push, or after a fix
-                                           #   for a failed demo
+        demo(pr)                           # a tier gap: first demo, a
+                                           #   re-demo after a non-exempt
+                                           #   push, or after a fix for a
+                                           #   failed demo
     if not pending(pr) and no finding is unanswered:
         cadence = 15m                      # only the demo, CI, or a late
                                            #   thread can change state now
@@ -333,8 +377,10 @@ function merge_gate(state) -> bool:
        and zero unresolved review threads
        and round(pr) ≤ 2
        and no escalation is open
-       and demo_ok(pr)                     # demoed, and nothing non-exempt
-                                           #   landed after the demo
+       and demo_ok(pr)                     # exercised by a green tier, or
+                                           #   demoed for the gap, and
+                                           #   nothing non-exempt landed
+                                           #   after
     # A push restarts CI, not review. When this returns true: merge
     # EXPLICITLY. No --auto. No --admin. Do not ask, do not wait.
 
@@ -412,6 +458,8 @@ ExitPR ≙ [ Δ LoopState; pr : PR |
                                           --   to fix, BEFORE the PR opened and
                                           --   before every fix push
   ∧ demoOk(pr)                            -- demo_ok: a non-exempt PR was
+                                          --   exercised by a green tier
+                                          --   (tier_covered), or its gap was
                                           --   confirmed on demoed_head, by
                                           --   ear when audible(pr), and
                                           --   nothing non-exempt landed after

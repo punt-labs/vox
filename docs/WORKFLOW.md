@@ -47,7 +47,7 @@ predicates over declared terms, never as bare primed flags.
 ## Roles
 
 The operator owns requirements and design direction, rules on genuine design
-forks, and confirms the audio demo by ear. Claude runs everything else: the
+forks, and confirms by ear what no automated test tier can judge. Claude runs everything else: the
 backlog, the missions, the review cycles, and the merges. Review of code is
 done by agents — the local review agents, plus Qodo and Devin Review on
 the PR.
@@ -216,7 +216,7 @@ Nobody reads these diffs. Agents review them, and they squash-merge. So the
 size of a PR is an economic decision, not a hygiene one:
 
 - **The floor is transaction cost.** Every PR pays a roughly fixed overhead —
-  branch, full-diff review rounds, the audio demo, CI, remote review cycles,
+  branch, full-diff review rounds, exercising the change, CI, remote review cycles,
   the merge gate, the recap. A PR too small pays that overhead for too little.
 - **The ceiling is reviewer effectiveness.** The reviewers are agents, and
   past a certain diff size their quality drops. A PR too large buys throughput
@@ -231,7 +231,7 @@ size of a PR is an economic decision, not a hygiene one:
   is never held back or split out for tidiness.
 
 The control flow, the terms it reads from GitHub (`round`, `qodo_in`,
-`pending`, `answered(f)`, `audible(pr)`, `demo_ok`,
+`pending`, `answered(f)`, `demo_exempt`, `tier_covered`, `audible(pr)`, `demo_ok`,
 `reviewed_head`, and the rest), `merge_gate`, `close_out`, `local_review`, and
 the `EnterPR`/`ExitPR` Z schemas are specified in
 [`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md). It is the authoritative text for
@@ -296,33 +296,52 @@ This holds only when three settings are in place: `.pr_agent.toml` is on `main`
 from ruleset 13252005 (so Copilot reviews only when requested); and Qodo's
 "Review every push" is Disabled in the portal.
 
-### The audio demo gate
+### Exercise before merge: test tiers first, a demo for the gap
 
-`make check` passing means the code compiles and the tests pass. It does not
-mean the feature works — and for vox it cannot, because vox produces audio
-that only a human can judge. Before the PR merges, the feature is driven
-through its real entry point — a `mic` tool call, a CLI command, a hook fire —
-with the expected outcome written down first, after `make install` and
+`make check` passing means the code compiles and the unit tests pass. It does
+not mean the feature works. Before the PR merges, the behavior it changes is
+exercised through its real entry point — a `mic` tool call, a CLI command, a
+hook fire, a call. Exercising the code is the whole purpose of this gate.
+
+**The automated tiers are the preferred proof.** `e2e` drives the installed
+CLI and MCP server. `subprocess` runs the real hook scripts and child
+processes. `call_e2e` places a call through a real `voxd`. `roundtrip`
+synthesizes a fixed corpus through the providers, transcribes it back and
+checks the word error rate. When a tier that is green on the PR head exercises
+the changed behavior through its real entry point, that tier is the proof and
+no demo is run (`tier_covered(pr)`). The leader names the tier and the test for
+each changed behavior in a "tier coverage" comment on the PR. A unit test
+against mocks does not count: it exercises the code, not the entry point.
+
+**A demo is required only for a tier gap**: changed behavior that no automated
+tier exercises. Then the feature is driven by hand through its real entry
+point, with the expected outcome written down first, after `make install` and
 `vox daemon restart` so the running daemon is the just-built code. Machine
-evidence comes from `mic:status`, `vox doctor`, and a grep of `vox.log`. For
-an audible PR, the operator then confirms what no introspection API can attest: that the audio
-sounded right — clean, the correct voice, the music ducked, the chime fired.
-Run the canonical flight in [`docs/testing/manual-tests.md`](testing/manual-tests.md)
-and ask after each audible step, immediately, because audio impressions decay
-within seconds. This is the one human gate in the loops, and it is a demo, not
-a diff.
+evidence comes from `mic:status`, `vox doctor`, and a grep of `vox.log`. A gap
+that plays nothing (`audible(pr)` is false: a status reading, `vox doctor`, a
+refusal) is closed by the leader's own run, with the command and output pasted
+into a "demo confirmed (not audible)" comment; the operator is not asked to
+run or bless it, and when the operator does say to run the command, that is
+the ruling.
 
-The ear is asked only for what a machine cannot judge. A PR that plays nothing
-(`audible(pr)` is false: a status reading, `vox doctor`, a refusal) is demoed
-by the leader's own run of the real entry point, with the command and output
-pasted into a "demo confirmed (not audible)" comment; the operator is not
-asked to run or bless it, and when the operator does say to run the command,
-that is the ruling. An audible PR is verified first by the roundtrip tier,
-which synthesizes a fixed corpus through the providers, transcribes it back and
-checks the word error rate, proving the synthesis path still speaks
-intelligibly; the operator then confirms only what that corpus cannot: that the
-demo step said the right words, in the right voice, with the delivery, the
-ducking, the chime and its timing. A finding that surfaces after
+**The ear is asked only for a gap a machine cannot judge.** The roundtrip tier
+proves the synthesis path still speaks intelligibly. It cannot judge that a
+step said the right words, in the right voice, with the delivery, the ducking,
+the chime and its timing. When a PR changes one of those and no tier covers
+it, the operator confirms it by ear: run the canonical flight in
+[`docs/testing/manual-tests.md`](testing/manual-tests.md) and ask after each
+audible step, immediately, because audio impressions decay within seconds.
+This is the one human gate in the loops, and it is a demo, not a diff.
+
+**A gap is also a finding about the tiers.** Where a test could close it, the
+PR adds that test, so the next change to the same behavior needs no demo.
+
+**Documentation is never demoed.** Every documentation file outside `plugin/`
+and `src/` is demo-exempt. vox's own settings files (`.punt-labs/vox/vox.md`,
+`vox.local.md`) are configuration, not documentation, whatever their
+extension.
+
+A finding that surfaces after
 the merge is recorded on the PR with the leader's reasoning, by its source's
 path in `answered(f)` (a Qodo finding through the Qodo CLI, any other by a
 ledger comment), and the next unit starts; it is never a blocking question, and the two-minute rule in the
@@ -402,7 +421,7 @@ is strict in both directions.
 
 **The leader owns the workflow.** The backlog, the mission contract,
 dispatch, monitoring, the local review agents (run on each mission's diff and
-on the full diff), the audio demo, and every git and GitHub operation:
+on the full diff), the tier-coverage record and any demo, and every git and GitHub operation:
 branches, pushes, opening the PR, driving remote review, resolving threads,
 merging, and closing out. The leader does not write production code. The only
 files the leader authors directly are the doc set — `CHANGELOG.md`,
@@ -487,10 +506,12 @@ itself.
    open is fixed in that PR. Only genuinely new lines of work become issues;
    a review finding is never new work.
 6. **The operator gates what only an ear can judge, and direction; never
-   diffs, sequencing, or paperwork.** A PR that plays nothing is confirmed by
-   the leader's own recorded run; an audible PR by the roundtrip tier and
-   then the operator's ear for voice, delivery, ducking and chimes. A gap a
-   hook or reviewer finds after the merge is recorded, not asked.
+   diffs, sequencing, or paperwork.** A change that a green automated tier
+   exercises through its real entry point needs no demo. A demo is for a tier
+   gap: one that plays nothing is confirmed by the leader's own recorded run;
+   an audible one by the operator's ear for voice, delivery, ducking and
+   chimes. Documentation is never demoed. A gap a hook or reviewer finds
+   after the merge is recorded, not asked.
 7. **Close-out is inside the loop.** The recap email, branch hygiene, and
    starting the next unit are steps of the loop, not afterthoughts.
 8. **No migration, compat, shim, or version-bridge code.** Punt Labs products
