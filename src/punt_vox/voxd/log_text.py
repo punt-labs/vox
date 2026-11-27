@@ -34,5 +34,11 @@ class LogText:
         named = cls.reason(f"{type(exc).__name__}: {exc}").removesuffix(": ")
         if isinstance(exc, OSError) and exc.errno is not None:
             named = f"{named}, errno {exc.errno}"
-        notes = getattr(exc, "__notes__", ())
-        return named + "".join(f" [{cls.reason(note)}]" for note in notes)
+        return named + cls.notes(exc)
+
+    @classmethod
+    def notes(cls, exc: BaseException) -> str:
+        """Render the notes added to *exc*, each in brackets, each made safe."""
+        return "".join(
+            f" [{cls.reason(note)}]" for note in getattr(exc, "__notes__", ())
+        )

@@ -9,6 +9,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final, Self, final
 
+from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
     AgentResponseCorrection,
@@ -153,7 +154,8 @@ class VoiceAgentCall:
 
     @staticmethod
     def _failure_text(failure: Exception) -> str:
-        return str(failure) or type(failure).__name__
+        # Notes carry what cleanup could not do, so the caller must see them.
+        return (str(failure) or type(failure).__name__) + LogText.notes(failure)
 
     async def _settle(
         self,

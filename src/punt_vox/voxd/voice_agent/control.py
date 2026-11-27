@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.voxd.voice_agent.agent_body import AgentBody
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
 from punt_vox.voxd.voice_agent.fault import ForeignResourceError
+from punt_vox.voxd.voice_agent.listing import Listing
 from punt_vox.voxd.voice_agent.reply import Reply
 from punt_vox.voxd.voice_agent.settings import AgentSettings
 from punt_vox.voxd.voice_agent.wire import SIGNED_URL, UNKNOWN_CREATE, Wire
@@ -135,6 +136,11 @@ class ConvAIControl:
         path = f"/tools/{Reply.resource_id(tool_id)}"
         if self._carries(path, marker, ("tool_config", "description")):
             self._force_delete(path)
+
+    @property
+    def listing(self) -> Listing:
+        """Return the account's listings, read over this connection."""
+        return Listing(self._wire)
 
     def _carries(self, path: str, marker: str, field: tuple[str, ...]) -> bool:
         """Return whether the resource at *path* has *marker*; False if absent."""

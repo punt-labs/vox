@@ -7,12 +7,12 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Final, Self
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 API_KEY: Final = "localhost-test-key"
 SIGNED_URL: Final = "ws://127.0.0.1:42609/convai?conversation_signature=not-for-logs"
@@ -21,11 +21,16 @@ _AGENTS: Final = "/v1/convai/agents/"
 _SIGNED_URL: Final = "/v1/convai/conversation/get-signed-url?agent_id="
 
 
+_UNSET: Final = object()
+
+
 class Requests:
     """Record requests and let tests change the server response between calls.
 
     ``calls`` holds every request except the reads that check a resource's
-    marker before a delete; those are in ``verifications``. The remote account
+    marker before a delete (``verifications``) and the account listings
+    (``listings``). A create can commit and then drop its reply, as a lost
+    connection does, and the listings page like the real ones. The remote account
     is ``tools`` (id to description) and ``agents`` (id to name); a delete
     removes from it only when ``delete_forgets`` is set, because most tests
     reuse one id for every generation.
@@ -39,6 +44,16 @@ class Requests:
     next_agent_ids: list[str]
     create_tool_id: str
     disconnect_on_tool_creation: bool
+    drop_reply_after_tool_commit: bool  # The tool is created; its reply is lost.
+    drop_reply_after_agent_commit: bool  # The agent is created; its reply is lost.
+    create_tool_status: int
+    commit_failed_create: bool  # A create answered with an error still commits.
+    list_status: int
+    failing_listings: set[str]  # Kinds ("agents", "tools") whose listing answers 500.
+    extra_entries: dict[str, list[object]]  # Raw entries a listing appends.
+    has_more_override: object  # Replaces a page's has_more unless it is _UNSET.
+    list_page_size: int
+    listings: list[str]
     create_agent_status: int
     signed_url_status: int
     delete_tool_status: int
@@ -57,6 +72,16 @@ class Requests:
         self.next_agent_ids = []
         self.create_tool_id = "tool_clock"
         self.disconnect_on_tool_creation = False
+        self.drop_reply_after_tool_commit = False
+        self.drop_reply_after_agent_commit = False
+        self.create_tool_status = 200
+        self.commit_failed_create = False
+        self.list_status = 200
+        self.failing_listings = set()
+        self.extra_entries = {}
+        self.has_more_override = _UNSET
+        self.list_page_size = 100
+        self.listings = []
         self.create_agent_status = self.signed_url_status = 200
         self.delete_tool_status = self.delete_agent_status = 404
         self.delete_forgets = False
@@ -88,23 +113,34 @@ def serve() -> Generator[Requests]:
                     if requests.next_tool_ids
                     else requests.create_tool_id
                 )
-                requests.tools[tool_id] = body["tool_config"]["description"]
-                self._reply(200, {"id": tool_id})
+                if requests.create_tool_status == 200 or requests.commit_failed_create:
+                    requests.tools[tool_id] = body["tool_config"]["description"]
+                if requests.drop_reply_after_tool_commit:
+                    self.close_connection = True
+                    return
+                self._reply(requests.create_tool_status, {"id": tool_id})
             elif self.path == "/v1/convai/agents/create":
                 agent_id = (
                     requests.next_agent_ids.pop(0)
                     if requests.next_agent_ids
                     else "agent_vox"
                 )
-                if requests.create_agent_status == 200:
+                if requests.create_agent_status == 200 or requests.commit_failed_create:
                     requests.agents[agent_id] = body["name"]
+                if requests.drop_reply_after_agent_commit:
+                    self.close_connection = True
+                    return
                 self._reply(requests.create_agent_status, {"agent_id": agent_id})
             else:
                 self._reply(500, {})
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
-            if path.startswith(_TOOLS):
+            if path == _TOOLS.rstrip("/"):
+                self._list("tools", requests.tools, lambda text: {"description": text})
+            elif path == _AGENTS.rstrip("/"):
+                self._list("agents", requests.agents, lambda text: text)
+            elif path.startswith(_TOOLS):
                 self._describe(path.removeprefix(_TOOLS), requests.tools, "tool")
             elif path.startswith(_AGENTS):
                 self._describe(path.removeprefix(_AGENTS), requests.agents, "agent")
@@ -132,6 +168,45 @@ def serve() -> Generator[Requests]:
                 )
             else:
                 self._reply(500, {})
+
+        def _list(
+            self,
+            kind: str,
+            held: dict[str, str],
+            text: Callable[[str], object],
+        ) -> None:
+            """Reply with one page, in creation order, after the query's cursor."""
+            self._check_key()
+            requests.listings.append(kind)
+            if requests.list_status != 200 or kind in requests.failing_listings:
+                self._reply(
+                    requests.list_status if requests.list_status != 200 else 500, {}
+                )
+                return
+            query = parse_qs(urlsplit(self.path).query)
+            start = int(query.get("cursor", ["0"])[0])
+            ids = list(held)[start : start + requests.list_page_size]
+            end = start + len(ids)
+            more = end < len(held)
+            if kind == "tools":
+                items: list[object] = [
+                    {"id": i, "tool_config": text(held[i])} for i in ids
+                ]
+            else:
+                items = [{"agent_id": i, "name": text(held[i])} for i in ids]
+            if not more:
+                items.extend(requests.extra_entries.get(kind, []))
+            if requests.has_more_override is not _UNSET:
+                self._reply(200, {kind: items, "has_more": requests.has_more_override})
+                return
+            self._reply(
+                200,
+                {
+                    kind: items,
+                    "has_more": more,
+                    "next_cursor": str(end) if more else None,
+                },
+            )
 
         def _delete(self, resource_id: str, held: dict[str, str], status: int) -> None:
             if requests.delete_forgets and status == 200:
