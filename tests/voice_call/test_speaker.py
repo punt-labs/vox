@@ -83,13 +83,3 @@ async def test_a_tool_call_inside_one_turn_begins_an_utterance() -> None:
     await speaker.close()
     (sink,) = playback.sinks
     assert sink.starts == [True, True, False]
-
-
-async def test_a_new_sink_after_a_cut_starts_fresh() -> None:
-    playback = FakePlayback()
-    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
-    await speaker.play(Audio(b"a", 1))
-    await speaker.interrupt(1)
-    await speaker.play(Audio(b"b", 2))
-    await speaker.close()
-    assert [sink.starts for sink in playback.sinks] == [[True], [True]]

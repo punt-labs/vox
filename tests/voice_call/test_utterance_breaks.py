@@ -19,3 +19,13 @@ def test_a_tool_call_makes_the_next_chunk_begin_one_in_the_same_turn() -> None:
     breaks.begins(79)
     breaks.note_tool_call()
     assert [breaks.begins(79) for _ in range(3)] == [True, False, False]
+
+
+def test_reset_forgets_the_turn_and_a_pending_tool_call() -> None:
+    breaks = UtteranceBreaks()
+    breaks.begins(5)
+    breaks.reset()
+    assert breaks.begins(5)  # the first chunk of a fresh stream, same id
+    breaks.note_tool_call()
+    breaks.reset()
+    assert [breaks.begins(5), breaks.begins(5)] == [True, False]
