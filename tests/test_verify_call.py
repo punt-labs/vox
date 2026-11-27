@@ -247,6 +247,8 @@ _TRACE: list[dict[str, object]] = [
         },
     },
     {"ms": 300, "dir": "recv", "type": "agent_response", "detail": {}},
+    {"ms": 190, "dir": "recv", "type": "user_transcript", "detail": {}},
+    {"ms": 400, "dir": "recv", "type": "user_transcript", "detail": {}},
 ]
 
 
@@ -641,3 +643,26 @@ def test_a_leftover_worker_makes_the_run_exit_nonzero(
     _stub_trace(monkeypatch)
     assert verify_call.main() == 1
     assert "left" in capsys.readouterr().out
+
+
+def test_a_reply_after_the_next_caller_turn_is_not_the_spoken_status() -> None:
+    late = [r for r in _TRACE if r["ms"] != 300]
+    late.append({"ms": 450, "dir": "recv", "type": "agent_response", "detail": {}})
+    assert _worker_status(trace=late) == "FAIL"
+
+
+def test_a_reply_when_no_caller_turn_follows_is_the_spoken_status() -> None:
+    trace = [r for r in _TRACE if r["ms"] not in (300, 400)]
+    trace.append({"ms": 450, "dir": "recv", "type": "agent_response", "detail": {}})
+    assert _worker_status(trace=trace) == "PASS"
+
+
+@pytest.mark.parametrize(
+    "activity",
+    [{}, {"tool_in_flight": "Bash"}, {"files": "a.py"}, {"files": [1]}],
+)
+def test_worker_status_fails_when_activity_has_no_files_list(
+    activity: dict[str, object],
+) -> None:
+    row = _status_row(state="working", lifecycle="ready", activity=activity)
+    assert _worker_status(trace=_trace_with(row)) == "FAIL"

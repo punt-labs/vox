@@ -137,8 +137,12 @@ class Judge:
             "docs", "PASS", f"{len(calls)} read_docs call(s) ok, then a reply"
         )
 
-    def _replied_after(self, tool: str) -> bool:
-        """Return whether an agent reply follows the tool's successful result."""
+    def _replied_after(self, tool: str, *, within_turn: bool = False) -> bool:
+        """Return whether an agent reply follows the tool's successful result.
+
+        With ``within_turn`` the reply must come before the caller's next turn,
+        so a later answer to some other request is not mistaken for this one.
+        """
         if self._trace is None:
             return False
         results = [
@@ -147,13 +151,23 @@ class Judge:
         if not results:
             return False
         first = min(results)
-        replies = [
+        limit = self._next_caller_turn(first) if within_turn else float("inf")
+        return any(first < ms < limit for ms in self._times("agent_response"))
+
+    def _next_caller_turn(self, after: float) -> float:
+        """Return when the caller next spoke after ``after``; infinity if never."""
+        return min(
+            (ms for ms in self._times("user_transcript") if ms > after),
+            default=float("inf"),
+        )
+
+    def _times(self, kind: str) -> list[float]:
+        """Return the trace time of every row of one type."""
+        return [
             float(r["ms"])
-            for r in self._trace
-            if r.get("type") == "agent_response"
-            and isinstance(r.get("ms"), int | float)
+            for r in self._trace or []
+            if r.get("type") == kind and isinstance(r.get("ms"), int | float)
         ]
-        return any(ms > first for ms in replies)
 
     @staticmethod
     def _result_time(row: dict[str, object], tool: str) -> float | None:
@@ -221,8 +235,12 @@ class Judge:
                 )
             if fault := self._reading_fault(reading):
                 return Verdict(name, "FAIL", f"{fault}: {reading}")
-        if not self._replied_after("worker_status"):
-            return Verdict(name, "FAIL", "no agent reply followed worker_status")
+        if not self._replied_after("worker_status", within_turn=True):
+            return Verdict(
+                name,
+                "FAIL",
+                "no agent reply followed worker_status before the next turn",
+            )
         states = ", ".join(str(r["state"]) for r in readings)
         return Verdict(name, "PASS", f"worker_status returned {states} with activity")
 
@@ -234,8 +252,14 @@ class Judge:
         lifecycle = fields.get("lifecycle")
         if not isinstance(lifecycle, str) or not lifecycle:
             return "no lifecycle"
-        if not isinstance(fields.get("activity"), dict):
+        activity = fields.get("activity")
+        if not isinstance(activity, dict):
             return "activity is not an object"
+        files = cast("dict[str, object]", activity).get("files")
+        if not isinstance(files, list) or not all(
+            isinstance(f, str) for f in cast("list[object]", files)
+        ):
+            return "activity has no files list"
         return ""
 
     def _worker_cleanup(self) -> Verdict:
