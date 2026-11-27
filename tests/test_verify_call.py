@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,12 @@ agent: Flask lets you build the app inside a function, which helps testing.
 user: Search the web for the weather in Tokyo.
 tool: search_web({}) -> ok
 agent: It is sunny in Tokyo.
+user: Please start a coding worker in this repository.
+tool: start_worker({'task': 'git status'}) -> ok
+agent: Started it.
+tool: worker_status({'worker_id': 'abcd1234'}) -> ok
+agent: It is running git status.
+tool: stop_worker({'worker_id': 'abcd1234'}) -> ok
 user: Give me a minute, I need to think.
 ended by caller
 trace: /tmp/call.jsonl
@@ -104,8 +111,11 @@ def test_a_call_that_never_ended_fails_a_clean_end() -> None:
 _STATUS = (Path(__file__).parent / "fixtures" / "vox_call_status_ended.txt").read_text()
 
 
-def test_the_real_status_text_passes_every_expectation() -> None:
-    assert set(_verdicts(_STATUS).values()) == {"PASS"}
+def test_the_real_status_text_passes_every_expectation_but_the_worker_one() -> None:
+    # The captured call predates the worker turns, so it holds no worker call.
+    verdicts = _verdicts(_STATUS)
+    assert verdicts.pop("worker status") == "FAIL"
+    assert set(verdicts.values()) == {"PASS"}
 
 
 def test_markdown_on_a_continuation_line_of_an_agent_reply_fails_plain_words() -> None:
@@ -190,6 +200,23 @@ _TRACE: list[dict[str, object]] = [
         "detail": {"tool_name": "read_docs", "is_error": False},
     },
     {"ms": 120, "dir": "recv", "type": "agent_response", "detail": {}},
+    {
+        "ms": 200,
+        "dir": "recv",
+        "type": "agent_tool_response",
+        "detail": {"tool_name": "worker_status", "is_error": False},
+    },
+    {
+        "ms": 206,
+        "dir": "note",
+        "type": "worker_status_result",
+        "detail": {
+            "state": "working",
+            "lifecycle": "ready",
+            "activity": {"files": [], "tool_in_flight": "Bash"},
+        },
+    },
+    {"ms": 300, "dir": "recv", "type": "agent_response", "detail": {}},
 ]
 
 
@@ -203,7 +230,7 @@ def test_docs_passes_when_an_agent_reply_follows_the_tool_result() -> None:
 
 
 def test_docs_fails_when_the_agent_said_nothing_after_the_tool_result() -> None:
-    assert _with_trace(_TRACE[:-1])["docs"] == "FAIL"
+    assert _with_trace(_TRACE[:3])["docs"] == "FAIL"
 
 
 def test_docs_fails_when_the_only_reply_came_before_the_tool_result() -> None:
@@ -275,3 +302,194 @@ def test_the_trace_named_by_the_status_text_is_read(tmp_path: Path) -> None:
     assert rows == [{"ms": 1, "type": "agent_response", "detail": {}}]
     assert verify_call.load_trace("call ended by caller\n") is None
     assert verify_call.load_trace(f"trace: {tmp_path / 'missing'}\n") is None
+
+
+def _worker_status(
+    report: str = _GOOD, trace: list[dict[str, object]] | None = _TRACE
+) -> str:
+    judged = verify_call.Judge(report, "", search_key=True, trace=trace).verdicts()
+    return str(next(v.status for v in judged if v.name == "worker status"))
+
+
+def _status_row(**detail: object) -> dict[str, object]:
+    return {"ms": 206, "dir": "note", "type": "worker_status_result", "detail": detail}
+
+
+def _trace_with(row: dict[str, object]) -> list[dict[str, object]]:
+    return [r for r in _TRACE if r.get("type") != "worker_status_result"] + [row]
+
+
+def test_a_worker_started_and_read_with_a_valid_state_and_activity_passes() -> None:
+    assert _worker_status() == "PASS"
+
+
+def test_worker_status_fails_when_no_worker_was_started() -> None:
+    report = _GOOD.replace("start_worker", "other")
+    assert _worker_status(report) == "FAIL"
+
+
+def test_worker_status_fails_when_the_agent_never_asked_the_worker() -> None:
+    report = _GOOD.replace("tool: worker_status", "tool: other")
+    assert _worker_status(report) == "FAIL"
+
+
+def test_worker_status_fails_when_the_tool_errored() -> None:
+    report = _GOOD.replace(
+        "worker_status({'worker_id': 'abcd1234'}) -> ok", "worker_status({}) -> error"
+    )
+    assert _worker_status(report) == "FAIL"
+
+
+def test_worker_status_fails_without_a_trace_to_read_the_result_from() -> None:
+    assert _worker_status(trace=None) == "FAIL"
+
+
+def test_worker_status_fails_when_the_trace_holds_no_result() -> None:
+    bare = [r for r in _TRACE if r.get("type") != "worker_status_result"]
+    assert _worker_status(trace=bare) == "FAIL"
+
+
+@pytest.mark.parametrize("state", ["", "busy", "ready", None, 3])
+def test_worker_status_fails_on_a_state_word_the_agent_may_not_speak(
+    state: object,
+) -> None:
+    row = _status_row(state=state, lifecycle="ready", activity={"files": []})
+    assert _worker_status(trace=_trace_with(row)) == "FAIL"
+
+
+@pytest.mark.parametrize("state", ["working", "blocked", "idle", "finished"])
+def test_worker_status_passes_every_spoken_state_word(state: str) -> None:
+    row = _status_row(state=state, lifecycle="ready", activity={"files": []})
+    assert _worker_status(trace=_trace_with(row)) == "PASS"
+
+
+@pytest.mark.parametrize("activity", [None, "busy", [], 3])
+def test_worker_status_fails_when_activity_is_not_an_object(activity: object) -> None:
+    row = _status_row(state="working", lifecycle="ready", activity=activity)
+    assert _worker_status(trace=_trace_with(row)) == "FAIL"
+
+
+def test_worker_status_fails_without_a_lifecycle() -> None:
+    row = _status_row(state="working", lifecycle="", activity={})
+    assert _worker_status(trace=_trace_with(row)) == "FAIL"
+
+
+def test_worker_status_fails_when_no_reply_follows_the_result() -> None:
+    cut = [r for r in _TRACE if r["ms"] != 300]
+    assert _worker_status(trace=cut) == "FAIL"
+
+
+def test_the_plan_starts_reads_and_stops_the_worker_in_that_order() -> None:
+    texts = [t.text for t in verify_call.script_plan(search=False)]
+    start = next(i for i, t in enumerate(texts) if "start a coding worker" in t)
+    status = next(i for i, t in enumerate(texts) if "what the worker is doing" in t)
+    stop = next(i for i, t in enumerate(texts) if "stop the worker" in t)
+    assert start < status < stop
+    assert texts[stop + 1].lower().startswith("yes")
+
+
+def test_the_worker_task_is_read_only() -> None:
+    texts = " ".join(t.text for t in verify_call.script_plan(search=False))
+    assert "must not change any file" in texts
+
+
+class _Fleet:
+    """Stand in for subprocess.run with a worker list that grows once."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+        self.listed = 0
+
+    def __call__(
+        self, command: list[str], **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        if command[-2:] == ["worker", "list"]:
+            self.listed += 1
+            ids = ["old"] if self.listed == 1 else ["old", "new"]
+            return subprocess.CompletedProcess(
+                command, 0, json.dumps([{"id": i} for i in ids]), ""
+            )
+        out = _ENDED_STATUS if command[-2:] == ["call", "status"] else ""
+        return subprocess.CompletedProcess(command, 0, out, "")
+
+
+_ENDED_STATUS = "call ended by caller | 0 tool calls\nended by caller\n"
+
+
+def test_a_call_stops_a_worker_it_started_and_never_one_it_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fleet = _Fleet()
+    run = verify_call.CallRun(tmp_path)
+    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    monkeypatch.setattr(
+        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
+    )
+    run.place(search=False)
+    stops = [c for c in fleet.commands if c[-3:-1] == ["worker", "stop"]]
+    assert [c[-1] for c in stops] == ["new"]
+    assert run.leftover_workers == ["new"]
+
+
+def test_a_worker_the_agent_already_stopped_is_not_stopped_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Stopped(_Fleet):
+        def __call__(
+            self, command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            done = super().__call__(command, **kwargs)
+            if command[-2:] != ["worker", "list"]:
+                return done
+            rows = json.loads(done.stdout)
+            stopped = [
+                {**r, "state": "stopped"} if r["id"] == "new" else r for r in rows
+            ]
+            return subprocess.CompletedProcess(command, 0, json.dumps(stopped), "")
+
+    fleet = _Stopped()
+    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    monkeypatch.setattr(
+        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
+    )
+    run = verify_call.CallRun(tmp_path)
+    run.place(search=False)
+    assert run.leftover_workers == []
+
+
+def test_an_unreadable_worker_list_refuses_to_place_the_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Garbled(_Fleet):
+        def __call__(
+            self, command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            super().__call__(command, **kwargs)
+            out = "not json" if command[-2:] == ["worker", "list"] else ""
+            return subprocess.CompletedProcess(command, 0, out, "")
+
+    fleet = _Garbled()
+    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    monkeypatch.setattr(
+        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
+    )
+    with pytest.raises(ValueError, match="unreadable"):
+        verify_call.CallRun(tmp_path).place(search=False)
+    assert not any("--script" in c for c in fleet.commands)
+    assert not any(c[-2:-1] == ["stop"] for c in fleet.commands)
+
+
+def test_worker_commands_run_under_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fleet = _Fleet()
+    run = verify_call.CallRun(tmp_path)
+    monkeypatch.setattr(verify_call.subprocess, "run", fleet)
+    monkeypatch.setattr(
+        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
+    )
+    run.place(search=False)
+    worker = [c for c in fleet.commands if "worker" in c]
+    assert worker
+    assert all(c[0] == "timeout" for c in worker)

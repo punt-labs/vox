@@ -4,6 +4,8 @@ Run through ``make verify-call``. It spends ElevenLabs credits and plays audio
 on this machine, so it is never part of ``make check``. The call goes through
 the installed voxd to the real ElevenLabs agent; the caller's turns are
 generated here with macOS ``say`` and ``ffmpeg`` so no audio is committed.
+The call also starts one read-only worker, asks what it is doing and stops it;
+any worker the run started and the agent left behind is stopped afterwards.
 """
 
 from __future__ import annotations
@@ -18,11 +20,11 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, Self, final
+from typing import Final, Literal, Self, cast, final
 
 __all__ = ["Judge", "Verdict", "is_final", "is_live", "load_trace", "script_plan"]
 
-_CALL_TIMEOUT_S: Final = 300
+_CALL_TIMEOUT_S: Final = 420
 _STOP_TIMEOUT_S: Final = 30
 _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
 _OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
@@ -37,6 +39,16 @@ _SEARCH_TURN: Final = (
     "Please search the web for the latest open source language models."
 )
 _SILENCE_TURN: Final = "Give me a minute, I need to think."
+_WORKER_START_TURN: Final = (
+    "Please start a coding worker in this repository. Its task is to run "
+    "git status and report the result. It must not change any file."
+)
+_WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
+_WORKER_STOP_TURN: Final = "Please stop the worker."
+_WORKER_CONFIRM_TURN: Final = "Yes, stop it."
+# The words the agent may speak for a worker; the launch phase is not one.
+_WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
+_WORKER_ENDED: Final = ("stopped", "exited")  # Registry phases with nothing to stop.
 
 _FINAL_STATES: Final = ("call ended", "call failed")
 _SETTLE_POLLS: Final = 10
@@ -78,11 +90,17 @@ class Turn:
 
 
 def script_plan(*, search: bool) -> list[Turn]:
-    """Return the caller's turns: a silent lead-in, docs, search if set up, silence."""
+    """Return the caller's turns: lead-in, docs, search if set up, worker, silence."""
     plan = [Turn("", _LEAD_IN_S), Turn(_DOCS_TURN, 45)]
     if search:
         plan.append(Turn(_SEARCH_TURN, 30))
-    plan.append(Turn(_SILENCE_TURN, 40))
+    plan += [
+        Turn(_WORKER_START_TURN, 60),
+        Turn(_WORKER_STATUS_TURN, 40),
+        Turn(_WORKER_STOP_TURN, 30),
+        Turn(_WORKER_CONFIRM_TURN, 25),
+        Turn(_SILENCE_TURN, 40),
+    ]
     return plan
 
 
@@ -97,7 +115,7 @@ class Verdict:
 
 @final
 class Judge:
-    """Read the end-of-call report ``vox call`` prints and judge six expectations."""
+    """Read the end-of-call report ``vox call`` prints and judge seven expectations."""
 
     __slots__ = (
         "_agent",
@@ -153,12 +171,13 @@ class Judge:
         return agent, tools, ended
 
     def verdicts(self) -> list[Verdict]:
-        """Return the six expectations in order."""
+        """Return the seven expectations in order."""
         return [
             self._greeting(),
             self._docs(),
             self._plain_words(),
             self._search(),
+            self._worker_status(),
             self._silence(),
             self._clean_end(),
         ]
@@ -236,6 +255,44 @@ class Judge:
             return Verdict("search", "FAIL", f"search_web errored: {calls}")
         return Verdict("search", "PASS", f"{len(calls)} search_web call(s) ok")
 
+    def _worker_status(self) -> Verdict:
+        name = "worker status"
+        for tool in ("start_worker", "worker_status"):
+            calls = [t for t in self._tools if t.startswith(f"tool: {tool}(")]
+            if not calls:
+                return Verdict(name, "FAIL", f"{tool} was never called")
+            if any(not c.endswith("-> ok") for c in calls):
+                return Verdict(name, "FAIL", f"{tool} errored: {calls}")
+        if self._trace is None:
+            return Verdict(name, "FAIL", "no trace to read the worker_status result")
+        readings = [
+            cast("dict[str, object]", row["detail"])
+            for row in self._trace
+            if row.get("type") == "worker_status_result"
+            and isinstance(row.get("detail"), dict)
+        ]
+        if not readings:
+            return Verdict(name, "FAIL", "the trace holds no worker_status result")
+        for reading in readings:
+            if fault := self._reading_fault(reading):
+                return Verdict(name, "FAIL", f"{fault}: {reading}")
+        if not self._replied_after("worker_status"):
+            return Verdict(name, "FAIL", "no agent reply followed worker_status")
+        states = ", ".join(str(r["state"]) for r in readings)
+        return Verdict(name, "PASS", f"worker_status returned {states} with activity")
+
+    @staticmethod
+    def _reading_fault(fields: dict[str, object]) -> str:
+        """Return what is wrong with a traced worker_status result, else ''."""
+        if fields.get("state") not in _WORKER_STATES:
+            return "state is not working, blocked, idle or finished"
+        lifecycle = fields.get("lifecycle")
+        if not isinstance(lifecycle, str) or not lifecycle:
+            return "no lifecycle"
+        if not isinstance(fields.get("activity"), dict):
+            return "activity is not an object"
+        return ""
+
     def _silence(self) -> Verdict:
         nags = [t for t in self._agent if _NAG.search(t)]
         if nags:
@@ -256,20 +313,28 @@ class Judge:
 class CallRun:
     """Generate the caller's audio, place the call, and always stop it."""
 
-    __slots__ = ("_directory", "_placed")
+    __slots__ = ("_directory", "_leftover", "_placed")
     _directory: Path
     _placed: bool  # True once this run started a call; only then may it stop one.
+    _leftover: list[str]  # Workers this run's call started and the agent left running.
 
     def __new__(cls, directory: Path) -> Self:
         """Work inside *directory*, which holds the generated audio and script."""
         self = super().__new__(cls)
         self._directory = directory
         self._placed = False
+        self._leftover = []
         return self
+
+    @property
+    def leftover_workers(self) -> list[str]:
+        """Return the IDs of workers the call started that this run had to stop."""
+        return list(self._leftover)
 
     def place(self, *, search: bool) -> tuple[str, str]:
         """Return the final ``vox call status`` text and the call's own output."""
         script = self._script(search=search)
+        known = self._worker_ids()
         self._placed = True
         try:
             done = subprocess.run(
@@ -290,7 +355,43 @@ class CallRun:
             status = self._settled_status()
         finally:
             self._stop()
+            self._stop_new_workers(known)
         return status, done.stdout + done.stderr
+
+    @staticmethod
+    def _worker_ids() -> set[str]:
+        """Return the IDs of workers still running.
+
+        Raises:
+            ValueError: If ``vox worker list`` printed something unreadable;
+                guessing would risk stopping a worker this run did not start.
+        """
+        done = subprocess.run(
+            ["timeout", str(_STOP_TIMEOUT_S), "vox", "worker", "list"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            rows = json.loads(done.stdout)
+        except json.JSONDecodeError as exc:
+            msg = f"vox worker list was unreadable: {done.stdout!r}"
+            raise ValueError(msg) from exc
+        return {
+            str(row["id"])
+            for row in rows
+            if isinstance(row, dict) and row.get("state") not in _WORKER_ENDED
+        }
+
+    def _stop_new_workers(self, known: set[str]) -> None:
+        """Stop each worker that appeared during the call; never one already there."""
+        for worker_id in sorted(self._worker_ids() - known):
+            self._leftover.append(worker_id)
+            subprocess.run(
+                ["timeout", str(_STOP_TIMEOUT_S), "vox", "worker", "stop", worker_id],
+                capture_output=True,
+                check=False,
+            )
 
     def _script(self, *, search: bool) -> Path:
         rows = []
@@ -393,7 +494,10 @@ def main() -> int:
         return 3
     search = _search_configured()
     with tempfile.TemporaryDirectory(prefix="verify-call-") as directory:
-        report, output = CallRun(Path(directory)).place(search=search)
+        run = CallRun(Path(directory))
+        report, output = run.place(search=search)
+    if run.leftover_workers:
+        print(f"stopped a worker the call left running: {run.leftover_workers}")
     trace = load_trace(report)
     verdicts = Judge(report, output, search_key=search, trace=trace).verdicts()
     for verdict in verdicts:
