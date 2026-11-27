@@ -5277,6 +5277,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/pcm_gap.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.58,
+    "max_complexity": 7.0,
+    "avg_complexity": 1.92,
+    "module_size": 113.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/pcm_output.py": {
     "method_ratio": 0.909,
     "encapsulation_ratio": 1.0,
@@ -5286,6 +5299,19 @@
     "module_size": 88.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.667,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/pcm_report.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 3.0,
+    "avg_complexity": 2.0,
+    "module_size": 35.0,
+    "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -5306,10 +5332,10 @@
   "src/punt_vox/voxd/pcm_stream.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.8,
+    "avg_params": 0.79,
     "max_complexity": 6.0,
-    "avg_complexity": 2.9,
-    "module_size": 296.0,
+    "avg_complexity": 2.89,
+    "module_size": 265.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

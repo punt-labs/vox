@@ -8,11 +8,21 @@ from punt_vox.voxd.pcm_audio import PcmBuffer, PcmDuration
 
 
 class TestPcmBuffer:
-    def test_pull_returns_whole_frames_in_order(self) -> None:
+    def test_pull_into_moves_whole_frames_in_order_and_pads_with_silence(self) -> None:
         buffer = PcmBuffer()
         buffer.append(b"\x01\x02\x03")
-        assert buffer.pull(4) == b"\x01\x02"
+        out = bytearray(b"\xff" * 4)
+        assert buffer.pull_into(memoryview(out)) == 2
+        assert bytes(out) == b"\x01\x02\x00\x00"
         assert len(buffer) == 1
+
+    def test_pull_into_leaves_what_does_not_fit_pending(self) -> None:
+        buffer = PcmBuffer()
+        buffer.append(b"\x01\x02\x03\x04\x05\x06")
+        out = bytearray(4)
+        assert buffer.pull_into(memoryview(out)) == 4
+        assert bytes(out) == b"\x01\x02\x03\x04"
+        assert len(buffer) == 2
 
     def test_clear_reports_dropped_bytes(self) -> None:
         buffer = PcmBuffer()

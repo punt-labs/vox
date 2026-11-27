@@ -161,6 +161,7 @@ class TestPcmStreamSink:
         sink, device = await open_sink()
         sink.feed(ms_of(OLD, 10))
         sink.feed(ms_of(NEW, 10))
+        sink.finish()  # a response still arriving would fade out, not go silent
         device.opened.pull(2)
         heard = bytes(device.opened.heard)
         assert heard == ms_of(OLD, 10) + ms_of(NEW, 10) + bytes(BLOCK * 2)
@@ -277,12 +278,14 @@ class TestPcmStreamSink:
             await sink.open(failing)
         assert device.opened.closed
 
-    async def test_underflow_counts_starved_blocks_after_audio_starts(self) -> None:
+    async def test_underflow_counts_one_dry_spell_after_audio_starts(self) -> None:
         sink, device = await open_sink()
         device.opened.pull(2)
         sink.feed(ms_of(OLD, 30))
         device.opened.pull(3)
-        assert (await sink.close()).underflows == 2
+        report = await sink.close()
+        assert report.underflows == 1
+        assert report.gap_total.ms == pytest.approx(30.0)
 
     async def test_device_flags_are_counted_and_reported(self) -> None:
         sink, device = await open_sink()

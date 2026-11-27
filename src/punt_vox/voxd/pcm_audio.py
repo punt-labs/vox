@@ -53,14 +53,19 @@ class PcmBuffer:
         with self._lock:
             self._pending += pcm
 
-    def pull(self, nbytes: int) -> bytes:
-        """Remove and return up to *nbytes* whole frames from the front."""
+    def pull_into(self, out: memoryview) -> int:
+        """Fill *out* from the front, pad the rest with silence; return audio bytes.
+
+        Only whole frames move, so a trailing half sample stays pending. The
+        copy happens under the lock, which is what makes a flush exact.
+        """
         with self._lock:
-            take = min(nbytes, len(self._pending))
-            take -= take % BYTES_PER_FRAME
-            block = bytes(self._pending[:take])
+            # -2 is ...11110: masking with it rounds down to a whole frame.
+            take = min(len(out), len(self._pending)) & -BYTES_PER_FRAME
+            out[:take] = self._pending[:take]
             del self._pending[:take]
-            return block
+        out[take:] = bytes(len(out) - take)
+        return take
 
     def clear(self) -> int:
         """Discard everything pending and return how many bytes were dropped."""

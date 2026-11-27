@@ -23,64 +23,26 @@ import contextlib
 import logging
 import time
 from collections.abc import Buffer
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.voxd.pcm_audio import (
-    BYTES_PER_FRAME,
     PCM_SAMPLE_RATE_HZ,
     PcmBuffer,
     PcmDuration,
 )
+from punt_vox.voxd.pcm_gap import GapSmoother
 from punt_vox.voxd.pcm_output import DeviceCall, OutputDeviceLostError
+from punt_vox.voxd.pcm_report import FlushReport, StreamReport
 
 if TYPE_CHECKING:
     from punt_vox.voxd.pcm_output import OutputStream, OutputStreamFactory
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "FlushReport",
-    "PcmStreamSink",
-    "StreamReport",
-]
+__all__ = ["PcmStreamSink"]
 
 _BLOCK_FRAMES = 320
 """20 ms per callback: the most audio that can still sound after a flush."""
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class FlushReport:
-    """What one :meth:`PcmStreamSink.flush` discarded and how long it took."""
-
-    dropped: PcmDuration
-    elapsed_ms: float
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class StreamReport:
-    """How one utterance's stream ended: audio fed, heard and discarded.
-
-    ``underflows`` counts blocks the device asked for while the response was
-    still arriving and that came up short or empty after audio had started.
-    ``device_flags`` counts callbacks PortAudio flagged (under/overflow,
-    priming), and ``device_lost`` is set when the device stopped on its own.
-    """
-
-    fed: PcmDuration
-    played: PcmDuration
-    dropped: PcmDuration
-    interrupted: bool
-    underflows: int
-    device_flags: int
-    device_lost: bool
-
-    @property
-    def degraded(self) -> bool:
-        """Return whether the device starved, flagged, or stopped on its own."""
-        return bool(self.underflows or self.device_flags or self.device_lost)
 
 
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
@@ -111,12 +73,12 @@ class PcmStreamSink:
         "_drained",
         "_dropped",
         "_fed",
+        "_gap",
         "_loop",
         "_opened_at",
         "_phase",
         "_played",
         "_stream",
-        "_underflows",
     )
 
     _buffer: PcmBuffer
@@ -126,12 +88,12 @@ class PcmStreamSink:
     _dropped: int
     _drained: bool
     _fed: int
+    _gap: GapSmoother
     _loop: asyncio.AbstractEventLoop
     _opened_at: float
     _phase: SinkPhase
     _played: int
     _stream: OutputStream | None
-    _underflows: int
 
     def __new__(cls, loop: asyncio.AbstractEventLoop) -> Self:
         """Create a sink that signals completion on *loop*."""
@@ -143,12 +105,12 @@ class PcmStreamSink:
         self._dropped = 0
         self._drained = False
         self._fed = 0
+        self._gap = GapSmoother()
         self._loop = loop
         self._opened_at = time.monotonic()
         self._phase = "streaming"
         self._played = 0
         self._stream = None
-        self._underflows = 0
         return self
 
     @property
@@ -289,28 +251,23 @@ class PcmStreamSink:
 
     def _report(self, *, interrupted: bool) -> StreamReport:
         """Build and log the closing report, at WARNING if playback degraded."""
+        self._gap.settle()
         report = StreamReport(
             fed=PcmDuration(self._fed),
             played=PcmDuration(self._played),
             dropped=PcmDuration(self._dropped),
             interrupted=interrupted,
-            underflows=self._underflows,
+            underflows=self._gap.starved,
+            gap_total=self._gap.total,
+            gap_longest=self._gap.longest,
+            idle_gaps=self._gap.idle_gaps,
             device_flags=self._device_flags,
             device_lost=self._device_lost,
         )
         logger.log(
             logging.WARNING if report.degraded else logging.INFO,
-            "PCM stream closed at %.0f ms: fed %.0f ms, played %.0f ms, "
-            "dropped %.0f ms, interrupted=%s, underflows=%d, device_flags=%d, "
-            "device_lost=%s",
-            self._since_open_ms(),
-            report.fed.ms,
-            report.played.ms,
-            report.dropped.ms,
-            report.interrupted,
-            report.underflows,
-            report.device_flags,
-            report.device_lost,
+            "%s",
+            report.describe(self._since_open_ms()),
         )
         return report
 
@@ -374,46 +331,44 @@ class PcmStreamSink:
             self._loop.call_soon_threadsafe(self._done.set)
 
     def _callback(
-        self, outdata: Buffer, frames: int, _time: object, status: object
+        self, outdata: Buffer, _frames: int, _time: object, status: object
     ) -> None:
         """PortAudio thread: fill one block, logging any failure before PortAudio."""
         try:
-            self._fill(outdata, frames, status)
+            if status:
+                self._device_flags += 1
+            self._fill(outdata)
         except BaseException:
             logger.exception("PCM output callback failed; the device will stop")
             raise
 
-    def _fill(self, outdata: Buffer, frames: int, status: object) -> None:
-        """Fill one block, padding with silence, and track the utterance's end."""
-        out = memoryview(outdata).cast("B")
-        wanted = frames * BYTES_PER_FRAME
-        block = self._buffer.pull(wanted)
-        out[: len(block)] = block
-        out[len(block) : wanted] = bytes(wanted - len(block))
-        if status:
-            self._device_flags += 1
-        if block and not self._played:
-            # The first block with audio in it: playback is now audible, so
-            # a barge-in from here on cuts a reply the person has heard.
+    def _count_block(self, nbytes: int) -> None:
+        """Device thread: add one pulled block to the utterance's totals.
+
+        The first block with audio in it makes playback audible, so a barge-in
+        from here on cuts a reply the person has heard.
+        """
+        if nbytes and not self._played:
             with contextlib.suppress(RuntimeError):  # a closed loop at shutdown
                 self._loop.call_soon_threadsafe(
                     logger.info,
                     "PCM playback started at %.0f ms",
                     self._since_open_ms(),
                 )
-        self._played += len(block)
-        if len(block) < wanted and not self._drained:
-            self._short_block()
+        self._played += nbytes
 
-    def _short_block(self) -> None:
-        """Account for a block the buffer could not fill: starved, or played out."""
+    def _fill(self, outdata: Buffer) -> None:
+        """Fill one block, padding with silence, and track the utterance's end."""
+        out = memoryview(outdata).cast("B")  # PortAudio hands over one block exactly
+        filled = self._buffer.pull_into(out)
+        self._count_block(filled)
+        is_short = filled < len(out) and not self._drained
         phase = self._phase
-        if phase == "streaming":
-            # Starved mid-response: the network fell behind real time. A
-            # short block before any audio played is the response arriving.
-            if self._played:
-                self._underflows += 1
-        elif phase == "finished":
+        # Starved mid-response: the network fell behind real time. A short
+        # block before any audio played is the response arriving.
+        starving = is_short and phase == "streaming" and bool(self._played)
+        self._gap.shape(out, filled, starving=starving)
+        if is_short and phase == "finished":
             self._drained = True
             with contextlib.suppress(RuntimeError):  # a closed loop at shutdown
                 self._loop.call_soon_threadsafe(self._done.set)

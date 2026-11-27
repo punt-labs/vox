@@ -25,7 +25,7 @@ an ElevenLabs \texttt{interruption}, and closes the sink; the device thread
 pulls 20~ms blocks. Pending audio lives in one locked buffer, so each feed,
 pull and flush is atomic and the operations below interleave in any order.
 
-The model counts bytes. It names five properties, and the tests carry the
+The model counts bytes. It names eight properties, and the tests carry the
 same names:
 
 \begin{enumerate}
@@ -40,6 +40,15 @@ same names:
   \item[P5] \emph{Play-out drains}: close lets the device play its last block
     only when the response finished and nothing is pending; otherwise it
     aborts.
+  \item[P6] \emph{A dry spell opens only on a streaming sink that already
+    played audio}: silence before the first audio, or after the response
+    finished or was flushed, is not a dry spell.
+  \item[P7] \emph{Shaping moves no byte}: the fade out of a dry spell and the
+    fade in after it change sample values, never \emph{fed}, \emph{played},
+    \emph{dropped} or \emph{pending}; every operation on a spell is $\Xi$
+    on \emph{Sink}.
+  \item[P8] \emph{An idle pause is not starvation}: a spell longer than
+    \emph{idleLimit} is a turn boundary of the call, counted apart.
 \end{enumerate}
 
 \section{Types}
@@ -206,5 +215,92 @@ the loop's cooperation, so a \texttt{Flush} may land between that read and
 the drain: \texttt{Drain} is therefore allowed from \texttt{interrupted}
 too. Nothing is pending in either case, so the two orders end in the same
 counts; only the report's \texttt{interrupted} flag differs.
+
+\section{Dry spells}
+
+A dry spell is the buffer running empty while audio was playing and the
+response was still arriving. The device thread fades the last sample down to
+zero, plays silence, and fades the first samples of resumed audio up from
+where the fade-out had got to. The fades add no phase to the sink: they are
+the sample-level shape of the \texttt{Starve} and \texttt{Resume} steps
+below. What the model adds is the spell's own state, so that the count and
+the length the report carries are defined.
+
+\begin{axdef}
+  idleLimit : \nat_1
+\end{axdef}
+
+\begin{schema}{Spells}
+  open : ZBOOL \\
+  missing, starved, idle : \nat
+\where
+  open = zfalse \implies missing = 0
+\end{schema}
+
+\begin{schema}{InitSpells}
+  Spells'
+\where
+  open' = zfalse \\
+  missing' = 0 \\
+  starved' = 0 \\
+  idle' = 0
+\end{schema}
+
+\begin{schema}{Observed}
+  Sink \\
+  Spells
+\where
+  open = ztrue \implies played > 0
+\end{schema}
+
+The predicate of \texttt{Observed} is P6: a spell is open only on a sink
+that has played audio.
+
+\begin{schema}{Starve}
+  \Xi Sink \\
+  \Delta Spells \\
+  k? : \nat_1
+\where
+  phase = streaming \\
+  played > 0 \\
+  pending = 0 \\
+  open' = ztrue \\
+  missing' = missing + k? \\
+  starved' = starved \\
+  idle' = idle
+\end{schema}
+
+\texttt{Starve} is a callback that came up short. Its preconditions are P6:
+a block short before any audio is the response arriving, and a block short
+after \texttt{Finish} or \texttt{Flush} is the end. Its $\Xi$~\emph{Sink} is
+P7.
+
+\begin{schema}{EndStarvation}
+  \Xi Sink \\
+  \Delta Spells
+\where
+  open = ztrue \\
+  missing \leq idleLimit \\
+  open' = zfalse \\
+  missing' = 0 \\
+  starved' = starved + 1 \\
+  idle' = idle
+\end{schema}
+
+\begin{schema}{EndIdle}
+  \Xi Sink \\
+  \Delta Spells
+\where
+  open = ztrue \\
+  missing > idleLimit \\
+  open' = zfalse \\
+  missing' = 0 \\
+  starved' = starved \\
+  idle' = idle + 1
+\end{schema}
+
+\texttt{EndStarvation} and \texttt{EndIdle} are the spell closing, when audio
+resumes, the response ends, or the stream is released; together they are total
+on an open spell, which is P8.
 
 \end{document}
