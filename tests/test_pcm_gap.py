@@ -2,21 +2,32 @@
 
 Named after the properties of ``docs/pcm-stream.tex``: P6 (a dry spell opens
 only on a streaming sink that already played audio), P7 (shaping never moves
-a byte count) and P8 (a dry spell is starvation when the same response resumes,
-idle when a new response begins or the response ends).
+a byte count) and P8 (a dry spell is starvation when the same utterance resumes,
+a pause when a new utterance begins, and neither when the stream ends in it).
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 import struct
+from contextlib import asynccontextmanager
 from itertools import pairwise
+from typing import TYPE_CHECKING, cast
 
 import pytest
-from test_pcm_stream import BLOCK, open_sink
+from test_pcm_stream import BLOCK, FakeDevice, open_sink
 
-from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
+from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ, PcmBuffer
 from punt_vox.voxd.pcm_gap import FADE_FRAMES
+from punt_vox.voxd.pcm_stream import PcmStreamSink
+from punt_vox.voxd.voice_agent.events import Audio
+from punt_vox.voxd.voice_call.speaker import AgentSpeaker
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from punt_vox.voxd.playback import PlaybackQueue
 
 AMPLITUDE = 12_000
 PERIOD = 40  # frames per cycle: a 400 Hz tone, whose peak is easy to cut at
@@ -166,11 +177,11 @@ class TestOnlyRealStarvationIsCounted:
         assert report.gap_longest.ms == pytest.approx(60.0)
 
     async def test_a_stall_inside_one_reply_is_starvation_at_any_length(self) -> None:
-        """P8: the same response resuming is late audio, however late."""
+        """P8: the same utterance resuming is late audio, however late."""
         sink, device = await open_sink()
-        sink.feed(tone(BLOCK), response=1)
+        sink.feed(tone(BLOCK), starts_utterance=True)
         device.opened.pull(1 + 75)  # 1.5 s dry
-        sink.feed(tone(BLOCK), response=1)
+        sink.feed(tone(BLOCK))
         device.opened.pull(1)
         report = await sink.close()
         assert report.underflows == 1
@@ -179,12 +190,12 @@ class TestOnlyRealStarvationIsCounted:
         assert report.idle_gaps == 0
         assert report.degraded
 
-    async def test_a_pause_between_two_responses_is_idle_not_starvation(self) -> None:
-        """P8: a spell that resumes at a response boundary is a turn boundary."""
+    async def test_a_pause_between_two_utterances_is_idle_not_starvation(self) -> None:
+        """P8: a spell that resumes where a new utterance begins is a pause."""
         sink, device = await open_sink()
-        sink.feed(tone(BLOCK), response=1)
+        sink.feed(tone(BLOCK), starts_utterance=True)
         device.opened.pull(1 + 40)  # 0.8 s dry
-        sink.feed(tone(BLOCK), response=2)
+        sink.feed(tone(BLOCK), starts_utterance=True)
         device.opened.pull(1)
         report = await sink.close()
         assert report.underflows == 0
@@ -196,15 +207,17 @@ class TestOnlyRealStarvationIsCounted:
         self,
     ) -> None:
         sink, device = await open_sink()
-        sink.feed(tone(BLOCK * 2), response=1)
-        sink.feed(tone(BLOCK * 2), response=2)  # queued behind: no gap at the join
+        sink.feed(tone(BLOCK * 2), starts_utterance=True)
+        sink.feed(tone(BLOCK * 2), starts_utterance=True)  # no gap at the join
         device.opened.pull(4 + 3)
-        sink.feed(tone(BLOCK), response=2)  # the second response resumes late
+        sink.feed(tone(BLOCK))  # the same utterance resumes late
         device.opened.pull(1)
         report = await sink.close()
         assert (report.underflows, report.idle_gaps) == (1, 0)
 
-    async def test_chunks_that_name_no_response_never_start_one(self) -> None:
+    async def test_chunks_that_do_not_start_an_utterance_never_end_a_stall_idle(
+        self,
+    ) -> None:
         sink, device = await open_sink()
         sink.feed(tone(BLOCK))
         device.opened.pull(1 + 40)
@@ -230,13 +243,15 @@ class TestOnlyRealStarvationIsCounted:
         assert (report.underflows, report.idle_gaps) == (0, 0)
         assert not report.degraded
 
-    async def test_a_dry_spell_open_at_close_is_not_called_starvation(self) -> None:
-        """Nothing says the audio was late: the stream ended, so it is idle."""
+    async def test_a_dry_spell_open_at_close_is_trailing_not_starvation(self) -> None:
+        """Nothing says whether the audio was late, so it is neither: but kept."""
         sink, device = await open_sink()
         sink.feed(tone(BLOCK))
         device.opened.pull(3)
         report = await sink.close()
-        assert (report.underflows, report.idle_gaps) == (0, 1)
+        assert (report.underflows, report.idle_gaps) == (0, 0)
+        assert report.trailing_gap.ms == pytest.approx(40.0)
+        assert not report.degraded
 
 
 class TestShapingMovesNoBytes:
@@ -297,22 +312,187 @@ class TestEveryCutFades:
         report = await sink.close()
         assert (report.underflows, report.idle_gaps) == (0, 0)
 
-    async def test_finish_ends_an_open_spell_as_idle(self) -> None:
-        """The response is over: nothing was late."""
+    async def test_finish_ends_an_open_spell_as_trailing(self) -> None:
+        """No end-of-utterance marker: the silence is kept, and called neither."""
         sink, device = await open_sink()
         sink.feed(tone(BLOCK, ends_at_peak=True))
         device.opened.pull(2)
         sink.finish()
         device.opened.pull(1)
         report = await sink.close()
-        assert (report.underflows, report.idle_gaps) == (0, 1)
+        assert (report.underflows, report.idle_gaps) == (0, 0)
+        assert report.trailing_gap.ms == pytest.approx(20.0)
         assert not report.degraded
 
-    async def test_a_flush_ends_an_open_spell_as_idle(self) -> None:
+    async def test_a_stall_that_ends_in_a_flush_keeps_its_length(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK, ends_at_peak=True), starts_utterance=True)
+        device.opened.pull(1 + 50)  # one second dry
+        sink.flush()
+        device.opened.pull(1)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 0)
+        assert report.trailing_gap.ms == pytest.approx(1000.0)
+        assert "trailing_gap=1000 ms" in report.describe(0.0)
+
+    async def test_a_flush_ends_an_open_spell_as_trailing(self) -> None:
         sink, device = await open_sink()
         sink.feed(tone(BLOCK, ends_at_peak=True))
         device.opened.pull(2)
         sink.flush()
         device.opened.pull(1)
         report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 0)
+        assert report.trailing_gap.ms == pytest.approx(20.0)
+
+
+class TestMarksAreFrameAccurate:
+    async def test_a_stall_after_a_mark_inside_the_last_block_is_starvation(
+        self,
+    ) -> None:
+        """The second utterance's first frames play in the block that runs dry."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK + 100), starts_utterance=True)
+        sink.feed(tone(10), starts_utterance=True)
+        device.opened.pull(2 + 20)
+        sink.feed(tone(BLOCK))
+        device.opened.pull(1)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (1, 0)
+
+    async def test_an_odd_length_chunk_before_a_new_utterance_is_still_a_pause(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK) + b"\x01", starts_utterance=True)
+        device.opened.pull(1 + 20)
+        sink.feed(b"\x00" + tone(BLOCK), starts_utterance=True)
+        device.opened.pull(2)
+        report = await sink.close()
         assert (report.underflows, report.idle_gaps) == (0, 1)
+
+    async def test_a_mark_after_the_resumed_block_leaves_the_stall_starvation(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        device.opened.pull(1 + 10)
+        sink.feed(tone(BLOCK))  # the same utterance resumes
+        sink.feed(tone(BLOCK), starts_utterance=True)  # a later one follows it
+        device.opened.pull(2)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (1, 0)
+
+    async def test_a_tool_pause_of_three_seconds_is_a_pause(self) -> None:
+        """Marked by the tool call, though the turn's event id never changed."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        device.opened.pull(1 + 150)
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        device.opened.pull(1)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 1)
+        assert not report.degraded
+
+    async def test_the_mark_is_queued_before_the_audio_it_describes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The device thread must never pull audio whose mark is not there yet."""
+        sink, _ = await open_sink()
+        seen: list[int] = []
+        append = PcmBuffer.append
+
+        def spy(buffer: PcmBuffer, pcm: bytes) -> None:
+            seen.append(len(sink._gap._marks))  # pyright: ignore[reportPrivateUsage]
+            append(buffer, pcm)
+
+        monkeypatch.setattr(PcmBuffer, "append", spy)
+        sink.feed(tone(BLOCK), starts_utterance=True)
+        assert seen == [1]
+
+
+class TestTheFlushTailIsPlayedBeforeTheDeviceIsReleased:
+    async def test_close_after_a_flush_waits_for_the_tail_then_stops(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        sink.flush()
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.005)
+        assert not closing.done()  # waiting for the callback that plays the tail
+        device.opened.pull(1)
+        await closing
+        stream = device.opened
+        assert stream.stopped
+        assert not stream.aborted
+        assert stream.heard_at_release == BLOCK * 2 * 2
+        assert max(steps(stream.heard)) <= STEP_LIMIT
+
+    async def test_a_device_that_never_calls_back_is_aborted_after_the_wait(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        sink.flush()
+        await sink.close()
+        assert device.opened.aborted
+
+    async def test_a_barge_in_through_the_speaker_plays_the_tail(self) -> None:
+        device = FakeDevice()
+
+        class Playback:
+            mutex = asyncio.Lock()
+
+            @asynccontextmanager
+            async def stream_pcm(
+                self, *, locked: bool = False
+            ) -> AsyncGenerator[PcmStreamSink]:
+                assert locked
+                sink = PcmStreamSink(asyncio.get_running_loop())
+                await sink.open(device)
+                try:
+                    yield sink
+                finally:
+                    await sink.close()
+
+        speaker = AgentSpeaker(cast("PlaybackQueue", Playback()))
+        await speaker.play(Audio(tone(BLOCK * 3), 1))
+        device.opened.pull(1)
+        interrupting = asyncio.create_task(speaker.interrupt(1))
+        await asyncio.sleep(0.005)
+        device.opened.pull(1)
+        await interrupting
+        await speaker.close()
+        assert device.opened.stopped
+        assert not device.opened.aborted
+        assert max(steps(device.opened.heard)) <= STEP_LIMIT
+
+
+class TestFinishWaitsForTheTail:
+    async def test_the_stream_is_not_drained_until_the_fade_is_done(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK - 20, ends_at_peak=True))
+        sink.finish()
+        device.opened.pull(1)  # 20 of the 48 fade frames fit in this block
+        await asyncio.sleep(0)
+        waiter = asyncio.create_task(sink.wait())
+        await asyncio.sleep(0.005)
+        assert not waiter.done()
+        device.opened.pull(1)
+        await asyncio.wait_for(waiter, timeout=1)
+        await sink.close()
+        stream = device.opened
+        assert stream.stopped
+        assert max(steps(stream.heard)) <= STEP_LIMIT
+        assert not any(stream.heard[(BLOCK + FADE_FRAMES) * 2 :])
+
+    async def test_finish_after_the_last_full_block_still_plays_the_tail(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK, ends_at_peak=True))
+        device.opened.pull(1)
+        sink.finish()
+        device.opened.pull(1)
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        await sink.close()
+        assert max(steps(device.opened.heard)) <= STEP_LIMIT

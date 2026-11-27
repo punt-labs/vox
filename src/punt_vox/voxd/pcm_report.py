@@ -24,12 +24,14 @@ class FlushReport:
 class StreamReport:
     """How one sink's stream ended: audio fed, heard and discarded.
 
-    The stream spans every agent response from the first reply to the close.
-    ``underflows`` counts silences after which the *same* response resumed:
+    The stream spans every agent utterance from the first reply to the close.
+    ``underflows`` counts silences after which the *same* utterance resumed:
     the buffer ran dry while audio was late. ``gap_total`` and ``gap_longest``
     are the silence those added up to and the longest one, at any length. A
-    silence that ended at a new response, or with the stream, is a turn
-    boundary, counted in ``idle_gaps`` and never as starvation.
+    silence that ended where a new utterance began (a turn, or a pause for a
+    tool call) is counted in ``idle_gaps`` and never as starvation. A silence
+    the stream ended in (a barge-in, or the hang-up) cannot be told from
+    either, so it is neither: its length is ``trailing_gap``.
     ``device_flags`` counts callbacks PortAudio flagged (under/overflow,
     priming), and ``device_lost`` is set when the device stopped on its own.
     """
@@ -42,6 +44,7 @@ class StreamReport:
     gap_total: PcmDuration
     gap_longest: PcmDuration
     idle_gaps: int
+    trailing_gap: PcmDuration
     device_flags: int
     device_lost: bool
 
@@ -58,5 +61,6 @@ class StreamReport:
             f"dropped {self.dropped.ms:.0f} ms, interrupted={self.interrupted}, "
             f"underflows={self.underflows} (total {self.gap_total.ms:.0f} ms, "
             f"longest {self.gap_longest.ms:.0f} ms), idle_gaps={self.idle_gaps}, "
+            f"trailing_gap={self.trailing_gap.ms:.0f} ms, "
             f"device_flags={self.device_flags}, device_lost={self.device_lost}"
         )

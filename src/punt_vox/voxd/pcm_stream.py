@@ -53,6 +53,9 @@ After a flush only that block and a fade-out tail of at most 3 ms (one more
 block at the very end of it) can still sound."""
 
 
+_TAIL_WAIT_S = 2 * _BLOCK_FRAMES / PCM_SAMPLE_RATE_HZ
+"""40 ms: two callbacks, enough for the one after a flush to write its tail."""
+
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
 """Where a sink is: arriving, fully fed, flushed, or released.
 
@@ -87,6 +90,7 @@ class PcmStreamSink:
         "_phase",
         "_played",
         "_stream",
+        "_tail_played",
     )
 
     _buffer: PcmBuffer
@@ -102,6 +106,7 @@ class PcmStreamSink:
     _phase: SinkPhase
     _played: int
     _stream: OutputStream | None
+    _tail_played: asyncio.Event
 
     def __new__(cls, loop: asyncio.AbstractEventLoop) -> Self:
         """Create a sink that signals completion on *loop*."""
@@ -119,6 +124,7 @@ class PcmStreamSink:
         self._phase = "streaming"
         self._played = 0
         self._stream = None
+        self._tail_played = asyncio.Event()
         return self
 
     @property
@@ -144,15 +150,13 @@ class PcmStreamSink:
         self._stream = starting.result()
         logger.info("PCM stream open in %.1f ms", self._since_open_ms())
 
-    def feed(self, pcm: bytes, response: int | None = None) -> None:
-        """Queue one chunk of agent audio belonging to *response*.
+    def feed(self, pcm: bytes, *, starts_utterance: bool = False) -> None:
+        """Queue one chunk of agent audio.
 
-        The stream stays open between the agent's turns, so only the caller
-        knows where one response ends and the next begins: when *response*
-        differs from the previous chunk's, the chunk starts a new response,
-        and a silence that ends there is a pause between turns, not a stall.
-        ``None`` (a caller that does not tell responses apart) never starts
-        one.
+        The stream stays open between the agent's turns and across its tool
+        calls, so only the caller knows where an utterance begins. Set
+        *starts_utterance* on the chunk that begins one: a silence that ends
+        there is a pause, not a stall.
 
         After a flush, audio still in flight from the interrupted response is
         counted as dropped and never queued. Feeding a finished or closed
@@ -165,7 +169,9 @@ class PcmStreamSink:
         if self._phase not in {"streaming", "interrupted"}:
             msg = f"cannot feed a PCM sink that is {self._phase}"
             raise ValueError(msg)
-        self._gap.note_response(self._fed, response)
+        if starts_utterance:
+            # Before the audio is queued: a block that pulls it must find the mark.
+            self._gap.note_boundary(self._fed)
         self._fed += len(pcm)
         if self._phase == "interrupted":
             self._dropped += len(pcm)
@@ -215,7 +221,7 @@ class PcmStreamSink:
             raise ValueError(msg)
         self._dropped += self._buffer.trim_partial_frame()
         self._phase = "finished"
-        if not self._buffer:
+        if not self._buffer and not self._gap.needs_fade_out:
             self._drained = True
             self._done.set()
 
@@ -240,6 +246,7 @@ class PcmStreamSink:
         if self._phase == "closed":
             msg = "PCM sink is already closed"
             raise ValueError(msg)
+        is_tail_played = await self._play_flush_tail()
         ending, self._phase = self._phase, "closed"
         pending = self._buffer.clear()
         self._dropped += pending
@@ -247,7 +254,7 @@ class PcmStreamSink:
         stream, self._stream = self._stream, None
         try:
             if stream is not None:
-                drain = ending == "finished" and not pending
+                drain = is_tail_played or (ending == "finished" and not pending)
                 releasing = await DeviceCall.run(
                     self._release_device, stream, drain=drain
                 )
@@ -255,6 +262,22 @@ class PcmStreamSink:
         finally:
             report = self._report(interrupted=ending == "interrupted")
         return report
+
+    async def _play_flush_tail(self) -> bool:
+        """Wait, for at most two blocks, for a flushed stream's fade-out to play.
+
+        ``abort`` would discard the tail the device thread writes after a
+        flush, so a stream whose tail played is stopped instead, which plays
+        what the device holds: at most the one block it already had, then the
+        tail. A device that never calls back is aborted after the wait.
+        """
+        if self._phase != "interrupted" or self._stream is None:
+            return False
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(_TAIL_WAIT_S):
+                await self._tail_played.wait()
+            return True
+        return False
 
     @staticmethod
     def _raise_release_outcome(releasing: DeviceCall[None]) -> None:
@@ -282,6 +305,7 @@ class PcmStreamSink:
             gap_total=self._gap.total,
             gap_longest=self._gap.longest,
             idle_gaps=self._gap.idle_gaps,
+            trailing_gap=self._gap.trailing,
             device_flags=self._device_flags,
             device_lost=self._device_lost,
         )
@@ -390,7 +414,19 @@ class PcmStreamSink:
         # block before any audio played is the response arriving.
         starving = is_short and phase == "streaming" and bool(self._played)
         self._gap.shape(out, filled, starving=starving, played=offset)
+        if not self._gap.needs_fade_out:
+            self._settle_block(phase, is_short=is_short)
+
+    def _settle_block(self, phase: SinkPhase, *, is_short: bool) -> None:
+        """Device thread: wake whoever waits on the end of a block with no tail left."""
         if is_short and phase == "finished":
             self._drained = True
-            with contextlib.suppress(RuntimeError):  # a closed loop at shutdown
-                self._loop.call_soon_threadsafe(self._done.set)
+            self._signal(self._loop, self._done)
+        elif phase == "interrupted":
+            self._signal(self._loop, self._tail_played)
+
+    @staticmethod
+    def _signal(loop: asyncio.AbstractEventLoop, event: asyncio.Event) -> None:
+        """Device thread: set *event* on *loop*; a closed loop at shutdown is fine."""
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(event.set)

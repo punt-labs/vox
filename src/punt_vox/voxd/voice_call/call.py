@@ -266,20 +266,25 @@ class VoiceAgentCall:
                 case Interruption(event_id=event_id):
                     await self._speaker.interrupt(event_id)
                 case ClientToolCall() as call:
+                    self._speaker.note_utterance_event()
                     group.create_task(self._answer(conv, call))
                 case UserTranscript() as turn:
                     self._progress.activity()
                     self._transcript.record(turn)
                     self._tools.guard.gate.heard(turn.text)
                 case AgentResponse() | AgentResponseCorrection() as turn:
-                    self._transcript.record(turn)
-                    self._tools.guard.gate.agent_spoke(
-                        turn.text
-                        if isinstance(turn, AgentResponse)
-                        else turn.corrected_text
-                    )
+                    self._heard_agent(turn)
                 case AgentToolResponse() as ack:
                     self._acknowledged(ack)
+
+    def _heard_agent(self, turn: AgentResponse | AgentResponseCorrection) -> None:
+        """Record what the agent said; a new response is also a new utterance."""
+        if isinstance(turn, AgentResponse):
+            self._speaker.note_utterance_event()
+        self._transcript.record(turn)
+        self._tools.guard.gate.agent_spoke(
+            turn.text if isinstance(turn, AgentResponse) else turn.corrected_text
+        )
 
     def _acknowledged(self, ack: AgentToolResponse) -> None:
         """Taint on a tool voxd did not run; note end_call, the agent's hang-up."""

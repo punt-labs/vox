@@ -17,6 +17,7 @@ from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
     AgentResponseCorrection,
     AgentToolResponse,
+    Audio,
     ClientToolCall,
     Metadata,
     Ping,
@@ -291,6 +292,24 @@ async def test_a_live_call_logs_its_conversation_id(
     with caplog.at_level(logging.INFO, logger="punt_vox.voxd.voice_call.call_log"):
         await call.run(_dial)
     assert "Call live: conversation conv_1" in [r.message for r in caplog.records]
+
+
+async def test_a_tool_call_and_an_agent_response_each_begin_an_utterance() -> None:
+    """Both arrive inside one turn's event id: only the events mark the pause."""
+    playback = FakePlayback()
+    peer = _Peer(
+        [
+            Audio(b"a", 79),
+            ClientToolCall("t1", "list_workers", {}, expects_response=False),
+            Audio(b"b", 79),
+            Audio(b"c", 79),
+            AgentResponse("and then", 79, "r2"),
+            Audio(b"d", 79),
+        ]
+    )
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await _call(peer, speaker=speaker).run(_dial)
+    assert playback.sinks[0].starts == [True, True, False, True]
 
 
 async def test_each_tool_call_is_logged_with_its_outcome(

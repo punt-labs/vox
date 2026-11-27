@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack, suppress
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.pcm_output import OutputDeviceLostError
+from punt_vox.voxd.voice_call.utterance_breaks import UtteranceBreaks
 
 if TYPE_CHECKING:
     from punt_vox.voxd.pcm_stream import PcmStreamSink
@@ -26,13 +27,22 @@ class AgentSpeaker:
     audio from the response it cut, and the next response opens a new sink.
     """
 
-    __slots__ = ("_cut", "_held", "_owns", "_playback", "_reply", "_sink")
+    __slots__ = (
+        "_breaks",
+        "_cut",
+        "_held",
+        "_owns",
+        "_playback",
+        "_reply",
+        "_sink",
+    )
     _playback: PlaybackQueue
     _held: AsyncExitStack  # The playback mutex, from the first reply to hang-up.
     _owns: bool  # Whether ``_held`` holds the mutex now.
     _reply: AsyncExitStack  # The current reply's sink.
     _sink: PcmStreamSink | None  # None between replies and after a cut.
     _cut: int  # The newest interrupted response; its audio is never played.
+    _breaks: UtteranceBreaks
 
     def __new__(cls, playback: PlaybackQueue) -> Self:
         """Bind the daemon's playback queue."""
@@ -41,6 +51,7 @@ class AgentSpeaker:
         self._held, self._reply = AsyncExitStack(), AsyncExitStack()
         self._sink, self._owns = None, False
         self._cut = -1
+        self._breaks = UtteranceBreaks()
         return self
 
     async def play(self, audio: Audio) -> None:
@@ -54,7 +65,11 @@ class AgentSpeaker:
             self._sink = await self._reply.enter_async_context(
                 self._playback.stream_pcm(locked=True)
             )
-        self._sink.feed(audio.pcm, audio.event_id)
+        self._sink.feed(audio.pcm, starts_utterance=self._breaks.begins(audio.event_id))
+
+    def note_utterance_event(self) -> None:
+        """Note an ``agent_response`` or a tool call: the next audio is new."""
+        self._breaks.note_event()
 
     async def interrupt(self, event_id: int) -> None:
         """Discard queued audio of the response the person talked over."""
@@ -84,5 +99,6 @@ class AgentSpeaker:
 
     async def _end_reply(self) -> None:
         self._sink = None
+        self._breaks.reset()
         reply, self._reply = self._reply, AsyncExitStack()
         await reply.aclose()

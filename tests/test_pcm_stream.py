@@ -44,6 +44,7 @@ class FakeOutputStream:
         "closed",
         "finished_callback",
         "heard",
+        "heard_at_release",
         "release_gate",
         "start_error",
         "started",
@@ -57,6 +58,7 @@ class FakeOutputStream:
     closed: bool
     finished_callback: Callable[[], None]
     heard: bytearray
+    heard_at_release: int | None
     start_error: Exception | None
     started: bool
     stop_error: Exception | None
@@ -76,6 +78,7 @@ class FakeOutputStream:
         self.stop_error = None
         self.release_gate = None
         self.heard = bytearray()
+        self.heard_at_release = None
         return self
 
     def pull(self, blocks: int = 1, *, pace_s: float = 0.0) -> None:
@@ -96,12 +99,14 @@ class FakeOutputStream:
             self.release_gate.wait(timeout=5)
         if self.stop_error is not None:
             raise self.stop_error
+        self.heard_at_release = len(self.heard)
         self.stopped = True
         self.finished_callback()
 
     def abort(self) -> None:
         if self.release_gate is not None:
             self.release_gate.wait(timeout=5)
+        self.heard_at_release = len(self.heard)
         self.aborted = True
         self.finished_callback()
 
@@ -249,6 +254,7 @@ class TestPcmStreamSink:
         sink.feed(ms_of(OLD, 20))
         device.opened.pull(1)
         sink.finish()
+        device.opened.pull(1)  # the fade-out after the last sample plays first
         await asyncio.wait_for(sink.wait(), timeout=1)
         await sink.close()
         assert device.opened.stopped

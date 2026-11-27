@@ -62,11 +62,34 @@ async def test_an_interruption_before_any_audio_only_records_the_cut() -> None:
     assert playback.sinks == []
 
 
-async def test_each_chunk_tells_the_sink_which_response_it_belongs_to() -> None:
+async def test_a_chunk_of_a_new_turn_begins_an_utterance() -> None:
     playback = FakePlayback()
     speaker = AgentSpeaker(cast("PlaybackQueue", playback))
     for pcm, event_id in ((b"a", 1), (b"b", 1), (b"c", 2)):
         await speaker.play(Audio(pcm, event_id))
     await speaker.close()
     (sink,) = playback.sinks
-    assert sink.responses == [1, 1, 2]
+    assert sink.starts == [True, False, True]
+
+
+async def test_an_agent_event_inside_one_turn_begins_an_utterance() -> None:
+    """A tool pause or a second agent_response shares the turn's event id."""
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"a", 79))
+    speaker.note_utterance_event()  # a client_tool_call, then more speech
+    await speaker.play(Audio(b"b", 79))
+    await speaker.play(Audio(b"c", 79))
+    await speaker.close()
+    (sink,) = playback.sinks
+    assert sink.starts == [True, True, False]
+
+
+async def test_a_new_sink_after_a_cut_starts_fresh() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"a", 1))
+    await speaker.interrupt(1)
+    await speaker.play(Audio(b"b", 2))
+    await speaker.close()
+    assert [sink.starts for sink in playback.sinks] == [[True], [True]]

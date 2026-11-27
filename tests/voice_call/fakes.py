@@ -86,13 +86,13 @@ class FakeWorkers:
 class FakeSink:
     def __init__(self) -> None:
         self.fed: list[bytes] = []
-        self.responses: list[int | None] = []  # The response each chunk belongs to.
+        self.starts: list[bool] = []  # Whether each chunk began an utterance.
         self.flushed = 0
         self.finished = False
 
-    def feed(self, pcm: bytes, response: int | None = None) -> None:
+    def feed(self, pcm: bytes, *, starts_utterance: bool = False) -> None:
         self.fed.append(pcm)
-        self.responses.append(response)
+        self.starts.append(starts_utterance)
 
     def flush(self) -> None:
         self.flushed += 1
