@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The voice agent's `worker_status` tool now says what a worker is doing from
+  the hook events voxd already collects: a state (`working`, `blocked`,
+  `idle`, `finished`), the tool in flight, the files being touched, an open
+  failure, and seconds since the last event. The old registry value moves to
+  a `lifecycle` field. `make verify-call` places a worker and checks this live,
+  and the call report keeps every turn of the call instead of the last 20. (PL-1724)
+
 - `make test` and `make test-push` default to four pytest workers. Override
   the count with `PYTEST_WORKERS`, e.g. `make test PYTEST_WORKERS=auto`. (PL-1627)
 

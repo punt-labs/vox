@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, ClassVar, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import ClientTool
@@ -89,7 +90,9 @@ class BossTools:
         ),
         ClientTool(
             "worker_status",
-            "Report one worker's state and latest progress.",
+            "Report one worker's state (working, blocked, idle or finished), the "
+            "tool it is running, the files it is touching, any open failure, how "
+            "long since it last reported, and its latest progress.",
             _schema({"worker_id": _ID}, "worker_id"),
         ),
         ClientTool("list_workers", "List every worker and its state.", _schema({})),
@@ -157,12 +160,14 @@ class BossTools:
 
     __slots__ = (
         "_answer",
+        "_clock",
         "_directory",
         "_guard",
         "_projects",
         "_research",
         "_workers",
     )
+    _clock: Callable[[], float]
     _directory: WorkerDirectory
     _workers: WorkerControl
     _projects: ProjectAllowlist
@@ -177,10 +182,12 @@ class BossTools:
         *,
         spoken_labels: dict[str, str] | None = None,
         research: ResearchTools | None = None,  # None: no search or docs set up.
+        clock: Callable[[], float] = time.time,
     ) -> Self:
         """Bind the worker surface, its allowlist and a fresh per-call result cache."""
         self = super().__new__(cls)
         self._workers, self._projects = workers, projects
+        self._clock = clock
         self._directory = WorkerDirectory(workers, spoken_labels)
         self._answer = ToolAnswer()
         self._research = research if research is not None else ResearchTools()
@@ -258,7 +265,7 @@ class BossTools:
 
     async def _status(self, arguments: dict[str, object]) -> object:
         worker = await self._directory.find(ToolFields.text(arguments, "worker_id"))
-        return WorkerBrief.detail(worker)
+        return WorkerBrief.detail(worker, self._clock())
 
     async def _list(self, _arguments: dict[str, object]) -> object:
         return [WorkerBrief.summary(w) for w in await self._workers.workers()]

@@ -48,14 +48,15 @@ def test_a_correction_picks_the_newest_turn_with_that_response_id() -> None:
     assert [turn["text"] for turn in transcript.turns()] == ["first", "sec"]
 
 
-def test_only_the_last_twenty_turns_are_kept() -> None:
+def test_a_long_call_keeps_its_greeting_and_every_later_turn() -> None:
     transcript = CallTranscript()
-    for n in range(25):
+    transcript.record(AgentResponse("Hi, it's Vox.", 0, "greeting"))
+    for n in range(1, 30):
         transcript.record(UserTranscript(f"turn {n}", n))
     turns = transcript.turns()
-    assert len(turns) == 20
-    assert turns[0] == {"role": "user", "text": "turn 5"}
-    assert turns[-1] == {"role": "user", "text": "turn 24"}
+    assert len(turns) == 30
+    assert turns[0] == {"role": "agent", "text": "Hi, it's Vox."}
+    assert turns[-1] == {"role": "user", "text": "turn 29"}
 
 
 def test_turns_is_a_copy_the_caller_may_keep() -> None:

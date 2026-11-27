@@ -69,3 +69,38 @@ def test_open_failure_lookup_and_successful_retry() -> None:
     history.ingest(3, "PostToolUse", {**payload, "tool_response": "recovered"})
     history.ingest(2, "PostToolUseFailure", payload)
     assert history.open_failure() is None
+
+
+_BASH: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+
+
+def test_a_tool_begun_before_the_boundary_is_not_in_flight() -> None:
+    history = HookToolHistory()
+    history.ingest(3, "PreToolUse", _BASH)
+    assert history.in_flight(since=2) == "Bash"
+    assert history.in_flight(since=3) is None
+    assert history.in_flight(since=5) is None
+
+
+def test_one_completion_settles_only_one_of_two_identical_parallel_calls() -> None:
+    history = HookToolHistory()
+    history.ingest(1, "PreToolUse", _BASH)
+    history.ingest(2, "PreToolUse", _BASH)
+    history.ingest(3, "PostToolUse", {**_BASH, "tool_response": "a"})
+    assert history.in_flight(since=0) == "Bash"
+    history.ingest(4, "PostToolUse", {**_BASH, "tool_response": "b"})
+    assert history.in_flight(since=0) is None
+
+
+def test_a_completion_that_arrives_first_still_settles_its_call() -> None:
+    history = HookToolHistory()
+    history.ingest(2, "PostToolUse", {**_BASH, "tool_response": "a"})
+    history.ingest(1, "PreToolUse", _BASH)
+    assert history.in_flight(since=0) is None
+
+
+def test_the_newest_tool_sequence_is_zero_when_empty() -> None:
+    history = HookToolHistory()
+    assert history.newest() == 0
+    history.ingest(7, "PreToolUse", _BASH)
+    assert history.newest() == 7

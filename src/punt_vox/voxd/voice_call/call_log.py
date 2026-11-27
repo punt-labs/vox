@@ -94,6 +94,15 @@ class CallLog:
             type(exc).__name__,
         )
 
+    @classmethod
+    def untraced(cls, name: str, exc: Exception) -> None:
+        """Log a trace note that could not be written, by exception type only."""
+        logger.warning(
+            "Call tool %s: trace note not written (%s)",
+            cls._tool_name(name),
+            type(exc).__name__,
+        )
+
     @staticmethod
     def _tool_name(name: str) -> str:
         return name if name in _TOOLS else "unknown"  # An agent-chosen name.
