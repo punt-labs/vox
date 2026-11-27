@@ -12,26 +12,6 @@ vox adds text-to-speech (TTS) and background music to Claude Code and to your ow
 
 **Platforms:** macOS, Linux
 
-## Diagnostics and usage telemetry
-
-Private diagnostic logs live at `~/.punt-labs/vox/logs/vox.log` (0600 files,
-0700 directories). `--verbose` and the `log_level` setting control file verbosity.
-The daemon never mirrors diagnostics to stderr; clients continue without a file
-sink if private logging cannot be configured, with one metadata-only warning.
-
-Usage telemetry is local-only by default, stored separately in
-`~/.punt-labs/vox/telemetry.db`, with 90-day retention. It captures versioned spans
-for MCP tools, dispatched hooks, top-level CLI commands, and daemon synthesis:
-closed operation/provider names, start and end times, success/error outcomes,
-cache hits, and text lengths. It never captures text, prompts, paths,
-credentials, or exception messages.
-Unknown operation names become `other`. Shared `punt-observe` configuration owns
-exporters; network export requires explicit opt-in consent.
-
-Set `VOX_TELEMETRY=off` to disable vox usage telemetry, or `PUNT_TELEMETRY=off`
-to disable it for all Punt tools. Either switch wins; disabled telemetry opens no
-database and creates no salt. Diagnostic logging remains available.
-
 ## Quick Start
 
 ```bash
@@ -119,7 +99,7 @@ sh install.sh
 - **Background music** --- `/music on` generates up to 12 instrumental tracks with the ElevenLabs Music API; see [Background Music](#background-music)
 - **Music Player (lux)** --- a clickable album list and play controls in the [lux](https://github.com/punt-labs/lux) display; see [Music Player](#music-player)
 - **Control Panel (lux)** --- a lux menu entry for notification and voice settings; see [Control Panel](#control-panel)
-- **Voice calls** --- talk to Vox and delegate coding to persistent workers; see [Vox call](#vox-call)
+- **Voice calls** --- talk to Vox and delegate coding to persistent workers; see [Vox Call](#vox-call)
 
 ## What It Looks Like
 
@@ -250,32 +230,21 @@ voice or rate. Use a different `--name` for each take (for example,
 `--name take-1.mp3` and `--name take-2.mp3`) to keep them separate.
 `--name` only works for a single text segment.
 
-#### Batch segment output
+#### Batch Segment Output
 
 `vox say --from segments.json` and `vox rec new --from segments.json` read a
 JSON array of strings or objects with a string `text` field. Blank segments
 are skipped. With `--json`, stdout is JSON Lines, not a JSON array: each
 successful segment produces one JSON object per line, in input order.
 
-If the daemon rejects a segment or the connection fails during processing,
-the command writes a final `{"error": "..."}` object to stdout, skips the
-remaining segments, and exits nonzero. Earlier results stay in the output.
-An invalid segments file instead produces a single `{"error": "..."}`
-object and exits with status 2 before processing any segments. Successful
-objects do not have an `error` key.
-
-Save stdout before parsing so you can check Vox's exit status separately
-and still read partial results. `jq -c .` reads the objects individually:
-
-```sh
-printf '%s\n' '["First line.", {"text":"Second line."}]' > segments.json
-status=0
-vox rec new --from segments.json --json > results.jsonl || status=$?
-jq -c . results.jsonl
-printf 'Vox exit status: %s\n' "$status" >&2
+```bash
+vox rec new --from segments.json --json
 ```
 
-Use `vox say` in place of `vox rec new` to play the segments instead.
+A rejected segment or a lost connection ends the output with a final
+`{"error": "..."}` object and a nonzero exit; earlier results stay in the
+output. See [docs/guide-batch-output.md](docs/guide-batch-output.md) for the
+failure cases and a script that reads partial results.
 
 #### Music
 
@@ -338,41 +307,12 @@ Use `vox say` in place of `vox rec new` to play the segments instead.
 vox is also a Python library. It talks to the same `voxd` daemon as the plugin and the CLI; `vox install` is the only setup.
 
 ```python
-from punt_vox import SynthesisSpec, VoiceTarget, VoxClientSync, VoxError
+from punt_vox import SynthesisSpec, VoxClientSync
 
-vox = VoxClientSync()  # connects per call — no setup, no teardown
-
-try:
-    # Speak text through the daemon (plays on the local audio device):
-    vox.synthesize("Build finished", SynthesisSpec(voice="sarah"))
-
-    # ...or get the MP3 bytes to save or stream yourself:
-    audio = vox.record("Deploy complete", SynthesisSpec(voice="matilda"))
-
-    # List voices for a provider and model (omit the model for its default):
-    print(vox.voices(VoiceTarget("openai", "gpt-4o-mini-tts")))
-except VoxError as exc:  # VoxdConnectionError, VoxdProtocolError, or VoxdRejectionError
-    print(f"vox failed: {exc}")
+VoxClientSync().synthesize("Build finished", SynthesisSpec(voice="sarah"))
 ```
 
-`VoxClient` is the async version. It connects once and is an async context manager:
-
-```python
-import asyncio
-from punt_vox import VoxClient, SynthesisSpec
-
-
-async def main() -> None:
-    async with VoxClient() as vox:  # connect on enter, close on exit
-        await vox.synthesize("Tests green", SynthesisSpec(voice="sarah"))
-        health = await vox.health()  # typed HealthStatus, not a bare dict
-        print(health.provider, health.daemon_version)
-
-
-asyncio.run(main())
-```
-
-Every failure raises a `VoxError` subclass, and `health()` and the `program_*` methods return typed results (`HealthStatus`, `ProgramStatus`, …) rather than dicts. The public names are listed in `punt_vox.__all__`: `VoxClient`, `VoxClientSync`, `SynthesisSpec`, `SynthesizeResult`, `VoxError`, `VoxdConnectionError`, `VoxdProtocolError`, `VoxdRejectionError`, `HealthStatus`, `ProgramStatus`, `CommandOutcome`, `ProgramSummary`, and `PromptSet`. The package ships type information (`py.typed`). Importing `punt_vox` does not import any provider SDK.
+`VoxClientSync` connects per call; `VoxClient` is the async version. Every failure raises a `VoxError` subclass, results are typed, and the package ships type information (`py.typed`). See the [Python Library Guide](docs/guide-python-library.md) for both clients, recording to MP3 bytes, voice listing, and the full list of public names, and the [API Reference](docs/api-reference/index.md) for every signature.
 
 ## Setup
 
@@ -590,6 +530,26 @@ This registers `voxd` as a service, creates `keys.env`, and starts the daemon. O
 
 Per-repository settings live in `.punt-labs/vox/` in each repository, in two files: `vox.md` holds settings meant to be committed (voice, provider, model), and `vox.local.md` is git-ignored and holds session state such as the current vibe.
 
+### Diagnostics and Usage Telemetry
+
+Private diagnostic logs live at `~/.punt-labs/vox/logs/vox.log` (0600 files,
+0700 directories). `--verbose` and the `log_level` setting control file verbosity.
+The daemon never mirrors diagnostics to stderr; clients continue without a file
+sink if private logging cannot be configured, with one metadata-only warning.
+
+Usage telemetry is local-only by default, stored separately in
+`~/.punt-labs/vox/telemetry.db`, with 90-day retention. It captures versioned spans
+for MCP tools, dispatched hooks, top-level CLI commands, and daemon synthesis:
+closed operation/provider names, start and end times, success/error outcomes,
+cache hits, and text lengths. It never captures text, prompts, paths,
+credentials, or exception messages.
+Unknown operation names become `other`. Shared `punt-observe` configuration owns
+exporters; network export requires explicit opt-in consent.
+
+Set `VOX_TELEMETRY=off` to disable vox usage telemetry, or `PUNT_TELEMETRY=off`
+to disable it for all Punt tools. Either switch wins; disabled telemetry opens no
+database and creates no salt. Diagnostic logging remains available.
+
 ### Agent Usage Guide
 
 `vox enable` is the only guide writer. It deposits `.punt-labs/vox/CLAUDE.md` in the repo and adds `@.punt-labs/vox/CLAUDE.md` to the repo's `CLAUDE.md`, so the guide loads only in enabled projects. `vox install`, `vox uninstall`, and `install.sh` touch no `CLAUDE.md`. A stale `@~/.punt-labs/vox/CLAUDE.md` import in `~/.claude/CLAUDE.md` and the old `~/.punt-labs/vox/CLAUDE.md` guide are left alone; delete both by hand.
@@ -618,20 +578,20 @@ Each album is saved under `~/Music/vox/<name>/`, named by `--title` or else by t
 
 ## Music Player
 
-When [lux](https://github.com/punt-labs/lux) is running on the same machine, `voxd` adds a **voxd ▸ Music** menu entry to the lux display. It shows your saved albums as a list, each with a Play control, above play/pause, previous, next, and stop controls. Clicking an album plays it through your speakers, and the display shows what is playing and the track position (read from the album's ID3 tags). If the lux display restarts, `voxd` reconnects and adds the menu again. Without lux, the rest of vox works the same; only the player needs it.
+When [lux](https://github.com/punt-labs/lux) is running on the same machine, `voxd` adds a **voxd ▸ Music** menu entry to the lux display. It shows your saved albums as a list, each with a Play control, above play/pause, previous, next, and stop controls. Clicking an album plays it through your speakers, and the display shows what is playing and the track number (read from the album's ID3 tags). If the lux display restarts, `voxd` reconnects and adds the menu again. Without lux, the rest of vox works the same; only the player needs it.
 
 ## Control Panel
 
 When vox is enabled in a repository and lux is running, each Claude Code session adds a `Vox` entry to the lux menu. It opens a settings panel for chimes versus voice, the notification level (off, normal, continuous), and the voice, with a preview button. The panel changes the same settings as the CLI and slash commands, so they always agree. If a change cannot be saved or `voxd` is unreachable, the panel says so in a status line.
 
-## Vox call
+## Vox Call
 
 Talk to Vox without opening a coding session first. `voxd` runs an ElevenLabs
 voice agent that can start, steer, check and stop coding workers. Workers run
 in their own worktrees and keep running after you hang up. On another call,
 ask Vox what the workers did while you were away.
 
-### Call setup
+### Call Setup
 
 The daemon needs an ElevenLabs API key with Agents Write (`convai_write`).
 For coding workers, install Git, tmux and Claude Code on the daemon host.
@@ -652,14 +612,8 @@ Scripted calls still play replies, so they also need the extra:
 uv tool install --force "punt-vox[call]"
 ```
 
-If you installed with pip:
-
-```bash
-pip install "punt-vox[call]"
-```
-
-`sounddevice` uses PortAudio. On macOS, run `brew install portaudio`; on
-most Linux distributions, install `libportaudio2`.
+The extra's `sounddevice` package needs the PortAudio library: the
+`portaudio` package in Homebrew, `libportaudio2` on most Linux distributions.
 
 To let Vox start workers, allowlist the Git repository on the machine that
 runs the daemon:
@@ -706,10 +660,15 @@ vox call --headset
 
 After the greeting, say: “Start a worker in vox-demo. Ask it to read
 README.md and report its title without editing any files.”
-In a second terminal, check the call and hang up:
+In a second terminal, check the call:
 
 ```bash
 vox call status
+```
+
+Then hang up:
+
+```bash
 vox call stop
 ```
 
@@ -757,6 +716,8 @@ The connection between Claude Code and `vox mcp` does not depend on the daemon, 
 
 ## Related Approaches
 
+- **[AgentVibes](https://github.com/paulpreibisch/AgentVibes)** --- An actively maintained open-source voice companion for Claude Code. It leads on offline voices (Piper and Kokoro run locally) and ships a terminal UI and a bundled music catalog. vox differs in three ways: the mood follows the session instead of a personality you pick, the music is generated to match, and the same daemon is importable as a Python library.
+- **[agent-notify](https://github.com/cfngc4594/agent-notify)** --- Open-source sound and voice notifications for Claude Code, Cursor, and Codex. A good fit when you want alerts across several assistants and nothing more; vox adds provider choice, mood, music, and calls.
 - **`say` / `espeak-ng` in a shell hook** --- One line of shell on macOS or Linux. Sequential playback is left to the caller; overlapping calls compete for the audio device. No deduplication across sessions and no voices beyond what the OS ships. vox uses these same programs as its offline fallback.
 - **Editor-side TTS plugins** (VS Code speech, Neovim `:!say`, ...) --- Tied to one editor. Claude Code runs in the terminal.
 - **`notify-send` / macOS `terminal-notifier`** --- Visual notifications, not audio.
@@ -765,6 +726,9 @@ The connection between Claude Code and `vox mcp` does not depend on the daemon, 
 
 [Architecture (PDF)](docs/architecture.pdf) |
 [Remote Setup](docs/guide-remote-setup.md) |
+[Python Library](docs/guide-python-library.md) |
+[API Reference](docs/api-reference/index.md) |
+[Batch Output](docs/guide-batch-output.md) |
 [Design Log](DESIGN.md) |
 [Testing](TESTING.md) |
 [Contributing](CONTRIBUTING.md) |
