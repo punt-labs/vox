@@ -37,7 +37,7 @@ on a click.
 Three independent controls, no cross-control invariant and no state machine —
 each is a standalone radio group / combo that reflects vox's current setting
 and applies a new one on change. This is why the feature does **not** trigger
-the formal-modeling gate (`docs/WORKFLOW.md` § Formal Modeling): there is no
+the formal-modeling gate (`CLAUDE.md` § Formal Modeling): there is no
 multi-state subsystem with invariant-bearing transitions here, just three
 idempotent set-and-confirm actions.
 

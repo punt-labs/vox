@@ -91,7 +91,6 @@ uv.toml
 MagicMock/
 .idea/
 **/.cursor/*
-!/.cursor/BUGBOT.md
 .punt-labs/quarry/
 
 # Vendored ethos (project-local): vox tracks the identity registry
@@ -174,3 +173,5 @@ spikes/vox-bst7-el-convai/agent.json
 
 # Leftover local state from the retired beads tracker
 .beads/
+/.CLAUDE.md.punt-import.lock
+/.claude/.settings.json.punt-import.lock

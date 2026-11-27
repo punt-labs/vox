@@ -46,3 +46,19 @@ def test_failure_names_an_exception_by_type_and_safe_message(
     exc: BaseException, expected: str
 ) -> None:
     assert LogText.failure(exc) == expected
+
+
+def test_failure_includes_the_notes_attached_to_the_exception() -> None:
+    exc = RuntimeError("create failed")
+    exc.add_note("cleanup after the failure also failed: ConvAIError('tool t')")
+    rendered = LogText.failure(exc)
+    assert rendered.startswith("RuntimeError: create failed")
+    assert "cleanup after the failure also failed" in rendered
+
+
+def test_notes_render_each_note_in_brackets_with_paths_redacted() -> None:
+    exc = RuntimeError("x")
+    exc.add_note("left at /var/state/a.json")
+    exc.add_note("second")
+    assert LogText.notes(exc) == " [left at <path>] [second]"
+    assert LogText.notes(RuntimeError("y")) == ""

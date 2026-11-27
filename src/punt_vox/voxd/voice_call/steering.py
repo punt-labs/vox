@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Final, Self, cast, final
 
 from punt_vox.voxd.voice_call.worker_directory import WorkerDirectory
 
 if TYPE_CHECKING:
     from punt_vox.voxd.voice_call.contracts import WorkerControl
     from punt_vox.voxd.workers.steering_types import DecisionChoice
+
+
+DENIAL: Final = "No."
 
 
 @final
@@ -45,12 +48,17 @@ class SteeringTool:
         epoch = self._epoch(arguments, worker["last_report"], choice)
         return {
             "worker_id": worker["id"],
-            "words": words,
+            "words": self._spoken(choice, words),
             "urgent": urgent,
             "choice": choice,
             "prompt_epoch": epoch,
             "prompt_seq": epoch if choice is not None else None,
         }
+
+    @staticmethod
+    def _spoken(choice: object, words: str) -> str:
+        """Return the words to deliver: a denial carries only the fixed refusal."""
+        return DENIAL if choice == "deny" else words
 
     @staticmethod
     def _epoch(

@@ -1,7 +1,7 @@
 # REVIEW.md
 
 Instructions for code reviewers of this repository: Qodo, Devin Review,
-Bugbot, Copilot, and the local review agents (`code-reviewer`,
+Copilot, and the local review agents (`code-reviewer`,
 `silent-failure-hunter`, `invariant-completeness-reviewer`). Read this before
 raising a finding.
 
@@ -46,7 +46,7 @@ against the product.
 - `__new__` as the constructor. It is the standard here.
 - Suppressions (`# noqa`, `# type: ignore`, `xfail`). Never suggest them.
 - PR titles, descriptions, commit messages and CHANGELOG wording.
-- Agent process rules. `CLAUDE.md`, `docs/WORKFLOW.md`, `.punt-labs/**` and
+- Agent process rules. `CLAUDE.md`, `docs/WORKFLOW.md`, `docs/WORKFLOW-PR-LOOP.md`, `.punt-labs/**` and
   the mission records describe how agents work this repository: missions,
   review rounds, delegation, issue tracking, demo and merge gates. They are
   not code. Do not grade a diff against them, do not grade their pseudocode

@@ -23,7 +23,7 @@ from punt_vox.voxd.workers.worktrees import WorkerWorktrees
 from .fakes import FakeWorkers, payload
 
 
-def test_catalog_names_the_six_boss_tools() -> None:
+def test_catalog_names_the_boss_and_research_tools() -> None:
     assert {tool.name for tool in BossTools.CATALOG} == {
         "start_worker",
         "steer_worker",
@@ -31,6 +31,8 @@ def test_catalog_names_the_six_boss_tools() -> None:
         "list_workers",
         "stop_worker",
         "remain_silent",
+        "search_web",
+        "read_docs",
     }
 
 
@@ -98,7 +100,9 @@ async def test_reissued_steer_in_one_epoch_replays_even_after_pending_clears(
     if choice is not None:
         reissued["words"] = "CONTINUE!"
     assert await tools.answer("steer_worker", reissued) == first
-    assert workers.steered == [("abcd1234", "Continue.", False)]
+    # A denial carries the fixed refusal, never the model's words.
+    delivered = "No." if choice == "deny" else "Continue."
+    assert workers.steered == [("abcd1234", delivered, False)]
     assert tools.replayed == 1
 
 
@@ -330,6 +334,10 @@ async def test_list_stop_and_silence() -> None:
     tools = _tools(workers)
     listed, _ = await tools.answer("list_workers", {})
     assert [w["worker_id"] for w in json.loads(listed)] == ["abcd1234"]
+    held, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
+    # Listing put worker text in the conversation, so the stop waits for a yes.
+    tools.guard.gate.agent_spoke(json.loads(held)["voxd_readback"])
+    tools.guard.gate.heard("yes")
     stopped, _ = await tools.answer("stop_worker", {"worker_id": "abcd1234"})
     assert json.loads(stopped)["state"] == "stopped"
     assert await tools.answer("remain_silent", {}) == (

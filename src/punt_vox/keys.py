@@ -15,7 +15,11 @@ save a variable the gate does not read (or omit one it does).
 
 from __future__ import annotations
 
-from punt_vox.providers.credentials import PROVIDER_KEY_NAMES, ProviderCredentials
+from punt_vox.providers.credentials import (
+    PROVIDER_KEY_NAMES,
+    SEARCH_KEY_NAME,
+    ProviderCredentials,
+)
 
 __all__ = [
     "HEADER_CARRIED_KEY_NAMES",
@@ -25,7 +29,7 @@ __all__ = [
 
 # The ``keys.env`` names held to the HTTP-header character set on write.
 HEADER_CARRIED_KEY_NAMES: frozenset[str] = (
-    ProviderCredentials().header_carried_env_vars()
+    ProviderCredentials().header_carried_env_vars() | {SEARCH_KEY_NAME}
 )
 
 
