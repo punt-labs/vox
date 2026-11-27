@@ -219,9 +219,12 @@ class TestPcmStreamSink:
         device.opened.pull(1)
         await asyncio.wait_for(sink.wait(), timeout=1)
 
-    async def test_finish_with_nothing_pending_completes_at_once(self) -> None:
-        sink, _ = await open_sink()
+    async def test_finish_with_nothing_pending_completes_on_the_next_callback(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)
         await asyncio.wait_for(sink.wait(), timeout=1)
 
     async def test_flush_releases_a_waiter(self) -> None:
@@ -402,6 +405,7 @@ class TestSinkPhases:
         """A stop after an empty response finished is a no-op (FlushNoOp)."""
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)
         assert sink.flush().dropped.nbytes == 0
         report = await sink.close()
         assert not report.interrupted

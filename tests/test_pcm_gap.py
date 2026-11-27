@@ -12,6 +12,7 @@ import asyncio
 import logging
 import math
 import struct
+import threading
 from contextlib import asynccontextmanager
 from itertools import pairwise
 from typing import TYPE_CHECKING, cast
@@ -531,8 +532,44 @@ class TestFinishWaitsForTheTail:
         assert max(steps(device.opened.heard)) <= STEP_LIMIT
 
 
+class TestFinishWaitsForTheCallbackThatOwnsTheFinalBlock:
+    async def test_wait_stays_pending_until_the_final_block_is_shaped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The callback has pulled the last audio but not yet shaped or counted it."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK, ends_at_peak=True), starts_utterance=True)
+        pulled, resume = threading.Event(), threading.Event()
+        pull_into = PcmBuffer.pull_into
+
+        def paused(buffer: PcmBuffer, out: memoryview) -> int:
+            filled = pull_into(buffer, out)
+            pulled.set()
+            resume.wait(timeout=5)
+            return filled
+
+        monkeypatch.setattr(PcmBuffer, "pull_into", paused)
+        callback = threading.Thread(target=device.opened.pull)
+        callback.start()
+        assert await asyncio.to_thread(pulled.wait, 5)
+        sink.finish()  # the buffer is empty and the last sample so far is zero
+        waiter = asyncio.create_task(sink.wait())
+        await asyncio.sleep(0.01)
+        assert not waiter.done()
+        resume.set()
+        callback.join()
+        await asyncio.sleep(0.01)
+        assert not waiter.done()  # the fade-out is still owed
+        monkeypatch.undo()
+        device.opened.pull(1)  # renders the tail
+        await asyncio.wait_for(waiter, timeout=1)
+        assert max(steps(device.opened.heard)) <= STEP_LIMIT
+        assert not any(device.opened.heard[(BLOCK + FADE_FRAMES) * 2 :])
+        await sink.close()
+
+
 class TestFinishNeverWaitsOnADeadDevice:
-    async def test_a_hang_up_after_a_long_silence_needs_no_more_callbacks(
+    async def test_a_hang_up_after_a_long_silence_needs_one_callback(
         self,
     ) -> None:
         """The fade finished in the first silent block; nothing is left to play."""
@@ -540,6 +577,7 @@ class TestFinishNeverWaitsOnADeadDevice:
         sink.feed(tone(BLOCK * 5), starts_utterance=True)
         device.opened.pull(5 + 50)  # 100 ms of audio, then a second of silence
         sink.finish()
+        device.opened.pull(1)  # one callback says so: no fade is owed
         await asyncio.wait_for(sink.wait(), timeout=1)
         report = await sink.close()
         assert device.opened.stopped

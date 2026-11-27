@@ -219,7 +219,10 @@ class PcmStreamSink:
         """Mark the response complete: no more :meth:`feed` calls follow.
 
         A no-op once flushed. A trailing half sample, which a chunk boundary
-        can leave, is dropped so the stream can still play out cleanly.
+        can leave, is dropped so the stream can still play out cleanly. The
+        stream counts as played out when the next callback has shaped the last
+        block and its fade-out: an empty buffer here does not say so, since a
+        callback may hold the final block unshaped.
         """
         if self._phase == "interrupted":
             return
@@ -228,7 +231,9 @@ class PcmStreamSink:
             raise ValueError(msg)
         self._dropped += self._buffer.trim_partial_frame()
         self._phase = "finished"
-        if not self._buffer and not self._gap.needs_fade_out:
+        if self._stream is None:
+            # No callback will ever pull: with a device, the callback that
+            # shaped the last block is the one to say the audio is played out.
             self._drained = True
             self._done.set()
 
