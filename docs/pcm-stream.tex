@@ -231,8 +231,11 @@ state, so that the counts and the length the report carries are defined.
 
 The call's stream stays open between the agent's turns and across its tool
 calls, so the sink cannot tell a pause from a stall by itself. The caller
-marks the stream offset where each new utterance begins (the first chunk of a
-turn, and the first chunk after an \texttt{agent\_response} or a tool call).
+marks the stream offset where each new utterance begins: the first chunk of a
+turn (its audio \texttt{event\_id} differs from the previous chunk's) and the
+first chunk after a client tool call. An \texttt{agent\_response} is not a
+mark: in the real call traces it carries no information the turn id and the
+tool call do not already give.
 A mark is a byte offset rounded down to a frame; \emph{marks} is the set of
 marks the device has not yet pulled past.
 
@@ -291,8 +294,10 @@ the \texttt{Feed} it describes, and a \texttt{Pull} sees whatever
 \end{schema}
 
 The device pulls a block. The marks it passes are dropped; \emph{boundary!}
-says whether one of them lies inside the pulled bytes, which is where a new
-utterance began.
+says whether one lies at the first byte pulled. A spell opens where the
+previous audio ended, which is where this block begins, so only a mark there
+says the audio that resumes is a new utterance: a later mark in the block
+begins one after it, and an earlier one belongs to audio already pulled.
 
 \begin{schema}{PullMarks}
   \Delta Sink \\
@@ -300,7 +305,7 @@ utterance began.
   boundary! : ZBOOL
 \where
   marks' = \{ m : marks | m \geq played' \} \\
-  boundary! = ztrue \iff (\exists m : marks @ played \leq m \land m < played') \\
+  boundary! = ztrue \iff played \in marks \\
   open' = open \\
   missing' = missing \\
   starved' = starved \\
