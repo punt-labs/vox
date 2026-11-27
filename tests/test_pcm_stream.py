@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from conversation_mode._fake_sounddevice import FakeSoundDevice
 
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
+from punt_vox.voxd.pcm_gap import FADE_FRAMES
 from punt_vox.voxd.pcm_output import (
     OutputCallback,
     OutputDeviceLostError,
@@ -161,19 +163,27 @@ class TestPcmStreamSink:
         sink, device = await open_sink()
         sink.feed(ms_of(OLD, 10))
         sink.feed(ms_of(NEW, 10))
-        sink.finish()  # a response still arriving would fade out, not go silent
+        sink.finish()  # a response still arriving is a dry spell, not an ending
         device.opened.pull(2)
         heard = bytes(device.opened.heard)
-        assert heard == ms_of(OLD, 10) + ms_of(NEW, 10) + bytes(BLOCK * 2)
+        played = ms_of(OLD, 10) + ms_of(NEW, 10)
+        assert heard[: len(played)] == played
+        assert not any(heard[len(played) + FADE_FRAMES * 2 :])
 
-    async def test_flush_silences_the_next_block(self) -> None:
+    async def test_flush_fades_the_next_block_to_silence(self) -> None:
+        """Only the 3 ms tail of the cut sample sounds; none of the flushed audio."""
         sink, device = await open_sink()
         sink.feed(ms_of(OLD, 500))
         device.opened.pull(5)
         report = sink.flush()
         device.opened.pull(1)
+        block = device.opened.heard[-BLOCK * 2 :]
+        fade_bytes = FADE_FRAMES * 2
         assert report.dropped.ms == pytest.approx(400.0)
-        assert device.opened.heard[-BLOCK * 2 :] == bytes(BLOCK * 2)
+        assert block[fade_bytes:] == bytes(BLOCK * 2 - fade_bytes)
+        samples = [sample for (sample,) in struct.iter_unpack("<h", block)]
+        assert 0 < samples[0] < int.from_bytes(OLD, "little")
+        assert samples == sorted(samples, reverse=True)
 
     async def test_feed_after_flush_is_ignored(self) -> None:
         sink, device = await open_sink()
@@ -283,6 +293,8 @@ class TestPcmStreamSink:
         device.opened.pull(2)
         sink.feed(ms_of(OLD, 30))
         device.opened.pull(3)
+        sink.feed(ms_of(OLD, 20))
+        device.opened.pull(1)
         report = await sink.close()
         assert report.underflows == 1
         assert report.gap_total.ms == pytest.approx(30.0)

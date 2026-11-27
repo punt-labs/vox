@@ -60,8 +60,8 @@ class PcmBuffer:
         copy happens under the lock, which is what makes a flush exact.
         """
         with self._lock:
-            # -2 is ...11110: masking with it rounds down to a whole frame.
-            take = min(len(out), len(self._pending)) & -BYTES_PER_FRAME
+            take = min(len(out), len(self._pending))
+            take -= take % BYTES_PER_FRAME  # whole frames only
             out[:take] = self._pending[:take]
             del self._pending[:take]
         out[take:] = bytes(len(out) - take)
@@ -78,8 +78,7 @@ class PcmBuffer:
         """Drop a trailing half sample and return how many bytes went."""
         with self._lock:
             extra = len(self._pending) % BYTES_PER_FRAME
-            if extra:
-                del self._pending[-extra:]
+            del self._pending[len(self._pending) - extra :]  # no-op when whole
             return extra
 
     def __len__(self) -> int:

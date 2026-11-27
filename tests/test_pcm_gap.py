@@ -2,7 +2,8 @@
 
 Named after the properties of ``docs/pcm-stream.tex``: P6 (a dry spell opens
 only on a streaming sink that already played audio), P7 (shaping never moves
-a byte count) and P8 (an idle pause is not starvation).
+a byte count) and P8 (a dry spell is starvation when the same response resumes,
+idle when a new response begins or the response ends).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import pytest
 from test_pcm_stream import BLOCK, open_sink
 
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
-from punt_vox.voxd.pcm_gap import FADE_FRAMES, IDLE_GAP_FRAMES
+from punt_vox.voxd.pcm_gap import FADE_FRAMES
 
 AMPLITUDE = 12_000
 PERIOD = 40  # frames per cycle: a 400 Hz tone, whose peak is easy to cut at
@@ -129,13 +130,13 @@ class TestUninterruptedAudioIsBitIdentical:
         device.opened.pull(6)
         assert bytes(device.opened.heard[: len(audio)]) == audio
 
-    async def test_nothing_follows_the_audio_but_silence(self) -> None:
+    async def test_nothing_follows_the_audio_but_its_fade_and_silence(self) -> None:
         audio = tone(BLOCK * 2)
         sink, device = await open_sink()
         sink.feed(audio)
         sink.finish()
         device.opened.pull(4)
-        assert not any(device.opened.heard[len(audio) :])
+        assert not any(device.opened.heard[len(audio) + FADE_FRAMES * 2 :])
 
 
 class TestOnlyRealStarvationIsCounted:
@@ -164,18 +165,52 @@ class TestOnlyRealStarvationIsCounted:
         assert report.gap_total.ms == pytest.approx(80.0)
         assert report.gap_longest.ms == pytest.approx(60.0)
 
-    async def test_an_idle_pause_between_turns_is_not_starvation(self) -> None:
-        """P8: a pause longer than the idle limit is a turn boundary."""
+    async def test_a_stall_inside_one_reply_is_starvation_at_any_length(self) -> None:
+        """P8: the same response resuming is late audio, however late."""
         sink, device = await open_sink()
-        sink.feed(tone(BLOCK))
-        device.opened.pull(1 + IDLE_GAP_FRAMES // BLOCK + 5)
-        sink.feed(tone(BLOCK))
+        sink.feed(tone(BLOCK), response=1)
+        device.opened.pull(1 + 75)  # 1.5 s dry
+        sink.feed(tone(BLOCK), response=1)
+        device.opened.pull(1)
+        report = await sink.close()
+        assert report.underflows == 1
+        assert report.gap_longest.ms == pytest.approx(1500.0)
+        assert report.gap_total.ms == pytest.approx(1500.0)
+        assert report.idle_gaps == 0
+        assert report.degraded
+
+    async def test_a_pause_between_two_responses_is_idle_not_starvation(self) -> None:
+        """P8: a spell that resumes at a response boundary is a turn boundary."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK), response=1)
+        device.opened.pull(1 + 40)  # 0.8 s dry
+        sink.feed(tone(BLOCK), response=2)
         device.opened.pull(1)
         report = await sink.close()
         assert report.underflows == 0
         assert report.idle_gaps == 1
         assert report.gap_total.nbytes == 0
         assert not report.degraded
+
+    async def test_a_boundary_played_through_does_not_hide_a_later_stall(
+        self,
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 2), response=1)
+        sink.feed(tone(BLOCK * 2), response=2)  # queued behind: no gap at the join
+        device.opened.pull(4 + 3)
+        sink.feed(tone(BLOCK), response=2)  # the second response resumes late
+        device.opened.pull(1)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (1, 0)
+
+    async def test_chunks_that_name_no_response_never_start_one(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK))
+        device.opened.pull(1 + 40)
+        sink.feed(tone(BLOCK))
+        device.opened.pull(1)
+        assert (await sink.close()).underflows == 1
 
     async def test_silence_before_the_first_audio_is_not_a_dry_spell(self) -> None:
         """P6: a spell opens only on a sink that already played audio."""
@@ -195,13 +230,13 @@ class TestOnlyRealStarvationIsCounted:
         assert (report.underflows, report.idle_gaps) == (0, 0)
         assert not report.degraded
 
-    async def test_a_dry_spell_still_open_at_close_is_counted(self) -> None:
+    async def test_a_dry_spell_open_at_close_is_not_called_starvation(self) -> None:
+        """Nothing says the audio was late: the stream ended, so it is idle."""
         sink, device = await open_sink()
         sink.feed(tone(BLOCK))
         device.opened.pull(3)
         report = await sink.close()
-        assert report.underflows == 1
-        assert report.gap_longest.ms == pytest.approx(40.0)
+        assert (report.underflows, report.idle_gaps) == (0, 1)
 
 
 class TestShapingMovesNoBytes:
@@ -220,24 +255,64 @@ class TestShapingMovesNoBytes:
         assert 2 <= FADE_FRAMES / PCM_SAMPLE_RATE_HZ * 1000 <= 5
 
 
-class TestASpellEndsWhenTheResponseDoes:
-    async def test_a_flush_during_a_dry_spell_ends_it_in_silence(self) -> None:
+class TestEveryCutFades:
+    """A flush or a finish after audio fades its tail too, and counts no spell."""
+
+    async def test_a_flush_at_a_peak_does_not_click(self) -> None:
         sink, device = await open_sink()
-        sink.feed(tone(BLOCK, ends_at_peak=True))
-        device.opened.pull(2)  # one starved block: the tail starts fading
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)  # the block ends near a peak
         sink.flush()
         device.opened.pull(1)
-        report = await sink.close()
-        assert not any(device.opened.heard[-BLOCK * 2 :])
-        assert report.underflows == 1
-        assert report.gap_total.ms == pytest.approx(20.0)
+        assert max(steps(device.opened.heard)) <= STEP_LIMIT
 
-    async def test_finish_during_a_dry_spell_ends_it_in_silence(self) -> None:
+    @pytest.mark.parametrize("ending", ["flush", "finish"])
+    async def test_an_ending_twenty_frames_into_a_fade_still_completes_it(
+        self, ending: str
+    ) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK - 20, ends_at_peak=True))
+        device.opened.pull(1)  # 20 of the 48 fade frames fit in this block
+        sink.flush() if ending == "flush" else sink.finish()
+        device.opened.pull(1)
+        heard = device.opened.heard
+        assert max(steps(heard)) <= STEP_LIMIT
+        assert not any(heard[(BLOCK + FADE_FRAMES) * 2 :])
+
+    async def test_a_flush_still_discards_every_pending_byte(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        report = sink.flush()
+        device.opened.pull(2)
+        assert report.dropped.nbytes == BLOCK * 2 * 2
+        assert not any(device.opened.heard[(BLOCK + FADE_FRAMES) * 2 :])
+
+    async def test_a_flush_counts_no_dry_spell(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        sink.flush()
+        device.opened.pull(2)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 0)
+
+    async def test_finish_ends_an_open_spell_as_idle(self) -> None:
+        """The response is over: nothing was late."""
         sink, device = await open_sink()
         sink.feed(tone(BLOCK, ends_at_peak=True))
         device.opened.pull(2)
         sink.finish()
         device.opened.pull(1)
         report = await sink.close()
-        assert not any(device.opened.heard[-BLOCK * 2 :])
-        assert report.underflows == 1
+        assert (report.underflows, report.idle_gaps) == (0, 1)
+        assert not report.degraded
+
+    async def test_a_flush_ends_an_open_spell_as_idle(self) -> None:
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK, ends_at_peak=True))
+        device.opened.pull(2)
+        sink.flush()
+        device.opened.pull(1)
+        report = await sink.close()
+        assert (report.underflows, report.idle_gaps) == (0, 1)

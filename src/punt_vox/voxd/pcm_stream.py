@@ -1,4 +1,4 @@
-"""Streaming PCM output: one continuously-owned output stream per utterance.
+"""Streaming PCM output: one continuously-owned output stream per sink.
 
 File playback (:class:`~punt_vox.voxd.playback.PlaybackQueue.play_audio`)
 spawns one player process per file, and killing that process does not stop
@@ -7,13 +7,18 @@ silent the instant the user barges in, so its audio is written into an output
 stream voxd owns and whose pending audio voxd can discard itself
 (``docs/conversation-mode-prd.tex``, "Continuous-stream playback").
 
+A sink owns one output stream from its first reply to a barge-in (or the
+call's hang-up), so it spans every agent response in between, silences
+included; its :class:`~punt_vox.voxd.pcm_report.StreamReport` covers that
+whole stretch.
+
 Thread discipline: :meth:`PcmStreamSink.feed`, :meth:`~PcmStreamSink.flush`
 and :meth:`~PcmStreamSink.finish` run on the event loop; the PortAudio
 callback runs on PortAudio's own thread. Both sides touch the pending audio
 only through :class:`PcmBuffer`, whose single lock makes each append, block
 pull and clear atomic. A flush is therefore exact: no audio fed before it
-returns is pulled after it, so at most the one block the device already
-holds is still heard.
+returns is pulled after it, so what is still heard is the one block the
+device already holds and a fade-out tail of at most 3 ms.
 """
 
 from __future__ import annotations
@@ -42,11 +47,14 @@ logger = logging.getLogger(__name__)
 __all__ = ["PcmStreamSink"]
 
 _BLOCK_FRAMES = 320
-"""20 ms per callback: the most audio that can still sound after a flush."""
+"""20 ms per callback: the most audio the device holds when a flush lands.
+
+After a flush only that block and a fade-out tail of at most 3 ms (one more
+block at the very end of it) can still sound."""
 
 
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
-"""Where an utterance is: arriving, fully fed, flushed, or released.
+"""Where a sink is: arriving, fully fed, flushed, or released.
 
 ``streaming -> finished`` (:meth:`~PcmStreamSink.finish`),
 ``streaming | finished -> interrupted`` (:meth:`~PcmStreamSink.flush`), and
@@ -115,7 +123,7 @@ class PcmStreamSink:
 
     @property
     def phase(self) -> SinkPhase:
-        """Return where the utterance is in its lifecycle."""
+        """Return where the sink is in its lifecycle."""
         return self._phase
 
     @property
@@ -136,8 +144,15 @@ class PcmStreamSink:
         self._stream = starting.result()
         logger.info("PCM stream open in %.1f ms", self._since_open_ms())
 
-    def feed(self, pcm: bytes) -> None:
-        """Queue one chunk of agent audio.
+    def feed(self, pcm: bytes, response: int | None = None) -> None:
+        """Queue one chunk of agent audio belonging to *response*.
+
+        The stream stays open between the agent's turns, so only the caller
+        knows where one response ends and the next begins: when *response*
+        differs from the previous chunk's, the chunk starts a new response,
+        and a silence that ends there is a pause between turns, not a stall.
+        ``None`` (a caller that does not tell responses apart) never starts
+        one.
 
         After a flush, audio still in flight from the interrupted response is
         counted as dropped and never queued. Feeding a finished or closed
@@ -150,6 +165,7 @@ class PcmStreamSink:
         if self._phase not in {"streaming", "interrupted"}:
             msg = f"cannot feed a PCM sink that is {self._phase}"
             raise ValueError(msg)
+        self._gap.note_response(self._fed, response)
         self._fed += len(pcm)
         if self._phase == "interrupted":
             self._dropped += len(pcm)
@@ -164,9 +180,7 @@ class PcmStreamSink:
         another stop or the natural end of the turn is harmless.
         """
         started = time.monotonic()
-        if self._phase in {"interrupted", "closed"} or (
-            self._phase == "finished" and self._drained
-        ):
+        if self._is_settled:
             return FlushReport(PcmDuration(0), 0.0)
         dropped = PcmDuration(self._buffer.clear())
         self._dropped += dropped.nbytes
@@ -180,6 +194,13 @@ class PcmStreamSink:
             report.elapsed_ms,
         )
         return report
+
+    @property
+    def _is_settled(self) -> bool:
+        """Return whether nothing is left for a flush to discard."""
+        return self._phase in {"interrupted", "closed"} or (
+            self._phase == "finished" and self._drained
+        )
 
     def finish(self) -> None:
         """Mark the response complete: no more :meth:`feed` calls follow.
@@ -209,7 +230,7 @@ class PcmStreamSink:
             raise OutputDeviceLostError(msg)
 
     async def close(self) -> StreamReport:
-        """Release the device off the loop and report how the utterance ended.
+        """Release the device off the loop and report how the stream ended.
 
         A stream that played out is stopped, so its last block is heard;
         anything else (flushed, or closed early) is aborted at once. The
@@ -343,7 +364,7 @@ class PcmStreamSink:
             raise
 
     def _count_block(self, nbytes: int) -> None:
-        """Device thread: add one pulled block to the utterance's totals.
+        """Device thread: add one pulled block to the stream's totals.
 
         The first block with audio in it makes playback audible, so a barge-in
         from here on cuts a reply the person has heard.
@@ -358,16 +379,17 @@ class PcmStreamSink:
         self._played += nbytes
 
     def _fill(self, outdata: Buffer) -> None:
-        """Fill one block, padding with silence, and track the utterance's end."""
+        """Fill one block, padding with silence, and track the end of the stream."""
         out = memoryview(outdata).cast("B")  # PortAudio hands over one block exactly
         filled = self._buffer.pull_into(out)
+        offset = self._played
         self._count_block(filled)
         is_short = filled < len(out) and not self._drained
         phase = self._phase
         # Starved mid-response: the network fell behind real time. A short
         # block before any audio played is the response arriving.
         starving = is_short and phase == "streaming" and bool(self._played)
-        self._gap.shape(out, filled, starving=starving)
+        self._gap.shape(out, filled, starving=starving, played=offset)
         if is_short and phase == "finished":
             self._drained = True
             with contextlib.suppress(RuntimeError):  # a closed loop at shutdown

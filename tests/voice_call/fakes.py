@@ -86,11 +86,13 @@ class FakeWorkers:
 class FakeSink:
     def __init__(self) -> None:
         self.fed: list[bytes] = []
+        self.responses: list[int | None] = []  # The response each chunk belongs to.
         self.flushed = 0
         self.finished = False
 
-    def feed(self, pcm: bytes) -> None:
+    def feed(self, pcm: bytes, response: int | None = None) -> None:
         self.fed.append(pcm)
+        self.responses.append(response)
 
     def flush(self) -> None:
         self.flushed += 1

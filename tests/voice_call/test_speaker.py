@@ -60,3 +60,13 @@ async def test_an_interruption_before_any_audio_only_records_the_cut() -> None:
     await speaker.interrupt(4)
     await speaker.play(Audio(b"late", 4))
     assert playback.sinks == []
+
+
+async def test_each_chunk_tells_the_sink_which_response_it_belongs_to() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    for pcm, event_id in ((b"a", 1), (b"b", 1), (b"c", 2)):
+        await speaker.play(Audio(pcm, event_id))
+    await speaker.close()
+    (sink,) = playback.sinks
+    assert sink.responses == [1, 1, 2]

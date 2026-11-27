@@ -54,7 +54,7 @@ class AgentSpeaker:
             self._sink = await self._reply.enter_async_context(
                 self._playback.stream_pcm(locked=True)
             )
-        self._sink.feed(audio.pcm)
+        self._sink.feed(audio.pcm, audio.event_id)
 
     async def interrupt(self, event_id: int) -> None:
         """Discard queued audio of the response the person talked over."""

@@ -43,12 +43,13 @@ same names:
   \item[P6] \emph{A dry spell opens only on a streaming sink that already
     played audio}: silence before the first audio, or after the response
     finished or was flushed, is not a dry spell.
-  \item[P7] \emph{Shaping moves no byte}: the fade out of a dry spell and the
-    fade in after it change sample values, never \emph{fed}, \emph{played},
-    \emph{dropped} or \emph{pending}; every operation on a spell is $\Xi$
-    on \emph{Sink}.
-  \item[P8] \emph{An idle pause is not starvation}: a spell longer than
-    \emph{idleLimit} is a turn boundary of the call, counted apart.
+  \item[P7] \emph{Shaping moves no byte}: the fades change sample values,
+    never \emph{fed}, \emph{played}, \emph{dropped} or \emph{pending}; every
+    operation on a spell is $\Xi$ on \emph{Sink}.
+  \item[P8] \emph{Starvation is lateness, not length}: a spell that ends
+    with audio of the same response is starvation at any length; a spell that
+    ends at a response boundary, or with the response (finish, flush) or the
+    stream, is idle and counted apart.
 \end{enumerate}
 
 \section{Types}
@@ -220,22 +221,27 @@ counts; only the report's \texttt{interrupted} flag differs.
 
 A dry spell is the buffer running empty while audio was playing and the
 response was still arriving. The device thread fades the last sample down to
-zero, plays silence, and fades the first samples of resumed audio up from
-where the fade-out had got to. The fades add no phase to the sink: they are
-the sample-level shape of the \texttt{Starve} and \texttt{Resume} steps
-below. What the model adds is the spell's own state, so that the count and
-the length the report carries are defined.
+zero (a 3~ms tail), plays silence, and fades the first samples of resumed
+audio up from where the tail had got to. The same tail also follows a flush
+or the end of the response. The fades add no phase to the sink: they are the
+sample-level shape of the steps below. What the model adds is the spell's own
+state, so that the counts and the length the report carries are defined.
 
-\begin{axdef}
-  idleLimit : \nat_1
-\end{axdef}
+The call's stream stays open between the agent's turns, so the sink cannot
+tell a pause from a stall by itself. The caller marks where each response
+begins; a spell that ends at such a mark is a turn boundary. In the model the
+mark is the input \emph{boundary?}: it is true when the audio that ends the
+spell is the first of a new response.
 
 \begin{schema}{Spells}
   open : ZBOOL \\
-  missing, starved, idle : \nat
+  missing, starved, idle, silence : \nat
 \where
   open = zfalse \implies missing = 0
 \end{schema}
+
+\emph{silence} is the total length of the starvations; \emph{missing} is the
+length of the open spell.
 
 \begin{schema}{InitSpells}
   Spells'
@@ -243,7 +249,8 @@ the length the report carries are defined.
   open' = zfalse \\
   missing' = 0 \\
   starved' = 0 \\
-  idle' = 0
+  idle' = 0 \\
+  silence' = 0
 \end{schema}
 
 \begin{schema}{Observed}
@@ -256,6 +263,10 @@ the length the report carries are defined.
 The predicate of \texttt{Observed} is P6: a spell is open only on a sink
 that has played audio.
 
+A callback that comes up short extends the open spell, or opens one. The
+code pulls whole frames, so a half sample may stay pending: \emph{pending}
+is at most one byte.
+
 \begin{schema}{Starve}
   \Xi Sink \\
   \Delta Spells \\
@@ -263,44 +274,55 @@ that has played audio.
 \where
   phase = streaming \\
   played > 0 \\
-  pending = 0 \\
+  pending \leq 1 \\
   open' = ztrue \\
   missing' = missing + k? \\
   starved' = starved \\
-  idle' = idle
+  idle' = idle \\
+  silence' = silence
 \end{schema}
 
-\texttt{Starve} is a callback that came up short. Its preconditions are P6:
-a block short before any audio is the response arriving, and a block short
-after \texttt{Finish} or \texttt{Flush} is the end. Its $\Xi$~\emph{Sink} is
-P7.
+\texttt{Starve} is P6 (the preconditions) and P7 (the $\Xi$~\emph{Sink}).
 
-\begin{schema}{EndStarvation}
+\begin{schema}{Resume}
+  \Xi Sink \\
+  \Delta Spells \\
+  boundary? : ZBOOL
+\where
+  open = ztrue \\
+  open' = zfalse \\
+  missing' = 0 \\
+  boundary? = ztrue \implies
+    (idle' = idle + 1 \land starved' = starved \land silence' = silence) \\
+  boundary? = zfalse \implies
+    (starved' = starved + 1 \land silence' = silence + missing \land idle' = idle)
+\end{schema}
+
+\texttt{Resume} is audio returning. The length of the spell does not appear
+in the choice: P8.
+
+\begin{schema}{EndWithResponse}
   \Xi Sink \\
   \Delta Spells
 \where
   open = ztrue \\
-  missing \leq idleLimit \\
+  phase \in \{ finished, interrupted, closed \} \\
   open' = zfalse \\
   missing' = 0 \\
-  starved' = starved + 1 \\
-  idle' = idle
-\end{schema}
-
-\begin{schema}{EndIdle}
-  \Xi Sink \\
-  \Delta Spells
-\where
-  open = ztrue \\
-  missing > idleLimit \\
-  open' = zfalse \\
-  missing' = 0 \\
+  idle' = idle + 1 \\
   starved' = starved \\
-  idle' = idle + 1
+  silence' = silence
 \end{schema}
 
-\texttt{EndStarvation} and \texttt{EndIdle} are the spell closing, when audio
-resumes, the response ends, or the stream is released; together they are total
-on an open spell, which is P8.
+\texttt{EndWithResponse} closes a spell the response outlived, on the next
+callback after \texttt{Finish} or \texttt{Flush}, or at \texttt{Close}. Nothing
+was late, so it is idle (P8).
+
+One callback can end a spell and open the next: the resumed audio runs out
+inside the same block.
+
+\begin{zed}
+  ResumeThenStarve \defs Resume \semi Starve
+\end{zed}
 
 \end{document}

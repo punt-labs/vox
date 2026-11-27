@@ -1,4 +1,4 @@
-"""What one streamed utterance's flush and close report: audio and dry spells."""
+"""What one sink's flush and close report: audio and dry spells."""
 
 from __future__ import annotations
 
@@ -22,15 +22,16 @@ class FlushReport:
 @final
 @dataclass(frozen=True, slots=True)
 class StreamReport:
-    """How one utterance's stream ended: audio fed, heard and discarded.
+    """How one sink's stream ended: audio fed, heard and discarded.
 
-    ``underflows`` counts dry spells: the buffer ran empty and cut audio that
-    was playing while the response was still arriving. ``gap_total`` and
-    ``gap_longest`` are the silence those spells added up to and the longest
-    one. A pause longer than the idle limit is a turn boundary, counted in
-    ``idle_gaps`` and never as starvation. ``device_flags`` counts callbacks
-    PortAudio flagged (under/overflow, priming), and ``device_lost`` is set
-    when the device stopped on its own.
+    The stream spans every agent response from the first reply to the close.
+    ``underflows`` counts silences after which the *same* response resumed:
+    the buffer ran dry while audio was late. ``gap_total`` and ``gap_longest``
+    are the silence those added up to and the longest one, at any length. A
+    silence that ended at a new response, or with the stream, is a turn
+    boundary, counted in ``idle_gaps`` and never as starvation.
+    ``device_flags`` counts callbacks PortAudio flagged (under/overflow,
+    priming), and ``device_lost`` is set when the device stopped on its own.
     """
 
     fed: PcmDuration
