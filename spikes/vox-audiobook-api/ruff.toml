@@ -5,3 +5,4 @@ extend = "../../pyproject.toml"
 
 [lint.per-file-ignores]
 "spike.py" = ["T20", "S603", "S607"]
+"test_spike.py" = ["S101", "ARG001", "PLR2004", "D"]

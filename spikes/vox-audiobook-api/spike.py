@@ -5,16 +5,22 @@ prints the endpoint, HTTP status, selected response headers and a result line,
 and writes any audio under OUT_DIR. Probes are independent.
 
     uv run --no-project --with httpx python spike.py OUT_DIR \
-        tts|dialogue|pron|studio|all
+        [tts|dialogue|pron|studio|all]
+
+The probe defaults to all. Assertions print PASS or FAIL lines; the exit status
+is 1 when any assertion fails.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
 import subprocess
-import sys
 import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -31,6 +37,18 @@ CHAPTER = (
     "PlaceOrderError, and checkProductCodeExists returned nothing at all. "
     "Professor Elara Chen stared at the type definition for a long time. "
 )
+
+
+@dataclass
+class Verdicts:
+    """Collect PASS/FAIL assertions so main() can set the exit status."""
+
+    failures: list[str] = field(default_factory=list[str])
+
+    def check(self, name: str, *, ok: bool, detail: str = "") -> None:
+        print(f"[{name}] {'PASS' if ok else 'FAIL'} {detail}".rstrip())
+        if not ok:
+            self.failures.append(name)
 
 
 def client() -> httpx.Client:
@@ -74,7 +92,7 @@ def save(out: Path, name: str, r: httpx.Response) -> Path:
     return path
 
 
-def probe_tts(c: httpx.Client, out: Path) -> None:
+def probe_tts(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
     """v4 text-to-speech: a long chapter in one call, then a stitched follow-on."""
     text = CHAPTER * 12  # about 5,000 characters
     print(f"[tts] chapter length {len(text)} chars")
@@ -103,7 +121,7 @@ def probe_tts(c: httpx.Client, out: Path) -> None:
         save(out, "tts-stitched.mp3", r2)
 
 
-def probe_dialogue(c: httpx.Client, out: Path) -> None:
+def probe_dialogue(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
     """Text-to-dialogue with 2 voices: does eleven_v4 take them, or only v3?"""
     inputs = [
         {"text": "[warmly] Professor Chen, the proof has a gap.", "voice_id": SARAH},
@@ -124,20 +142,28 @@ def probe_dialogue(c: httpx.Client, out: Path) -> None:
             save(out, f"dialogue-{model}.mp3", r)
 
 
-def probe_pron(c: httpx.Client, out: Path) -> None:
-    """Alias dictionary: create it, apply it, transcribe back to check the words."""
+def words(text: str) -> str:
+    """Lowercase and strip punctuation so transcripts compare by words."""
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
+    """Alias dictionary: apply it, then assert the transcript carries the aliases."""
+    # The aliases share no words with their source text, so a transcript
+    # holding them can only come from an applied dictionary.
     rules = [
         {
             "type": "alias",
             "string_to_replace": "PlaceOrderEvents",
-            "alias": "Place Order Events",
+            "alias": "order placed notifications",
         },
         {
             "type": "alias",
             "string_to_replace": "checkProductCodeExists",
-            "alias": "check product code exists",
+            "alias": "verify the product code",
         },
     ]
+    transcripts: dict[str, str] = {}
     r = c.post(
         "/v1/pronunciation-dictionaries/add-from-rules",
         json={"name": "vox-audiobook-spike", "rules": rules},
@@ -177,10 +203,23 @@ def probe_pron(c: httpx.Client, out: Path) -> None:
             )
         report(f"pron-stt-{label}", tr)
         if tr.status_code == 200:
-            print(f"[pron-{label}] transcript: {tr.json().get('text')!r}")
+            transcripts[label] = words(tr.json().get("text", ""))
+            print(f"[pron-{label}] transcript: {transcripts[label]!r}")
+    aliases = [words(rule["alias"]) for rule in rules]
+    for label, expect_aliases in (("with-dict", True), ("without-dict", False)):
+        heard = transcripts.get(label)
+        if heard is None:
+            verdicts.check(f"pron-{label}", ok=False, detail="no transcript to judge")
+            continue
+        found = [alias in heard for alias in aliases]
+        ok = all(found) if expect_aliases else not any(found)
+        expected = "carries" if expect_aliases else "lacks"
+        verdicts.check(
+            f"pron-{label}", ok=ok, detail=f"transcript {expected} the alias words"
+        )
 
 
-def probe_studio(c: httpx.Client, out: Path) -> None:
+def probe_studio(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
     """Studio project from JSON: two chapters, two voices; convert; fetch snapshot."""
     content = [
         {
@@ -235,7 +274,12 @@ def probe_studio(c: httpx.Client, out: Path) -> None:
         "from_content_json": json.dumps(content),
         "auto_convert": "true",
     }
-    r = c.post("/v1/studio/projects", data=form)
+    # The API documents only multipart/form-data; (None, value) makes each
+    # field a filename-free part.
+    r = c.post(
+        "/v1/studio/projects",
+        files={key: (None, value) for key, value in form.items()},
+    )
     report("studio-create", r)
     if r.status_code != 200:
         return
@@ -263,7 +307,7 @@ def probe_studio(c: httpx.Client, out: Path) -> None:
     print(f"[studio] project left in place for inspection: {pid}")
 
 
-PROBES = {
+PROBES: dict[str, Callable[[httpx.Client, Path, Verdicts], None]] = {
     "tts": probe_tts,
     "dialogue": probe_dialogue,
     "pron": probe_pron,
@@ -271,18 +315,32 @@ PROBES = {
 }
 
 
-def main() -> None:
-    out = Path(sys.argv[1])
-    out.mkdir(parents=True, exist_ok=True)
-    which = sys.argv[2] if len(sys.argv) > 2 else "all"
-    c = client()
-    for name in PROBES if which == "all" else [which]:
-        print(f"=== {name} ===")
-        try:
-            PROBES[name](c, out)
-        except httpx.HTTPError as exc:
-            print(f"[{name}] transport error: {exc!r}")
+def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Probe the ElevenLabs endpoints an audiobook Program would call.",
+    )
+    parser.add_argument("out_dir", type=Path, metavar="OUT_DIR")
+    parser.add_argument("probe", nargs="?", choices=[*PROBES, "all"], default="all")
+    return parser.parse_args(argv)
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    make_client: Callable[[], httpx.Client] = client,
+) -> int:
+    """Run the chosen probes; return 1 when any assertion failed."""
+    args = parse_args(argv)  # before any filesystem or client side effect
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    verdicts = Verdicts()
+    with make_client() as c:
+        for name in PROBES if args.probe == "all" else [args.probe]:
+            print(f"=== {name} ===")
+            try:
+                PROBES[name](c, args.out_dir, verdicts)
+            except httpx.HTTPError as exc:
+                print(f"[{name}] transport error: {exc!r}")
+    return 1 if verdicts.failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
