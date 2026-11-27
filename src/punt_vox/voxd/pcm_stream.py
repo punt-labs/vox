@@ -286,6 +286,18 @@ class PcmStreamSink:
             report = self._report(interrupted=ending == "interrupted")
         return report
 
+    @property
+    def _is_report_owed(self) -> bool:
+        """Return whether the device owes a played-out report.
+
+        Only once the stream ended: a flushed one, or a finished one the
+        callback drained. A finished stream closed with audio still queued is
+        a teardown: it aborts at once, and the device is not lost.
+        """
+        return self._phase == "interrupted" or (
+            self._phase == "finished" and self._drained
+        )
+
     async def _await_playout(self) -> bool:
         """Wait, bounded, for the device to report a finished stream played out.
 
@@ -296,7 +308,7 @@ class PcmStreamSink:
         consuming: the stream is marked lost and released with abort(), which
         does not wait on the device.
         """
-        if self._phase not in {"finished", "interrupted"} or self._stream is None:
+        if self._stream is None or not self._is_report_owed:
             return False
         return not self._watch.is_lost and await self._watch.played_out()
 

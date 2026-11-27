@@ -171,9 +171,11 @@ the callback that shaped it (\texttt{Drain}) says the audio is played out.
   phase \neq closed \\
   playedOut? = ztrue \implies drained = ztrue \\
   drain! = ztrue \iff
-    (phase \in \{ finished, interrupted \} \land playedOut? = ztrue) \\
+    ((phase = interrupted \lor (phase = finished \land drained = ztrue))
+      \land playedOut? = ztrue) \\
   lost! = ztrue \iff
-    (phase \in \{ finished, interrupted \} \land playedOut? = zfalse) \\
+    ((phase = interrupted \lor (phase = finished \land drained = ztrue))
+      \land playedOut? = zfalse) \\
   dropped' = dropped + pending \\
   pending' = 0 \\
   phase' = closed \\
@@ -187,8 +189,10 @@ the callback that shaped it (\texttt{Drain}) says the audio is played out.
 \texttt{StreamCompleted}) arriving within the bound; it can only be true once
 the stream is drained. \texttt{drain!} is P5: \texttt{ztrue} stops the
 device, which is then instant; \texttt{zfalse} aborts it, which does not wait
-on the device. A flushed or finished stream the device did not report played
-out is also \emph{lost!}: the report is degraded. Any other phase aborts.
+on the device. A flushed or drained stream the device did not report played
+out is also \emph{lost!}: the report is degraded. A report is owed only
+once the stream ended (interrupted, or finished and drained): a finished
+stream closed before it drained is a teardown, and aborts without being lost.
 
 \section{Operations on the device thread}
 

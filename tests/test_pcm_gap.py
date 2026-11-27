@@ -13,6 +13,7 @@ import logging
 import math
 import struct
 import threading
+import time
 from contextlib import asynccontextmanager
 from itertools import pairwise
 from typing import TYPE_CHECKING, cast
@@ -612,6 +613,39 @@ class TestFinishWaitsForTheCallbackThatOwnsTheFinalBlock:
         assert max(steps(device.opened.heard)) <= STEP_LIMIT
         assert not any(device.opened.heard[(BLOCK + FADE_FRAMES) * 2 :])
         await sink.close()
+
+
+class TestACloseBeforeTheDrainOwesNoPlayoutReport:
+    async def test_a_finished_stream_closed_with_audio_queued_aborts_at_once(
+        self,
+    ) -> None:
+        """Call teardown cancels wait(); a healthy device is still pulling audio."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 100), starts_utterance=True)  # 2 s of audio
+        device.opened.pull(1)
+        sink.finish()
+        stop = threading.Event()
+
+        def live_device() -> None:
+            while not stop.is_set() and not device.opened.is_finished:
+                device.opened.pull(1)
+                time.sleep(0.02)
+
+        thread = threading.Thread(target=live_device)
+        thread.start()
+        waiter = asyncio.create_task(sink.wait())
+        await asyncio.sleep(0.05)
+        waiter.cancel()
+        started = time.monotonic()
+        report = await sink.close()
+        elapsed = time.monotonic() - started
+        stop.set()
+        thread.join()
+        assert elapsed < 0.2
+        assert device.opened.aborted
+        assert not device.opened.stopped
+        assert not report.device_lost
+        assert not report.degraded
 
 
 class TestFinishNeverWaitsOnADeadDevice:
