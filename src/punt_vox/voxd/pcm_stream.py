@@ -36,9 +36,14 @@ from punt_vox.voxd.pcm_audio import (
     PcmDuration,
 )
 from punt_vox.voxd.pcm_gap import GapSmoother
-from punt_vox.voxd.pcm_output import DeviceCall, OutputDeviceLostError
+from punt_vox.voxd.pcm_output import (
+    DeviceCall,
+    OutputDeviceLostError,
+    StreamCompleted,
+)
 from punt_vox.voxd.pcm_release import StreamRelease
 from punt_vox.voxd.pcm_report import FlushReport, StreamReport
+from punt_vox.voxd.pcm_watch import DeviceWatch
 
 if TYPE_CHECKING:
     from punt_vox.voxd.pcm_output import OutputStream, OutputStreamFactory
@@ -53,12 +58,6 @@ _BLOCK_FRAMES = 320
 After a flush only that block and a fade-out tail of at most 3 ms (one more
 block at the very end of it) can still sound."""
 
-
-_TAIL_WAIT_S = 2 * _BLOCK_FRAMES / PCM_SAMPLE_RATE_HZ
-"""40 ms: two callbacks, enough for the one after a flush to write its tail."""
-
-_STALL_WAIT_S = 1.0
-"""A device that has made no callback for this long is stalled, not slow."""
 
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
 """Where a sink is: arriving, fully fed, flushed, or released.
@@ -82,9 +81,8 @@ class PcmStreamSink:
 
     __slots__ = (
         "_buffer",
-        "_callbacks",
+        "_completing",
         "_device_flags",
-        "_device_lost",
         "_done",
         "_drained",
         "_dropped",
@@ -95,13 +93,12 @@ class PcmStreamSink:
         "_phase",
         "_played",
         "_stream",
-        "_tail_played",
+        "_watch",
     )
 
     _buffer: PcmBuffer
-    _callbacks: int
+    _completing: bool  # The callback raised StreamCompleted: finishing is expected.
     _device_flags: int
-    _device_lost: bool
     _done: asyncio.Event
     _dropped: int
     _drained: bool
@@ -112,15 +109,14 @@ class PcmStreamSink:
     _phase: SinkPhase
     _played: int
     _stream: OutputStream | None
-    _tail_played: asyncio.Event
+    _watch: DeviceWatch
 
     def __new__(cls, loop: asyncio.AbstractEventLoop) -> Self:
         """Create a sink that signals completion on *loop*."""
         self = super().__new__(cls)
         self._buffer = PcmBuffer()
-        self._callbacks = 0
+        self._completing = False
         self._device_flags = 0
-        self._device_lost = False
         self._done = asyncio.Event()
         self._dropped = 0
         self._drained = False
@@ -131,7 +127,7 @@ class PcmStreamSink:
         self._phase = "streaming"
         self._played = 0
         self._stream = None
-        self._tail_played = asyncio.Event()
+        self._watch = DeviceWatch(loop)
         return self
 
     @property
@@ -170,7 +166,7 @@ class PcmStreamSink:
         sink is a caller bug and raises :class:`ValueError`; feeding after
         the device stopped on its own raises :class:`OutputDeviceLostError`.
         """
-        if self._device_lost:
+        if self._watch.is_lost:
             msg = "output device stopped; the PCM stream cannot play more audio"
             raise OutputDeviceLostError(msg)
         if self._phase not in {"streaming", "interrupted"}:
@@ -245,30 +241,10 @@ class PcmStreamSink:
         period, so it fires after one to two): a hang-up must not wait on a
         device that has gone away without saying so.
         """
-        calls = -1
-        while not self._done.is_set():
-            calls = await self._wait_or_stall(calls)
-        if self._device_lost:
+        await self._watch.until(self._done)
+        if self._watch.is_lost:
             msg = "output device stopped before the PCM stream ended"
             raise OutputDeviceLostError(msg)
-
-    async def _wait_or_stall(self, calls: int) -> int:
-        """Wait one stall period; return the callback count, or raise if frozen."""
-        try:
-            async with asyncio.timeout(_STALL_WAIT_S):
-                await self._done.wait()
-        except TimeoutError:
-            if self._callbacks == calls:
-                logger.warning(
-                    "PCM output made no callback for at least %.3g s; "
-                    "giving up the wait",
-                    _STALL_WAIT_S,
-                )
-                # Release with abort(): stop() waits on the device to drain.
-                self._device_lost = True
-                msg = "output device made no progress; the PCM stream stalled"
-                raise OutputDeviceLostError(msg) from None
-        return self._callbacks
 
     async def close(self) -> StreamReport:
         """Release the device off the loop and report how the stream ended.
@@ -282,18 +258,18 @@ class PcmStreamSink:
             msg = "PCM sink is already closed"
             raise ValueError(msg)
         try:
-            is_tail_played = await self._play_flush_tail()
+            is_played_out = await self._await_playout()
         except asyncio.CancelledError:
             # The device must still be released: nobody calls close() again.
             # A failed release is logged; it must not replace the cancellation.
             try:
-                await self._release(is_tail_played=False)
+                await self._release(is_played_out=False)
             except Exception:
                 logger.exception("releasing the PCM device during a cancelled close")
             raise
-        return await self._release(is_tail_played=is_tail_played)
+        return await self._release(is_played_out=is_played_out)
 
-    async def _release(self, *, is_tail_played: bool) -> StreamReport:
+    async def _release(self, *, is_played_out: bool) -> StreamReport:
         """Close the sink, release its device, and report how the stream ended."""
         ending, self._phase = self._phase, "closed"
         pending = self._buffer.clear()
@@ -302,28 +278,27 @@ class PcmStreamSink:
         stream, self._stream = self._stream, None
         try:
             if stream is not None:
-                is_drained = ending == "finished" and not pending
-                drain = (is_tail_played or is_drained) and not self._device_lost
+                # stop() waits for the device to play what it holds: only after
+                # the device said it did (finished_callback) is that instant.
+                drain = is_played_out and not self._watch.is_lost
                 await StreamRelease.run(stream, drain=drain)
         finally:
             report = self._report(interrupted=ending == "interrupted")
         return report
 
-    async def _play_flush_tail(self) -> bool:
-        """Wait, for at most two blocks, for a flushed stream's fade-out to play.
+    async def _await_playout(self) -> bool:
+        """Wait, bounded, for the device to report a finished stream played out.
 
-        ``abort`` would discard the tail the device thread writes after a
-        flush, so a stream whose tail played is stopped instead, which plays
-        what the device holds: at most the one block it already had, then the
-        tail. A device that never calls back is aborted after the wait.
+        After a flush or a finish the callback writes the last block and its
+        fade-out, then raises StreamCompleted; PortAudio plays what it holds
+        and calls ``finished_callback``. Only then is stop() instant. A device
+        that has not said so within ``PLAYOUT_WAIT_S`` (pcm_watch) has stopped
+        consuming: the stream is marked lost and released with abort(), which
+        does not wait on the device.
         """
-        if self._phase != "interrupted" or self._stream is None:
+        if self._phase not in {"finished", "interrupted"} or self._stream is None:
             return False
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(_TAIL_WAIT_S):
-                await self._tail_played.wait()
-            return True
-        return False
+        return not self._watch.is_lost and await self._watch.played_out()
 
     def _report(self, *, interrupted: bool) -> StreamReport:
         """Build and log the closing report, at WARNING if playback degraded."""
@@ -339,7 +314,7 @@ class PcmStreamSink:
             idle_gaps=self._gap.idle_gaps,
             trailing_gap=self._gap.trailing,
             device_flags=self._device_flags,
-            device_lost=self._device_lost,
+            device_lost=self._watch.is_lost,
         )
         logger.log(
             logging.WARNING if report.degraded else logging.INFO,
@@ -376,11 +351,11 @@ class PcmStreamSink:
         normally. At daemon shutdown the loop may already be closed while
         the device still runs; that is the normal end, not a fault.
         """
-        if self._phase == "closed" or self._drained:
+        if self._phase == "closed" or self._drained or self._completing:
+            self._watch.finished()
             return
-        self._device_lost = True
-        with contextlib.suppress(RuntimeError):
-            self._loop.call_soon_threadsafe(self._done.set)
+        self._watch.lose()
+        self._watch.signal(self._done)
 
     def _callback(
         self, outdata: Buffer, _frames: int, _time: object, status: object
@@ -390,6 +365,8 @@ class PcmStreamSink:
             if status:
                 self._device_flags += 1
             self._fill(outdata)
+        except StreamCompleted:
+            raise
         except BaseException:
             logger.exception("PCM output callback failed; the device will stop")
             raise
@@ -413,7 +390,7 @@ class PcmStreamSink:
         """Fill one block, padding with silence, and track the end of the stream."""
         out = memoryview(outdata).cast("B")  # PortAudio hands over one block exactly
         filled = self._buffer.pull_into(out)
-        self._callbacks += 1
+        self._watch.tick()
         offset = self._played
         self._count_block(filled)
         is_short = filled < len(out) and not self._drained
@@ -426,15 +403,16 @@ class PcmStreamSink:
             self._settle_block(phase, is_short=is_short)
 
     def _settle_block(self, phase: SinkPhase, *, is_short: bool) -> None:
-        """Device thread: wake whoever waits on the end of a block with no tail left."""
+        """Device thread: once no fade is owed, end a finished or flushed stream.
+
+        The callback raises StreamCompleted after this block: PortAudio plays
+        the buffers it holds and reports finished, which is what close() waits
+        for. A finished stream also wakes :meth:`wait`.
+        """
         if is_short and phase == "finished":
             self._drained = True
-            self._signal(self._loop, self._done)
-        elif phase == "interrupted":
-            self._signal(self._loop, self._tail_played)
-
-    @staticmethod
-    def _signal(loop: asyncio.AbstractEventLoop, event: asyncio.Event) -> None:
-        """Device thread: set *event* on *loop*; a closed loop at shutdown is fine."""
-        with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(event.set)
+            self._watch.signal(self._done)
+        elif phase != "interrupted":
+            return
+        self._completing = True
+        raise StreamCompleted

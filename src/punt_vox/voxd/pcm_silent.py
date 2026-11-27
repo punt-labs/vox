@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.pcm_audio import BYTES_PER_FRAME
+from punt_vox.voxd.pcm_output import StreamCompleted
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -70,23 +71,20 @@ class SilentOutputStream:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop after the block in hand; PortAudio's drain has nothing more to play."""
-        self._end()
+        """Stop after the block in hand; PortAudio's drain has nothing more to play.
+
+        Called off the device thread, as PortAudio requires, and only after
+        :meth:`start` succeeded; a thread that died has already left.
+        """
+        self._stop.set()
+        self._thread.join()
 
     def abort(self) -> None:
         """Stop at once; nothing was buffered beyond the block in hand."""
-        self._end()
+        self.stop()
 
     def close(self) -> None:
         """Release the device: the thread is already joined by stop or abort."""
-
-    def _end(self) -> None:
-        """Stop the device thread and wait for it; a thread that died has already left.
-
-        Called off the device thread, as PortAudio requires of stop and abort,
-        and only after :meth:`start` succeeded.
-        """
-        self._stop.set()
         self._thread.join()
 
     def _run(self) -> None:
@@ -98,6 +96,8 @@ class SilentOutputStream:
         """
         try:
             self._drain()
+        except StreamCompleted:
+            pass  # the last block played: report finished, as PortAudio does
         except Exception:
             logger.exception("silent output device stopped: the callback raised")
         finally:

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from test_pcm_stream import BLOCK, DeviceThread, FakeDevice, open_sink
 
-from punt_vox.voxd import pcm_stream
+from punt_vox.voxd import pcm_watch
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ, PcmBuffer
 from punt_vox.voxd.pcm_gap import FADE_FRAMES
 from punt_vox.voxd.pcm_output import OutputDeviceLostError
@@ -480,6 +480,27 @@ class TestTheFlushTailIsPlayedBeforeTheDeviceIsReleased:
         assert device.opened.closed
         assert device.opened.aborted or device.opened.stopped
 
+    async def test_a_device_that_never_drains_is_aborted_within_a_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """stop() waits for the device to play what it holds: it must not run."""
+        monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 3))
+        device.opened.pull(1)
+        device.opened.stop_gate = threading.Event()  # stop() would block 5 s
+        device.opened.reports_finished = False  # it never says the audio played
+        sink.flush()
+        closing = asyncio.create_task(sink.close())
+        await asyncio.sleep(0.005)
+        device.opened.pull(1)  # the device takes the fade block, then stops draining
+        report = await asyncio.wait_for(closing, timeout=1)
+        assert device.opened.aborted
+        assert not device.opened.stopped
+        assert report.device_lost
+        assert report.degraded
+        device.opened.stop_gate.set()
+
     async def test_a_failing_release_does_not_replace_a_cancellation(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -611,13 +632,13 @@ class TestFinishNeverWaitsOnADeadDevice:
     async def test_a_device_that_stops_calling_back_ends_the_wait(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.01)
+        monkeypatch.setattr(pcm_watch, "STALL_WAIT_S", 0.01)
         sink, device = await open_sink()
         sink.feed(tone(BLOCK * 5), starts_utterance=True)
         device.opened.pull(1)
         sink.finish()  # the other four blocks are never pulled: a stalled device
         with (
-            caplog.at_level(logging.WARNING, logger="punt_vox.voxd.pcm_stream"),
+            caplog.at_level(logging.WARNING, logger="punt_vox.voxd.pcm_watch"),
             pytest.raises(OutputDeviceLostError),
         ):
             await asyncio.wait_for(sink.wait(), timeout=2)
@@ -628,7 +649,7 @@ class TestFinishNeverWaitsOnADeadDevice:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """stop() can block on a frozen device: the hang this wait exists to avoid."""
-        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.01)
+        monkeypatch.setattr(pcm_watch, "STALL_WAIT_S", 0.01)
         sink, device = await open_sink()
         sink.feed(tone(BLOCK * 2, ends_at_peak=True), starts_utterance=True)
         device.opened.pull(2)  # the buffer is empty; the fade-out owes a callback
@@ -644,7 +665,7 @@ class TestFinishNeverWaitsOnADeadDevice:
     async def test_a_slow_but_live_device_is_waited_for(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.05)
+        monkeypatch.setattr(pcm_watch, "STALL_WAIT_S", 0.05)
         sink, device = await open_sink()
         sink.feed(tone(BLOCK * 6), starts_utterance=True)
         sink.finish()

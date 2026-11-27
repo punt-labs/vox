@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 type Kind = Literal["input", "output"]
 
 
+class FakeCallbackStopError(Exception):
+    """sounddevice.CallbackStop: finish after the queued buffers have played."""
+
+
 class FakePortAudioError(Exception):
     """Stand-in for :class:`sounddevice.PortAudioError`."""
 
@@ -137,6 +141,7 @@ class FakeSoundDevice:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> Self:
         """Put the fake in ``sys.modules`` as ``sounddevice``."""
         module = SimpleNamespace(
+            CallbackStop=FakeCallbackStopError,
             PortAudioError=FakePortAudioError,
             RawInputStream=self.raw_input_stream,
             RawOutputStream=self.raw_output_stream,

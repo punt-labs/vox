@@ -10,10 +10,20 @@ from typing import TYPE_CHECKING, Self, cast, final
 
 import pytest
 
-from punt_vox.voxd.pcm_output import DeviceCall, sounddevice_output_stream
+from punt_vox.voxd.pcm_output import (
+    DeviceCall,
+    StreamCompleted,
+    sounddevice_output_stream,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Buffer
+
+    from punt_vox.voxd.pcm_output import OutputCallback
+
+
+class FakeCallbackStopError(Exception):
+    """sounddevice.CallbackStop."""
 
 
 @final
@@ -44,6 +54,7 @@ class TestSounddeviceOutputStream:
     ) -> None:
         fake = types.ModuleType("sounddevice")
         fake.__dict__["RawOutputStream"] = RecordingRawOutputStream
+        fake.__dict__["CallbackStop"] = FakeCallbackStopError
         monkeypatch.setitem(sys.modules, "sounddevice", fake)
 
         stream = sounddevice_output_stream(
@@ -53,15 +64,45 @@ class TestSounddeviceOutputStream:
             finished_callback=_finished,
         )
 
-        assert cast("RecordingRawOutputStream", stream).kwargs == {
+        kwargs = cast("RecordingRawOutputStream", stream).kwargs
+        assert kwargs.pop("callback") is not None
+        assert kwargs == {
             "samplerate": 16_000,
             "blocksize": 320,
             "channels": 1,
             "dtype": "int16",
             "latency": "low",
-            "callback": _callback,
             "finished_callback": _finished,
         }
+
+    def test_the_callback_runs_and_a_completed_stream_becomes_callback_stop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = types.ModuleType("sounddevice")
+        fake.__dict__["RawOutputStream"] = RecordingRawOutputStream
+        fake.__dict__["CallbackStop"] = FakeCallbackStopError
+        monkeypatch.setitem(sys.modules, "sounddevice", fake)
+        blocks: list[int] = []
+
+        def callback(_out: Buffer, frames: int, _time: object, _status: object) -> None:
+            blocks.append(frames)
+            if len(blocks) == 2:
+                raise StreamCompleted
+
+        stream = sounddevice_output_stream(
+            samplerate=16_000,
+            blocksize=320,
+            callback=callback,
+            finished_callback=_finished,
+        )
+        wrapped = cast(
+            "OutputCallback",
+            cast("RecordingRawOutputStream", stream).kwargs["callback"],
+        )
+        wrapped(bytearray(640), 320, None, None)
+        with pytest.raises(FakeCallbackStopError):
+            wrapped(bytearray(640), 320, None, None)
+        assert blocks == [320, 320]
 
     def test_missing_call_extra_names_the_fix(
         self, monkeypatch: pytest.MonkeyPatch

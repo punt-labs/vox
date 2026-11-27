@@ -24,6 +24,7 @@ from punt_vox.voxd.pcm_gap import FADE_FRAMES
 from punt_vox.voxd.pcm_output import (
     OutputCallback,
     OutputDeviceLostError,
+    StreamCompleted,
     sounddevice_output_stream,
 )
 from punt_vox.voxd.pcm_stream import PcmStreamSink
@@ -46,21 +47,27 @@ class FakeOutputStream:
         "finished_callback",
         "heard",
         "heard_at_release",
+        "is_finished",
         "release_gate",
+        "reports_finished",
         "start_error",
         "started",
         "stop_error",
+        "stop_gate",
         "stopped",
     )
 
     _callback: OutputCallback
     release_gate: threading.Event | None
+    stop_gate: threading.Event | None
     abort_error: Exception | None
     aborted: bool
     closed: bool
     finished_callback: Callable[[], None]
     heard: bytearray
     heard_at_release: int | None
+    is_finished: bool
+    reports_finished: bool
     start_error: Exception | None
     started: bool
     stop_error: Exception | None
@@ -80,14 +87,27 @@ class FakeOutputStream:
         self.stop_error = None
         self.abort_error = None
         self.release_gate = None
+        self.stop_gate = None
         self.heard = bytearray()
         self.heard_at_release = None
+        self.is_finished = False
+        self.reports_finished = True
         return self
 
     def pull(self, blocks: int = 1, *, pace_s: float = 0.0) -> None:
         for _ in range(blocks):
+            if self.is_finished:  # PortAudio stops calling back after paComplete
+                time.sleep(pace_s)
+                continue
             out = bytearray(BLOCK * 2)
-            self._callback(out, BLOCK, None, None)
+            try:
+                self._callback(out, BLOCK, None, None)
+            except StreamCompleted:
+                self.heard += out
+                self.is_finished = True
+                if self.reports_finished:
+                    self.finished_callback()
+                continue
             self.heard += out
             if pace_s:
                 time.sleep(pace_s)
@@ -98,6 +118,8 @@ class FakeOutputStream:
         self.started = True
 
     def stop(self) -> None:
+        if self.stop_gate is not None:
+            self.stop_gate.wait(timeout=5)  # a device that never finishes draining
         if self.release_gate is not None:
             self.release_gate.wait(timeout=5)
         if self.stop_error is not None:
@@ -434,6 +456,7 @@ class TestSinkPhases:
     async def test_close_closes_the_device_when_stop_fails(self) -> None:
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)  # the device plays out, then reports finished
         device.opened.stop_error = OSError("device unplugged")
         with pytest.raises(OSError, match="unplugged"):
             await sink.close()
@@ -568,6 +591,7 @@ class TestDeviceFailures:
         device.opened.release_gate = release
         device.opened.stop_error = OSError("device unplugged")
         sink.finish()
+        device.opened.pull(1)
         closing = asyncio.create_task(sink.close())
         await asyncio.sleep(0.01)
         closing.cancel()
@@ -678,6 +702,7 @@ class TestDeviceFailures:
         caplog.set_level(logging.INFO, logger="punt_vox.voxd.pcm_stream")
         sink, device = await open_sink()
         sink.finish()
+        device.opened.pull(1)  # the device plays out, then reports finished
         device.opened.stop_error = OSError("device unplugged")
         with pytest.raises(OSError, match="unplugged"):
             await sink.close()
