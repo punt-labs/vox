@@ -5,6 +5,7 @@ import re
 import pytest
 
 from punt_vox._currency_patterns import CurrencyPatterns
+from punt_vox._currency_suffix import SuffixCurrency
 
 
 @pytest.mark.parametrize("prefix", ["", "end_"])
@@ -28,6 +29,6 @@ def test_prose_fields_canonicalize_dotted_euro_groups() -> None:
 
 @pytest.mark.parametrize(("text", "eligible"), [("1,50€", True), ("1,50$", False)])
 def test_suffix_decimal_requires_euro(text: str, eligible: bool) -> None:
-    assert (re.fullmatch(CurrencyPatterns.suffix_amount("$€"), text) is not None) == (
+    assert (re.fullmatch(SuffixCurrency.amount_pattern("$€"), text) is not None) == (
         eligible
     )
