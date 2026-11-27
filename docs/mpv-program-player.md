@@ -434,7 +434,10 @@ The notification tier is untouched by this change. `ffplay` is removed from the
 ### They overlay — two OS-level streams
 
 A chime over ducked music is **two independent processes** writing to the shared
-system output: mpv (music, held at 60%) and afplay (chime, 80%). The OS mixer
+system output: mpv (music, at `--volume=60`) and afplay (chime, at `-v 0.8`).
+The two numbers are on different scales and are not directly comparable: mpv's
+volume curve is not linear, so music sits further below the chime than 60
+against 80 suggests. The OS mixer
 sums them — CoreAudio on macOS, PulseAudio/PipeWire on Linux — exactly as
 ffplay-music + afplay-chime do today. No cross-tier coordination and no shared
 handle. The duck is **static** (a constant reduced mpv volume), as it is today.
