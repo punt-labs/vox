@@ -18,8 +18,9 @@ __all__ = ["STATUS_ASKED", "TIMEOUT_EXIT", "Judge", "Verdict", "is_final"]
 _OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
 _NAG: Final = re.compile(r"are you (still )?there|still there", re.I)
 _MARKDOWN: Final = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|^\s*[-*]\s", re.M)
+# The scripted status question, or the contraction speech recognition may give.
+STATUS_ASKED: Final = re.compile(r"what the worker(?:'s| is) doing", re.I)
 # The words the agent may speak for a worker; the launch phase is not one.
-STATUS_ASKED: Final = re.compile(r"what the worker is doing", re.I)
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
 _FINAL_STATES: Final = ("call ended", "call failed")
 TIMEOUT_EXIT: Final = 124  # ``timeout`` killed an idle scripted call: its normal end.
@@ -324,13 +325,13 @@ class Judge:
     def _left_running(cleanup: Cleanup) -> list[str]:
         """Say who was left running, and what this run's stop achieved for each."""
         said = {
-            "this run stopped it": [
+            "; this run stopped it": [
                 w for w in cleanup.left_running if w in cleanup.stopped
             ],
-            "this run's stop could not be confirmed": [
+            "; this run's stop could not be confirmed": [
                 w for w in cleanup.left_running if w in cleanup.unconfirmed
             ],
-            "and stopping it failed": [
+            " and stopping it failed": [
                 w
                 for w in cleanup.left_running
                 if w not in cleanup.stopped and w not in cleanup.unconfirmed
@@ -340,10 +341,7 @@ class Judge:
         for outcome, workers in said.items():
             if not workers:
                 continue
-            joiner = " " if outcome.startswith("and") else "; "
-            found.append(
-                f"the agent left {', '.join(workers)} running{joiner}{outcome}"
-            )
+            found.append(f"the agent left {', '.join(workers)} running{outcome}")
         return found
 
     def _silence(self) -> Verdict:

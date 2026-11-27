@@ -1457,7 +1457,11 @@ def test_caller_turns_that_do_not_match_the_report_fail_the_status_check() -> No
 
 
 def test_the_scripted_status_turn_is_the_one_the_judge_looks_for() -> None:
-    assert verify_judge.STATUS_ASKED.search(verify_script.WORKER_STATUS_TURN)
+    asked = verify_judge.STATUS_ASKED
+    assert asked.search(verify_script.WORKER_STATUS_TURN)
+    assert asked.search("Tell me what the worker's doing right now.")
+    assert asked.search("TELL ME WHAT THE WORKER IS DOING")
+    assert not asked.search("Please stop the git status worker you just started.")
 
 
 def test_a_running_worker_is_named_when_its_start_record_was_lost_to_a_bad_trace(
