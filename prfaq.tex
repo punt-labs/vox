@@ -496,8 +496,12 @@ Restart Claude Code and type \texttt{/vox enable}.
   it locally. No data is stored by vox beyond a local audio cache in
   \texttt{\texttildelow/.punt-labs/vox/cache/} and saved audio in
   \texttt{\texttildelow/Music/vox/} (configurable via
-  \texttt{VOX\_OUTPUT\_DIR}). vox has no telemetry, no analytics, and no
-  cloud service of its own.
+  \texttt{VOX\_OUTPUT\_DIR}), and local usage telemetry in
+  \texttt{\texttildelow/.punt-labs/vox/telemetry.db}. The telemetry records
+  which commands and tools ran and whether they succeeded, never their
+  text. It is kept for 90 days, stays on your machine unless you opt in to
+  export, and \texttt{VOX\_TELEMETRY=off} turns it off. There is no punt-labs
+  cloud service.
 
   The privacy implication: your TTS provider sees the text of your
   notifications. For ElevenLabs and OpenAI, review their data retention
@@ -777,7 +781,9 @@ vox say "Build finished."
   abandonment.
 
   No runtime cloud dependencies exist beyond the TTS API calls themselves.
-  vox has no backend service, no database, and no telemetry. The optional
+  There is no punt-labs backend service and no remote database. Usage
+  telemetry is a local file that leaves the machine only with opt-in
+  consent. The optional
   remote \texttt{voxd} mode connects to a user-controlled daemon on another
   machine, not to any punt-labs service.
 \end{faqpair}

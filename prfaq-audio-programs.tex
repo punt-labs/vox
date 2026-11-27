@@ -426,7 +426,8 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
   \cite{elevenlabs2026zeroretention}. The script was written by your coding
   agent, so its model provider has seen it too. On your side, the audio and
   the script are saved on your own machine. There is no punt-labs cloud
-  service and no telemetry.
+  service. Usage counts (which commands ran, never their text) are kept on
+  your machine and sent nowhere unless you opt in.
 
   If text about your code must not leave your machine, do not ask for shows
   about your code. Shows about pandas are unaffected.
@@ -598,7 +599,7 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
   episode worth ten minutes? If the answer to the last one is no, the work
   stops before any product code is written.
 
-  The same sitting takes six measurements.
+  The same sitting takes seven measurements.
 
   \begin{itemize}[leftmargin=1.5em, nosep]
     \item How long the agent takes to write a five-minute chapter.
@@ -607,6 +608,9 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
           streamed.
 
     \item Whether one 20,000-character speech request is accepted.
+
+    \item Whether the multi-speaker engine accepts a request linked to the
+          one before it.
 
     \item Whether a long coding task slows or stalls while a background
           agent writes a script beside it.
@@ -648,8 +652,9 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
   characters per minute \cite{voxspike2026audiobook}. Dialogue pacing may
   differ, so applying that rate to a podcast is an assumption. On that
   assumption a ten-minute episode is about 8,800 characters, or five
-  requests joined end to end. The join was accepted by the API and has not
-  been heard. NotebookLM, with far more tuning, still warns of voice
+  requests joined end to end. Linking one request to the next was accepted
+  for narration. It has not been tried on the multi-speaker engine, and no
+  join has been heard. NotebookLM, with far more tuning, still warns of voice
   glitches and speakers swapping \cite{notebooklm2026audiooverview}.
   Mitigation: listen first (see \faqref{faq:validation-plan}). If joins are
   audible, the fallback is one voiced turn per request through the
@@ -798,7 +803,8 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
 
 \begin{faqpair}{How will we know it worked?}\label{faq:metrics}
 
-  vox has no telemetry, so the measures are things a person can report.
+  Usage telemetry stays on each listener's machine unless they opt in, so
+  the measures are things a person can report.
 
   \begin{itemize}[leftmargin=1.5em, nosep]
     \item \textbf{We use it.} After two weeks, the people building vox

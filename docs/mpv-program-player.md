@@ -426,7 +426,7 @@ Exactly which code is which:
 | Tier | Backend | Code | Volume |
 |------|---------|------|--------|
 | **Programs** (music, later audiobooks/podcasts) | one persistent **mpv** + JSON IPC | `programs/` — the loop, `MpvSupervisor`, `MpvClient`, `MpvProgramPlayer` | reduced (`--volume=60`) |
-| **Notifications** (speech + chimes) | **afplay** (macOS) / **ffplay** (Linux), `say`/`espeak` | `voxd/playback.py` (`PlaybackQueue._player_command`), `providers/say.py`, `providers/espeak.py` | full |
+| **Notifications** (speech + chimes) | **afplay** (macOS) / **ffplay** (Linux), `say`/`espeak` | `voxd/playback.py` (`PlaybackQueue._player_command`), `providers/say.py`, `providers/espeak.py` | 80 |
 
 The notification tier is untouched by this change. `ffplay` is removed from the
 *program* tier only; it remains the notification tier's Linux player.
