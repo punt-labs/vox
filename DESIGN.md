@@ -1906,7 +1906,7 @@ Full spec, error taxonomy, and z-spec state machine: `docs/vox-ig52-music-resili
 
 ### Decision
 
-Background music is rebuilt on a **Program** model — a named, persisted pool of parts plus a manifest, driven by an explicit state machine — replacing the filename-pattern "pool" and the 29-method `MusicScheduler` god-facade. Phase 1 realizes the `playlist` format; `podcast`/`audiobook` are named in the type vocabulary but not built. Design of record: `docs/audio-programs-phase1-design.md`; formal contract: `docs/audio-programs.tex` (a fuzz-clean Z model, 16 state invariants validated by construction).
+Background music is rebuilt on a **Program** model — a named, persisted pool of parts plus a manifest, driven by an explicit state machine — replacing the filename-pattern "pool" and the 29-method `MusicScheduler` god-facade. Phase 1 realizes the `playlist` format; `podcast`/`audiobook` are named in the type vocabulary but not built. Design of record and formal contract: `docs/audio-programs.tex` (a fuzz-clean Z model, 16 state invariants validated by construction).
 
 Key decisions:
 
