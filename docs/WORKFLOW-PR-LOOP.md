@@ -204,11 +204,19 @@ function demo(pr):
 #   demo_exempt(f) = f is under docs/, tests/, or .github/, is a ratchet
 #                  file (.oo-*, .suppression-*), is one of the
 #                  files .pr_agent.toml, .gitignore, .cursor/BUGBOT.md,
-#                  or is a top-level *.md,
-#                  and is not under plugin/ — commands, skills, agents,
-#                  and hooks there are behavior even when Markdown, because
-#                  Claude Code executes them; src/, a dependency, or an
-#                  install change can change what the operator hears
+#                  or is a documentation file wherever it sits (*.md,
+#                  *.tex, *.bib, or a *.pdf built from one: README.md,
+#                  DESIGN.md, CHANGELOG.md, the PR/FAQs prfaq*.tex with
+#                  their .bib and .pdf, a deposited CLAUDE.md guide),
+#                  and is not under plugin/ or src/ — commands, skills,
+#                  agents, and hooks under plugin/ are behavior even when
+#                  Markdown, because Claude Code executes them, and a
+#                  Markdown file under src/ ships in the package (the
+#                  guide `vox enable` deposits); src/, a dependency, or an
+#                  install change can change what the operator hears.
+#                  Every documentation update is demo-exempt (operator
+#                  ruling, 2026-11-27): a document cannot change what vox
+#                  plays or prints
 #   audible(pr)  = some non-exempt file the PR changes can change what is
 #                  heard (demo_exempt files are not counted): under
 #                  src/punt_vox/providers/, src/punt_vox/voxd/ (every file:
