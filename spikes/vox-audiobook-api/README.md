@@ -55,6 +55,10 @@ collect it; run it by path:
 uv run --no-project --with httpx --with pytest pytest spikes/vox-audiobook-api -q
 ```
 
+The tests that decode audio need `ffprobe` on `PATH`; it ships with ffmpeg,
+which vox already requires. Without it they skip with a stated reason, and a
+separate test covers the run's behaviour when `ffprobe` is absent.
+
 ## Results
 
 Run on 2026-11-26 against the account's `growing_business` plan. Findings and
