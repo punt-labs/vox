@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Self, cast, final
 
-from verify_judge import Judge, is_final
+from verify_judge import NO_EXIT, Judge, is_final
 from verify_workers import Cleanup, WorkerFleet
 
 __all__ = [
@@ -33,6 +33,7 @@ __all__ = [
     "script_plan",
 ]
 
+_TIMEOUT_EXIT: Final = 124  # What ``timeout`` exits with when it kills its command.
 _LAUNCH_MARGIN_S: Final = 240  # Speech, agent latency and retries on top of the pauses.
 _STOP_TIMEOUT_S: Final = 30
 _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
@@ -84,7 +85,8 @@ def load_trace(status: str) -> list[dict[str, object]] | None:
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return None
-    return [json.loads(row) for row in text.splitlines() if row.strip()]
+    parsed = [json.loads(row) for row in text.splitlines() if row.strip()]
+    return [row for row in parsed if isinstance(row, dict)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +163,7 @@ class CallRun:
         launch: subprocess.CompletedProcess[str] | None = None
         failure = ""
         before = ""
+        killed = False
         try:
             script = self._script(search=search)
             before = trace_path(self.status())
@@ -171,9 +174,10 @@ class CallRun:
             OSError,
         ) as exc:
             failure = f"{type(exc).__name__}: {str(exc)[:200]}"
+            killed = isinstance(exc, subprocess.TimeoutExpired)
         finally:
             self._launched = launch
-            mine, status, problems = self._attribute(launch, before)
+            mine, status, problems = self._attribute(launch, before, killed=killed)
             if failure:
                 problems.insert(0, f"the call could not be run ({failure})")
             self._cleanup = self._sweep(fleet, mine, problems)
@@ -181,9 +185,14 @@ class CallRun:
         return status, output
 
     @property
+    def placed(self) -> bool:
+        """Return whether a launch was attempted, so a failure is past setup."""
+        return self._placed
+
+    @property
     def launch_exit(self) -> int:
-        """Return the exit status of ``vox call``, or -1 when it never returned."""
-        return -1 if self._launched is None else self._launched.returncode
+        """Return the exit status of ``vox call``, or NO_EXIT when it never returned."""
+        return NO_EXIT if self._launched is None else self._launched.returncode
 
     def _launch(
         self, script: Path, *, search: bool
@@ -199,7 +208,11 @@ class CallRun:
         )
 
     def _attribute(
-        self, launch: subprocess.CompletedProcess[str] | None, before: str
+        self,
+        launch: subprocess.CompletedProcess[str] | None,
+        before: str,
+        *,
+        killed: bool,
     ) -> tuple[str, str, list[str]]:
         """Return this run's call trace, its report and what could not be shown.
 
@@ -209,22 +222,23 @@ class CallRun:
         """
         if launch is not None and (mine := trace_path(launch.stdout)):
             return mine, self._settled_status(mine, launch.stdout), []
-        how = "no result" if launch is None else f"exit {launch.returncode}"
-        err = "" if launch is None else launch.stderr.strip()[:200]
-        found = self.status() if self._placed else ""
+        if launch is not None and launch.returncode != _TIMEOUT_EXIT:
+            err = launch.stderr.strip()[:200]
+            msg = f"vox call exited {launch.returncode} without a report ({err})"
+            return "", "", [msg]  # Not killed: no call is this run's to adopt.
+        if launch is None and not killed:
+            return "", "", ["the launch never ran, so no call is this run's"]
+        found = self.status()
         mine = trace_path(found)
         if not mine or mine == before:
-            return (
-                "",
-                "",
-                [f"the call did not start or could not be found ({how}: {err})"],
-            )
-        problems = [f"vox call timed out ({how}); its report was recovered from status"]
-        if is_live(found):
-            if fault := self._stop(mine):
-                problems.append(fault)
+            return "", "", ["the call timed out and could not be found from status"]
+        problems = ["vox call timed out; its report was recovered from status"]
+        if fault := self._stop(mine):
+            problems.append(fault)
         status = self._settled_status(mine, "")
-        if not is_final(status):
+        if not status:
+            problems.append("another call replaced the status before this report")
+        elif not is_final(status):
             problems.append("the call never ended after the hang-up")
         return mine, status, problems
 
@@ -331,9 +345,10 @@ class CallRun:
         """Hang up the live call whose trace is ``mine``; return what went wrong.
 
         ``vox call stop`` stops whatever call is live, so it runs only while the
-        live status still names this run's call.
+        live status still names this run's call. A stop that fails because the
+        call ended in the meantime is not a failure.
         """
-        if not mine or trace_path(self.status()) != mine:
+        if not self._is_mine_and_live(mine):
             return ""
         done = subprocess.run(
             ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
@@ -341,10 +356,17 @@ class CallRun:
             text=True,
             check=False,
         )
-        if done.returncode != 0:
-            detail = done.stderr.strip()[:200] or "no stderr"
-            return f"vox call stop failed (exit {done.returncode}: {detail})"
-        return ""
+        if done.returncode == 0 or not self._is_mine_and_live(mine):
+            return ""
+        detail = done.stderr.strip()[:200] or "no stderr"
+        return f"vox call stop failed (exit {done.returncode}: {detail})"
+
+    def _is_mine_and_live(self, mine: str) -> bool:
+        """Return whether the live call is the one with trace ``mine``."""
+        if not mine:
+            return False
+        status = self.status()
+        return trace_path(status) == mine and is_live(status)
 
 
 def _search_configured() -> bool:
@@ -377,8 +399,11 @@ def main() -> int:
         try:
             report, output = run.place(search=search)
         except ValueError as exc:
-            print(f"FAIL setup: {exc}")
-            return 4
+            if not run.placed:
+                print(f"FAIL setup: {exc}")
+                return 4
+            print(f"FAIL run: {exc}")
+            return 1
     trace = load_trace(report)
     verdicts = Judge(
         report,

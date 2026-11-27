@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Final, Literal, Self, cast, final
 if TYPE_CHECKING:
     from verify_workers import Cleanup
 
-__all__ = ["Judge", "Verdict", "is_final"]
+__all__ = ["NO_EXIT", "Judge", "Verdict", "is_final"]
 
 _OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
 _NAG: Final = re.compile(r"are you (still )?there|still there", re.I)
@@ -21,6 +21,7 @@ _MARKDOWN: Final = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|^\s*[-*]\s", re.M)
 # The words the agent may speak for a worker; the launch phase is not one.
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
 _FINAL_STATES: Final = ("call ended", "call failed")
+NO_EXIT: Final = -1  # The launch never returned, so it has no exit status.
 
 type Status = Literal["PASS", "FAIL", "SKIP"]
 
@@ -71,9 +72,9 @@ class Judge:
         output: str,
         *,
         search_key: bool,
+        launch_exit: int,
         trace: list[dict[str, object]] | None = None,
         cleanup: Cleanup | None = None,
-        launch_exit: int = 0,
     ) -> Self:
         """Bind the report, the call's other output and whether search is set up."""
         self = super().__new__(cls)
@@ -303,6 +304,8 @@ class Judge:
             return Verdict("clean end", "FAIL", "the call was still live when judged")
         if "RuntimeWarning" in self._output or "Traceback" in self._output:
             return Verdict("clean end", "FAIL", "warning or traceback on hang-up")
+        if self._launch_exit == NO_EXIT:
+            return Verdict("clean end", "FAIL", "vox call did not return")
         if self._launch_exit != 0:
             return Verdict(
                 "clean end", "FAIL", f"vox call finished with exit {self._launch_exit}"

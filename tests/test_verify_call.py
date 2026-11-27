@@ -58,7 +58,12 @@ def _verdicts(
     report: str, *, search_key: bool = True, output: str = ""
 ) -> dict[str, str]:
     judged = verify_judge.Judge(
-        report, output, search_key=search_key, trace=_TRACE, cleanup=_CLEAN
+        report,
+        output,
+        search_key=search_key,
+        launch_exit=0,
+        trace=_TRACE,
+        cleanup=_CLEAN,
     ).verdicts()
     return {v.name: v.status for v in judged}
 
@@ -154,7 +159,10 @@ def test_a_nag_on_a_continuation_line_fails_silence() -> None:
 
 def test_the_first_agent_turn_is_judged_even_after_a_live_header_line() -> None:
     assert (
-        verify_judge.Judge(_STATUS, "", search_key=True).verdicts()[0].status == "PASS"
+        verify_judge.Judge(_STATUS, "", search_key=True, launch_exit=0)
+        .verdicts()[0]
+        .status
+        == "PASS"
     )
 
 
@@ -203,7 +211,10 @@ def test_empty_idle_or_connecting_status_is_not_final(text: str) -> None:
 
 def test_a_live_status_fails_the_clean_end_even_if_it_looks_complete() -> None:
     verdicts = {
-        v.name: v for v in verify_judge.Judge(_LIVE, "", search_key=True).verdicts()
+        v.name: v
+        for v in verify_judge.Judge(
+            _LIVE, "", search_key=True, launch_exit=0
+        ).verdicts()
     }
     assert verdicts["clean end"].status == "FAIL"
     assert "still live" in verdicts["clean end"].why
@@ -255,7 +266,7 @@ _TRACE: list[dict[str, object]] = [
 
 def _with_trace(trace: list[dict[str, object]] | None) -> dict[str, str]:
     judged = verify_judge.Judge(
-        _GOOD, "", search_key=True, trace=trace, cleanup=_CLEAN
+        _GOOD, "", search_key=True, launch_exit=0, trace=trace, cleanup=_CLEAN
     ).verdicts()
     return {v.name: v.status for v in judged}
 
@@ -343,7 +354,7 @@ def _worker_status(
     report: str = _GOOD, trace: list[dict[str, object]] | None = _TRACE
 ) -> str:
     judged = verify_judge.Judge(
-        report, "", search_key=True, trace=trace, cleanup=_CLEAN
+        report, "", search_key=True, launch_exit=0, trace=trace, cleanup=_CLEAN
     ).verdicts()
     return str(next(v.status for v in judged if v.name == "worker status"))
 
@@ -486,7 +497,7 @@ def _stub_trace(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _cleanup_verdict(cleanup: object, report: str = _GOOD) -> tuple[str, str]:
     judged = verify_judge.Judge(
-        report, "", search_key=True, trace=_TRACE, cleanup=cleanup
+        report, "", search_key=True, launch_exit=0, trace=_TRACE, cleanup=cleanup
     ).verdicts()
     verdict = next(v for v in judged if v.name == "worker cleanup")
     return str(verdict.status), str(verdict.why)
@@ -673,7 +684,7 @@ def test_a_call_cancelled_mid_launch_reports_the_start_and_names_new_workers(
     cleanup, status = _place(tmp_path, monkeypatch, voxd)
     assert status == ""
     assert voxd.stops() == []
-    assert "did not start" in cleanup.problems[0]
+    assert "timed out" in cleanup.problems[0]
     assert [r.id for r in cleanup.unproven] == ["w2"]
 
 
@@ -700,7 +711,7 @@ def test_a_refused_launch_never_sweeps_the_previous_calls_trace(
     cleanup, status = _place(tmp_path, monkeypatch, voxd)
     assert voxd.stops() == []
     assert status == ""
-    assert "did not start" in cleanup.problems[0]
+    assert "exited 1 without a report" in cleanup.problems[0]
     assert "Call unavailable" in cleanup.problems[0]
 
 
@@ -866,7 +877,7 @@ def test_a_timed_out_launch_still_stops_its_own_live_call_and_its_workers(
     voxd = _Voxd(mine, {}, {"new": "ready"})
     voxd.launch_code = 124
     voxd.launch_out = ""
-    voxd.post_statuses = [_live(mine), _report(mine)]
+    voxd.post_statuses = [_live(mine), _live(mine), _report(mine)]
     cleanup, status = _place(tmp_path, monkeypatch, voxd)
     assert len(voxd.call_stops()) == 1
     assert voxd.stops() == ["new"]
@@ -1018,3 +1029,132 @@ def test_a_new_worker_that_already_ended_is_information_not_a_failure() -> None:
     assert status == "PASS"
     assert "w9" in why
     assert "already ended" in why
+
+
+def _refused_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, code: int, live_trace: Path
+) -> tuple[_Voxd, _Cleanup, str]:
+    previous = _trace_file(tmp_path, "mine-previous")
+    voxd = _Voxd(None, {"theirs": "ready"}, {"theirs": "ready"})
+    voxd.pre_status = _report(previous)
+    voxd.launch_code = code
+    voxd.launch_out = ""
+    voxd.status_out = _live(live_trace)
+    cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    return voxd, cleanup, status
+
+
+def test_a_launch_that_exits_one_without_a_report_adopts_no_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    voxd, cleanup, status = _refused_launch(
+        tmp_path, monkeypatch, code=1, live_trace=_trace_file(other, "theirs")
+    )
+    assert voxd.call_stops() == []
+    assert voxd.stops() == []
+    assert status == ""
+    assert cleanup.started == ()
+    assert any("exited 1 without a report" in p for p in cleanup.problems)
+    assert all("timed out" not in p for p in cleanup.problems)
+
+
+def test_a_killed_launch_still_adopts_the_call_that_appeared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    trace = _trace_file(mine, "new")
+    voxd = _Voxd(trace, {}, {"new": "ready"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace), _live(trace), _report(trace)]
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    assert len(voxd.call_stops()) == 1
+    assert voxd.stops() == ["new"]
+    assert any("timed out" in p for p in cleanup.problems)
+
+
+def test_a_call_that_ended_before_the_stop_is_not_a_failed_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = _trace_file(tmp_path, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.stop_call_code = 2
+    voxd.post_statuses = [_live(trace), _live(trace), _report(trace)]
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    assert len(voxd.call_stops()) == 1
+    assert all("vox call stop" not in p for p in cleanup.problems)
+
+
+def test_a_call_that_already_ended_is_not_stopped_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = _trace_file(tmp_path, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_report(trace)]
+    _place(tmp_path, monkeypatch, voxd)
+    assert voxd.call_stops() == []
+
+
+def test_a_status_taken_over_by_another_call_is_said_plainly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    trace = _trace_file(mine, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace), _live(trace), _report(_trace_file(other))]
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    assert any("another call replaced the status" in p for p in cleanup.problems)
+    assert all("never ended" not in p for p in cleanup.problems)
+
+
+def test_trace_rows_that_are_not_objects_are_skipped(tmp_path: Path) -> None:
+    path = tmp_path / "call.jsonl"
+    path.write_text(
+        '[1]\n"x"\n3\n{"type": "worker_started", "detail": {"worker_id": "w"}}\n'
+    )
+    rows = verify_call.load_trace(f"trace: {path}")
+    assert rows == [{"type": "worker_started", "detail": {"worker_id": "w"}}]
+
+
+def test_a_failure_after_the_call_was_placed_is_not_called_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "new"), {}, {"new": "stopped"})
+
+    def broken(
+        self: object, launch: object, before: str, *, killed: bool
+    ) -> tuple[str, str, list[str]]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(verify_call.CallRun, "_attribute", broken)
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 1
+    out = capsys.readouterr().out
+    assert "boom" in out
+    assert "FAIL setup" not in out
+
+
+def test_a_launch_that_never_returned_is_judged_as_such() -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, launch_exit=-1, trace=_TRACE, cleanup=_CLEAN
+    ).verdicts()
+    verdict = next(v for v in judged if v.name == "clean end")
+    assert verdict.status == "FAIL"
+    assert "did not return" in verdict.why
+    assert "-1" not in verdict.why
+
+
+def test_a_judge_cannot_be_built_without_a_launch_exit() -> None:
+    with pytest.raises(TypeError, match="launch_exit"):
+        verify_judge.Judge(_GOOD, "", search_key=True)
