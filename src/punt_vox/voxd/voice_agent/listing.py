@@ -79,8 +79,10 @@ class Listing:
         found: list[str] = []
         seen: set[str] = set()
         cursor: str | None = None
-        for _ in range(_MAX_PAGES):
-            if expired():
+        for page_number in range(_MAX_PAGES):
+            # The first page is always read, so an earlier listing that spent
+            # the budget cannot leave this one unread.
+            if page_number and expired():
                 msg = f"ElevenLabs GET {kind.path} ran out of time"
                 raise SweepIncompleteError(msg, tuple(found))
             reply = self._wire.request("GET", kind.path, params=self._params(cursor))

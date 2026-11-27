@@ -28,9 +28,9 @@ __all__ = ["Replacement"]
 
 logger = logging.getLogger(__name__)
 
-# Total time for one orphan sweep. A request can take 10 s, so the sweep ends
-# well inside the daemon's 30 s wait for a connection.
-SWEEP_BUDGET_S: Final = 15.0
+# Total time for one orphan sweep: a bound so a misbehaving cursor cannot spin
+# the walk forever. A slow account is not an error, so it is generous.
+SWEEP_BUDGET_S: Final = 120.0
 
 
 @final
@@ -74,6 +74,7 @@ class Replacement:
         """Create the tools and agent; return the new record and the agent id."""
         base = self._base or Registration(None, (), "", self._control.credential_id)
         record = base
+        creating = "tools"  # What a lost reply may have left behind.
         try:
             self._store.write(record)  # The intent, before anything is created.
             marker = self._marker.text()
@@ -83,6 +84,7 @@ class Replacement:
                 # leaves the id in the rollback record.
                 record = replace(record, pending_tools=(*record.pending_tools, tool_id))
                 self._checkpoint(record, tool_id, "tool", self._disposal.tool)
+            creating = "agents"
             agent_id = self._control.create_agent(record.pending_tools, marker)
             record = replace(record, pending_agents=(agent_id,))
             self._checkpoint(record, agent_id, "agent", self._disposal.agent)
@@ -102,7 +104,7 @@ class Replacement:
                     if isinstance(failure, UnknownCreateError)
                     else None
                 )
-                for problem in self._abandon(record, expired):
+                for problem in self._abandon(record, expired, creating):
                     failure.add_note(problem)
             except (ConvAIError, OSError) as cleanup:
                 # Cleanup must never replace the failure that started it.
@@ -111,7 +113,10 @@ class Replacement:
         return finished, agent_id
 
     def _abandon(
-        self, record: Registration, expired: Callable[[], bool] | None
+        self,
+        record: Registration,
+        expired: Callable[[], bool] | None,
+        creating: str,
     ) -> tuple[str, ...]:
         """Delete what the attempt created and restore the old registration.
 
@@ -123,7 +128,9 @@ class Replacement:
         agents, tools = record.pending_agents, record.pending_tools
         problems: list[str] = []
         if expired is not None:
-            found_agents, found_tools = self._unrecorded(record, problems, expired)
+            found_agents, found_tools = self._unrecorded(
+                record, problems, expired, creating
+            )
             agents, tools = (*agents, *found_agents), (*tools, *found_tools)
         kept_agents = Undeleted.ids(self._disposal.agents(agents))
         kept_tools = Undeleted.ids(self._disposal.tools(tools))
@@ -157,15 +164,19 @@ class Replacement:
         record: Registration,
         problems: list[str],
         expired: Callable[[], bool],
+        creating: str,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Return this host's marked agents and tools that no record names.
 
-        A failed listing is added to *problems* and finds nothing, so the
-        other kind is still swept and what it found is still deleted.
+        The kind that *creating* names is listed first, because the shared
+        budget may be spent before the second listing; each listing still
+        reads its first page. A failed listing is added to *problems* and
+        finds nothing, so the other kind is still swept and what it found is
+        still deleted.
         """
         base, listing = self._base, self._control.listing
-        found: list[tuple[str, ...]] = []
-        for kind, listed, named in (
+        found: dict[str, tuple[str, ...]] = {}
+        sweeps = (
             (
                 "agents",
                 listing.marked_agents,
@@ -176,7 +187,8 @@ class Replacement:
                 listing.marked_tools,
                 {*record.tools, *(base.tools if base else ())},
             ),
-        ):
+        )
+        for kind, listed, named in sorted(sweeps, key=lambda s: s[0] != creating):
             try:
                 ids = listed(self._marker.text(), expired)
             except SweepIncompleteError as exc:
@@ -188,8 +200,8 @@ class Replacement:
             except ConvAIError as exc:
                 problems.append(f"sweep of {kind} failed: {exc}")
                 ids = ()
-            found.append(tuple(i for i in ids if i not in named))
-        return found[0], found[1]
+            found[kind] = tuple(i for i in ids if i not in named)
+        return found["agents"], found["tools"]
 
     @staticmethod
     def _deadline(clock: Callable[[], float], budget_s: float) -> Callable[[], bool]:

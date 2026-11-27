@@ -10,6 +10,7 @@ import pytest
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
 from punt_vox.voxd.voice_agent.host_marker import HostMarker
+from punt_vox.voxd.voice_agent.replacement import SWEEP_BUDGET_S
 
 from .fake_wire import API_KEY, SIGNED_URL
 
@@ -353,7 +354,7 @@ def test_a_sweep_stops_at_its_deadline_and_still_deletes_what_it_found(
 ) -> None:
     config = tmp_path / _REGISTRATION
     with ConvAIControl(API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config, clock=_Clock(6.0))
+        agent = VoiceAgent(control, path=config, clock=_Clock(SWEEP_BUDGET_S * 0.6))
         agent.connection((_CLOCK,))
         wire.calls.clear()
         wire.delete_forgets = True
@@ -362,7 +363,7 @@ def test_a_sweep_stops_at_its_deadline_and_still_deletes_what_it_found(
         with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
             agent.connection((_ALARM,))
     assert "tool_orphan" not in wire.tools
-    assert wire.listings.count("tools") == 1  # The deadline cut the walk short.
+    assert wire.listings.count("tools") == 2  # The deadline cut the walk short.
     assert any("did not finish within" in note for note in caught.value.__notes__)
 
 
@@ -371,7 +372,7 @@ def test_a_found_resource_the_deadline_sweep_cannot_delete_is_kept(
 ) -> None:
     config = tmp_path / _REGISTRATION
     with ConvAIControl(API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config, clock=_Clock(6.0))
+        agent = VoiceAgent(control, path=config, clock=_Clock(SWEEP_BUDGET_S * 0.6))
         agent.connection((_CLOCK,))
         wire.delete_tool_status = 403
         _slow_sweep_account(wire)
@@ -395,3 +396,64 @@ def test_a_sweep_within_its_deadline_reads_every_page(
     assert "tool_alarm" not in wire.tools
     notes = getattr(caught.value, "__notes__", [])
     assert not any("did not finish" in note for note in notes)
+
+
+def _crowded_account(wire: Requests, kind: str) -> None:
+    """Fill the *kind* listing with foreign entries, so it spans several pages."""
+    held = wire.agents if kind == "agents" else wire.tools
+    for number in range(4):
+        held[f"{kind}_foreign_{number}"] = "Someone else's resource"
+    wire.list_page_size = 2
+
+
+def test_a_lost_tool_reply_sweeps_tools_before_the_agent_listing_spends_the_budget(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(SWEEP_BUDGET_S * 0.5))
+        agent.connection((_CLOCK,))
+        wire.delete_forgets = True
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        _crowded_account(wire, "agents")
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.create_tool_status = 500
+        wire.commit_failed_create = True
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert "tool_alarm" not in wire.tools
+
+
+def test_a_lost_agent_reply_sweeps_the_agent_before_the_tool_listing_spends_the_budget(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(SWEEP_BUDGET_S * 0.5))
+        agent.connection((_CLOCK,))
+        wire.delete_forgets = True
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        _crowded_account(wire, "tools")
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.next_agent_ids = ["agent_new"]
+        wire.create_agent_status = 504
+        wire.commit_failed_create = True
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert "agent_new" not in wire.agents
+    assert "tool_alarm" not in wire.tools
+
+
+def test_an_exhausted_budget_still_lets_each_listing_read_its_first_page(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(SWEEP_BUDGET_S * 10))
+        agent.connection((_CLOCK,))
+        wire.listings.clear()
+        wire.next_tool_ids = ["tool_alarm"]
+        wire.create_tool_status = 500
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert sorted(wire.listings) == ["agents", "tools"]
