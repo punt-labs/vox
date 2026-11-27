@@ -14,7 +14,7 @@ import spike
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
-AUDIO = b"not really mp3 bytes"  # ffprobe fails on it; seconds() falls back
+AUDIO = b"ID3" + bytes(2000)  # ffprobe rejects it; seconds() falls back to bytes
 
 
 class Api:
@@ -356,3 +356,122 @@ def test_studio_non_json_ok_body_while_polling_is_recorded(
 
     assert exit_code("studio", Api(handler), tmp_path) == 1
     assert "[studio] FAIL" in capsys.readouterr().out
+
+
+def studio_api(
+    *, state: str = "default", snapshots: dict[str, object] | None = None
+) -> Api:
+    """Fake a Studio project that reports the given state and snapshot reply."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "POST" and path == "/v1/studio/projects":
+            return httpx.Response(200, json={"project_id": "p1"})
+        if path == "/v1/studio/projects/p1":
+            return httpx.Response(200, json={"state": state})
+        if path.endswith("/snapshots"):
+            return httpx.Response(200, json=snapshots or {})
+        if path.endswith("/archive"):
+            return audio_ok(request)
+        return httpx.Response(200, json={"chapters": []})
+
+    return Api(handler)
+
+
+def test_studio_never_converting_fails_after_all_polls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+    api = studio_api(state="converting")
+    assert exit_code("studio", api, tmp_path) == 1
+    assert (
+        "[studio-convert] FAIL state converting after 200 s" in capsys.readouterr().out
+    )
+    assert len(api.requests) == 1 + spike.POLLS  # create, polls; probe stopped
+
+
+def test_studio_full_success_exits_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+    api = studio_api(snapshots={"snapshots": [{"project_snapshot_id": "s1"}]})
+    assert exit_code("studio", api, tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[studio-convert] PASS" in out
+    assert "[studio-snapshot] PASS" in out
+    assert (tmp_path / "out" / "studio-book.zip").exists()
+
+
+@pytest.mark.parametrize("reply", [{}, {"snapshots": []}, {"snapshots": None}])
+def test_studio_without_snapshots_fails(
+    reply: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+    api = studio_api(snapshots=reply)
+    assert exit_code("studio", api, tmp_path) == 1
+    assert "[studio-snapshot] FAIL" in capsys.readouterr().out
+    assert not any(p.endswith("/archive") for p in api.paths())
+
+
+def test_pron_empty_transcripts_fail_both_checks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    verdicts, out = run("pron", pron_api("", ""), tmp_path, capsys)
+    assert verdicts.failures == ["pron-with-dict", "pron-without-dict"]
+    assert "no transcript to judge" in out
+
+
+def test_tts_without_request_id_fails_stitching_and_sends_no_second_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(200, content=AUDIO))
+    assert exit_code("tts", api, tmp_path) == 1
+    assert "[tts-stitched] FAIL" in capsys.readouterr().out
+    assert len(api.requests) == 1
+
+
+def test_tts_tiny_audio_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(200, content=b"x", headers={"request-id": "r"}))
+    assert exit_code("tts", api, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[tts-long] FAIL 1 bytes" in out
+    assert "[tts-stitched] FAIL 1 bytes" in out
+
+
+def test_unexpected_json_shape_fails_that_probe_and_later_probes_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/add-from-rules"):
+            return httpx.Response(200, json={})  # no "id": KeyError in the probe
+        return httpx.Response(403, text="nope")
+
+    api = Api(handler)
+    assert spike.main([str(tmp_path / "out")], make_client=api.client) == 1
+    assert "[pron] FAIL" in capsys.readouterr().out
+    assert api.paths()[-1] == "/v1/studio/projects"  # studio ran after pron
+
+
+def test_save_oserror_fails_that_probe_and_later_probes_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def broken_save(_out: Path, _name: str, _r: httpx.Response) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(spike, "save", broken_save)
+    api = Api(audio_ok)
+    assert spike.main([str(tmp_path / "out"), "all"], make_client=api.client) == 1
+    out = capsys.readouterr().out
+    assert "[tts] FAIL" in out
+    assert "/v1/text-to-dialogue" in api.paths()  # dialogue ran after tts

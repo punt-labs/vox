@@ -29,6 +29,9 @@ BASE = "https://api.elevenlabs.io"
 GEORGE = "JBFqnCBsd6RMkjVDRZzb"  # narrator
 SARAH = "EXAVITQu4vr4xnSDxMaL"  # character
 ROGER = "CwhRBWXzGAHq8TQ4Fs17"  # character
+POLLS = 40
+POLL_SECONDS = 5
+MIN_AUDIO_BYTES = 1000  # anything smaller is an error stub, not speech
 HEADERS_OF_INTEREST = ("request-id", "character-cost", "content-type")
 
 CHAPTER = (
@@ -113,19 +116,32 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     if not verdicts.expect_ok("tts-long", r):
         return
     save(out, "tts-long.mp3", r)
+    verdicts.check(
+        "tts-long",
+        ok=len(r.content) >= MIN_AUDIO_BYTES,
+        detail=f"{len(r.content)} bytes",
+    )
     rid = r.headers.get("request-id")
+    if not rid:
+        verdicts.check("tts-stitched", ok=False, detail="no request-id to stitch from")
+        return
     r2 = c.post(
         f"/v1/text-to-speech/{GEORGE}",
         params={"output_format": "mp3_44100_128"},
         json={
             "text": "[softly] And then the cat looked up.",
             "model_id": "eleven_v4",
-            "previous_request_ids": [rid] if rid else [],
+            "previous_request_ids": [rid],
         },
     )
     report("tts-stitched", r2)
     if verdicts.expect_ok("tts-stitched", r2):
         save(out, "tts-stitched.mp3", r2)
+        verdicts.check(
+            "tts-stitched",
+            ok=len(r2.content) >= MIN_AUDIO_BYTES,
+            detail=f"{len(r2.content)} bytes",
+        )
 
 
 def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
@@ -218,8 +234,11 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
             )
         report(f"pron-stt-{label}", tr)
         if tr.status_code == 200:
-            transcripts[label] = words(tr.json().get("text", ""))
-            print(f"[pron-{label}] transcript: {transcripts[label]!r}")
+            text_heard = tr.json().get("text")
+            # An empty transcript is no transcript: it would pass "lacks" vacuously.
+            if isinstance(text_heard, str) and words(text_heard):
+                transcripts[label] = words(text_heard)
+                print(f"[pron-{label}] transcript: {transcripts[label]!r}")
     aliases = [words(rule["alias"]) for rule in rules]
     for label, expect_aliases in (("with-dict", True), ("without-dict", False)):
         heard = transcripts.get(label)
@@ -306,8 +325,9 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     project = r.json().get("project", r.json())
     pid = project["project_id"]
     print(f"[studio] project {pid}, state {project.get('state')}")
-    for _ in range(40):
-        time.sleep(5)
+    state = None
+    for _ in range(POLLS):
+        time.sleep(POLL_SECONDS)
         polled = c.get(f"/v1/studio/projects/{pid}")
         if not verdicts.expect_ok("studio-poll", polled):
             report("studio-poll", polled)
@@ -316,12 +336,21 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         print(f"[studio] state {state}")
         if state == "default":
             break
+    verdicts.check(
+        "studio-convert",
+        ok=state == "default",
+        detail=f"state {state} after {POLLS * POLL_SECONDS} s",
+    )
+    if state != "default":
+        return
     snaps = c.get(f"/v1/studio/projects/{pid}/snapshots")
     report("studio-snapshots", snaps)
     verdicts.expect_ok("studio-snapshots", snaps)
     items: list[dict[str, str]] = (
-        snaps.json().get("snapshots", []) if snaps.status_code == 200 else []
+        snaps.json().get("snapshots") or [] if snaps.status_code == 200 else []
     )
+    if snaps.status_code == 200:
+        verdicts.check("studio-snapshot", ok=bool(items), detail=f"{len(items)} found")
     if items:
         sid: str = items[0]["project_snapshot_id"]
         a = c.post(f"/v1/studio/projects/{pid}/snapshots/{sid}/archive", json={})
@@ -364,8 +393,9 @@ def main(
             print(f"=== {name} ===")
             try:
                 PROBES[name](c, args.out_dir, verdicts)
-            except (httpx.HTTPError, ValueError) as exc:
-                # ValueError covers json.JSONDecodeError from a non-JSON reply.
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError) as exc:
+                # ValueError covers JSONDecodeError; KeyError/TypeError an unexpected
+                # JSON shape; OSError a failed save. Later probes still run.
                 verdicts.check(name, ok=False, detail=repr(exc))
     return 1 if verdicts.failures else 0
 
