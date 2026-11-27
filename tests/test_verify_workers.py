@@ -32,6 +32,9 @@ class _Result(Protocol):
     @property
     def unproven(self) -> tuple[_Row, ...]: ...
 
+    @property
+    def ignored(self) -> tuple[_Row, ...]: ...
+
 
 class _Row(Protocol):
     """The fields of a WorkerRow these tests read."""
@@ -263,3 +266,38 @@ def test_a_trace_naming_a_worker_that_existed_before_the_call_stops_nothing(
     assert voxd.workers["old"] == "ready"
     assert len(cleanup.problems) == 1
     assert "existed before the call" in cleanup.problems[0]
+
+
+def test_a_new_worker_that_already_ended_is_not_unproven_but_is_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup = _sweep(monkeypatch, _Voxd({"gone": "exited", "also": "stopped"}))
+    assert cleanup.unproven == ()
+    assert [row.id for row in cleanup.ignored] == ["gone", "also"]
+
+
+def test_a_row_with_no_id_is_a_reported_failure_not_a_key_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({}, list_out='[{"state": "ready"}]')
+    cleanup = _sweep(monkeypatch, voxd, "new")
+    assert "no id" in cleanup.problems[0]
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    with pytest.raises(ValueError, match="no id"):
+        verify_workers.WorkerFleet.observe()
+
+
+def test_a_non_string_id_is_a_reported_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({}, list_out='[{"id": 7, "state": "ready"}]')
+    assert "no id" in _sweep(monkeypatch, voxd, "new").problems[0]
+
+
+def test_a_clean_stop_is_still_checked_when_another_problem_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({"old": "ready", "new": "ready"}, stop_works=False)
+    cleanup = _sweep(monkeypatch, voxd, "old", "new", before=("old",))
+    assert any("existed before" in p for p in cleanup.problems)
+    assert any("worker new is still running" in p for p in cleanup.problems)

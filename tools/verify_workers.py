@@ -52,7 +52,10 @@ class Cleanup:
         str, ...
     ]  # Still running after the call; this run stopped them.
     problems: tuple[str, ...]  # Each thing that could not be checked or stopped.
-    unproven: tuple[WorkerRow, ...] = ()  # New during the call, absent from its trace.
+    unproven: tuple[
+        WorkerRow, ...
+    ] = ()  # Running, new during the call, not in its trace.
+    ignored: tuple[WorkerRow, ...] = ()  # New and already ended: nothing left to stop.
 
 
 @final
@@ -88,9 +91,9 @@ class WorkerFleet:
             rows = self._rows()
         except ValueError as exc:
             return Cleanup(started, (), (str(exc),))
-        unproven = tuple(
-            row for row in rows if row.id not in self._before and row.id not in started
-        )
+        new = [r for r in rows if r.id not in self._before and r.id not in started]
+        unproven = tuple(r for r in new if r.running)
+        ignored = tuple(r for r in new if not r.running)
         running = {row.id for row in rows if row.running}
         foreign = tuple(w for w in started if w in self._before)
         left = tuple(w for w in started if w in running and w not in foreign)
@@ -98,10 +101,15 @@ class WorkerFleet:
             f"worker {w} existed before the call, so it was not stopped"
             for w in foreign
         ]
-        problems += [fault for worker in left if (fault := self._stop(worker))]
-        if left and not problems:
-            problems = self._still_running(left)
-        return Cleanup(started, left, tuple(problems), unproven)
+        stopped: list[str] = []
+        for worker in left:
+            if fault := self._stop(worker):
+                problems.append(fault)
+            else:
+                stopped.append(worker)
+        if stopped:
+            problems += self._still_running(tuple(stopped))
+        return Cleanup(started, left, tuple(problems), unproven, ignored)
 
     def _still_running(self, stopped: tuple[str, ...]) -> list[str]:
         """Return a problem for each worker a successful stop left running."""
@@ -137,6 +145,8 @@ class WorkerFleet:
         entries = [cast("dict[str, object]", r) for r in rows if isinstance(r, dict)]
         if len(entries) != len(rows):
             raise ValueError("vox worker list printed not a list of workers")
+        if not all(isinstance(e.get("id"), str) for e in entries):
+            raise ValueError("vox worker list printed a worker with no id")
         return [
             WorkerRow(str(e["id"]), str(e.get("state", "")), str(e.get("task", "")))
             for e in entries

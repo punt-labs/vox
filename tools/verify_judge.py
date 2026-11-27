@@ -48,6 +48,7 @@ class Judge:
         "_agent",
         "_cleanup",
         "_ended",
+        "_launch_exit",
         "_output",
         "_report",
         "_search_key",
@@ -60,6 +61,7 @@ class Judge:
     _agent: list[str]
     _tools: list[str]
     _ended: bool
+    _launch_exit: int
     _trace: list[dict[str, object]] | None  # None: no trace was read.
     _cleanup: Cleanup | None  # None: no worker cleanup was attempted.
 
@@ -71,11 +73,13 @@ class Judge:
         search_key: bool,
         trace: list[dict[str, object]] | None = None,
         cleanup: Cleanup | None = None,
+        launch_exit: int = 0,
     ) -> Self:
         """Bind the report, the call's other output and whether search is set up."""
         self = super().__new__(cls)
         self._report, self._output, self._search_key = report, output, search_key
         self._trace, self._cleanup = trace, cleanup
+        self._launch_exit = launch_exit
         self._agent, self._tools, self._ended = self._parse(report)
         return self
 
@@ -268,21 +272,25 @@ class Judge:
         if cleanup is None:
             return Verdict(name, "FAIL", "no worker cleanup was attempted")
         found = [*cleanup.problems, *(row.describe() for row in cleanup.unproven)]
+        if cleanup.left_running:
+            found.append(
+                f"the agent left {', '.join(cleanup.left_running)} running; "
+                "this run stopped it"
+            )
         if found:
             return Verdict(name, "FAIL", "; ".join(found))
         if not cleanup.started:
             return Verdict(name, "FAIL", "the call started no worker to stop")
-        if cleanup.left_running:
-            return Verdict(
-                name,
-                "FAIL",
-                f"the agent left {', '.join(cleanup.left_running)} running; "
-                "this run stopped it",
-            )
         stops = [t for t in self._tools if t.startswith("tool: stop_worker(")]
         if not any(t.endswith("-> ok") for t in stops):
             return Verdict(name, "FAIL", f"stop_worker never succeeded: {stops}")
-        return Verdict(name, "PASS", "stop_worker ok; no started worker still running")
+        note = ""
+        if cleanup.ignored:
+            ids = ", ".join(row.id for row in cleanup.ignored)
+            note = f"; {ids} appeared and already ended (not ours to judge)"
+        return Verdict(
+            name, "PASS", f"stop_worker ok; no started worker still running{note}"
+        )
 
     def _silence(self) -> Verdict:
         nags = [t for t in self._agent if _NAG.search(t)]
@@ -295,6 +303,10 @@ class Judge:
             return Verdict("clean end", "FAIL", "the call was still live when judged")
         if "RuntimeWarning" in self._output or "Traceback" in self._output:
             return Verdict("clean end", "FAIL", "warning or traceback on hang-up")
+        if self._launch_exit != 0:
+            return Verdict(
+                "clean end", "FAIL", f"vox call finished with exit {self._launch_exit}"
+            )
         if not self._ended:
             return Verdict("clean end", "FAIL", "the report names no end of the call")
         return Verdict("clean end", "PASS", "ended without a warning")

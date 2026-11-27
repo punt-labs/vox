@@ -326,7 +326,7 @@ def test_a_run_that_placed_no_call_never_stops_one(
 ) -> None:
     recorder = _Recorder(_LIVE)
     monkeypatch.setattr(verify_call.subprocess, "run", recorder)
-    verify_call.CallRun(tmp_path)._stop()
+    verify_call.CallRun(tmp_path)._stop("")
     assert recorder.commands == []
 
 
@@ -544,6 +544,10 @@ class _Voxd:
         self.status_out: str | None = None  # None: the report of ``trace``.
         self.before_code = 0
         self.after_code = 0
+        self.pre_status = "call idle\n"  # What status says before the launch.
+        self.post_statuses: list[str] = []  # Answers after the launch, in order.
+        self.stop_call_code = 0
+        self.launch_raises: BaseException | None = None
         self.commands: list[list[str]] = []
 
     def __call__(
@@ -552,9 +556,22 @@ class _Voxd:
         self.commands.append(command)
         if command[-2:] == ["call", "status"]:
             out = _report(self.trace) if self.status_out is None else self.status_out
+            if self.launched and self.post_statuses:
+                out = (
+                    self.post_statuses.pop(0)
+                    if len(self.post_statuses) > 1
+                    else self.post_statuses[0]
+                )
+            out = out if self.launched else self.pre_status
             return subprocess.CompletedProcess(command, 0, out, "")
+        if command[-2:] == ["call", "stop"]:
+            return subprocess.CompletedProcess(
+                command, self.stop_call_code, "", "stop broke"
+            )
         if "--script" in command:
             self.launched = True
+            if self.launch_raises is not None:
+                raise self.launch_raises
             out = _report(self.trace) if self.launch_out is None else self.launch_out
             err = "Call unavailable" if self.launch_code else ""
             return subprocess.CompletedProcess(command, self.launch_code, out, err)
@@ -573,6 +590,9 @@ class _Voxd:
 
     def stops(self) -> list[str]:
         return [c[-1] for c in self.commands if c[3:5] == ["worker", "stop"]]
+
+    def call_stops(self) -> list[list[str]]:
+        return [c for c in self.commands if c[-2:] == ["call", "stop"]]
 
     def scripts(self) -> list[list[str]]:
         return [c for c in self.commands if "--script" in c]
@@ -675,7 +695,8 @@ def test_a_refused_launch_never_sweeps_the_previous_calls_trace(
     voxd = _Voxd(None, {"old-worker": "ready"}, {"old-worker": "ready"})
     voxd.launch_code = 1
     voxd.launch_out = ""
-    voxd.status_out = _report(_trace_file(older, "old-worker"))
+    voxd.pre_status = _report(_trace_file(older, "old-worker"))
+    voxd.status_out = voxd.pre_status
     cleanup, status = _place(tmp_path, monkeypatch, voxd)
     assert voxd.stops() == []
     assert status == ""
@@ -806,3 +827,194 @@ def test_an_unproven_worker_fails_worker_cleanup_and_is_named() -> None:
     assert status == "FAIL"
     assert "w9" in why
     assert "vox worker stop w9" in why
+
+
+def _live(trace: Path) -> str:
+    return _report(trace).replace("call ended by caller", "call live", 1)
+
+
+def test_a_finished_launch_has_nothing_left_to_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "new"), {}, {"new": "stopped"})
+    other = tmp_path / "foreign"
+    other.mkdir()
+    voxd.status_out = _live(_trace_file(other, "x"))
+    _place(tmp_path, monkeypatch, voxd)
+    assert voxd.call_stops() == []
+
+
+def test_a_live_call_with_a_foreign_trace_is_never_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = tmp_path / "foreign"
+    other.mkdir()
+    foreign = _trace_file(other, "x")
+    voxd = _Voxd(None, {}, {})
+    voxd.pre_status = _report(foreign)
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.status_out = _live(foreign)
+    _place(tmp_path, monkeypatch, voxd)
+    assert voxd.call_stops() == []
+
+
+def test_a_timed_out_launch_still_stops_its_own_live_call_and_its_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = _trace_file(tmp_path, "new")
+    voxd = _Voxd(mine, {}, {"new": "ready"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(mine), _report(mine)]
+    cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    assert len(voxd.call_stops()) == 1
+    assert voxd.stops() == ["new"]
+    assert cleanup.started == ("new",)
+    assert all("did not start" not in p for p in cleanup.problems)
+    assert any("timed out" in p for p in cleanup.problems)
+    assert str(mine) in status
+
+
+def test_a_timed_out_launch_whose_call_already_ended_recovers_its_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = _trace_file(tmp_path, "new")
+    voxd = _Voxd(mine, {}, {"new": "exited"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    assert voxd.call_stops() == []
+    assert str(mine) in status
+    assert cleanup.started == ("new",)
+    assert cleanup.unproven == ()
+
+
+def test_the_launch_timeout_covers_the_script_plus_a_margin() -> None:
+    for search in (True, False):
+        plan = verify_call.script_plan(search=search)
+        total = sum(turn.pause_s for turn in plan)
+        assert verify_call.launch_timeout_s(search=search) >= total + 120
+
+
+def test_the_launch_runs_under_that_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "new"), {}, {"new": "stopped"})
+    _place(tmp_path, monkeypatch, voxd)
+    command = voxd.scripts()[0]
+    assert command[:2] == [
+        "timeout",
+        str(verify_call.launch_timeout_s(search=False)),
+    ]
+
+
+def test_a_failed_call_stop_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = _trace_file(tmp_path)
+    voxd = _Voxd(mine, {}, {})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.stop_call_code = 1
+    voxd.status_out = _live(mine)
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    assert any("vox call stop" in p and "stop broke" in p for p in cleanup.problems)
+
+
+def test_a_status_trace_equal_to_the_pre_launch_one_is_not_this_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    older = _trace_file(tmp_path, "old-worker")
+    voxd = _Voxd(None, {"old-worker": "ready"}, {"old-worker": "ready"})
+    voxd.pre_status = _report(older)
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.status_out = _report(older)
+    cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    assert voxd.stops() == []
+    assert voxd.call_stops() == []
+    assert status == ""
+    assert cleanup.started == ()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [subprocess.TimeoutExpired(["vox"], 435), FileNotFoundError("vox")],
+)
+def test_a_launch_that_raises_still_reports_the_cleanup_and_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: BaseException,
+) -> None:
+    voxd = _Voxd(None, {}, {"w7": "ready"})
+    voxd.launch_raises = error
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 1
+    out = capsys.readouterr().out
+    assert "FAIL worker cleanup" in out
+    assert type(error).__name__ in out
+    assert "w7" in out
+    assert voxd.stops() == []
+
+
+def test_a_script_that_cannot_be_built_fails_the_run_with_its_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(None, {}, {})
+
+    def broken(self: object, *, search: bool) -> Path:
+        raise subprocess.CalledProcessError(1, ["say"])
+
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
+    monkeypatch.setattr(verify_call.CallRun, "_script", broken)
+    assert verify_call.main() == 1
+    assert "CalledProcessError" in capsys.readouterr().out
+    assert voxd.scripts() == []
+
+
+def test_a_non_zero_launch_exit_fails_the_run_even_with_a_good_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path, "abcd1234"), {}, {"abcd1234": "stopped"})
+    voxd.launch_code = 1
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 1
+    assert "FAIL clean end" in capsys.readouterr().out
+
+
+def test_a_zero_launch_exit_is_a_clean_end() -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, trace=_TRACE, cleanup=_CLEAN, launch_exit=0
+    ).verdicts()
+    assert {v.status for v in judged} == {"PASS"}
+
+
+def test_a_launch_exit_other_than_zero_fails_the_clean_end() -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, trace=_TRACE, cleanup=_CLEAN, launch_exit=1
+    ).verdicts()
+    verdict = next(v for v in judged if v.name == "clean end")
+    assert verdict.status == "FAIL"
+    assert "exit 1" in verdict.why
+
+
+def test_every_problem_and_the_left_running_worker_share_one_message() -> None:
+    both = verify_workers.Cleanup(
+        ("abcd1234",), ("abcd1234",), ("vox call stop failed: x",)
+    )
+    status, why = _cleanup_verdict(both)
+    assert status == "FAIL"
+    assert "vox call stop failed: x" in why
+    assert "left abcd1234 running" in why
+
+
+def test_a_new_worker_that_already_ended_is_information_not_a_failure() -> None:
+    ended = verify_workers.WorkerRow("w9", "exited", "do things")
+    cleanup = verify_workers.Cleanup(("abcd1234",), (), (), (), (ended,))
+    status, why = _cleanup_verdict(cleanup)
+    assert status == "PASS"
+    assert "w9" in why
+    assert "already ended" in why
