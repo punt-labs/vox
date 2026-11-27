@@ -558,7 +558,8 @@ class TestFinishNeverWaitsOnADeadDevice:
             pytest.raises(OutputDeviceLostError),
         ):
             await asyncio.wait_for(sink.wait(), timeout=2)
-        assert "made no progress" in caplog.text
+        # Between one and two stall periods: the log must not claim more.
+        assert "no callback for at least 0.01 s" in caplog.text
 
     async def test_a_stalled_device_with_nothing_queued_is_aborted_not_stopped(
         self, monkeypatch: pytest.MonkeyPatch

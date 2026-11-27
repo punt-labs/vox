@@ -236,7 +236,8 @@ class PcmStreamSink:
         """Return once the audio played out, or the sink was flushed or closed.
 
         Raises :class:`OutputDeviceLostError` if the device stopped first, or
-        made no callback for two stall periods: a hang-up must not wait on a
+        was silent for at least one stall period (the check runs once per
+        period, so it fires after one to two): a hang-up must not wait on a
         device that has gone away without saying so.
         """
         calls = -1
@@ -254,8 +255,9 @@ class PcmStreamSink:
         except TimeoutError:
             if self._callbacks == calls:
                 logger.warning(
-                    "PCM output made no progress for %.1f s; giving up the wait",
-                    2 * _STALL_WAIT_S,
+                    "PCM output made no callback for at least %.3g s; "
+                    "giving up the wait",
+                    _STALL_WAIT_S,
                 )
                 # Release with abort(): stop() waits on the device to drain.
                 self._device_lost = True
