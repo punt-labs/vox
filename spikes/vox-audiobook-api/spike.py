@@ -153,7 +153,9 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
 def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     """Text-to-dialogue with 2 voices: does eleven_v4 take them, or only v3?
 
-    A refusal by one model is a finding; the probe fails only if both refuse.
+    A refusal by one model is a finding, but the probe records FAIL when both
+    refuse, and when a 200 from either model carries a body that is not audio
+    (wrong content type or under MIN_AUDIO_BYTES).
     """
     inputs = [
         {"text": "[warmly] Professor Chen, the proof has a gap.", "voice_id": SARAH},
