@@ -129,7 +129,7 @@ class GapSmoother:
     @property
     def needs_fade_out(self) -> bool:
         """Return whether the device must still play a fade-out tail."""
-        return self._mode in {"cut", "tail"} or self._last != 0
+        return self._last != 0
 
     def note_boundary(self, offset: int) -> None:
         """Note that a new utterance begins at stream byte *offset*.

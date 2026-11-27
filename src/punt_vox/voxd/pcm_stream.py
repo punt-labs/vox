@@ -57,6 +57,9 @@ block at the very end of it) can still sound."""
 _TAIL_WAIT_S = 2 * _BLOCK_FRAMES / PCM_SAMPLE_RATE_HZ
 """40 ms: two callbacks, enough for the one after a flush to write its tail."""
 
+_STALL_WAIT_S = 1.0
+"""A device that has made no callback for this long is stalled, not slow."""
+
 type SinkPhase = Literal["streaming", "finished", "interrupted", "closed"]
 """Where a sink is: arriving, fully fed, flushed, or released.
 
@@ -79,6 +82,7 @@ class PcmStreamSink:
 
     __slots__ = (
         "_buffer",
+        "_callbacks",
         "_device_flags",
         "_device_lost",
         "_done",
@@ -95,6 +99,7 @@ class PcmStreamSink:
     )
 
     _buffer: PcmBuffer
+    _callbacks: int
     _device_flags: int
     _device_lost: bool
     _done: asyncio.Event
@@ -113,6 +118,7 @@ class PcmStreamSink:
         """Create a sink that signals completion on *loop*."""
         self = super().__new__(cls)
         self._buffer = PcmBuffer()
+        self._callbacks = 0
         self._device_flags = 0
         self._device_lost = False
         self._done = asyncio.Event()
@@ -229,12 +235,31 @@ class PcmStreamSink:
     async def wait(self) -> None:
         """Return once the audio played out, or the sink was flushed or closed.
 
-        Raises :class:`OutputDeviceLostError` if the device stopped first.
+        Raises :class:`OutputDeviceLostError` if the device stopped first, or
+        made no callback for two stall periods: a hang-up must not wait on a
+        device that has gone away without saying so.
         """
-        await self._done.wait()
+        calls = -1
+        while not self._done.is_set():
+            calls = await self._wait_or_stall(calls)
         if self._device_lost:
             msg = "output device stopped before the PCM stream ended"
             raise OutputDeviceLostError(msg)
+
+    async def _wait_or_stall(self, calls: int) -> int:
+        """Wait one stall period; return the callback count, or raise if frozen."""
+        try:
+            async with asyncio.timeout(_STALL_WAIT_S):
+                await self._done.wait()
+        except TimeoutError:
+            if self._callbacks == calls:
+                logger.warning(
+                    "PCM output made no progress for %.1f s; giving up the wait",
+                    2 * _STALL_WAIT_S,
+                )
+                msg = "output device made no progress; the PCM stream stalled"
+                raise OutputDeviceLostError(msg) from None
+        return self._callbacks
 
     async def close(self) -> StreamReport:
         """Release the device off the loop and report how the stream ended.
@@ -374,6 +399,7 @@ class PcmStreamSink:
         """Fill one block, padding with silence, and track the end of the stream."""
         out = memoryview(outdata).cast("B")  # PortAudio hands over one block exactly
         filled = self._buffer.pull_into(out)
+        self._callbacks += 1
         offset = self._played
         self._count_block(filled)
         is_short = filled < len(out) and not self._drained

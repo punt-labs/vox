@@ -9,6 +9,7 @@ a pause when a new utterance begins, and neither when the stream ends in it).
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import struct
 from contextlib import asynccontextmanager
@@ -16,10 +17,12 @@ from itertools import pairwise
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from test_pcm_stream import BLOCK, FakeDevice, open_sink
+from test_pcm_stream import BLOCK, DeviceThread, FakeDevice, open_sink
 
+from punt_vox.voxd import pcm_stream
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ, PcmBuffer
 from punt_vox.voxd.pcm_gap import FADE_FRAMES
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.voice_agent.events import Audio
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
@@ -509,3 +512,44 @@ class TestFinishWaitsForTheTail:
         await asyncio.wait_for(sink.wait(), timeout=1)
         await sink.close()
         assert max(steps(device.opened.heard)) <= STEP_LIMIT
+
+
+class TestFinishNeverWaitsOnADeadDevice:
+    async def test_a_hang_up_after_a_long_silence_needs_no_more_callbacks(
+        self,
+    ) -> None:
+        """The fade finished in the first silent block; nothing is left to play."""
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 5), starts_utterance=True)
+        device.opened.pull(5 + 50)  # 100 ms of audio, then a second of silence
+        sink.finish()
+        await asyncio.wait_for(sink.wait(), timeout=1)
+        report = await sink.close()
+        assert device.opened.stopped
+        assert report.trailing_gap.ms == pytest.approx(1000.0)
+
+    async def test_a_device_that_stops_calling_back_ends_the_wait(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.01)
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 5), starts_utterance=True)
+        device.opened.pull(1)
+        sink.finish()  # the other four blocks are never pulled: a stalled device
+        with (
+            caplog.at_level(logging.WARNING, logger="punt_vox.voxd.pcm_stream"),
+            pytest.raises(OutputDeviceLostError),
+        ):
+            await asyncio.wait_for(sink.wait(), timeout=2)
+        assert "made no progress" in caplog.text
+
+    async def test_a_slow_but_live_device_is_waited_for(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pcm_stream, "_STALL_WAIT_S", 0.05)
+        sink, device = await open_sink()
+        sink.feed(tone(BLOCK * 6), starts_utterance=True)
+        sink.finish()
+        with DeviceThread(device.opened):
+            await asyncio.wait_for(sink.wait(), timeout=2)
+        await sink.close()
