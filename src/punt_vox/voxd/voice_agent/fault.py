@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-__all__ = ["ConvAIError", "ForeignResourceError", "UnknownCreateError"]
+from typing import cast
+
+__all__ = [
+    "ConvAIError",
+    "ForeignResourceError",
+    "SweepIncompleteError",
+    "UnknownCreateError",
+]
 
 
 class ConvAIError(RuntimeError):
@@ -15,3 +22,15 @@ class ForeignResourceError(ConvAIError):
 
 class UnknownCreateError(ConvAIError):
     """Report a create whose outcome is unknown: it may have committed remotely."""
+
+
+class SweepIncompleteError(ConvAIError):
+    """Report a listing walk cut short, with the marked ids it had already found.
+
+    ``args`` is the message and then the found ids.
+    """
+
+    @property
+    def found(self) -> tuple[str, ...]:
+        """Return the marked ids found before the walk stopped."""
+        return cast("tuple[str, ...]", self.args[1])

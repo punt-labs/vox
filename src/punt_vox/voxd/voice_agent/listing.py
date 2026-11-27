@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Self, cast, final
 
-from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_agent.fault import ConvAIError, SweepIncompleteError
 from punt_vox.voxd.voice_agent.reply import Reply
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.voice_agent.wire import Wire
 
 __all__ = ["Listing"]
@@ -25,6 +27,20 @@ class _Page:
     next_cursor: str | None  # None on the last page.
 
 
+@dataclass(frozen=True, slots=True)
+class _Kind:
+    """Where one kind of resource is listed, and where its id and text sit."""
+
+    path: str
+    items: str  # The reply field holding the page's entries.
+    id_field: str
+    text_field: tuple[str, ...]
+
+
+_AGENTS: Final = _Kind("/agents", "agents", "agent_id", ("name",))
+_TOOLS: Final = _Kind("/tools", "tools", "id", ("tool_config", "description"))
+
+
 @final
 class Listing:
     """Walk a paged ElevenLabs listing from its first page to its last."""
@@ -38,25 +54,24 @@ class Listing:
         self._wire = wire
         return self
 
-    def marked_agents(self, marker: str) -> tuple[str, ...]:
-        """Return the ids of every agent on the account whose name has *marker*."""
-        return self._marked("/agents", "agents", "agent_id", ("name",), marker)
+    def marked_agents(
+        self, marker: str, expired: Callable[[], bool]
+    ) -> tuple[str, ...]:
+        """Return the ids of every agent on the account whose name has *marker*.
 
-    def marked_tools(self, marker: str) -> tuple[str, ...]:
+        Raises :class:`SweepIncompleteError`, carrying what it found, once
+        *expired* answers True between pages.
+        """
+        return self._marked(_AGENTS, marker, expired)
+
+    def marked_tools(self, marker: str, expired: Callable[[], bool]) -> tuple[str, ...]:
         """Return the ids of every tool whose description has *marker*."""
-        return self._marked(
-            "/tools", "tools", "id", ("tool_config", "description"), marker
-        )
+        return self._marked(_TOOLS, marker, expired)
 
     def _marked(
-        self,
-        path: str,
-        items: str,
-        id_field: str,
-        text_field: tuple[str, ...],
-        marker: str,
+        self, kind: _Kind, marker: str, expired: Callable[[], bool]
     ) -> tuple[str, ...]:
-        """Return the ids at *path* whose text at *text_field* contains *marker*.
+        """Return the ids at *kind* whose text contains *marker*.
 
         Raises :class:`ConvAIError` for a reply that is not a listing, a cursor
         that repeats, or a listing that outlasts the page bound.
@@ -65,66 +80,61 @@ class Listing:
         seen: set[str] = set()
         cursor: str | None = None
         for _ in range(_MAX_PAGES):
-            params = {"page_size": str(_PAGE_SIZE)}
-            if cursor is not None:
-                params["cursor"] = cursor
-            page = self._page(
-                self._wire.request("GET", path, params=params),
-                items,
-                id_field,
-                text_field,
-                marker,
-            )
+            if expired():
+                msg = f"ElevenLabs GET {kind.path} ran out of time"
+                raise SweepIncompleteError(msg, tuple(found))
+            reply = self._wire.request("GET", kind.path, params=self._params(cursor))
+            page = self._page(reply, kind, marker)
             found.extend(page.ids)
             cursor = page.next_cursor
             if cursor is None:
                 return tuple(found)
             if cursor in seen:
-                msg = f"ElevenLabs GET {path} repeated a cursor"
+                msg = f"ElevenLabs GET {kind.path} repeated a cursor"
                 raise ConvAIError(msg)
             seen.add(cursor)
-        msg = f"ElevenLabs GET {path} did not end after {_MAX_PAGES} pages"
+        msg = f"ElevenLabs GET {kind.path} did not end after {_MAX_PAGES} pages"
         raise ConvAIError(msg)
 
-    def _page(
-        self,
-        reply: Reply,
-        items: str,
-        id_field: str,
-        text_field: tuple[str, ...],
-        marker: str,
-    ) -> _Page:
+    @staticmethod
+    def _params(cursor: str | None) -> dict[str, str]:
+        params = {"page_size": str(_PAGE_SIZE)}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return params
+
+    def _page(self, reply: Reply, kind: _Kind, marker: str) -> _Page:
         """Read one page and keep the ids of the entries that carry *marker*.
 
         An entry with no text cannot carry it and is skipped. Anything else
         unreadable is an error: a skipped entry might be the resource to delete.
         """
-        raw = reply.value(items)
+        raw = reply.value(kind.items)
         if not isinstance(raw, list):
-            msg = f"ElevenLabs reply is missing {items}"
+            msg = f"ElevenLabs reply is missing {kind.items}"
             raise ConvAIError(msg)
         ids: list[str] = []
         for entry in cast("list[object]", raw):
             if not isinstance(entry, dict):
-                msg = f"ElevenLabs {items} listing has an entry that is not an object"
+                msg = f"ElevenLabs {kind.items} has an entry that is not an object"
                 raise ConvAIError(msg)
             fields = cast("dict[str, object]", entry)
-            text = self._text(fields, text_field)
+            text = self._text(fields, kind.text_field)
             if text is None or marker not in text:
                 continue
-            resource_id = fields.get(id_field)
+            resource_id = fields.get(kind.id_field)
             if not isinstance(resource_id, str):
-                msg = f"ElevenLabs {items} listing has a marked entry with no usable id"
+                msg = f"ElevenLabs {kind.items} has a marked entry with no usable id"
                 raise ConvAIError(msg)
             ids.append(Reply.resource_id(resource_id))
-        return _Page(tuple(ids), self._cursor(reply, items))
+        return _Page(tuple(ids), self._cursor(reply, kind))
 
     @staticmethod
-    def _cursor(reply: Reply, items: str) -> str | None:
+    def _cursor(reply: Reply, kind: _Kind) -> str | None:
         """Return where the next page is; None when this was the last."""
         has_more = reply.value("has_more")
         if not isinstance(has_more, bool):
-            msg = f"ElevenLabs {items} listing has no boolean has_more"
+            msg = f"ElevenLabs {kind.items} listing has no boolean has_more"
             raise ConvAIError(msg)
         if not has_more:
             return None
@@ -136,9 +146,20 @@ class Listing:
 
     @staticmethod
     def _text(entry: object, path: tuple[str, ...]) -> str | None:
+        """Return the text at *path*; None only if it is absent, null or empty."""
         value: object = entry
         for name in path:
-            if not isinstance(value, dict):
+            if value is None:
                 return None
+            if not isinstance(value, dict):
+                msg = (
+                    f"ElevenLabs listing has a parent of {name!r} that is not an object"
+                )
+                raise ConvAIError(msg)
             value = cast("dict[str, object]", value).get(name)
-        return value if isinstance(value, str) else None
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            msg = f"ElevenLabs listing has {path[-1]!r} that is not text"
+            raise ConvAIError(msg)
+        return value

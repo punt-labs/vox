@@ -594,3 +594,20 @@ async def test_search_arguments_are_not_kept_in_the_call_status() -> None:
     await call.run(_dial)
     shown = call.status()["tool_calls"]
     assert shown == [{"tool": "search_web", "arguments": {}, "error": True}]
+
+
+async def test_a_provisioning_failure_note_reaches_the_call_status() -> None:
+    async def provisioning_failed() -> tuple[str, SessionOptions]:
+        failure = ConvAIError("ElevenLabs POST /tools failed (ReadTimeout)")
+        failure.add_note(
+            "registration not restored; still on ElevenLabs and unrecorded: "
+            "agents [], tools ['tool_alarm']"
+        )
+        raise failure
+
+    call = _call(_Peer([]))
+    await call.run(provisioning_failed)
+    error = str(call.status()["error"])
+    assert error.startswith("ElevenLabs POST /tools failed (ReadTimeout)")
+    assert "tools ['tool_alarm']" in error
+    assert call.outcome().error == error

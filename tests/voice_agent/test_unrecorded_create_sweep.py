@@ -324,3 +324,74 @@ def test_ids_left_on_elevenlabs_are_named_when_the_registration_cannot_be_restor
     notes = "\n".join(caught.value.__notes__)
     assert "tool_alarm" in notes
     assert "not restored" in notes
+
+
+class _Clock:
+    """A clock that advances *step* seconds each time it is read."""
+
+    def __init__(self, step: float) -> None:
+        self._now, self._step = 0.0, step
+
+    def __call__(self) -> float:
+        now = self._now
+        self._now += self._step
+        return now
+
+
+def _slow_sweep_account(wire: Requests) -> None:
+    """Leave a marked orphan on page one and the lost create on a later page."""
+    wire.tools["tool_orphan"] = wire.tools["tool_clock"]
+    for number in range(3):
+        wire.tools[f"tool_foreign_{number}"] = "Someone else's tool"
+    wire.list_page_size = 2
+    wire.next_tool_ids = ["tool_alarm"]
+    wire.drop_reply_after_tool_commit = True
+
+
+def test_a_sweep_stops_at_its_deadline_and_still_deletes_what_it_found(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(6.0))
+        agent.connection((_CLOCK,))
+        wire.calls.clear()
+        wire.delete_forgets = True
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        _slow_sweep_account(wire)
+        with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
+            agent.connection((_ALARM,))
+    assert "tool_orphan" not in wire.tools
+    assert wire.listings.count("tools") == 1  # The deadline cut the walk short.
+    assert any("did not finish within" in note for note in caught.value.__notes__)
+
+
+def test_a_found_resource_the_deadline_sweep_cannot_delete_is_kept(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(6.0))
+        agent.connection((_CLOCK,))
+        wire.delete_tool_status = 403
+        _slow_sweep_account(wire)
+        with pytest.raises(ConvAIError, match=_UNRECORDED):
+            agent.connection((_ALARM,))
+    assert _stored(config)["retired_tools"] == ["tool_orphan"]
+
+
+def test_a_sweep_within_its_deadline_reads_every_page(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _REGISTRATION
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config, clock=_Clock(0.0))
+        agent.connection((_CLOCK,))
+        wire.delete_forgets = True
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        _slow_sweep_account(wire)
+        with pytest.raises(ConvAIError, match=_UNRECORDED) as caught:
+            agent.connection((_ALARM,))
+    assert "tool_alarm" not in wire.tools
+    notes = getattr(caught.value, "__notes__", [])
+    assert not any("did not finish" in note for note in notes)

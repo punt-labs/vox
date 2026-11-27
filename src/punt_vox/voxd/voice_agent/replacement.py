@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.voice_agent.contracts import Registration
 from punt_vox.voxd.voice_agent.disposal import Undeleted
-from punt_vox.voxd.voice_agent.fault import ConvAIError, UnknownCreateError
+from punt_vox.voxd.voice_agent.fault import (
+    ConvAIError,
+    SweepIncompleteError,
+    UnknownCreateError,
+)
+from punt_vox.voxd.voice_agent.wire import UNKNOWN_CREATE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,6 +27,10 @@ if TYPE_CHECKING:
 __all__ = ["Replacement"]
 
 logger = logging.getLogger(__name__)
+
+# Total time for one orphan sweep. A request can take 10 s, so the sweep ends
+# well inside the daemon's 30 s wait for a connection.
+SWEEP_BUDGET_S: Final = 15.0
 
 
 @final
@@ -57,7 +66,10 @@ class Replacement:
         return self
 
     def build(
-        self, tools: tuple[ClientTool, ...], fingerprint: str
+        self,
+        tools: tuple[ClientTool, ...],
+        fingerprint: str,
+        clock: Callable[[], float],  # Times the sweep after a lost create reply.
     ) -> tuple[Registration, str]:
         """Create the tools and agent; return the new record and the agent id."""
         base = self._base or Registration(None, (), "", self._control.credential_id)
@@ -85,9 +97,12 @@ class Replacement:
             self._store.write(finished)
         except Exception as failure:
             try:
-                for problem in self._abandon(
-                    record, sweep=isinstance(failure, UnknownCreateError)
-                ):
+                expired = (
+                    self._deadline(clock, SWEEP_BUDGET_S)
+                    if isinstance(failure, UnknownCreateError)
+                    else None
+                )
+                for problem in self._abandon(record, expired):
                     failure.add_note(problem)
             except (ConvAIError, OSError) as cleanup:
                 # Cleanup must never replace the failure that started it.
@@ -95,18 +110,20 @@ class Replacement:
             raise
         return finished, agent_id
 
-    def _abandon(self, record: Registration, *, sweep: bool) -> tuple[str, ...]:
+    def _abandon(
+        self, record: Registration, expired: Callable[[], bool] | None
+    ) -> tuple[str, ...]:
         """Delete what the attempt created and restore the old registration.
 
-        With *sweep*, a create whose reply was lost may have left a resource no
+        With *expired*, a create whose reply was lost may have left a resource no
         record names; the account is searched for it too. Returns what the
         caller must still be told: a failed search, or ids left on ElevenLabs
         that no file records.
         """
         agents, tools = record.pending_agents, record.pending_tools
         problems: list[str] = []
-        if sweep:
-            found_agents, found_tools = self._unrecorded(record, problems)
+        if expired is not None:
+            found_agents, found_tools = self._unrecorded(record, problems, expired)
             agents, tools = (*agents, *found_agents), (*tools, *found_tools)
         kept_agents = Undeleted.ids(self._disposal.agents(agents))
         kept_tools = Undeleted.ids(self._disposal.tools(tools))
@@ -136,7 +153,10 @@ class Replacement:
         return tuple(problems)
 
     def _unrecorded(
-        self, record: Registration, problems: list[str]
+        self,
+        record: Registration,
+        problems: list[str],
+        expired: Callable[[], bool],
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Return this host's marked agents and tools that no record names.
 
@@ -158,12 +178,24 @@ class Replacement:
             ),
         ):
             try:
-                ids = listed(self._marker.text())
+                ids = listed(self._marker.text(), expired)
+            except SweepIncompleteError as exc:
+                problems.append(
+                    f"sweep of {kind} did not finish within {SWEEP_BUDGET_S:g} s"
+                    f"{UNKNOWN_CREATE}"
+                )
+                ids = exc.found
             except ConvAIError as exc:
                 problems.append(f"sweep of {kind} failed: {exc}")
                 ids = ()
             found.append(tuple(i for i in ids if i not in named))
         return found[0], found[1]
+
+    @staticmethod
+    def _deadline(clock: Callable[[], float], budget_s: float) -> Callable[[], bool]:
+        """Return a test that is True once *budget_s* has passed on *clock*."""
+        limit = clock() + budget_s
+        return lambda: clock() >= limit
 
     def _checkpoint(
         self,

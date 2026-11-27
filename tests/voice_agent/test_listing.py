@@ -16,9 +16,13 @@ if TYPE_CHECKING:
 _MARKER = "[vox-voice-agent host=abc]"
 
 
+def _never() -> bool:
+    return False
+
+
 def _marked_tools(wire: Requests) -> tuple[str, ...]:
     with ConvAIControl(API_KEY, base_url=wire.url) as control:
-        return control.listing.marked_tools(_MARKER)
+        return control.listing.marked_tools(_MARKER, _never)
 
 
 @pytest.mark.parametrize("has_more", ["yes", None, 1, "false"])
@@ -76,3 +80,46 @@ def test_a_listing_longer_than_the_page_bound_names_the_pages_read(
         wire.tools[f"tool_{number}"] = "Foreign"
     with pytest.raises(ConvAIError, match=r"did not end after 100 pages"):
         _marked_tools(wire)
+
+
+def _marked_agents(wire: Requests) -> tuple[str, ...]:
+    with ConvAIControl(API_KEY, base_url=wire.url) as control:
+        return control.listing.marked_agents(_MARKER, _never)
+
+
+def test_an_agent_whose_name_is_not_text_is_an_error(wire: Requests) -> None:
+    wire.extra_entries["agents"] = [{"agent_id": "agent_x", "name": 7}]
+    with pytest.raises(ConvAIError, match="not text"):
+        _marked_agents(wire)
+
+
+def test_a_tool_whose_description_is_not_text_is_an_error(wire: Requests) -> None:
+    wire.extra_entries["tools"] = [{"id": "t", "tool_config": {"description": 7}}]
+    with pytest.raises(ConvAIError, match="not text"):
+        _marked_tools(wire)
+
+
+@pytest.mark.parametrize("config", ["flat", 3, ["description"]])
+def test_a_tool_config_that_is_not_an_object_is_an_error(
+    wire: Requests, config: object
+) -> None:
+    wire.extra_entries["tools"] = [{"id": "t", "tool_config": config}]
+    with pytest.raises(ConvAIError, match="not an object"):
+        _marked_tools(wire)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"id": "t"},
+        {"id": "t", "tool_config": None},
+        {"id": "t", "tool_config": {}},
+        {"id": "t", "tool_config": {"description": None}},
+        {"id": "t", "tool_config": {"description": ""}},
+    ],
+)
+def test_an_entry_with_no_text_is_still_skipped(
+    wire: Requests, entry: dict[str, object]
+) -> None:
+    wire.extra_entries["tools"] = [entry]
+    assert _marked_tools(wire) == ()
