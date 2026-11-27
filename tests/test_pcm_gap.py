@@ -614,6 +614,39 @@ class TestFinishWaitsForTheCallbackThatOwnsTheFinalBlock:
         assert not any(device.opened.heard[(BLOCK + FADE_FRAMES) * 2 :])
         await sink.close()
 
+    async def test_audio_fed_after_a_short_pull_is_still_played_after_finish(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The last chunk and the hang-up land between a pull and its phase read."""
+        sink, device = await open_sink()
+        sink.feed(tone(64), starts_utterance=True)
+        pulled, resume = threading.Event(), threading.Event()
+        pull_into = PcmBuffer.pull_into
+
+        def paused(buffer: PcmBuffer, out: memoryview) -> int:
+            filled = pull_into(buffer, out)  # 64 frames into a 320-frame block
+            pulled.set()
+            resume.wait(timeout=5)
+            return filled
+
+        monkeypatch.setattr(PcmBuffer, "pull_into", paused)
+        callback = threading.Thread(target=device.opened.pull)
+        callback.start()
+        assert await asyncio.to_thread(pulled.wait, 5)
+        final = tone(BLOCK)
+        sink.feed(final)
+        sink.finish()
+        resume.set()
+        callback.join()
+        monkeypatch.undo()
+        assert not device.opened.is_finished  # more audio is queued: no completion
+        device.opened.pull(3)
+        report = await sink.close()
+        assert (report.played.nbytes, report.dropped.nbytes) == (
+            64 * 2 + len(final),
+            0,
+        )
+
 
 class TestACloseBeforeTheDrainOwesNoPlayoutReport:
     async def test_a_finished_stream_closed_with_audio_queued_aborts_at_once(

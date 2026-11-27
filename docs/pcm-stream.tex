@@ -235,6 +235,12 @@ the drain: \texttt{Drain} is therefore allowed from \texttt{interrupted}
 too. Nothing is pending in either case, so the two orders end in the same
 counts; only the report's \texttt{interrupted} flag differs.
 
+The callback pulls before it reads the phase, so a short pull can precede a
+final \texttt{Feed} and \texttt{Finish}. The code therefore looks at the
+buffer again after it reads \texttt{finished}: nothing can be fed after that
+phase, and a non-empty buffer means the next callback pulls the rest, which is
+what \texttt{pending = 0} above requires.
+
 \section{Dry spells}
 
 A dry spell is the buffer running empty while audio was playing and the

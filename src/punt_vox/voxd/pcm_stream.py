@@ -207,9 +207,7 @@ class PcmStreamSink:
     @property
     def _is_settled(self) -> bool:
         """Return whether nothing is left for a flush to discard."""
-        return self._phase in {"interrupted", "closed"} or (
-            self._phase == "finished" and self._drained
-        )
+        return self._phase in {"interrupted", "closed"} or self._is_played_out
 
     def finish(self) -> None:
         """Mark the response complete: no more :meth:`feed` calls follow.
@@ -294,9 +292,12 @@ class PcmStreamSink:
         callback drained. A finished stream closed with audio still queued is
         a teardown: it aborts at once, and the device is not lost.
         """
-        return self._phase == "interrupted" or (
-            self._phase == "finished" and self._drained
-        )
+        return self._phase == "interrupted" or self._is_played_out
+
+    @property
+    def _is_played_out(self) -> bool:
+        """Return whether the callback drained a finished stream."""
+        return self._phase == "finished" and self._drained
 
     async def _await_playout(self) -> bool:
         """Wait, bounded, for the device to report a finished stream played out.
@@ -421,7 +422,9 @@ class PcmStreamSink:
         the buffers it holds and reports finished, which is what close() waits
         for. A finished stream also wakes :meth:`wait`.
         """
-        if is_short and phase == "finished":
+        if is_short and phase == "finished" and not self._buffer:
+            # The pull preceded the phase read: audio fed before finish() may
+            # still be queued, and nothing can arrive after it.
             self._drained = True
             self._watch.signal(self._done)
         elif phase != "interrupted":
