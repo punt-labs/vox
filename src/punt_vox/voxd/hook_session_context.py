@@ -78,6 +78,7 @@ class SessionContext:
             case "SessionStart":
                 self._started = True
             case "UserPromptSubmit":
+                self._prompt_seq = max(self._prompt_seq, sequence)
                 self._goal = self._newest(
                     self._goal, sequence, HookText.clip(payload.get("prompt"))
                 )
@@ -96,7 +97,6 @@ class SessionContext:
         self._last_event_at = max(self._last_event_at, at)
         if event == "UserPromptSubmit":
             self._input.ingest(sequence, payload.get("prompt"))
-            self._prompt_seq = max(self._prompt_seq, sequence)
         self._decisions.ingest(sequence, event, payload)
 
     @staticmethod

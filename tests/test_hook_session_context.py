@@ -183,3 +183,13 @@ def test_the_prompt_boundary_survives_a_checkpoint_as_its_own_sequence() -> None
     session = SessionContext()
     session.ingest(4, "UserPromptSubmit", {"prompt": ""}, worker_input=True)
     assert session.checkpoint()["prompt_seq"] == 4
+
+
+@pytest.mark.parametrize("prompt", ["never mind", ""])
+def test_an_ordinary_session_prompt_also_ends_the_tool_before_it(prompt: str) -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    session.ingest(2, "UserPromptSubmit", {"prompt": prompt})
+    snapshot = session.snapshot()
+    assert snapshot["in_flight_tool"] is None
+    assert snapshot["turn_seq"] == 2
