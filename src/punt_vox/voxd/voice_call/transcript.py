@@ -1,9 +1,8 @@
-"""The recent exchange of one voice call, as its status reply shows it."""
+"""The whole exchange of one voice call, as its status reply shows it."""
 
 from __future__ import annotations
 
-from collections import deque
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
@@ -16,20 +15,22 @@ if TYPE_CHECKING:
 
 __all__ = ["CallTranscript"]
 
-_HISTORY: Final = 20
-
 
 @final
 class CallTranscript:
-    """Keep the last turns, rewriting an interrupted agent reply in place."""
+    """Keep every turn, rewriting an interrupted agent reply in place.
+
+    The end-of-call report is the record of the call, so it keeps the greeting
+    however long the call ran; a call lasts minutes, so the list stays small.
+    """
 
     __slots__ = ("_turns",)
-    _turns: deque[tuple[str | None, Turn]]  # (response_id, turn); users have none.
+    _turns: list[tuple[str | None, Turn]]  # (response_id, turn); users have none.
 
     def __new__(cls) -> Self:
-        """Start an empty exchange capped at the last turns a status shows."""
+        """Start an empty exchange."""
         self = super().__new__(cls)
-        self._turns = deque(maxlen=_HISTORY)
+        self._turns = []
         return self
 
     def record(
@@ -45,7 +46,7 @@ class CallTranscript:
                 self._correct(event)
 
     def turns(self) -> list[Turn]:
-        """Return the kept turns, oldest first."""
+        """Return every turn, oldest first."""
         return [turn for _, turn in self._turns]
 
     def _correct(self, correction: AgentResponseCorrection) -> None:
