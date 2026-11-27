@@ -33,6 +33,7 @@ class WorkerHookCheckpoint(HookContextSnapshot):
     result_seq: int
     worker_seq: int
     goal_seq: int
+    prompt_seq: int  # Newest prompt of any text; an empty one still ends a tool.
     tool_history_checkpoint: ToolHistoryCheckpoint
 
 
@@ -50,6 +51,7 @@ class CheckpointOrdering:
             checkpoint["prompt_epoch"],
             checkpoint["result_seq"],
             checkpoint["goal_seq"],
+            checkpoint["prompt_seq"],
         )
         if not all(
             type(seq) is int and 0 <= seq <= checkpoint["gaps"]["highest_seen"]

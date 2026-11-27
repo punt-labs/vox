@@ -147,3 +147,10 @@ def test_a_worker_that_is_gone_reports_no_tool_in_flight(state: WorkerState) -> 
     detail = WorkerActivity(worker).detail(now=1.0)
     assert "tool_in_flight" not in detail
     assert detail["files"] == ["/repo/a.py"]
+
+
+@pytest.mark.parametrize("error", ["launch_error", "stop_error", "cleanup_error"])
+def test_a_worker_with_a_lifecycle_error_shows_no_tool_in_flight(error: str) -> None:
+    worker = payload("w", in_flight_tool="Bash", **{error: "OSError"})
+    assert WorkerActivity(worker).state == "finished"
+    assert "tool_in_flight" not in WorkerActivity(worker).detail(now=1.0)

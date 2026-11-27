@@ -42,9 +42,7 @@ class WorkerActivity:
         A Stop ends the turn; the word stays ``finished`` until a new prompt or
         tool starts, whatever lifecycle events follow.
         """
-        if self._lifecycle in ("exited", "stopped") or any(
-            key in self._report for key in _ERROR_KEYS
-        ):
+        if self._gone:
             return "finished"
         pending = self._report.get("pending_decision")
         if isinstance(pending, dict):
@@ -54,6 +52,13 @@ class WorkerActivity:
         if not self._count("worker_seq"):
             return "idle"
         return "finished" if self._turn_ended() else "working"
+
+    @property
+    def _gone(self) -> bool:
+        """Return whether the worker has exited, stopped or failed to launch or stop."""
+        return self._lifecycle in ("exited", "stopped") or any(
+            key in self._report for key in _ERROR_KEYS
+        )
 
     def _asked(self, pending: dict[str, object]) -> ActivityState:
         """Return the word for an open question: blocked, or waiting for a prompt."""
@@ -92,8 +97,7 @@ class WorkerActivity:
             else []
         }
         # Termination keeps the last hook report, so a gone worker runs no tool.
-        gone = self._lifecycle in ("exited", "stopped")
-        if (tool := self._report.get("in_flight_tool")) and not gone:
+        if (tool := self._report.get("in_flight_tool")) and not self._gone:
             detail["tool_in_flight"] = tool
         if isinstance(failure := self._report.get("open_failure"), dict):
             found = cast("dict[str, object]", failure)

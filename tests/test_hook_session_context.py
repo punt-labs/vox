@@ -167,3 +167,19 @@ def test_a_restart_keeps_a_tool_before_the_newest_prompt_out_of_flight() -> None
     restored.restore(session.checkpoint())
     assert session.snapshot()["in_flight_tool"] is None
     assert restored.snapshot() == session.snapshot()
+
+
+def test_a_prompt_with_no_text_still_interrupts_the_tool_before_it() -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    session.ingest(2, "UserPromptSubmit", {"prompt": ""}, worker_input=True)
+    restored = SessionContext()
+    restored.restore(session.checkpoint())
+    assert session.snapshot()["in_flight_tool"] is None
+    assert restored.snapshot() == session.snapshot()
+
+
+def test_the_prompt_boundary_survives_a_checkpoint_as_its_own_sequence() -> None:
+    session = SessionContext()
+    session.ingest(4, "UserPromptSubmit", {"prompt": ""}, worker_input=True)
+    assert session.checkpoint()["prompt_seq"] == 4
