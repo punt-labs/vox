@@ -91,7 +91,9 @@ class WorkerActivity:
             if isinstance(files, list)
             else []
         }
-        if tool := self._report.get("in_flight_tool"):
+        # Termination keeps the last hook report, so a gone worker runs no tool.
+        gone = self._lifecycle in ("exited", "stopped")
+        if (tool := self._report.get("in_flight_tool")) and not gone:
             detail["tool_in_flight"] = tool
         if isinstance(failure := self._report.get("open_failure"), dict):
             found = cast("dict[str, object]", failure)

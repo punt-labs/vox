@@ -138,3 +138,12 @@ def test_a_new_prompt_or_tool_after_a_stop_is_working_again(
 
 def test_a_worker_working_before_any_stop_is_working() -> None:
     assert _state_after(_PROMPT) == "working"
+
+
+@pytest.mark.parametrize("state", ["exited", "stopped"])
+def test_a_worker_that_is_gone_reports_no_tool_in_flight(state: WorkerState) -> None:
+    worker = payload("w", in_flight_tool="Bash", active_files=["/repo/a.py"])
+    worker["state"] = state
+    detail = WorkerActivity(worker).detail(now=1.0)
+    assert "tool_in_flight" not in detail
+    assert detail["files"] == ["/repo/a.py"]

@@ -157,3 +157,13 @@ def test_the_newest_prompt_or_tool_event_is_reported_as_the_turn_sequence() -> N
     _tool(session, 3, "PostToolUse")
     session.ingest(4, "Stop", {}, worker_input=True)
     assert session.snapshot()["turn_seq"] == 3
+
+
+def test_a_restart_keeps_a_tool_before_the_newest_prompt_out_of_flight() -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    session.ingest(2, "UserPromptSubmit", {"prompt": "never mind"}, worker_input=True)
+    restored = SessionContext()
+    restored.restore(session.checkpoint())
+    assert session.snapshot()["in_flight_tool"] is None
+    assert restored.snapshot() == session.snapshot()

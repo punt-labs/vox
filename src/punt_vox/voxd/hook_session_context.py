@@ -153,7 +153,7 @@ class SessionContext:
             "goal": self._goal[1] or None,
             "active_files": files,
             "in_flight_tool": self._tools.in_flight(
-                max(self._decisions.prompt_epoch, self._input.last()[0])
+                max(self._decisions.prompt_epoch, self._goal[0])
             ),
             "last_results": results,
             "open_failure": self._tools.open_failure(),
