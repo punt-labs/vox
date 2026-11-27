@@ -21,47 +21,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, Self, cast, final
 
-from verify_judge import NO_EXIT, TIMEOUT_EXIT, Judge, is_final
+from verify_judge import TIMEOUT_EXIT, Judge, is_final
+from verify_script import PCM_BYTES_PER_S, launch_timeout_s, script_plan
 from verify_workers import Cleanup, WorkerFleet
 
-__all__ = [
-    "CallRun",
-    "is_live",
-    "launch_timeout_s",
-    "load_trace",
-    "main",
-    "script_plan",
-]
+__all__ = ["CallRun", "Trace", "is_live", "load_trace", "main", "trace_path"]
 
-# ``vox call --script`` never returns on its own once the script ends: it idles
-# on pings until ``timeout`` kills it, so exit 124 is the normal end of a call.
-# The timeout is therefore the script itself plus a short drain, not a margin.
-_SPEECH_ESTIMATE_S: Final = 3  # Per spoken turn, on top of its pause.
-_DRAIN_S: Final = 45  # For the agent's last reply and any worker stop in flight.
 _STOP_TIMEOUT_S: Final = 30
 _KEYS_ENV: Final = Path.home() / ".punt-labs" / "vox" / "keys.env"
-_LEAD_IN_S: Final = 6  # Silence before the caller speaks, so the greeting is whole.
-_DOCS_TURN: Final = (
-    "What is the Python SDK repository for the Model Context Protocol? "
-    "Look it up in the docs."
-)
-_SEARCH_TURN: Final = (
-    "Please search the web for the latest open source language models."
-)
-_SILENCE_TURN: Final = "Give me a minute, I need to think."
-_WORKER_START_TURN: Final = (
-    "Please start a coding worker in this repository. Its task is to run "
-    "git status and report the result. It must not change any file."
-)
-_WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
-_WORKER_GO_TURN: Final = (
-    "Yes."  # The gate accepts only a bare yes from its closed list.
-)
-_WORKER_STOP_TURN: Final = (
-    "Please stop the git status worker you just started, not any older worker."
-)
-_WORKER_CONFIRM_TURN: Final = "Yes."
-
 _SETTLE_POLLS: Final = 10
 _SETTLE_WAIT_S: Final = 2.0
 
@@ -80,8 +47,20 @@ def trace_path(status: str) -> str:
     return ""
 
 
-def load_trace(status: str) -> list[dict[str, object]] | None:
-    """Return the trace rows named by the status text's ``trace:`` line, if readable."""
+@dataclass(frozen=True, slots=True)
+class Trace:
+    """The object rows of a call trace, and how many other rows it held."""
+
+    rows: list[dict[str, object]]
+    dropped: int  # Rows that were valid JSON but not objects.
+
+
+def load_trace(status: str) -> Trace | None:
+    """Return the trace named by the status text's ``trace:`` line, if readable.
+
+    Raises:
+        ValueError: If a row is not JSON, as a half-written last line is not.
+    """
     if not (path := trace_path(status)):
         return None
     try:
@@ -89,45 +68,16 @@ def load_trace(status: str) -> list[dict[str, object]] | None:
     except OSError:
         return None
     parsed = [json.loads(row) for row in text.splitlines() if row.strip()]
-    return [row for row in parsed if isinstance(row, dict)]
-
-
-@dataclass(frozen=True, slots=True)
-class Turn:
-    """One scripted caller turn: what is said ("" is silence) and the pause after."""
-
-    text: str
-    pause_s: int
-
-
-def script_plan(*, search: bool) -> list[Turn]:
-    """Return the caller's turns: lead-in, docs, search if set up, worker, silence."""
-    plan = [Turn("", _LEAD_IN_S), Turn(_DOCS_TURN, 45)]
-    if search:
-        plan.append(Turn(_SEARCH_TURN, 30))
-    plan += [
-        Turn(_WORKER_START_TURN, 25),
-        Turn(_WORKER_GO_TURN, 50),
-        Turn(_WORKER_STATUS_TURN, 40),
-        Turn(_WORKER_STOP_TURN, 30),
-        Turn(_WORKER_CONFIRM_TURN, 25),
-        Turn(_SILENCE_TURN, 40),
-    ]
-    return plan
-
-
-def launch_timeout_s(*, search: bool) -> int:
-    """Return when ``vox call`` is cut off: the script's length plus a short drain."""
-    plan = script_plan(search=search)
-    spoken = sum(1 for turn in plan if turn.text)
-    return sum(t.pause_s for t in plan) + _SPEECH_ESTIMATE_S * spoken + _DRAIN_S
+    rows = [row for row in parsed if isinstance(row, dict)]
+    return Trace(rows, len(parsed) - len(rows))
 
 
 @final
 class CallRun:
     """Generate the caller's audio, place the call, and always stop it."""
 
-    __slots__ = ("_cleanup", "_directory", "_launched", "_placed")
+    __slots__ = ("_audio_s", "_cleanup", "_directory", "_launched", "_placed")
+    _audio_s: float  # How long the generated script plays, once it is built.
     _directory: Path
     _placed: bool  # True once this run started a call; only then may it stop one.
     _cleanup: Cleanup | None  # None until the call has been placed and swept.
@@ -140,6 +90,7 @@ class CallRun:
         self._placed = False
         self._cleanup = None
         self._launched = None
+        self._audio_s = 0.0
         return self
 
     @property
@@ -162,16 +113,21 @@ class CallRun:
         the launch. The report is empty when no call can be attributed.
 
         Raises:
-            ValueError: If the workers cannot be listed before anything is spent.
+            ValueError: If the workers or the call status cannot be read before
+                anything is spent.
         """
         fleet = WorkerFleet.observe()
+        try:
+            before = trace_path(self.status())
+        except ValueError as exc:
+            raise ValueError(
+                f"could not read the call status before launching: {exc}"
+            ) from exc
         launch: subprocess.CompletedProcess[str] | None = None
         failure = ""
-        before = ""
         killed = False
         try:
             script = self._script(search=search)
-            before = trace_path(self.status())
             launch = self._launch(script, search=search)
         except (
             subprocess.CalledProcessError,
@@ -190,19 +146,24 @@ class CallRun:
         return status, output
 
     @property
+    def audio_s(self) -> float:
+        """Return how long the generated script plays, 0.0 before it is built."""
+        return self._audio_s
+
+    @property
     def placed(self) -> bool:
         """Return whether a launch was attempted, so a failure is past setup."""
         return self._placed
 
     @property
-    def launch_exit(self) -> int:
-        """Return the exit status of ``vox call``, or NO_EXIT when it never returned."""
-        return NO_EXIT if self._launched is None else self._launched.returncode
+    def launch_exit(self) -> int | None:  # None: the launch never returned.
+        """Return the exit status of ``vox call``, or None when it never returned."""
+        return None if self._launched is None else self._launched.returncode
 
     def _launch(
         self, script: Path, *, search: bool
     ) -> subprocess.CompletedProcess[str]:
-        timeout = launch_timeout_s(search=search)
+        timeout = launch_timeout_s(search=search, audio_s=self._audio_s)
         self._placed = True
         return subprocess.run(
             ["timeout", str(timeout), "vox", "call", "--script", str(script)],
@@ -227,41 +188,61 @@ class CallRun:
         only when its trace is new, and a live one is hung up.
         """
         if launch is not None and (mine := trace_path(launch.stdout)):
-            return mine, self._settled_status(mine, launch.stdout), []
+            problems: list[str] = []
+            status = self._read_report(mine, launch.stdout, problems)
+            return mine, status, problems
         if launch is not None and launch.returncode != TIMEOUT_EXIT:
             err = launch.stderr.strip()[:200]
             msg = f"vox call exited {launch.returncode} without a report ({err})"
             return "", "", [msg]  # Not killed: no call is this run's to adopt.
         if launch is None and not killed:
             return "", "", ["the launch never ran, so no call is this run's"]
-        found = self.status()
+        try:
+            found = self.status()
+        except ValueError as exc:
+            return "", "", [f"could not read the call status to find the call: {exc}"]
         mine = trace_path(found)
         if not mine or mine == before:
             return "", "", ["the call timed out and could not be found from status"]
-        problems: list[str] = []  # Recovery is the normal end of a scripted call.
+        problems = []  # Recovery is the normal end of a scripted call.
         if fault := self._stop(mine):
             problems.append(fault)
-        status = self._settled_status(mine, "")
+        return mine, self._read_report(mine, "", problems), problems
+
+    def _read_report(self, mine: str, fallback: str, problems: list[str]) -> str:
+        """Return the ended report of call ``mine``, noting in ``problems`` if not."""
+        try:
+            status = self._settled_status(mine, fallback)
+        except ValueError as exc:
+            problems.append(f"could not read the call status for the report: {exc}")
+            return fallback
         if not status:
             problems.append("another call replaced the status before this report")
+        elif is_live(status):
+            problems.append("the call is still live; run `vox call stop`")
         elif not is_final(status):
-            problems.append("the call never ended after the hang-up")
-        return mine, status, problems
+            problems.append("the call never reached an ended status")
+        return status
 
     def _sweep(self, fleet: WorkerFleet, mine: str, problems: list[str]) -> Cleanup:
         """Stop the workers the call's trace names, and name any others."""
         ids: tuple[str, ...] = ()
         if mine:
             try:
-                rows = load_trace(f"trace: {mine}")
+                loaded = load_trace(f"trace: {mine}")
             except ValueError as exc:
                 problems.append(f"the call trace was unreadable: {exc}")
-                rows = []
-            if rows is None:
+                loaded = Trace([], 0)
+            if loaded is None:
                 problems.append(
                     "the call trace could not be read, so its workers are unknown"
                 )
-                rows = []
+                loaded = Trace([], 0)
+            if loaded.dropped:
+                problems.append(
+                    f"the call trace held {loaded.dropped} row(s) that are not objects"
+                )
+            rows = loaded.rows
             details = [
                 cast("dict[str, object]", row["detail"])
                 for row in rows
@@ -278,8 +259,10 @@ class CallRun:
 
     def _script(self, *, search: bool) -> Path:
         rows = []
+        audio_bytes = 0
         for index, turn in enumerate(script_plan(search=search)):
             pcm = self._pcm(index, turn.text, turn.pause_s)
+            audio_bytes += pcm.stat().st_size
             rows.append(
                 json.dumps(
                     {
@@ -288,6 +271,7 @@ class CallRun:
                     }
                 )
             )
+        self._audio_s = audio_bytes / PCM_BYTES_PER_S
         script = self._directory / "script.jsonl"
         script.write_text("\n".join(rows) + "\n")
         return script
@@ -338,13 +322,27 @@ class CallRun:
 
     @staticmethod
     def status() -> str:
-        """Return the status text after the call, which is the full report."""
-        done = subprocess.run(
-            ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        """Return the status text after the call, which is the full report.
+
+        Raises:
+            ValueError: If ``vox call status`` failed or timed out, so that a
+                failed read is never mistaken for an idle daemon.
+        """
+        try:
+            done = subprocess.run(
+                ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "status"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_STOP_TIMEOUT_S + 5,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise ValueError(f"vox call status failed ({type(exc).__name__})") from exc
+        if done.returncode != 0:
+            detail = done.stderr.strip()[:200] or "no stderr"
+            raise ValueError(
+                f"vox call status failed (exit {done.returncode}: {detail})"
+            )
         return done.stdout
 
     def _stop(self, mine: str) -> str:
@@ -354,21 +352,31 @@ class CallRun:
         live status still names this run's call. A stop that fails because the
         call ended in the meantime is not a failure.
         """
-        if not self._is_mine_and_live(mine):
-            return ""
-        done = subprocess.run(
-            ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if done.returncode == 0 or not self._is_mine_and_live(mine):
-            return ""
+        try:
+            if not self._is_mine_and_live(mine):
+                return ""
+            done = subprocess.run(
+                ["timeout", str(_STOP_TIMEOUT_S), "vox", "call", "stop"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if done.returncode == 0 or not self._is_mine_and_live(mine):
+                return ""
+        except ValueError as exc:
+            return (
+                "could not read the call status to hang up; "
+                f"run `vox call stop` ({exc})"
+            )
         detail = done.stderr.strip()[:200] or "no stderr"
         return f"vox call stop failed (exit {done.returncode}: {detail})"
 
     def _is_mine_and_live(self, mine: str) -> bool:
-        """Return whether the live call is the one with trace ``mine``."""
+        """Return whether the live call is the one with trace ``mine``.
+
+        Raises:
+            ValueError: If the status cannot be read.
+        """
         if not mine:
             return False
         status = self.status()
@@ -396,7 +404,12 @@ def main() -> int:
     if missing:
         print(f"FAIL setup: missing {', '.join(missing)}")
         return 2
-    if is_live(CallRun.status()):
+    try:
+        live = is_live(CallRun.status())
+    except ValueError as exc:
+        print(f"FAIL setup: could not read the call status ({exc})")
+        return 3
+    if live:
         print("FAIL setup: a call is already live; refusing to run or stop it")
         return 3
     search = _search_configured()
@@ -410,7 +423,13 @@ def main() -> int:
                 return 4
             print(f"FAIL run: {exc}")
             return 1
-    trace = load_trace(report)
+    trace_problem = ""
+    try:
+        loaded = load_trace(report)
+    except ValueError as exc:
+        loaded = None
+        trace_problem = f"trace unreadable ({exc})"
+    trace = None if loaded is None else loaded.rows
     verdicts = Judge(
         report,
         output,
@@ -422,6 +441,9 @@ def main() -> int:
     for verdict in verdicts:
         print(f"{verdict.status} {verdict.name}: {verdict.why}")
     failed = [v.name for v in verdicts if v.status == "FAIL"]
+    if trace_problem:
+        print(f"FAIL run: {trace_problem}")
+        failed.append("trace")
     if failed:
         print(f"verify-call FAILED: {', '.join(failed)}")
         print("--- call report ---")

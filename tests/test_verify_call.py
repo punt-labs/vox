@@ -29,6 +29,7 @@ def _load(name: str) -> ModuleType:
 
 verify_workers = _load("verify_workers")  # verify_call imports it by name.
 verify_judge = _load("verify_judge")  # verify_call imports it by name.
+verify_script = _load("verify_script")
 verify_call = _load("verify_call")
 _CLEAN = verify_workers.Cleanup(started=("abcd1234",), left_running=(), problems=())
 
@@ -169,13 +170,13 @@ def test_the_first_agent_turn_is_judged_even_after_a_live_header_line() -> None:
 def test_the_script_starts_with_a_silent_lead_in_so_the_greeting_is_not_clipped() -> (
     None
 ):
-    first = verify_call.script_plan(search=True)[0]
+    first = verify_script.script_plan(search=True)[0]
     assert first.text == ""
     assert first.pause_s >= 6
 
 
 def test_the_docs_turn_is_unmistakable_to_speech_recognition() -> None:
-    texts = [t.text for t in verify_call.script_plan(search=True)]
+    texts = [t.text for t in verify_script.script_plan(search=True)]
     assert (
         "What is the Python SDK repository for the Model Context Protocol? "
         "Look it up in the docs."
@@ -185,7 +186,7 @@ def test_the_docs_turn_is_unmistakable_to_speech_recognition() -> None:
 
 def test_without_search_the_plan_leaves_out_the_search_turn() -> None:
     assert not any(
-        "search the web" in t.text for t in verify_call.script_plan(search=False)
+        "search the web" in t.text for t in verify_script.script_plan(search=False)
     )
 
 
@@ -344,8 +345,10 @@ def test_a_run_that_placed_no_call_never_stops_one(
 def test_the_trace_named_by_the_status_text_is_read(tmp_path: Path) -> None:
     trace = tmp_path / "call.jsonl"
     trace.write_text('{"ms": 1, "type": "agent_response", "detail": {}}\n')
-    rows = verify_call.load_trace(f"call ended by caller\ntrace: {trace}\n")
-    assert rows == [{"ms": 1, "type": "agent_response", "detail": {}}]
+    loaded = verify_call.load_trace(f"call ended by caller\ntrace: {trace}\n")
+    assert loaded is not None
+    assert loaded.rows == [{"ms": 1, "type": "agent_response", "detail": {}}]
+    assert loaded.dropped == 0
     assert verify_call.load_trace("call ended by caller\n") is None
     assert verify_call.load_trace(f"trace: {tmp_path / 'missing'}\n") is None
 
@@ -441,7 +444,7 @@ def test_worker_status_fails_when_the_trace_shows_no_worker_started() -> None:
 
 
 def test_the_plan_confirms_the_start_before_asking_what_the_worker_is_doing() -> None:
-    texts = [t.text for t in verify_call.script_plan(search=False)]
+    texts = [t.text for t in verify_script.script_plan(search=False)]
     start = next(i for i, t in enumerate(texts) if "start a coding worker" in t)
     assert texts[start + 1] == "Yes."
     status = next(i for i, t in enumerate(texts) if "what the worker is doing" in t)
@@ -449,20 +452,20 @@ def test_the_plan_confirms_the_start_before_asking_what_the_worker_is_doing() ->
 
 
 def test_the_start_confirmation_pauses_long_enough_for_the_worker_to_launch() -> None:
-    plan = verify_call.script_plan(search=False)
+    plan = verify_script.script_plan(search=False)
     start = next(i for i, t in enumerate(plan) if "start a coding worker" in t.text)
     assert plan[start + 1].pause_s >= 45
 
 
 def test_the_stop_request_names_the_worker_it_started_then_confirms() -> None:
-    texts = [t.text for t in verify_call.script_plan(search=False)]
+    texts = [t.text for t in verify_script.script_plan(search=False)]
     stop = next(i for i, t in enumerate(texts) if "stop" in t and "worker" in t)
     assert "git status worker you just started" in texts[stop]
     assert texts[stop + 1] == "Yes."
 
 
 def test_every_scripted_confirmation_is_a_yes_the_daemon_will_accept() -> None:
-    texts = [t.text for t in verify_call.script_plan(search=False)]
+    texts = [t.text for t in verify_script.script_plan(search=False)]
     requests = [
         i
         for i, t in enumerate(texts)
@@ -473,7 +476,7 @@ def test_every_scripted_confirmation_is_a_yes_the_daemon_will_accept() -> None:
 
 
 def test_the_worker_task_is_read_only() -> None:
-    texts = " ".join(t.text for t in verify_call.script_plan(search=False))
+    texts = " ".join(t.text for t in verify_script.script_plan(search=False))
     assert "must not change any file" in texts
 
 
@@ -489,8 +492,8 @@ def _stub_script(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
 def _stub_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every status text read as the synthetic trace."""
 
-    def load(status: str) -> list[dict[str, object]]:
-        return _TRACE
+    def load(status: str) -> object:
+        return verify_call.Trace(_TRACE, 0)
 
     monkeypatch.setattr(verify_call, "load_trace", load)
 
@@ -557,6 +560,8 @@ class _Voxd:
         self.after_code = 0
         self.pre_status = "call idle\n"  # What status says before the launch.
         self.post_statuses: list[str] = []  # Answers after the launch, in order.
+        self.status_reads = 0
+        self.status_fails: set[int] = set()  # 1-based status reads that exit 1.
         self.stop_call_code = 0
         self.launch_raises: BaseException | None = None
         self.commands: list[list[str]] = []
@@ -566,6 +571,9 @@ class _Voxd:
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
         if command[-2:] == ["call", "status"]:
+            self.status_reads += 1
+            if self.status_reads in self.status_fails:
+                return subprocess.CompletedProcess(command, 1, "", "no voxd")
             out = _report(self.trace) if self.status_out is None else self.status_out
             if self.launched and self.post_statuses:
                 out = (
@@ -900,12 +908,32 @@ def test_a_timed_out_launch_whose_call_already_ended_recovers_its_report(
     assert cleanup.unproven == ()
 
 
-def test_the_launch_timeout_is_the_script_plus_a_short_drain() -> None:
-    for search in (True, False):
-        plan = verify_call.script_plan(search=search)
+def test_the_launch_timeout_is_the_generated_audio_plus_pauses_plus_a_drain() -> None:
+    # Measured speech of the generated turns: 27.4 s without search, 31.5 s with.
+    for search, speech in ((False, 27.4), (True, 31.5)):
+        plan = verify_script.script_plan(search=search)
         total = sum(turn.pause_s for turn in plan)
-        timeout = verify_call.launch_timeout_s(search=search)
+        timeout = verify_script.launch_timeout_s(search=search, audio_s=speech + 6)
         assert total + 30 <= timeout <= total + 90
+
+
+def test_the_timeout_grows_with_the_audio_that_was_generated() -> None:
+    short = verify_script.launch_timeout_s(search=True, audio_s=10)
+    assert verify_script.launch_timeout_s(search=True, audio_s=40) >= short + 30
+
+
+def test_the_script_records_how_long_its_generated_audio_plays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def pcm(self: object, index: int, text: str, pause_s: int) -> Path:
+        path = tmp_path / f"t{index}.pcm"
+        path.write_bytes(bytes(64000))  # 2 s of 16 kHz mono s16le.
+        return path
+
+    monkeypatch.setattr(verify_call.CallRun, "_pcm", pcm)
+    run = verify_call.CallRun(tmp_path)
+    run._script(search=False)
+    assert run.audio_s == 2.0 * len(verify_script.script_plan(search=False))
 
 
 def test_a_scripted_call_that_runs_to_the_timeout_is_a_clean_run(
@@ -957,7 +985,7 @@ def test_the_launch_runs_under_that_timeout(
     command = voxd.scripts()[0]
     assert command[:2] == [
         "timeout",
-        str(verify_call.launch_timeout_s(search=False)),
+        str(verify_script.launch_timeout_s(search=False, audio_s=0.0)),
     ]
 
 
@@ -1160,13 +1188,15 @@ def test_a_status_taken_over_by_another_call_is_said_plainly(
     assert all("never ended" not in p for p in cleanup.problems)
 
 
-def test_trace_rows_that_are_not_objects_are_skipped(tmp_path: Path) -> None:
+def test_trace_rows_that_are_not_objects_are_counted_not_hidden(tmp_path: Path) -> None:
     path = tmp_path / "call.jsonl"
     path.write_text(
         '[1]\n"x"\n3\n{"type": "worker_started", "detail": {"worker_id": "w"}}\n'
     )
-    rows = verify_call.load_trace(f"trace: {path}")
-    assert rows == [{"type": "worker_started", "detail": {"worker_id": "w"}}]
+    loaded = verify_call.load_trace(f"trace: {path}")
+    assert loaded is not None
+    assert loaded.rows == [{"type": "worker_started", "detail": {"worker_id": "w"}}]
+    assert loaded.dropped == 3
 
 
 def test_a_failure_after_the_call_was_placed_is_not_called_setup(
@@ -1188,7 +1218,7 @@ def test_a_failure_after_the_call_was_placed_is_not_called_setup(
 
 def test_a_launch_that_never_returned_is_judged_as_such() -> None:
     judged = verify_judge.Judge(
-        _GOOD, "", search_key=True, launch_exit=-1, trace=_TRACE, cleanup=_CLEAN
+        _GOOD, "", search_key=True, launch_exit=None, trace=_TRACE, cleanup=_CLEAN
     ).verdicts()
     verdict = next(v for v in judged if v.name == "clean end")
     assert verdict.status == "FAIL"
@@ -1199,3 +1229,113 @@ def test_a_launch_that_never_returned_is_judged_as_such() -> None:
 def test_a_judge_cannot_be_built_without_a_launch_exit() -> None:
     with pytest.raises(TypeError, match="launch_exit"):
         verify_judge.Judge(_GOOD, "", search_key=True)
+
+
+def test_a_status_read_that_fails_while_hanging_up_says_to_run_vox_call_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = _trace_file(tmp_path, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace), _live(trace)]
+    voxd.status_fails = {3}  # The read inside the hang-up.
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    joined = "; ".join(cleanup.problems)
+    assert voxd.call_stops() == []
+    assert "could not read the call status to hang up; run `vox call stop`" in joined
+    assert "no voxd" in joined
+    assert "never ended after the hang-up" not in joined
+
+
+def test_a_call_still_live_after_the_hang_up_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = _trace_file(tmp_path, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.post_statuses = [_live(trace)]
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    joined = "; ".join(cleanup.problems)
+    assert "the call is still live; run `vox call stop`" in joined
+    assert "never ended after the hang-up" not in joined
+
+
+def test_a_failed_status_read_after_the_launch_is_reported_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = _trace_file(tmp_path, "new")
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    voxd.launch_code = 124
+    voxd.launch_out = ""
+    voxd.status_fails = {2}  # The read that recovers the report.
+    cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    assert status == ""
+    assert any("could not read the call status" in p for p in cleanup.problems)
+
+
+def test_a_failed_status_read_before_the_launch_is_a_setup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path), {}, {})
+    voxd.status_fails = {1}
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    _stub_script(monkeypatch, tmp_path)
+    run = verify_call.CallRun(tmp_path)
+    with pytest.raises(ValueError, match="could not read the call status before"):
+        run.place(search=False)
+    assert voxd.scripts() == []
+    assert not run.placed
+
+
+def test_a_failed_status_read_is_not_taken_for_no_live_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    voxd = _Voxd(_trace_file(tmp_path), {}, {})
+    voxd.status_fails = {1}  # main's check for an already-live call.
+    assert _run_main(monkeypatch, tmp_path, voxd, search=True) == 3
+    assert "FAIL setup: could not read the call status" in capsys.readouterr().out
+    assert voxd.scripts() == []
+
+
+def test_dropped_trace_rows_fail_the_cleanup_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace = tmp_path / "call.jsonl"
+    trace.write_text(
+        '[1]\n{"type": "worker_started", "detail": {"worker_id": "new"}}\n'
+    )
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    cleanup, _ = _place(tmp_path, monkeypatch, voxd)
+    assert any("1 row" in p and "not objects" in p for p in cleanup.problems)
+
+
+def test_a_half_written_trace_fails_the_run_but_the_other_verdicts_are_judged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = tmp_path / "call.jsonl"
+    trace.write_text(
+        '{"type": "worker_started", "detail": {"worker_id": "new"}}\n{"ms": 1, "ty'
+    )
+    voxd = _Voxd(trace, {}, {"new": "stopped"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
+    _stub_script(monkeypatch, tmp_path)
+    assert verify_call.main() == 1
+    out = capsys.readouterr().out
+    assert "FAIL run: trace unreadable" in out
+    assert "PASS greeting" in out
+
+
+def test_a_launch_killed_by_sighup_is_reported_as_exit_minus_one() -> None:
+    judged = verify_judge.Judge(
+        _GOOD, "", search_key=True, launch_exit=-1, trace=_TRACE, cleanup=_CLEAN
+    ).verdicts()
+    verdict = next(v for v in judged if v.name == "clean end")
+    assert verdict.status == "FAIL"
+    assert "exit -1" in verdict.why
+    assert "did not return" not in verdict.why
