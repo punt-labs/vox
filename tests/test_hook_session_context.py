@@ -123,3 +123,37 @@ def test_in_flight_tool_and_event_time_survive_a_checkpoint_restore() -> None:
     snapshot = restored.snapshot()
     assert snapshot["in_flight_tool"] == "Bash"
     assert snapshot["last_event_at"] == 5.0
+
+
+def test_a_retried_old_hook_does_not_reset_the_silence_clock() -> None:
+    session = SessionContext()
+    session.ingest(1, "SessionStart", {}, worker_input=True, at=50.0)
+    session.ingest(1, "SessionStart", {}, worker_input=True, at=90.0)
+    assert session.snapshot()["last_event_at"] == 50.0
+
+
+def test_a_tool_begun_before_the_newest_prompt_is_not_in_flight() -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    assert session.snapshot()["in_flight_tool"] == "Bash"
+    session.ingest(2, "UserPromptSubmit", {"prompt": "never mind"}, worker_input=True)
+    assert session.snapshot()["in_flight_tool"] is None
+
+
+def test_a_tool_begun_after_the_newest_prompt_is_in_flight() -> None:
+    session = SessionContext()
+    session.ingest(1, "UserPromptSubmit", {"prompt": "go"}, worker_input=True)
+    _tool(session, 2, "PreToolUse")
+    assert session.snapshot()["in_flight_tool"] == "Bash"
+
+
+def test_the_newest_prompt_or_tool_event_is_reported_as_the_turn_sequence() -> None:
+    session = SessionContext()
+    assert session.snapshot()["turn_seq"] == 0
+    session.ingest(1, "SessionStart", {}, worker_input=True)
+    assert session.snapshot()["turn_seq"] == 0
+    session.ingest(2, "UserPromptSubmit", {"prompt": "go"}, worker_input=True)
+    assert session.snapshot()["turn_seq"] == 2
+    _tool(session, 3, "PostToolUse")
+    session.ingest(4, "Stop", {}, worker_input=True)
+    assert session.snapshot()["turn_seq"] == 3

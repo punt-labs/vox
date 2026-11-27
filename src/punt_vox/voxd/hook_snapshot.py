@@ -23,6 +23,7 @@ class HookContextSnapshot(TypedDict):
     gaps: HookGapReport
     pending_decision: PendingDecision | None  # None when no question is outstanding.
     prompt_epoch: int
+    turn_seq: int  # Newest prompt or tool event; a Stop after it ends the turn.
     last_event_at: float  # Epoch seconds of the newest worker hook; 0.0 if none.
 
 

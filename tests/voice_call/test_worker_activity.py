@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from punt_vox.voxd.hook_session_context import SessionContext
 from punt_vox.voxd.voice_call.worker_activity import WorkerActivity
 from punt_vox.voxd.workers.model import WorkerState
 
@@ -24,6 +25,20 @@ _IDLE = {"notification_type": "idle_prompt", "message": "Next?", "seq": 5}
             "blocked",
         ),
         ({"pending_decision": _IDLE, "worker_seq": 5, "prompt_epoch": 5}, "idle"),
+        (
+            {
+                "pending_decision": _IDLE,
+                "worker_seq": 5,
+                "prompt_epoch": 5,
+                "turn_seq": 3,
+            },
+            "finished",
+        ),
+        (
+            {"worker_seq": 9, "prompt_epoch": 6, "turn_seq": 5},
+            "finished",
+        ),
+        ({"worker_seq": 9, "prompt_epoch": 6, "turn_seq": 7}, "working"),
         ({"pending_decision": None, "worker_seq": 6, "prompt_epoch": 6}, "finished"),
     ],
 )
@@ -60,6 +75,63 @@ def test_detail_omits_what_voxd_has_not_seen() -> None:
     assert WorkerActivity(payload("w")).detail(now=500.0) == {"files": []}
 
 
-def test_clock_skew_never_reports_negative_silence() -> None:
+def test_a_clock_that_went_backwards_omits_the_silence() -> None:
     worker = payload("w", last_event_at=100.0)
-    assert WorkerActivity(worker).detail(now=90.0)["seconds_since_last_event"] == 0
+    assert "seconds_since_last_event" not in WorkerActivity(worker).detail(now=90.0)
+
+
+@pytest.mark.parametrize("error", ["launch_error", "stop_error", "cleanup_error"])
+@pytest.mark.parametrize("lifecycle", ["starting", "ready"])
+def test_a_worker_with_a_lifecycle_error_is_finished_never_idle(
+    error: str, lifecycle: WorkerState
+) -> None:
+    worker = payload("w", **{error: "OSError"})
+    worker["state"] = lifecycle
+    assert WorkerActivity(worker).state == "finished"
+
+
+def test_a_worker_still_starting_with_no_hook_is_idle() -> None:
+    worker = payload("w")
+    worker["state"] = "starting"
+    assert WorkerActivity(worker).state == "idle"
+
+
+def _state_after(*events: tuple[str, dict[str, object]]) -> str:
+    context = SessionContext()
+    for sequence, (event, fields) in enumerate(events, 1):
+        context.ingest(sequence, event, fields, worker_input=True, at=float(sequence))
+    worker = payload("w")
+    worker["last_report"] = dict(context.checkpoint())
+    return WorkerActivity(worker).state
+
+
+_PROMPT = ("UserPromptSubmit", {"prompt": "go"})
+_STOP = ("Stop", {"last_assistant_message": "done"})
+_TOOL = ("PreToolUse", {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        ("SessionEnd", {}),
+        ("SubagentStop", {}),
+        ("PreCompact", {}),
+        ("Notification", {"notification_type": "auth_success"}),
+        ("Notification", {"notification_type": "idle_prompt", "message": "Next?"}),
+    ],
+)
+def test_a_finished_worker_stays_finished_through_non_work_events(
+    later: tuple[str, dict[str, object]],
+) -> None:
+    assert _state_after(_PROMPT, _STOP, later) == "finished"
+
+
+@pytest.mark.parametrize("next_work", [_PROMPT, _TOOL])
+def test_a_new_prompt_or_tool_after_a_stop_is_working_again(
+    next_work: tuple[str, dict[str, object]],
+) -> None:
+    assert _state_after(_PROMPT, _STOP, next_work) == "working"
+
+
+def test_a_worker_working_before_any_stop_is_working() -> None:
+    assert _state_after(_PROMPT) == "working"

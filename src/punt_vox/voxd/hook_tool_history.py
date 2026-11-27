@@ -10,6 +10,7 @@ from punt_vox.voxd.hook_context_projection import (
     ToolUpdate,
 )
 from punt_vox.voxd.hook_failures import HookFailures
+from punt_vox.voxd.hook_tool_flight import ToolFlight
 
 
 class ToolHistoryCheckpoint(TypedDict):
@@ -56,14 +57,11 @@ class HookToolHistory:
 
     def in_flight(self, since: int) -> str | None:  # None when no tool is running.
         """Return the newest tool begun after ``since`` whose completion is unseen."""
-        running = [
-            (sequence, update.tool)
-            for sequence, update in self._tools.items()
-            if sequence > since
-            and not update.completed
-            and not self._failures.settled(sequence, update)
-        ]
-        return max(running)[1] if running else None
+        return ToolFlight(self._tools).running_after(since)
+
+    def newest(self) -> int:
+        """Return the sequence of the newest tool event, 0 when there is none."""
+        return max(self._tools, default=0)
 
     def open_failure(self) -> HookToolResult | None:  # None when no failure remains.
         """Return the newest unresolved failure."""

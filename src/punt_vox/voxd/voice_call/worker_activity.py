@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Self, cast, final
+from typing import TYPE_CHECKING, Final, Literal, Self, cast, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
 
 __all__ = ["ActivityState", "WorkerActivity"]
+
+# Report keys set when launch, stop or cleanup failed: nothing more will happen.
+_ERROR_KEYS: Final = ("launch_error", "stop_error", "cleanup_error")
 
 # The state words the voice agent speaks; the registry's launch phase is not one.
 type ActivityState = Literal["working", "blocked", "idle", "finished"]
@@ -34,19 +37,39 @@ class WorkerActivity:
 
     @property
     def state(self) -> ActivityState:
-        """Return blocked on a permission question, finished after a Stop hook."""
-        if self._lifecycle in ("exited", "stopped"):
+        """Return blocked on a permission question, finished once a turn has ended.
+
+        A Stop ends the turn; the word stays ``finished`` until a new prompt or
+        tool starts, whatever lifecycle events follow.
+        """
+        if self._lifecycle in ("exited", "stopped") or any(
+            key in self._report for key in _ERROR_KEYS
+        ):
             return "finished"
         pending = self._report.get("pending_decision")
         if isinstance(pending, dict):
-            asked = cast("dict[str, object]", pending).get("notification_type")
-            return "idle" if asked == "idle_prompt" else "blocked"
+            return self._asked(cast("dict[str, object]", pending))
         if self._report.get("in_flight_tool"):
             return "working"
-        newest = self._report.get("worker_seq", 0)
-        if newest and newest == self._report.get("prompt_epoch"):
-            return "finished"
-        return "working" if newest else "idle"
+        if not self._count("worker_seq"):
+            return "idle"
+        return "finished" if self._turn_ended() else "working"
+
+    def _asked(self, pending: dict[str, object]) -> ActivityState:
+        """Return the word for an open question: blocked, or waiting for a prompt."""
+        if pending.get("notification_type") != "idle_prompt":
+            return "blocked"
+        return "finished" if self._count("turn_seq") else "idle"
+
+    def _turn_ended(self) -> bool:
+        """Return whether no prompt or tool began after the last Stop or question."""
+        ended = self._count("prompt_epoch")
+        return bool(ended) and self._count("turn_seq") <= ended
+
+    def _count(self, field: str) -> int:
+        """Return a sequence field of the report, 0 when absent or not a number."""
+        value = self._report.get(field, 0)
+        return value if isinstance(value, int) else 0
 
     @property
     def decision_choices(self) -> list[str]:
@@ -77,6 +100,6 @@ class WorkerActivity:
                 "result": found.get("result", ""),
             }
         heard = self._report.get("last_event_at")
-        if isinstance(heard, int | float) and heard > 0:
-            detail["seconds_since_last_event"] = max(0, int(now - heard))
+        if isinstance(heard, int | float) and 0 < heard <= now:
+            detail["seconds_since_last_event"] = int(now - heard)
         return detail

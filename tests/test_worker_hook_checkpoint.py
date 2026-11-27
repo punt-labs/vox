@@ -130,7 +130,8 @@ def test_startup_skips_incomplete_hook_checkpoint(
 
     WorkerRecovery.restore(records.load(), restarted)
 
-    assert f"Worker {worker.id} hook checkpoint unavailable (KeyError)" in caplog.text
+    expected = "hook checkpoint unavailable (KeyError: missing 'prompt_epoch')"
+    assert f"Worker {worker.id} {expected}" in caplog.text
     with pytest.raises(ValueError, match="no hook context"):
         restarted.snapshot(worker.id)
 

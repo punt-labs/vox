@@ -64,11 +64,13 @@ class SessionContext:
 
         ``at`` is when voxd received it; only worker hooks move the clock.
         """
+        is_new = self._gaps.observe(sequence)
         if worker_input:
-            self._last_event_at = max(self._last_event_at, at)
-            self._worker_event(sequence, event, payload)
-        if not self._gaps.observe(sequence):
-            return
+            self._worker_event(sequence, event, payload, at=at if is_new else 0.0)
+        if is_new:
+            self._fold(sequence, event, payload)
+
+    def _fold(self, sequence: int, event: str, payload: dict[str, object]) -> None:
         match event:
             case "SessionStart":
                 self._started = True
@@ -85,8 +87,10 @@ class SessionContext:
                 pass
 
     def _worker_event(
-        self, sequence: int, event: str, payload: dict[str, object]
+        self, sequence: int, event: str, payload: dict[str, object], *, at: float
     ) -> None:
+        # ``at`` is 0.0 for a retried hook, which says nothing about silence.
+        self._last_event_at = max(self._last_event_at, at)
         if event == "UserPromptSubmit":
             self._input.ingest(sequence, payload.get("prompt"))
         self._decisions.ingest(sequence, event, payload)
@@ -148,12 +152,15 @@ class SessionContext:
             "session_started": self._started,
             "goal": self._goal[1] or None,
             "active_files": files,
-            "in_flight_tool": self._tools.in_flight(self._decisions.prompt_epoch),
+            "in_flight_tool": self._tools.in_flight(
+                max(self._decisions.prompt_epoch, self._input.last()[0])
+            ),
             "last_results": results,
             "open_failure": self._tools.open_failure(),
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
             "pending_decision": self._decisions.pending(),
             "prompt_epoch": self._decisions.prompt_epoch,
+            "turn_seq": max(self._goal[0], self._tools.newest()),
             "last_event_at": self._last_event_at,
         }
