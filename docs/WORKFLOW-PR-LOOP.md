@@ -88,7 +88,8 @@ function demo(pr):
         delivery, the ducking, the chime and its timing; the ear is asked
         only for those
     if the operator confirms: comment "demo confirmed by ear: H" with the
-        operator's words and the roundtrip result
+        operator's words for each audible gap, the command and output
+        for each silent gap, and the roundtrip result
                                     # demoed_head; only a PR that changes
                                     #   a non-exempt file reaches here
                                     #   (demo_ok is false)
@@ -236,7 +237,7 @@ function demo(pr):
 #                  stays exempt
 #   coverage(pr) = the leader's latest "tier coverage: H" comment, valid
 #                  when H is the head, or an ancestor of it and every file
-#                  changed since H is a documentation file. A later change
+#                  changed since H is demo_exempt. A later change
 #                  to a test, a workflow or any non-exempt file ends its
 #                  validity, so removing or weakening a named test, or
 #                  dropping its tier from CI, forces a new comment. With no
@@ -259,8 +260,12 @@ function demo(pr):
 #                  row is green on the PR head: its CI check, or, for a
 #                  tier that does not run on a PR (the live roundtrip,
 #                  playback, levels, agent, live_call), the leader's run
-#                  at the head with the command and output pasted in the
-#                  comment. A tier that is red or still running is a CI
+#                  at H of the valid coverage comment, with the command
+#                  and output pasted in that comment (every file changed
+#                  since H is demo_exempt, so the run still describes the
+#                  head). A covered row on such a tier with no pasted run
+#                  makes the comment invalid, so the next tick runs the
+#                  tier and posts the comment again. A tier that is red or still running is a CI
 #                  state to wait for or fix; it never calls for a demo
 #   gaps(pr)     = the gap rows of the valid coverage(pr). The gate exists
 #                  to exercise the code before the merge; a green tier
