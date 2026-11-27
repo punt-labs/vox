@@ -37,9 +37,10 @@ same names:
     a closed sink.
   \item[P4] \emph{Stop is idempotent}: a flush after a flush, a close or a
     play-out changes nothing.
-  \item[P5] \emph{Play-out drains}: close lets the device play its last block
-    only when the response finished and nothing is pending; otherwise it
-    aborts.
+  \item[P5] \emph{Play-out drains, or is abandoned}: close stops the device
+    (which then plays what it holds) only after the device said it played the
+    finished or flushed stream out; a device that did not say so within a
+    bound is marked lost and aborted, never waited on.
   \item[P6] \emph{A dry spell opens only on a streaming sink that already
     played audio}: silence before the first audio, or after the response
     finished or was flushed, is not a dry spell.
@@ -134,11 +135,12 @@ can leave, so the stream can still play out.
   phase' = finished \\
   fed' = fed \\
   played' = played \\
-  pending' = 0 \implies drained' = ztrue \\
-  pending' \neq 0 \implies drained' = drained
+  drained' = drained
 \end{schema}
 
-A response that ends with nothing left to play is played out at once.
+\texttt{Finish} never marks the stream drained, even with nothing pending: a
+device callback may hold the final block, pulled but not yet shaped, so only
+the callback that shaped it (\texttt{Drain}) says the audio is played out.
 
 \begin{schema}{Flush}
   \Delta Sink
@@ -163,11 +165,15 @@ A response that ends with nothing left to play is played out at once.
 
 \begin{schema}{Close}
   \Delta Sink \\
-  drain! : ZBOOL
+  playedOut? : ZBOOL \\
+  drain!, lost! : ZBOOL
 \where
   phase \neq closed \\
-  (phase = finished \land pending = 0) \implies drain! = ztrue \\
-  \lnot (phase = finished \land pending = 0) \implies drain! = zfalse \\
+  playedOut? = ztrue \implies drained = ztrue \\
+  drain! = ztrue \iff
+    (phase \in \{ finished, interrupted \} \land playedOut? = ztrue) \\
+  lost! = ztrue \iff
+    (phase \in \{ finished, interrupted \} \land playedOut? = zfalse) \\
   dropped' = dropped + pending \\
   pending' = 0 \\
   phase' = closed \\
@@ -176,8 +182,13 @@ A response that ends with nothing left to play is played out at once.
   drained' = drained
 \end{schema}
 
-\texttt{drain!} is P5: \texttt{ztrue} stops the device after its last block,
-\texttt{zfalse} aborts it.
+\texttt{playedOut?} is the device's own report (PortAudio's
+\texttt{finished\_callback}, after the callback ended the stream with
+\texttt{StreamCompleted}) arriving within the bound; it can only be true once
+the stream is drained. \texttt{drain!} is P5: \texttt{ztrue} stops the
+device, which is then instant; \texttt{zfalse} aborts it, which does not wait
+on the device. A flushed or finished stream the device did not report played
+out is also \emph{lost!}: the report is degraded. Any other phase aborts.
 
 \section{Operations on the device thread}
 
@@ -212,8 +223,9 @@ never has: the operational half of P2.
   pending' = pending
 \end{schema}
 
-\texttt{Drain} is the callback finding the buffer empty after
-\texttt{Finish}; it releases waiters. The callback reads the phase without
+\texttt{Drain} is the callback that shaped the last block and its fade-out
+finding the buffer empty after \texttt{Finish} or \texttt{Flush}; it ends the
+stream with \texttt{StreamCompleted} and releases waiters. The callback reads the phase without
 the loop's cooperation, so a \texttt{Flush} may land between that read and
 the drain: \texttt{Drain} is therefore allowed from \texttt{interrupted}
 too. Nothing is pending in either case, so the two orders end in the same
