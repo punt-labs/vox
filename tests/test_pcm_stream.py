@@ -18,6 +18,7 @@ from typing import Self, final
 import pytest
 from conversation_mode._fake_sounddevice import FakeSoundDevice
 
+from punt_vox.voxd import pcm_watch
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
 from punt_vox.voxd.pcm_audio import PCM_SAMPLE_RATE_HZ
 from punt_vox.voxd.pcm_gap import FADE_FRAMES
@@ -839,6 +840,37 @@ class TestPlaybackQueueOwnership:
             assert playback.mutex.locked()
             sink.feed(ms_of(OLD, 20))
         assert not playback.mutex.locked()
+        assert device.opened.aborted
+
+    async def test_a_finished_stream_the_device_never_plays_out_fails_the_exit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hang-up must not report a normal end for audio nobody heard."""
+        monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
+        device = FakeDevice()
+        playback = PlaybackQueue(device)
+        with pytest.raises(OutputDeviceLostError):
+            async with playback.stream_pcm() as sink:
+                sink.feed(ms_of(OLD, 20))
+                sink.finish()
+                device.opened.reports_finished = False  # it never confirms
+                device.opened.pull(3)
+        assert device.opened.aborted
+        assert not playback.mutex.locked()
+
+    async def test_a_flushed_stream_the_device_never_confirms_exits_quietly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A barge-in is deliberate: the abandoned device is not a failure."""
+        monkeypatch.setattr(pcm_watch, "PLAYOUT_WAIT_S", 0.05)
+        device = FakeDevice()
+        playback = PlaybackQueue(device)
+        async with playback.stream_pcm() as sink:
+            sink.feed(ms_of(OLD, 60))
+            device.opened.pull(1)
+            device.opened.reports_finished = False
+            sink.flush()
+            device.opened.pull(2)
         assert device.opened.aborted
 
     async def test_queued_playback_waits_behind_the_stream(self) -> None:

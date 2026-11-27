@@ -53,6 +53,14 @@ class StreamReport:
         """Return whether the device starved, flagged, or stopped on its own."""
         return bool(self.underflows or self.device_flags or self.device_lost)
 
+    @property
+    def is_playout_failed(self) -> bool:
+        """Return whether the device stopped before the stream played out.
+
+        A flush (a barge-in) is deliberate: the device is abandoned, not lost.
+        """
+        return self.device_lost and not self.interrupted
+
     def describe(self, elapsed_ms: float) -> str:
         """Return the closing log line for a stream that lived *elapsed_ms*."""
         return (

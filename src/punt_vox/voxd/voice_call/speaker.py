@@ -78,18 +78,36 @@ class AgentSpeaker:
             self._sink.flush()
         await self._end_reply()
 
-    async def finish(self) -> None:
-        """Let audio already received play out, then release the output."""
+    async def finish(self) -> str | None:
+        """Let audio already received play out, then release the output.
+
+        Returns why the last reply did not play out (the device stopped before
+        it did), or None when it did. The output is released either way.
+        """
+        # Absence is the contract: None means the reply played out.
+        failure: str | None = None
         try:
             if self._sink is not None:
                 self._sink.finish()
                 with suppress(OutputDeviceLostError):
                     await self._sink.wait()
         finally:
-            await self.close()
+            try:
+                await self._release()
+            except OutputDeviceLostError as exc:
+                failure = str(exc)
+        return failure
 
     async def close(self) -> None:
-        """Release the reply's sink and the playback mutex."""
+        """Release the reply's sink and the playback mutex: a deliberate teardown.
+
+        A device that was already lost is not a failure here; the call is
+        ending anyway.
+        """
+        with suppress(OutputDeviceLostError):
+            await self._release()
+
+    async def _release(self) -> None:
         try:
             await self._end_reply()
         finally:

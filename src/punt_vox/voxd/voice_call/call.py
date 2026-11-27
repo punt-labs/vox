@@ -174,7 +174,12 @@ class VoiceAgentCall:
                     await depart(self._progress.reported)
             finally:
                 if hung_up:
-                    await self._speaker.finish()
+                    await self._play_out()
+
+    async def _play_out(self) -> None:
+        """Let the last reply finish; a device that never played it fails the call."""
+        if (unplayed := await self._speaker.finish()) is not None:
+            self.mark_failed(unplayed)
 
     async def _converse(
         self,

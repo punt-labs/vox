@@ -17,7 +17,7 @@ from typing import Self
 from punt_vox.voxd.audio_context import AudioContext, AudioFile
 from punt_vox.voxd.conversation_mode.counted_output import CountedOutput
 from punt_vox.voxd.conversation_mode.device_table import DeviceTable
-from punt_vox.voxd.pcm_output import OutputStreamFactory
+from punt_vox.voxd.pcm_output import OutputDeviceLostError, OutputStreamFactory
 from punt_vox.voxd.pcm_stream import PcmStreamSink
 from punt_vox.voxd.playback_result import PlaybackResult
 from punt_vox.voxd.voice_agent.call_overrides import CallOverrides
@@ -156,7 +156,9 @@ class PlaybackQueue:
         as they wait behind a file. ``locked`` means the caller already holds
         the mutex: a voice call keeps it across replies and opens one stream
         per reply. The device is released on exit whether the utterance
-        played out, was flushed, or the caller raised.
+        played out, was flushed, or the caller raised. A natural end the
+        device never confirmed raises :class:`OutputDeviceLostError` after
+        the release; a flush or a caller's own error never does.
 
         The stream opens on the device table's current defaults and is
         counted on the table while open.
@@ -169,8 +171,14 @@ class PlaybackQueue:
             await sink.open(CountedOutput(self._output_stream, self._table))
             try:
                 yield sink
-            finally:
+            except BaseException:
+                # Releasing must not hide why the caller left.
                 await sink.close()
+                raise
+            report = await sink.close()
+            if report.is_playout_failed:
+                msg = "output device stopped before the PCM stream played out"
+                raise OutputDeviceLostError(msg)
 
     def set_last_result(self, value: PlaybackResult | None) -> None:
         """Set the last playback result. Used by delegation and tests."""

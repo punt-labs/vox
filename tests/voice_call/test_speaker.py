@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 from punt_vox.voxd.voice_agent.events import Audio
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
-from .fakes import FakePlayback
+from .fakes import FakePlayback, UnconfirmedPlayback
 
 if TYPE_CHECKING:
     from punt_vox.voxd.playback import PlaybackQueue
@@ -40,6 +40,32 @@ async def test_finish_plays_out_the_last_reply_before_release() -> None:
     (sink,) = playback.sinks
     assert (sink.fed, sink.finished, sink.flushed) == ([b"bye"], True, 0)
     assert playback.released == 1
+
+
+async def test_finish_reports_a_reply_the_device_never_played_out() -> None:
+    playback = UnconfirmedPlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"bye", 3))
+    failure = await speaker.finish()
+    assert failure is not None
+    assert "played out" in failure
+    assert playback.released == 1
+    assert not playback.mutex.locked()
+
+
+async def test_finish_reports_nothing_when_the_reply_played_out() -> None:
+    playback = FakePlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"bye", 3))
+    assert await speaker.finish() is None
+
+
+async def test_close_does_not_fail_on_a_lost_device() -> None:
+    playback = UnconfirmedPlayback()
+    speaker = AgentSpeaker(cast("PlaybackQueue", playback))
+    await speaker.play(Audio(b"a", 1))
+    await speaker.close()
+    assert not playback.mutex.locked()
 
 
 async def test_the_call_keeps_the_output_across_a_cut() -> None:

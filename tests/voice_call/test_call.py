@@ -37,7 +37,7 @@ from punt_vox.voxd.workers.records import WorkerRecords
 from punt_vox.voxd.workers.tmux import TmuxWorkerProvider
 from punt_vox.voxd.workers.wiring import WorkerSubsystem
 
-from .fakes import FakePlayback, FakeWorkers, payload
+from .fakes import FakePlayback, FakeWorkers, UnconfirmedPlayback, payload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -242,6 +242,42 @@ async def test_remote_hangup_ends_the_call(
     (ended,) = [m for m in messages if m.startswith("Call ended:")]
     assert "Call ended: ended by peer, 0 tool calls" in ended
     assert str(cast("dict[str, object]", status)["trace"]) in ended
+
+
+async def test_a_hangup_whose_last_reply_never_played_out_fails_the_call(
+    tmp_path: Path,
+) -> None:
+    async def peer(socket: ServerConnection) -> None:
+        await socket.recv()
+        await socket.send(json.dumps(_METADATA))
+        await socket.send(_audio(b"\x01\x00" * 8, 1))
+
+    pcm = tmp_path / "turn.pcm"
+    pcm.write_bytes(bytes(640))
+    playback = UnconfirmedPlayback()
+    async with asyncio.timeout(10), serve(peer, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        handlers = _handlers(
+            FakeWorkers(),
+            playback,
+            tmp_path,
+            connector=_Connector(f"ws://127.0.0.1:{port}/convai"),
+            opener=_LOOPBACK,
+        )
+        await _rpc(handlers, {"type": "call_start", "script": [{"pcm_path": str(pcm)}]})
+        while True:
+            status = cast(
+                "dict[str, object]",
+                (await _rpc(handlers, {"type": "call_status"}))["result"],
+            )
+            if status["state"] == "failed":
+                break
+            await asyncio.sleep(0.01)
+        await _rpc(handlers, {"type": "call_stop"})  # joins the call's task
+    assert playback.released == 1
+    assert not playback.mutex.locked()
+    assert status["state"] == "failed"
+    assert "played out" in str(status["error"])
 
 
 _END_CALL_ACK = {

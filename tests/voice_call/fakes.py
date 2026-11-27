@@ -6,6 +6,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from punt_vox.voxd.pcm_output import OutputDeviceLostError
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -122,3 +124,14 @@ class FakePlayback:
             yield sink
         finally:
             self.released += 1
+
+
+class UnconfirmedPlayback(FakePlayback):
+    """A device that never confirms a finished stream played out: exit raises."""
+
+    @asynccontextmanager
+    async def stream_pcm(self, *, locked: bool = False) -> AsyncGenerator[FakeSink]:
+        async with super().stream_pcm(locked=locked) as sink:
+            yield sink
+        msg = "output device stopped before the PCM stream played out"
+        raise OutputDeviceLostError(msg)
