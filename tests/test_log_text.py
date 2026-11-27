@@ -54,3 +54,11 @@ def test_failure_includes_the_notes_attached_to_the_exception() -> None:
     rendered = LogText.failure(exc)
     assert rendered.startswith("RuntimeError: create failed")
     assert "cleanup after the failure also failed" in rendered
+
+
+def test_notes_render_each_note_in_brackets_with_paths_redacted() -> None:
+    exc = RuntimeError("x")
+    exc.add_note("left at /var/state/a.json")
+    exc.add_note("second")
+    assert LogText.notes(exc) == " [left at <path>] [second]"
+    assert LogText.notes(RuntimeError("y")) == ""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.paths import config_dir
@@ -16,6 +17,7 @@ from punt_vox.voxd.voice_agent.replacement import Replacement
 from punt_vox.voxd.voice_agent.retirement import Retirement
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from punt_vox.voxd.voice_agent.contracts import ClientTool
@@ -33,7 +35,8 @@ class VoiceAgent:
     a stable tool catalog; explicitly tear the agent down to replace that catalog.
     """
 
-    __slots__ = ("_control", "_disposal", "_marker", "_retirement", "_store")
+    __slots__ = ("_clock", "_control", "_disposal", "_marker", "_retirement", "_store")
+    _clock: Callable[[], float]
     _control: ConvAIControl
     _store: RegistrationFile
     _disposal: Disposal
@@ -45,6 +48,7 @@ class VoiceAgent:
         control: ConvAIControl,
         *,
         path: Path | None = None,  # None selects the daemon's default config path.
+        clock: Callable[[], float] = time.monotonic,  # Times the orphan sweep.
     ) -> Self:
         """Bind the agent to the per-user daemon config or a separate test path.
 
@@ -53,6 +57,7 @@ class VoiceAgent:
         """
         self = super().__new__(cls)
         self._control = control
+        self._clock = clock
         live = config_dir() / "voice-agent.json"
         default = control.registration_path(live)
         where = path if path is not None else default
@@ -80,9 +85,13 @@ class VoiceAgent:
                 # A changed spec replaces the agent; the old resources are
                 # deleted after the call connects, never in its way.
                 replacement = Replacement(
-                    self._control, self._store, self._disposal, self._marker, stored
+                    self._control,
+                    self._store,
+                    self._disposal,
+                    self._marker,
+                    stored,
                 )
-                record, agent_id = replacement.build(ordered, fingerprint)
+                record, agent_id = replacement.build(ordered, fingerprint, self._clock)
                 tool_ids = record.tool_ids
         return self._control.signed_url(agent_id), tool_ids
 
