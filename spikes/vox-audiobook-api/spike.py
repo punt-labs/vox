@@ -14,11 +14,14 @@ is 1 when any assertion fails.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
+import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,17 +64,36 @@ class Verdicts:
             self.check(name, ok=False, detail=f"HTTP {r.status_code}")
         return ok
 
-    def check_audio(self, name: str, r: httpx.Response) -> bool:
-        """Record whether a 200 reply is audio: an audio/* type and real length.
+    def check_audio(self, name: str, r: httpx.Response, path: Path) -> bool:
+        """Record whether a saved 200 reply is audio: type, length and decodable.
 
-        ffprobe failures are swallowed by seconds(), so the content type and
-        size are the only evidence the body is speech and not an error page.
+        ffprobe verifies the saved file. Without ffprobe the body is only
+        unverified, which prints WARN (not PASS) and does not fail the run.
         """
         kind = r.headers.get("content-type", "")
-        ok = kind.startswith("audio/") and len(r.content) >= MIN_AUDIO_BYTES
-        self.check(
-            name, ok=ok, detail=f"{kind or 'no content-type'}, {len(r.content)} bytes"
-        )
+        detail = f"{kind or 'no content-type'}, {len(r.content)} bytes"
+        if not (kind.startswith("audio/") and len(r.content) >= MIN_AUDIO_BYTES):
+            self.check(name, ok=False, detail=detail)
+            return False
+        decodes = probe_duration(path)
+        if decodes is None:
+            print(f"[{name}] WARN {detail}, unverified (no ffprobe)")
+            return True
+        verdict = "decoded it" if decodes > 0 else "rejected it"
+        self.check(name, ok=decodes > 0, detail=f"{detail}, ffprobe {verdict}")
+        return decodes > 0
+
+    def check_zip(self, name: str, r: httpx.Response) -> bool:
+        """Record whether a reply is a readable zip holding at least one member."""
+        try:
+            with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+                bad_member = archive.testzip()
+                members = len(archive.namelist())
+        except zipfile.BadZipFile as exc:
+            self.check(name, ok=False, detail=f"not a zip: {exc}")
+            return False
+        ok = bad_member is None and members >= 1
+        self.check(name, ok=ok, detail=f"{members} members, bad member {bad_member}")
         return ok
 
 
@@ -80,26 +102,36 @@ def client() -> httpx.Client:
     return httpx.Client(base_url=BASE, headers={"xi-api-key": key}, timeout=300)
 
 
-def seconds(path: Path) -> str:
+def probe_duration(path: Path) -> float | None:
+    """Return the duration ffprobe reads, 0.0 if it rejects the file, None if absent."""
+    if shutil.which("ffprobe") is None:
+        return None
+    done = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     try:
-        out = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=nw=1:nk=1",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return f"{float(out.stdout):.1f}s"
-    except (OSError, subprocess.CalledProcessError, ValueError):
-        return f"{path.stat().st_size} bytes"
+        return float(done.stdout) if done.returncode == 0 else 0.0
+    except ValueError:
+        return 0.0
+
+
+def seconds(path: Path) -> str:
+    duration = probe_duration(path)
+    if duration:
+        return f"{duration:.1f}s"
+    return f"{path.stat().st_size} bytes"
 
 
 def report(name: str, r: httpx.Response) -> None:
@@ -129,8 +161,8 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     report("tts-long", r)
     if not verdicts.expect_ok("tts-long", r):
         return
-    save(out, "tts-long.mp3", r)
-    verdicts.check_audio("tts-long", r)
+    saved = save(out, "tts-long.mp3", r)
+    verdicts.check_audio("tts-long", r, saved)
     rid = r.headers.get("request-id")
     if not rid:
         verdicts.check("tts-stitched", ok=False, detail="no request-id to stitch from")
@@ -146,8 +178,8 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     )
     report("tts-stitched", r2)
     if verdicts.expect_ok("tts-stitched", r2):
-        save(out, "tts-stitched.mp3", r2)
-        verdicts.check_audio("tts-stitched", r2)
+        saved2 = save(out, "tts-stitched.mp3", r2)
+        verdicts.check_audio("tts-stitched", r2, saved2)
 
 
 def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
@@ -174,8 +206,8 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         )
         report(f"dialogue-{model}", r)
         if r.status_code == 200:
-            save(out, f"dialogue-{model}.mp3", r)
-            accepted = verdicts.check_audio(f"dialogue-{model}", r) or accepted
+            saved = save(out, f"dialogue-{model}.mp3", r)
+            accepted = verdicts.check_audio(f"dialogue-{model}", r, saved) or accepted
     verdicts.check("dialogue", ok=accepted, detail="a model accepted two voices")
 
 
@@ -234,7 +266,7 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         if rr.status_code != 200:
             continue
         path = save(out, f"pron-{label}.mp3", rr)
-        if not verdicts.check_audio(f"pron-tts-{label}", rr):
+        if not verdicts.check_audio(f"pron-tts-{label}", rr, path):
             continue  # no speech to transcribe: falls to "no transcript to judge"
         with path.open("rb") as fh:
             tr = c.post(
@@ -255,7 +287,8 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         if heard is None:
             verdicts.check(f"pron-{label}", ok=False, detail="no transcript to judge")
             continue
-        found = [alias in heard for alias in aliases]
+        # Pad with spaces so "verify the product codes" is not the alias.
+        found = [f" {alias} " in f" {heard} " for alias in aliases]
         ok = all(found) if expect_aliases else not any(found)
         expected = "carries" if expect_aliases else "lacks"
         verdicts.check(
@@ -337,6 +370,7 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     print(f"[studio] project {pid}, state {project.get('state')}")
     state = None
     polls = 0
+    started = time.monotonic()
     for _ in range(POLLS):
         polls += 1
         time.sleep(POLL_SECONDS)
@@ -348,10 +382,11 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         print(f"[studio] state {state}")
         if state == "default":
             break
+    elapsed = time.monotonic() - started
     verdicts.check(
         "studio-convert",
         ok=state == "default",
-        detail=f"state {state} after {polls * POLL_SECONDS} s ({polls} polls)",
+        detail=f"state {state} after {elapsed:.0f} s ({polls} polls)",
     )
     if state != "default":
         return
@@ -369,10 +404,7 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         report("studio-archive", a)
         if verdicts.expect_ok("studio-archive", a):
             save(out, "studio-book.zip", a)
-            is_zip = len(a.content) >= MIN_AUDIO_BYTES and a.content.startswith(b"PK")
-            verdicts.check(
-                "studio-archive", ok=is_zip, detail=f"{len(a.content)} bytes, zip magic"
-            )
+            verdicts.check_zip("studio-archive", a)
     chapters = c.get(f"/v1/studio/projects/{pid}/chapters")
     report("studio-chapters", chapters)
     if verdicts.expect_ok("studio-chapters", chapters):
