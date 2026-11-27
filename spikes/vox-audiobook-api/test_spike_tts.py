@@ -156,6 +156,7 @@ def dialogue_api(*, refused: tuple[str, ...]) -> Api:
     return Api(handler)
 
 
+@needs_ffprobe
 def test_dialogue_both_models_ok_exits_zero(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
