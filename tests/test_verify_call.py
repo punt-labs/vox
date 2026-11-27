@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from punt_vox.voxd.voice_call.spoken_answer import SpokenAnswer
+
 _PATH = Path(__file__).resolve().parents[1] / "tools" / "verify_call.py"
 _SPEC = importlib.util.spec_from_file_location("verify_call", _PATH)
 assert _SPEC is not None
@@ -402,7 +404,7 @@ def test_worker_status_fails_when_the_trace_shows_no_worker_started() -> None:
 def test_the_plan_confirms_the_start_before_asking_what_the_worker_is_doing() -> None:
     texts = [t.text for t in verify_call.script_plan(search=False)]
     start = next(i for i, t in enumerate(texts) if "start a coding worker" in t)
-    assert texts[start + 1] == "Yes, go ahead."
+    assert texts[start + 1] == "Yes."
     status = next(i for i, t in enumerate(texts) if "what the worker is doing" in t)
     assert start + 1 < status
 
@@ -417,7 +419,18 @@ def test_the_stop_request_names_the_worker_it_started_then_confirms() -> None:
     texts = [t.text for t in verify_call.script_plan(search=False)]
     stop = next(i for i, t in enumerate(texts) if "stop" in t and "worker" in t)
     assert "git status worker you just started" in texts[stop]
-    assert texts[stop + 1].lower().startswith("yes")
+    assert texts[stop + 1] == "Yes."
+
+
+def test_every_scripted_confirmation_is_a_yes_the_daemon_will_accept() -> None:
+    texts = [t.text for t in verify_call.script_plan(search=False)]
+    requests = [
+        i
+        for i, t in enumerate(texts)
+        if "start a coding worker" in t or "stop the" in t
+    ]
+    assert len(requests) == 2
+    assert [SpokenAnswer.of(texts[i + 1]) for i in requests] == ["yes", "yes"]
 
 
 def test_the_worker_task_is_read_only() -> None:

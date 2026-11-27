@@ -44,11 +44,13 @@ _WORKER_START_TURN: Final = (
     "git status and report the result. It must not change any file."
 )
 _WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
-_WORKER_GO_TURN: Final = "Yes, go ahead."
+_WORKER_GO_TURN: Final = (
+    "Yes."  # The gate accepts only a bare yes from its closed list.
+)
 _WORKER_STOP_TURN: Final = (
     "Please stop the git status worker you just started, not any older worker."
 )
-_WORKER_CONFIRM_TURN: Final = "Yes, stop it."
+_WORKER_CONFIRM_TURN: Final = "Yes."
 # The words the agent may speak for a worker; the launch phase is not one.
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
 _WORKER_ENDED: Final = ("stopped", "exited")  # Registry phases with nothing to stop.
