@@ -67,9 +67,9 @@ class AgentSpeaker:
             )
         self._sink.feed(audio.pcm, starts_utterance=self._breaks.begins(audio.event_id))
 
-    def note_utterance_event(self) -> None:
-        """Note an ``agent_response`` or a tool call: the next audio is new."""
-        self._breaks.note_event()
+    def note_tool_call(self) -> None:
+        """Note a tool call: the agent paused, so its next audio is new."""
+        self._breaks.note_tool_call()
 
     async def interrupt(self, event_id: int) -> None:
         """Discard queued audio of the response the person talked over."""

@@ -266,7 +266,7 @@ class VoiceAgentCall:
                 case Interruption(event_id=event_id):
                     await self._speaker.interrupt(event_id)
                 case ClientToolCall() as call:
-                    self._speaker.note_utterance_event()
+                    self._speaker.note_tool_call()
                     group.create_task(self._answer(conv, call))
                 case UserTranscript() as turn:
                     self._progress.activity()
@@ -278,9 +278,7 @@ class VoiceAgentCall:
                     self._acknowledged(ack)
 
     def _heard_agent(self, turn: AgentResponse | AgentResponseCorrection) -> None:
-        """Record what the agent said; a new response is also a new utterance."""
-        if isinstance(turn, AgentResponse):
-            self._speaker.note_utterance_event()
+        """Record what the agent said."""
         self._transcript.record(turn)
         self._tools.guard.gate.agent_spoke(
             turn.text if isinstance(turn, AgentResponse) else turn.corrected_text

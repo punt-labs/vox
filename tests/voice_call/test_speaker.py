@@ -72,12 +72,12 @@ async def test_a_chunk_of_a_new_turn_begins_an_utterance() -> None:
     assert sink.starts == [True, False, True]
 
 
-async def test_an_agent_event_inside_one_turn_begins_an_utterance() -> None:
-    """A tool pause or a second agent_response shares the turn's event id."""
+async def test_a_tool_call_inside_one_turn_begins_an_utterance() -> None:
+    """The pause shares the turn's event id; only the tool call marks it."""
     playback = FakePlayback()
     speaker = AgentSpeaker(cast("PlaybackQueue", playback))
     await speaker.play(Audio(b"a", 79))
-    speaker.note_utterance_event()  # a client_tool_call, then more speech
+    speaker.note_tool_call()
     await speaker.play(Audio(b"b", 79))
     await speaker.play(Audio(b"c", 79))
     await speaker.close()

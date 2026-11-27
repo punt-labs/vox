@@ -294,8 +294,12 @@ async def test_a_live_call_logs_its_conversation_id(
     assert "Call live: conversation conv_1" in [r.message for r in caplog.records]
 
 
-async def test_a_tool_call_and_an_agent_response_each_begin_an_utterance() -> None:
-    """Both arrive inside one turn's event id: only the events mark the pause."""
+async def test_only_a_tool_call_inside_a_turn_begins_an_utterance() -> None:
+    """The order of call-cac9b0c7: tool call, audio, agent_response, more audio.
+
+    The agent_response lands in the audio that resumes after the tool pause,
+    where the buffer is shallow: marking it would turn a stall into a pause.
+    """
     playback = FakePlayback()
     peer = _Peer(
         [
@@ -309,7 +313,7 @@ async def test_a_tool_call_and_an_agent_response_each_begin_an_utterance() -> No
     )
     speaker = AgentSpeaker(cast("PlaybackQueue", playback))
     await _call(peer, speaker=speaker).run(_dial)
-    assert playback.sinks[0].starts == [True, True, False, True]
+    assert playback.sinks[0].starts == [True, True, False, False]
 
 
 async def test_each_tool_call_is_logged_with_its_outcome(
