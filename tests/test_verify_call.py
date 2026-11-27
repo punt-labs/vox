@@ -27,6 +27,7 @@ def _load(name: str) -> ModuleType:
 
 
 verify_workers = _load("verify_workers")  # verify_call imports it by name.
+verify_judge = _load("verify_judge")  # verify_call imports it by name.
 verify_call = _load("verify_call")
 _CLEAN = verify_workers.Cleanup(started=("abcd1234",), left_running=(), problems=())
 
@@ -55,7 +56,7 @@ trace: /tmp/call.jsonl
 def _verdicts(
     report: str, *, search_key: bool = True, output: str = ""
 ) -> dict[str, str]:
-    judged = verify_call.Judge(
+    judged = verify_judge.Judge(
         report, output, search_key=search_key, trace=_TRACE, cleanup=_CLEAN
     ).verdicts()
     return {v.name: v.status for v in judged}
@@ -152,7 +153,7 @@ def test_a_nag_on_a_continuation_line_fails_silence() -> None:
 
 def test_the_first_agent_turn_is_judged_even_after_a_live_header_line() -> None:
     assert (
-        verify_call.Judge(_STATUS, "", search_key=True).verdicts()[0].status == "PASS"
+        verify_judge.Judge(_STATUS, "", search_key=True).verdicts()[0].status == "PASS"
     )
 
 
@@ -183,25 +184,25 @@ _LIVE = (Path(__file__).parent / "fixtures" / "vox_call_status_live.txt").read_t
 
 
 def test_a_live_status_is_not_final() -> None:
-    assert not verify_call.is_final(_LIVE)
+    assert not verify_judge.is_final(_LIVE)
 
 
 def test_an_ended_status_is_final() -> None:
-    assert verify_call.is_final(_STATUS)
+    assert verify_judge.is_final(_STATUS)
 
 
 def test_a_failed_status_is_final() -> None:
-    assert verify_call.is_final("call failed | 0 tool calls\nerror: boom\n")
+    assert verify_judge.is_final("call failed | 0 tool calls\nerror: boom\n")
 
 
 @pytest.mark.parametrize("text", ["", "call idle", "call connecting | 0 tool calls"])
 def test_empty_idle_or_connecting_status_is_not_final(text: str) -> None:
-    assert not verify_call.is_final(text)
+    assert not verify_judge.is_final(text)
 
 
 def test_a_live_status_fails_the_clean_end_even_if_it_looks_complete() -> None:
     verdicts = {
-        v.name: v for v in verify_call.Judge(_LIVE, "", search_key=True).verdicts()
+        v.name: v for v in verify_judge.Judge(_LIVE, "", search_key=True).verdicts()
     }
     assert verdicts["clean end"].status == "FAIL"
     assert "still live" in verdicts["clean end"].why
@@ -250,7 +251,7 @@ _TRACE: list[dict[str, object]] = [
 
 
 def _with_trace(trace: list[dict[str, object]] | None) -> dict[str, str]:
-    judged = verify_call.Judge(
+    judged = verify_judge.Judge(
         _GOOD, "", search_key=True, trace=trace, cleanup=_CLEAN
     ).verdicts()
     return {v.name: v.status for v in judged}
@@ -338,7 +339,7 @@ def test_the_trace_named_by_the_status_text_is_read(tmp_path: Path) -> None:
 def _worker_status(
     report: str = _GOOD, trace: list[dict[str, object]] | None = _TRACE
 ) -> str:
-    judged = verify_call.Judge(
+    judged = verify_judge.Judge(
         report, "", search_key=True, trace=trace, cleanup=_CLEAN
     ).verdicts()
     return str(next(v.status for v in judged if v.name == "worker status"))
@@ -481,7 +482,7 @@ def _stub_trace(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _cleanup_verdict(cleanup: object, report: str = _GOOD) -> tuple[str, str]:
-    judged = verify_call.Judge(
+    judged = verify_judge.Judge(
         report, "", search_key=True, trace=_TRACE, cleanup=cleanup
     ).verdicts()
     verdict = next(v for v in judged if v.name == "worker cleanup")
