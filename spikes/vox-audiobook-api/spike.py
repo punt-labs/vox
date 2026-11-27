@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -58,6 +59,19 @@ class Verdicts:
         ok = r.status_code == 200
         if not ok:
             self.check(name, ok=False, detail=f"HTTP {r.status_code}")
+        return ok
+
+    def check_audio(self, name: str, r: httpx.Response) -> bool:
+        """Record whether a 200 reply is audio: an audio/* type and real length.
+
+        ffprobe failures are swallowed by seconds(), so the content type and
+        size are the only evidence the body is speech and not an error page.
+        """
+        kind = r.headers.get("content-type", "")
+        ok = kind.startswith("audio/") and len(r.content) >= MIN_AUDIO_BYTES
+        self.check(
+            name, ok=ok, detail=f"{kind or 'no content-type'}, {len(r.content)} bytes"
+        )
         return ok
 
 
@@ -116,11 +130,7 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     if not verdicts.expect_ok("tts-long", r):
         return
     save(out, "tts-long.mp3", r)
-    verdicts.check(
-        "tts-long",
-        ok=len(r.content) >= MIN_AUDIO_BYTES,
-        detail=f"{len(r.content)} bytes",
-    )
+    verdicts.check_audio("tts-long", r)
     rid = r.headers.get("request-id")
     if not rid:
         verdicts.check("tts-stitched", ok=False, detail="no request-id to stitch from")
@@ -137,11 +147,7 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     report("tts-stitched", r2)
     if verdicts.expect_ok("tts-stitched", r2):
         save(out, "tts-stitched.mp3", r2)
-        verdicts.check(
-            "tts-stitched",
-            ok=len(r2.content) >= MIN_AUDIO_BYTES,
-            detail=f"{len(r2.content)} bytes",
-        )
+        verdicts.check_audio("tts-stitched", r2)
 
 
 def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
@@ -166,8 +172,8 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         )
         report(f"dialogue-{model}", r)
         if r.status_code == 200:
-            accepted = True
             save(out, f"dialogue-{model}.mp3", r)
+            accepted = verdicts.check_audio(f"dialogue-{model}", r) or accepted
     verdicts.check("dialogue", ok=accepted, detail="a model accepted two voices")
 
 
@@ -226,6 +232,8 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         if rr.status_code != 200:
             continue
         path = save(out, f"pron-{label}.mp3", rr)
+        if not verdicts.check_audio(f"pron-tts-{label}", rr):
+            continue  # no speech to transcribe: falls to "no transcript to judge"
         with path.open("rb") as fh:
             tr = c.post(
                 "/v1/speech-to-text",
@@ -326,7 +334,9 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     pid = project["project_id"]
     print(f"[studio] project {pid}, state {project.get('state')}")
     state = None
+    polls = 0
     for _ in range(POLLS):
+        polls += 1
         time.sleep(POLL_SECONDS)
         polled = c.get(f"/v1/studio/projects/{pid}")
         if not verdicts.expect_ok("studio-poll", polled):
@@ -339,7 +349,7 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     verdicts.check(
         "studio-convert",
         ok=state == "default",
-        detail=f"state {state} after {POLLS * POLL_SECONDS} s",
+        detail=f"state {state} after {polls * POLL_SECONDS} s ({polls} polls)",
     )
     if state != "default":
         return
@@ -357,9 +367,17 @@ def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         report("studio-archive", a)
         if verdicts.expect_ok("studio-archive", a):
             save(out, "studio-book.zip", a)
+            is_zip = len(a.content) >= MIN_AUDIO_BYTES and a.content.startswith(b"PK")
+            verdicts.check(
+                "studio-archive", ok=is_zip, detail=f"{len(a.content)} bytes, zip magic"
+            )
     chapters = c.get(f"/v1/studio/projects/{pid}/chapters")
     report("studio-chapters", chapters)
-    verdicts.expect_ok("studio-chapters", chapters)
+    if verdicts.expect_ok("studio-chapters", chapters):
+        listed: object = chapters.json().get("chapters")
+        count = len(cast("list[object]", listed)) if isinstance(listed, list) else -1
+        # The probe created two chapters.
+        verdicts.check("studio-chapters", ok=count == 2, detail=f"{count} listed")
     print(f"[studio] project left in place for inspection: {pid}")
 
 
@@ -393,9 +411,17 @@ def main(
             print(f"=== {name} ===")
             try:
                 PROBES[name](c, args.out_dir, verdicts)
-            except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError) as exc:
-                # ValueError covers JSONDecodeError; KeyError/TypeError an unexpected
-                # JSON shape; OSError a failed save. Later probes still run.
+            except (
+                httpx.HTTPError,
+                ValueError,
+                KeyError,
+                TypeError,
+                AttributeError,
+                OSError,
+            ) as exc:
+                # ValueError covers JSONDecodeError; KeyError/TypeError/AttributeError
+                # an unexpected JSON shape (AttributeError: valid JSON that is not an
+                # object); OSError a failed save. Later probes still run.
                 verdicts.check(name, ok=False, detail=repr(exc))
     return 1 if verdicts.failures else 0
 

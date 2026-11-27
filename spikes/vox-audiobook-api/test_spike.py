@@ -14,6 +14,7 @@ import spike
 
 Handler = Callable[[httpx.Request], httpx.Response]
 
+ZIP = b"PK" + bytes(2000)
 AUDIO = b"ID3" + bytes(2000)  # ffprobe rejects it; seconds() falls back to bytes
 
 
@@ -46,7 +47,11 @@ class Api:
 
 
 def audio_ok(_request: httpx.Request) -> httpx.Response:
-    return httpx.Response(200, content=AUDIO, headers={"request-id": "req-1"})
+    return httpx.Response(
+        200,
+        content=AUDIO,
+        headers={"request-id": "req-1", "content-type": "audio/mpeg"},
+    )
 
 
 def run(
@@ -359,9 +364,14 @@ def test_studio_non_json_ok_body_while_polling_is_recorded(
 
 
 def studio_api(
-    *, state: str = "default", snapshots: dict[str, object] | None = None
+    *,
+    state: str = "default",
+    snapshots: dict[str, object] | None = None,
+    chapters: list[object] | None = None,
+    archive: bytes | None = None,
 ) -> Api:
-    """Fake a Studio project that reports the given state and snapshot reply."""
+    """Fake a Studio project; the chapters default to the two the probe creates."""
+    chapters = [{}, {}] if chapters is None else chapters
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -372,8 +382,8 @@ def studio_api(
         if path.endswith("/snapshots"):
             return httpx.Response(200, json=snapshots or {})
         if path.endswith("/archive"):
-            return audio_ok(request)
-        return httpx.Response(200, json={"chapters": []})
+            return httpx.Response(200, content=ZIP if archive is None else archive)
+        return httpx.Response(200, json={"chapters": chapters})
 
     return Api(handler)
 
@@ -431,7 +441,11 @@ def test_pron_empty_transcripts_fail_both_checks(
 def test_tts_without_request_id_fails_stitching_and_sends_no_second_call(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api = Api(lambda _r: httpx.Response(200, content=AUDIO))
+    api = Api(
+        lambda _r: httpx.Response(
+            200, content=AUDIO, headers={"content-type": "audio/mpeg"}
+        )
+    )
     assert exit_code("tts", api, tmp_path) == 1
     assert "[tts-stitched] FAIL" in capsys.readouterr().out
     assert len(api.requests) == 1
@@ -443,8 +457,8 @@ def test_tts_tiny_audio_fails(
     api = Api(lambda _r: httpx.Response(200, content=b"x", headers={"request-id": "r"}))
     assert exit_code("tts", api, tmp_path) == 1
     out = capsys.readouterr().out
-    assert "[tts-long] FAIL 1 bytes" in out
-    assert "[tts-stitched] FAIL 1 bytes" in out
+    assert "[tts-long] FAIL no content-type, 1 bytes" in out
+    assert "[tts-stitched] FAIL no content-type, 1 bytes" in out
 
 
 def test_unexpected_json_shape_fails_that_probe_and_later_probes_run(
@@ -475,3 +489,120 @@ def test_save_oserror_fails_that_probe_and_later_probes_run(
     out = capsys.readouterr().out
     assert "[tts] FAIL" in out
     assert "/v1/text-to-dialogue" in api.paths()  # dialogue ran after tts
+
+
+def full_studio_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, api: Api) -> int:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+    return exit_code("studio", api, tmp_path)
+
+
+AUDIO_TYPE = {"content-type": "audio/mpeg"}
+SNAP: dict[str, object] = {"snapshots": [{"project_snapshot_id": "s1"}]}
+
+
+def test_non_object_json_fails_that_probe_and_later_probes_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/add-from-rules"):
+            return httpx.Response(200, json=[])  # valid JSON, not an object
+        return httpx.Response(403, text="nope")
+
+    api = Api(handler)
+    assert spike.main([str(tmp_path / "out")], make_client=api.client) == 1
+    assert "[pron] FAIL" in capsys.readouterr().out
+    assert api.paths()[-1] == "/v1/studio/projects"
+
+
+def test_studio_poll_returning_a_list_is_recorded_as_studio_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"project_id": "p1"})
+        return httpx.Response(200, json=[])
+
+    assert full_studio_exit(tmp_path, monkeypatch, Api(handler)) == 1
+    assert "[studio] FAIL" in capsys.readouterr().out
+
+
+def test_studio_empty_chapter_list_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    api = studio_api(snapshots=SNAP, chapters=[])
+    assert full_studio_exit(tmp_path, monkeypatch, api) == 1
+    assert "[studio-chapters] FAIL 0 listed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("body", "verdict"),
+    [(b"stub", "FAIL"), (b"PK" + bytes(5), "FAIL"), (ZIP, "PASS")],
+)
+def test_studio_archive_must_be_a_real_zip(
+    body: bytes,
+    verdict: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    api = studio_api(snapshots=SNAP, archive=body)
+    full_studio_exit(tmp_path, monkeypatch, api)
+    assert f"[studio-archive] {verdict}" in capsys.readouterr().out
+
+
+def test_studio_convert_pass_reports_actual_polls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    full_studio_exit(tmp_path, monkeypatch, studio_api(snapshots=SNAP))
+    assert "[studio-convert] PASS state default after 5 s (1 polls)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_dialogue_stub_body_is_not_an_acceptance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(200, content=b"x", headers=AUDIO_TYPE))
+    assert exit_code("dialogue", api, tmp_path) == 1
+    assert "[dialogue] FAIL" in capsys.readouterr().out
+
+
+def test_pron_stub_speech_is_no_transcript(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/text-to-speech/"):
+            return httpx.Response(200, content=b"x", headers=AUDIO_TYPE)
+        return pron_api("", "").handler(request)
+
+    api = Api(handler)
+    assert exit_code("pron", api, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[pron-tts-with-dict] FAIL" in out
+    assert "[pron-with-dict] FAIL no transcript to judge" in out
+    assert "/v1/speech-to-text" not in api.paths()
+
+
+@pytest.mark.parametrize("probe", ["tts", "dialogue", "pron"])
+def test_html_200_is_not_audio(
+    probe: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    html = httpx.Response(
+        200,
+        content=b"<html>" + bytes(2000),
+        headers={"content-type": "text/html", "request-id": "r"},
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/add-from-rules"):
+            return pron_api("", "").handler(request)
+        return html
+
+    assert exit_code(probe, Api(handler), tmp_path) == 1
+    assert "FAIL text/html" in capsys.readouterr().out
