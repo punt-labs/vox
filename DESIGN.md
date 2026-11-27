@@ -4041,3 +4041,77 @@ globally unless explicitly exercising it under a temporary HOME.
 - Mirroring daemon logs to stderr creates a second, non-private durable copy.
 - Failing all clients closed on diagnostics errors breaks hooks for unrelated
   filesystem problems. Failing the daemon open hides a broken diagnostic sink.
+
+## DES-076: Podcasts and Audiobooks Are Made With the Agent, on Any Subject; a Spoken Program Yields to Agent Speech
+
+**Date:** 2026-11-27
+**Status:** SETTLED
+**Topic:** What the two spoken Program formats are, what they may be about, how they share the speakers with the agent, and the order they are built in
+
+### Decision
+
+The product vision for the two spoken formats is the companion PR/FAQ
+`prfaq-audio-programs.tex`. Delivery is the Linear project "vox: podcasts and
+audiobooks" under the Audio Programs epic (PL-827). The rulings below are Jim's,
+made 2026-11-26 and 2026-11-27.
+
+1. **A collaboration.** The developer asks in plain words. The agent in the
+   session writes the script. vox voices it, saves it and plays it. vox holds no
+   language model. The command line takes a finished script on standard input.
+2. **The subject is open.** A show or book may be about the codebase, its
+   domain, a technology, a language being learned, fiction, or something with no
+   connection to work. No source is fixed for either format, and neither format
+   is tied to the repository.
+3. **The formats differ only in form.** A podcast is a stable cast of hosts in
+   conversation, over one or many episodes. An audiobook is one narrator reading
+   chapters that follow one another. Topic, register, language and level belong
+   to neither format.
+4. **No length cap.** A book runs as many chapters as it needs. A series grows
+   by appending episodes. Audio is generated a part or two ahead of the listener.
+5. **Vibe is an input.** The session mood that drives voice and music is passed
+   to the agent when it writes.
+6. **Two voices never talk at once.** A spoken program pauses when the agent
+   speaks and for a voice call. It resumes a set time after the agent's last
+   spoken word. That delay is one user setting and the only tuning value. Chimes
+   play over a spoken program. Music never pauses: it keeps the fixed lower
+   level of DES-030 and DES-061. A pause the developer chose never resumes by
+   itself.
+7. **Playback heartbeat.** While anything plays, voxd reports the current part
+   and position at least every 30 seconds. The saved position and the progress
+   bar, for music as well, both come from it.
+8. **Audiobook is built before podcast.** Narration is one speech request per
+   chapter. A podcast episode is about five stitched multi-speaker requests, and
+   the joins have not been heard.
+9. **Direct to the ElevenLabs speech and dialogue endpoints.** The Studio API
+   answers 403 for this account (probe of 2026-11-26, `spikes/vox-audiobook-api/`).
+10. **A listening session gates the spoken formats.** No product code for them
+    is written until a generated episode and chapter have been heard and judged.
+
+### What this supersedes
+
+- **DES-047, in part.** Its roadmap bullet describes "codebase-aware" podcast
+  and audiobook programs whose content is drawn from the codebase's domain, its
+  technology, or fiction inspired by it. Ruling 2 replaces that: the subject is
+  open. The rest of DES-047 stands.
+- **The phase order in DES-041 and DES-051.** Both name podcast as Phase 2 and
+  audiobook as Phase 3. Ruling 8 reverses the order. The Program model of
+  DES-041 stands.
+- **The length rulings of the audio-programs concept** (2026-07-05): a book of
+  about 30 minutes and six chapters. Ruling 4 removes the cap. The provisional
+  `poolSize` of 6 for podcast and audiobook in `docs/audio-programs.tex` and in
+  the `Format` type is a placeholder that the audiobook slice replaces.
+- **"Cast management deferred" and "length and credit budgeting deferred"**
+  from the same concept. A stable cast is part of the podcast format, and each
+  part reports the credits it used.
+
+### Rejected alternatives
+
+| Alternative | Rejected because |
+|-------------|------------------|
+| Tie each format to a source: audiobooks to the repository, podcasts to current events | The developer may want the opposite of work. Fixed sources turn a creative companion into a content pipeline. |
+| Pause a spoken program for every agent sound | Only two voices at once is a problem. A chime over a narrator is fine, as it is over music. |
+| Resume only after the agent has been busy for a while | The developer is in control and can pause by hand. One delay setting after the last spoken word is simpler to tune. |
+| Duck a spoken program under agent speech, as music sits under it | Two voices at once cannot both be followed. |
+| ElevenLabs Studio as the generation backend | Closed to this account, and built for a person producing a book in an editor. |
+| A language model inside vox, so the daemon can write the next part | The agent in the session already knows the code and the day's work. vox stays a pipe to the speech engine. |
+| Build podcast first, as the earlier phase order had it | The harder engine path would gate the simpler one. |

@@ -1,0 +1,1001 @@
+\documentclass[11pt,letterpaper]{article} % lint-ok
+
+% ── Geometry ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+
+% ── Pagination ────────────────────────────────────────────────────────────────
+\usepackage[all]{nowidow}    % Require ≥2 lines on each side of a page break
+\brokenpenalty=10000         % No hyphenated words across page breaks
+\raggedbottom                % Allow uneven page bottoms rather than stretching
+
+% ── Fonts ─────────────────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage{newpxtext}     % Palatino-based serif (TeX Gyre Pagella)
+\usepackage{newpxmath}     % Matching math font
+
+% ── Colors ────────────────────────────────────────────────────────────────────
+\usepackage[dvipsnames]{xcolor} % lint-ok
+\definecolor{SectionBlue}{HTML}{1B3A5C}
+\definecolor{AccentGray}{HTML}{4A4A4A}
+\definecolor{QuoteBorder}{HTML}{8B9DAF}
+\definecolor{RiskRed}{HTML}{C0392B}
+\definecolor{RiskAmber}{HTML}{E67E22}
+\definecolor{RiskGreen}{HTML}{27AE60}
+\definecolor{BoxBg}{HTML}{F7F8FA}
+
+% ── Tables ────────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+% ── Boxes ─────────────────────────────────────────────────────────────────────
+\usepackage[framemethod=tikz]{mdframed}
+
+% ── Lists ─────────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{needspace}
+
+% ── Hyperlinks ────────────────────────────────────────────────────────────────
+\usepackage{hyperref}
+\usepackage{xurl}  % break bibliography URLs at any character, not just at slashes
+\hypersetup{
+  colorlinks=true,
+  linkcolor=SectionBlue,
+  urlcolor=SectionBlue,
+  citecolor=SectionBlue,
+  pdfauthor={JM Freeman},
+  pdftitle={vox podcasts and audiobooks: PR/FAQ},
+  pdfsubject={Working Backwards: Product Discovery},
+}
+
+% ── Bibliography ─────────────────────────────────────────────────────────────
+\usepackage[style=numeric,backend=biber,sorting=none]{biblatex}
+\addbibresource{prfaq-audio-programs.bib}
+
+% ── Section styling ───────────────────────────────────────────────────────────
+\usepackage{titlesec}
+\titleformat{\section}
+  {\needspace{6\baselineskip}\Large\bfseries\color{SectionBlue}}
+  {}
+  {0pt}
+  {}
+
+\titleformat{\subsection}
+  {\needspace{5\baselineskip}\large\bfseries\color{AccentGray}}
+  {}
+  {0pt}
+  {}
+
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{AccentGray}}
+  {}
+  {0pt}
+  {}
+\titlespacing*{\subsubsection}{0pt}{1em}{0.5em}[0pt]
+
+% ── Document stage ───────────────────────────────────────────────────────────
+\newcommand{\prfaqstage}[1]{\def\theprfaqstage{#1}}
+\prfaqstage{hypothesis}
+
+% ── Document version ─────────────────────────────────────────────────────────
+\newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
+\prfaqversion{1}{0}
+
+% ── Header/footer ────────────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\textcolor{AccentGray}{Stage: \theprfaqstage{} \enspace\textbar\enspace v\theprfaqmajor.\theprfaqminor}}
+\fancyhead[R]{\footnotesize\textcolor{AccentGray}{\thepage}}
+\renewcommand{\headrulewidth}{0pt}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% Custom environments
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newcommand{\prsection}[1]{%
+  \vspace{1em}%
+  {\large\bfseries\color{SectionBlue}#1}%
+  \vspace{0.3em}\par%
+}
+
+\newmdenv[
+  topline=false,
+  bottomline=false,
+  rightline=false,
+  linewidth=3pt,
+  linecolor=QuoteBorder,
+  backgroundcolor=BoxBg,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=8pt,
+  innerbottommargin=8pt,
+  skipabove=\baselineskip,
+  skipbelow=\baselineskip,
+]{customerquote}
+
+\newmdenv[
+  topline=false,
+  bottomline=false,
+  rightline=false,
+  linewidth=3pt,
+  linecolor=SectionBlue,
+  backgroundcolor=BoxBg,
+  innerleftmargin=12pt,
+  innerrightmargin=12pt,
+  innertopmargin=8pt,
+  innerbottommargin=8pt,
+  skipabove=\baselineskip,
+  skipbelow=\baselineskip,
+]{spokespersonquote}
+
+\newcounter{faqnum} % lint-ok
+\newenvironment{faqpair}[1]{%
+  \needspace{4\baselineskip}%
+  \vspace{0.5em}%
+  \refstepcounter{faqnum}%
+  \noindent\textbf{\color{SectionBlue}Q\thefaqnum: #1}\par\nopagebreak[4]%
+  \vspace{0.2em}%
+  \begin{adjustwidth}{1em}{0pt}%
+  \setlength{\parindent}{0pt}%
+  \setlength{\parskip}{0.5em}%
+}{%
+  \end{adjustwidth}%
+  \vspace{0.5em}%
+}
+\newcommand{\faqref}[1]{\hyperref[#1]{FAQ~\ref*{#1}}}
+
+\newcounter{featurenum}
+\newcommand{\featureitem}[2]{%
+  \refstepcounter{featurenum}%
+  \item[\textbf{\color{SectionBlue}F\thefeaturenum.}]%
+  \textbf{#1}: #2%
+}
+\newcommand{\featureref}[1]{\hyperref[#1]{Feature~\ref*{#1}}}
+
+\usepackage{changepage}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% Document
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{document}
+
+% ── Headline block ───────────────────────────────────────────────────────────
+\begin{center} % lint-ok
+  {\LARGE\bfseries\color{SectionBlue}
+    vox Adds Podcasts and Audiobooks, Written With Your Coding Agent
+    and Played While the Code Gets Written} \\[0.8em]
+  {\large\color{AccentGray}
+    Ask for a two-host series on Postgres internals, a noir mystery set in
+    your billing service, or an hour about pandas, the animal. The agent
+    writes it and vox voices it. The first part plays a couple of minutes
+    later.} \\[0.3em]
+  {\large\color{AccentGray}
+    Free and open source from punt-labs. Music, shows and books share one
+    library, one player and one session mood.}
+\end{center}
+
+\vspace{0.5em}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% PRESS RELEASE
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section*{Press Release}
+
+SAN FRANCISCO, May 2027: Today, punt-labs announced podcasts and audiobooks
+in vox, the free, open-source voice and audio layer for AI coding agents. A
+developer working in Claude Code types \texttt{/podcast} or
+\texttt{/audiobook} followed by whatever they want to hear. The agent in the
+session writes the script and vox turns it into voiced audio. Playback
+starts while the later parts are still being made. A podcast app plays
+what somebody else recorded for somebody else
+(see \faqref{faq:different}). Here the show is made inside the coding
+session. The agent already knows the code and the day's work. The developer
+steers it in plain conversation. Playback steps aside the moment the agent
+needs attention (see \faqref{faq:interrupt}).
+
+\prsection{Problem}
+
+Coding with an agent is full of waiting. A typical turn takes under a
+minute, but the longest one in a thousand runs past 45 minutes
+\cite{anthropic2026agentautonomy}. Anthropic describes agent work that
+spans hours \cite{anthropic2026longrunnagents}. The developer is present
+for all of it and needed for little of it. Most people fill that time with
+a phone, a chat thread or a feed. Each of those takes the eyes off the
+terminal, and the agent's next question sits unanswered.
+
+Audio is the obvious companion for half-attention, and vox already plays
+generated music that follows the mood of the session. Music sets a mood. It
+cannot teach you how the query planner works or tell you a story. For that,
+developers open a podcast app, which knows nothing about the session. It
+talks over the agent's permission prompt. It has no episode about the
+library adopted this morning. It cannot be told ``less banter'' or ``go
+deeper on that.'' Sometimes the developer wants the opposite of work:
+twenty minutes about anything except the migration. The app answers with a
+catalog to scroll.
+
+\prsection{Solution}
+
+\textbf{Ask for anything.} The developer types a wish in ordinary words:
+
+{\small\begin{verbatim}
+/podcast how are people testing agent loops? two hosts, one a skeptic
+/audiobook tell me all about pandas. the animal, not the library
+/audiobook a noir mystery set inside this codebase
+/podcast a series called Learning React, start from zero
+\end{verbatim}}
+
+The agent answers with a short pitch in the conversation: a title, the cast,
+and the list of episodes or chapters. Then it starts writing. There is no
+form to fill in and no settings page. The topic can sit right next to the
+work: the codebase, its domain, the technology under it. It can sit as far
+from the work as the developer likes. Neither is the default.
+
+\textbf{Listen while it is still being made.} Every show opens with a short
+first part, about a minute long, so there is something to hear quickly. The
+rest are generated ahead of the listener, a part or two in front. A long
+book costs little more than what is heard (see \faqref{faq:cost}). A
+podcast is a cast of hosts in conversation, the same voices every episode,
+with a theme tune of its own. An audiobook is one narrator reading a book.
+It runs as many chapters as the story needs.
+
+\textbf{Steer it like a collaborator.} The show belongs to the developer and
+the agent together. ``Less banter.'' ``Do the next episode on hooks.''
+``That chapter dragged, redo it shorter.'' ``Tell the next one from the
+villain's side.'' The agent rewrites what comes next. A series grows for
+as long as there is something left to say (see \faqref{faq:steer}).
+
+\textbf{It carries the vibe.} The mood of a session already drives the
+agent's voice and the music. Shows and books take the same input. After a
+morning of red test runs the hosts are gentler and the chapter is shorter.
+On a good day they are quick and a little smug. The developer can also ask
+for a mood outright, or for a language and a level: ``a B1 German audiobook
+about a detective in Hamburg'' (see \featureref{feat:vibe} and
+\featureref{feat:language}).
+
+\textbf{It knows when to be quiet.} Two voices at once is the one thing
+that does not work. When the agent has something to say, the show pauses
+and the agent speaks. A few seconds after its last word, the show picks up
+where it stopped. The developer can pause and resume at any time. Chimes
+play over a show, as they play over music. Music never pauses. It already
+plays at a lower level than the agent's voice. Every show and book keeps its place across sessions.
+``Continue Learning React'' on Thursday resumes the sentence left on
+Tuesday (see \faqref{faq:interrupt}).
+
+\textbf{Everything is kept.} Shows and books are saved beside the music
+albums. The player on the Lux display lists all three with their episodes
+and chapters. Every script is saved as text next to its audio. Any of it
+exports as tagged audio files for a walk or a commute
+(see \faqref{faq:export}). The \texttt{vox}
+command line plays, pauses, lists and exports the same library with no
+agent in the loop.
+
+\prsection{Customer Quote}
+
+\begin{customerquote}
+\textit{``I used to start a big refactor and then lose forty minutes to my
+phone. Now I ask for something to listen to. Last week the agent and I made a
+six-episode series on Postgres internals. The two hosts kept making jokes
+about my actual schema. By the time the migration finished I was on episode
+three and I finally understood what a visibility map is. On Friday the tests
+had been red all afternoon, so I asked for a noir mystery set in our billing
+service. The murderer was a cron job. I laughed out loud in an open office.
+Then the agent chimed in to say the build was green, and the story carried
+on from the same line.''}
+
+\raggedleft \textbf{Priya Raman}, Staff Engineer at a logistics startup
+\end{customerquote}
+
+\prsection{Getting Started}
+
+A developer who already has vox needs an ElevenLabs API key on a paid plan
+and nothing else. First, update vox with the one-line installer. Second, in
+any repository where vox is enabled, type \texttt{/podcast} or
+\texttt{/audiobook} and say what to make. Third, keep working. The agent
+posts its pitch within seconds and the first part plays about two minutes
+later. There is no account to create with punt-labs, no upload step, and no
+editor to learn.
+
+\prsection{Spokesperson Quote}
+
+\begin{spokespersonquote}
+``We put the vibe in vibe coding. Literally. Music was the first half of
+that. The agent plays DJ and the session has a mood you can hear. But I
+kept wanting the other half. I sit next to something that can write about
+anything, and much of my day is spent waiting for it. The best I could do
+was open a podcast somebody else made for somebody else. So now I ask.
+Sometimes it is a series about the thing I am building, because the agent
+knows it better than any tutorial does. Sometimes it is pandas, the animal,
+because I need ten minutes off. The design rule is that asking for a show
+has to be as light as asking for a song. If it ever needs a form, we got it
+wrong.''
+
+\raggedleft \textbf{JM Freeman}, Creator of vox
+\end{spokespersonquote}
+
+\prsection{Call to Action}
+
+Podcasts and audiobooks ship in vox, available now at
+\url{https://github.com/punt-labs/vox}. The software is free and open
+source under the MIT license. Generating audio uses the developer's own
+ElevenLabs credits. Replaying anything already made is free. Update with
+the one-line installer, restart Claude Code, and type \texttt{/podcast}.
+
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FREQUENTLY ASKED QUESTIONS
+% ══════════════════════════════════════════════════════════════════════════════
+
+\section*{Frequently Asked Questions}
+
+\subsection*{External FAQs}
+
+\begin{faqpair}{What is this and who is it for?}\label{faq:what}
+
+  vox is the voice and audio layer for AI coding agents. It already gives
+  the agent a voice, chimes, a session mood and generated background music.
+  This release adds two things to make with the agent. A podcast is a cast
+  of hosts talking through a subject over one or many episodes. An
+  audiobook is a narrator reading a book of any length, chapter by chapter.
+
+  It is for a developer who works beside a coding agent for hours and wants
+  something good in their ears while the agent works. That can be something
+  about the work or something that is a break from it.
+\end{faqpair}
+
+\begin{faqpair}{How is this different from NotebookLM's Audio Overviews, or from a podcast app?}\label{faq:different}
+
+  NotebookLM turns a notebook of sources into a single audio overview. It
+  can gather the sources itself from a topic prompt
+  \cite{google2025deepresearch}. It offers four formats, a length setting and a steering prompt
+  before generation. It has an English-only mode for asking the hosts
+  questions \cite{notebooklm2026audiooverview,techcrunch2025notebooklmtone}.
+  It is a good product and the closest thing to this one.
+
+  \begin{center} % lint-ok
+  \small
+  \renewcommand{\arraystretch}{1.3}
+  \begin{tabularx}{\linewidth}{@{} l X X @{}}
+  \toprule
+  \textbf{\color{SectionBlue}Dimension} & \textbf{\color{SectionBlue}NotebookLM} & \textbf{\color{SectionBlue}vox} \\
+  \midrule
+  Where it runs & A browser tab or phone app & The coding session \\
+  What it knows & Sources you upload, or that it finds for a topic & The session: the code, the day's work, the mood \\
+  Length & One overview per request & A series that grows, or a book with no length limit \\
+  Subject & Non-fiction drawn from sources & Anything, including fiction \\
+  Steering & A prompt before generation & Conversation before, during and after \\
+  Interruptions & Unaware of your agent & Pauses for the agent and resumes \\
+  Music & None & Generated albums in the same library \\
+  \bottomrule
+  \end{tabularx}
+  \renewcommand{\arraystretch}{1.0}
+  \end{center}
+
+  A podcast app has better shows than any model will write this year. It
+  loses on fit. It has no episode about your codebase, it cannot be
+  redirected, and it keeps talking when the agent asks for approval.
+
+  NotebookLM leads in two places. Its hosts have been in public use far
+  longer. Its mode for asking the hosts questions is available today,
+  and the vox equivalent is a follow-up (see \featureref{feat:call-in}).
+\end{faqpair}
+
+\begin{faqpair}{How do I get started?}\label{faq:getting-started}
+
+  Update vox and check that an ElevenLabs key on a paid plan is configured.
+  The \texttt{vox doctor} command reports this. Then type \texttt{/podcast}
+  or \texttt{/audiobook} with a request. The agent replies with a title, a
+  cast and a list of parts, then begins. The first part plays about two
+  minutes later. The \texttt{pause}, \texttt{resume}, \texttt{next},
+  \texttt{prev}, \texttt{list} and \texttt{status} subcommands work the way
+  they do for \texttt{/music} today.
+\end{faqpair}
+
+\begin{faqpair}{How much does it cost?}\label{faq:cost}
+
+  The software is free. Generating speech spends credits on your own
+  ElevenLabs account. In a test call, 3,096 characters of text became three
+  and a half minutes of narration \cite{voxspike2026audiobook}. At that
+  rate an hour of narration is about 53,000 characters. The ElevenLabs list
+  price for its current speech model is \$0.08 per 1,000 characters on
+  every plan \cite{elevenlabs2026pricing}. An hour of narration therefore
+  costs a little over four US dollars. That figure rests on one call. Your
+  account is charged in credits, and the credits charged per character
+  depend on your plan.
+
+  Two costs are unmeasured. Podcasts use the multi-speaker engine, which
+  has not been priced by a test call. Writing the script spends model
+  tokens on your coding agent's plan.
+
+  Two rules keep the bill small. Audio is generated a part or two ahead of
+  where you are listening. Abandoning a twelve-chapter book after chapter
+  two costs three or four chapters, not twelve. Replaying anything already
+  generated is free, forever. The \texttt{status} subcommand shows the
+  credits each part used.
+\end{faqpair}
+
+\begin{faqpair}{What happens to my data?}\label{faq:data}
+
+  The script is written by the agent in your session and sent to ElevenLabs
+  to be voiced. If you asked for a show about your codebase, the script
+  describes your codebase, and ElevenLabs receives that text. ElevenLabs
+  keeps request data by default under its privacy policy. Its
+  zero-retention mode is offered only to select enterprise customers
+  \cite{elevenlabs2026zeroretention}. The script was written by your coding
+  agent, so its model provider has seen it too. On your side, the audio and
+  the script are saved on your own machine. There is no punt-labs cloud
+  service and no telemetry.
+
+  If text about your code must not leave your machine, do not ask for shows
+  about your code. Shows about pandas are unaffected.
+\end{faqpair}
+
+\begin{faqpair}{Can it really be about anything? How accurate is it?}\label{faq:anything}
+
+  Yes. Nothing ties a show to the repository. Technical requests work: a
+  technology you are adopting, the domain your software serves, the
+  architecture of the codebase in front of you. So do a language you are
+  learning at a stated level, a story, and a subject with no connection to
+  work at all.
+
+  Accuracy is the accuracy of the agent that wrote it. A model writing from
+  memory about a fast-moving subject will get things wrong in a confident
+  voice. Two things help. The authoring instructions tell the agent to look
+  things up before writing factual material, with whatever search and
+  reading tools the session has. Every script is saved as text, so a claim
+  that sounds off can be read, checked and corrected. Then that one part is
+  regenerated.
+\end{faqpair}
+
+\begin{faqpair}{Won't people talking in my ears wreck my concentration?}\label{faq:focus}
+
+  While you are reading or writing, yes, somewhat. Speech you are not
+  trying to follow still interferes with keeping words in mind
+  \cite{salame1982unattended}, and code is words. In one study, unattended
+  speech hurt reading comprehension and instrumental music did not
+  \cite{martin1988reading}. Music has a smaller cost and remains the
+  default companion for heads-down work.
+
+  Shows and books are for the other parts of the day: waiting on a long
+  agent run, watching a build, skimming a diff, taking a break. One command
+  pauses, and playback pauses by itself whenever the agent speaks.
+\end{faqpair}
+
+\begin{faqpair}{What happens when my agent needs me in the middle of an episode?}\label{faq:interrupt}
+
+  The rule is that two voices never talk at once. If the agent speaks, the
+  show pauses. It resumes from the same place a few seconds after the
+  agent's last word. That delay is one setting. A run of several spoken
+  updates becomes one pause, and you can lengthen or shorten the delay to
+  taste. If the agent only chimes, the show keeps playing and the chime
+  plays over it, as it does over music today. Music itself never pauses for
+  the agent. It plays at a fixed lower level, so the agent's voice is heard
+  over it.
+
+  You stay in control. Pause and resume are one command each, and a pause
+  you chose stays paused until you resume it. The player saves your
+  position at least every 30 seconds while it plays. A crash or a restart
+  costs you a few seconds, and your place is kept across sessions.
+\end{faqpair}
+
+\begin{faqpair}{Can I change a show after it starts?}\label{faq:steer}
+
+  Yes, by talking to the agent. You can ask for a different tone, more or
+  less depth, a new episode on a named subject, a chapter retold, or a host
+  replaced. Parts not yet generated are rewritten before they are voiced.
+  A part already voiced can be regenerated by itself without touching the
+  rest. A series has no fixed length. ``Add an episode on hooks'' three
+  weeks later appends one, and the hosts remember what they already
+  covered.
+\end{faqpair}
+
+\begin{faqpair}{Can I take a show with me?}\label{faq:export}
+
+  Yes. Any show, book or album exports as ordinary audio files with title,
+  part number and series tags, ready for a phone or a car. The scripts
+  export with them.
+\end{faqpair}
+
+% ── Internal FAQs ────────────────────────────────────────────────────────────
+
+\newpage
+\subsection*{Internal FAQs}
+
+\subsubsection*{Value \& Market}
+
+\begin{faqpair}{What is the total addressable market?}\label{faq:tam}
+
+  Small, and not the reason to build this. The audience is a subset of the
+  audience in the vox product PR/FAQ. That document estimates 360,000 to
+  720,000 developers who run agent tasks long enough to warrant a
+  notification \cite{voxprfaq2026}. Its starting count of developers is an
+  uncited assumption. This feature narrows that further to people with a
+  paid ElevenLabs plan who want long-form listening at their desk. No
+  source sizes that group.
+
+  The reason to build it is that it makes vox the audio side of working
+  with an agent (see \faqref{faq:different}). Adoption will follow from
+  that or it will not. The first market is the people who build vox.
+\end{faqpair}
+
+\begin{faqpair}{What evidence do we have that developers want this?}\label{faq:evidence}
+
+  None from customers. The evidence is indirect.
+
+  \textbf{The category exists.} Google keeps adding to its generated
+  podcasts: new formats in 2025, then source gathering from a topic prompt
+  \cite{techcrunch2025notebooklmtone,google2025deepresearch}. The inference
+  is that people listen to machine-written two-host audio when it is about
+  something they chose. No usage data backs that inference.
+
+  \textbf{The slot may exist.} The longest agent turns run past 45 minutes,
+  but those are one turn in a thousand \cite{anthropic2026agentautonomy}.
+  The share of a session spent waiting is unmeasured. Claude Code
+  transcripts on the builders' machines have timestamps and can supply it.
+
+  \textbf{One user.} vox music is in daily use by its author, who asked for
+  this. One person's wish is an anecdote.
+
+  \textbf{What is missing.} Nobody has listened to a vox-made episode,
+  because none exists. Whether an agent-written show keeps a listener past
+  the first novelty is unknown. That is the main value risk
+  (see \faqref{faq:failure}).
+\end{faqpair}
+
+\begin{faqpair}{Who are the competitors and why would we win?}\label{faq:competitors}
+
+  \textbf{NotebookLM.} The closest product, covered in
+  \faqref{faq:different}. Google built a standalone API that turns supplied
+  content into a podcast file with no notebook. It is now deprecated and
+  closed to new customers \cite{google2026podcastapi}. If Google reopened
+  it, a coding agent could call it and get polished two-host audio about a
+  set of files. It would still lack the session. That means playback that
+  yields to the agent, a library shared with music, a mood, a series that
+  grows by conversation, and books.
+
+  \textbf{ElevenLabs.} It owns the engines vox calls and sells its own
+  long-form tools. Its Studio API can create a two-voice podcast from
+  source material \cite{elevenlabs2026studiopodcast}. The Studio API refused this account
+  with a 403 \cite{voxspike2026audiobook}. Its reader app generates
+  podcasts from a user's documents \cite{elevenlabs2024genfm}. ElevenLabs
+  could offer agent-made shows directly, and it would do the audio better
+  than vox. It would still lack the session.
+
+  \textbf{Podcast and audiobook apps.} Better content, no fit. They are the
+  incumbent for the listener's time. They win by default if generated shows
+  are dull.
+
+  \textbf{Other agent voice tools.} AgentVibes plays a bundled music
+  catalog \cite{voxprfaq2026}.
+
+  The position is narrow: vox wins only on being in the session. If that
+  turns out not to matter to listeners, nothing else here is defensible.
+\end{faqpair}
+
+\begin{faqpair}{How will people find it?}\label{faq:acquisition}
+
+  Existing vox users get both commands with an update. Beyond them, the
+  channel is a demo. A sixty-second clip of a mystery set in a well-known
+  open-source codebase is easy to share and explains the feature by
+  itself. There is no paid acquisition.
+\end{faqpair}
+
+\begin{faqpair}{What is your next step to validate the vision?}\label{faq:validation-plan}
+
+  Listen. The API probe produced a three-and-a-half-minute narrated chapter
+  and a two-voice dialogue clip, and nobody has played either
+  \cite{voxspike2026audiobook}. The next step is one sitting. Play both
+  clips. Have the agent write one ten-minute podcast episode and one
+  five-minute chapter. Generate them through the probe script, extended to
+  take a script file. Listen to them during an ordinary agent run. Invite
+  three to five developers from outside punt-labs to listen too.
+
+  That sitting answers three questions about the content. Do the hosts
+  sound like two people or one model taking turns? Can you hear the joins
+  where dialogue requests are stitched? Is a ten-minute agent-written
+  episode worth ten minutes? If the answer to the last one is no, the work
+  stops before any product code is written.
+
+  The same sitting takes six measurements.
+
+  \begin{itemize}[leftmargin=1.5em, nosep]
+    \item How long the agent takes to write a five-minute chapter.
+
+    \item How long one chapter takes to generate, streamed and not
+          streamed.
+
+    \item Whether one 20,000-character speech request is accepted.
+
+    \item Whether a long coding task slows or stalls while a background
+          agent writes a script beside it.
+
+    \item Whether the background agent's output returns into the coding
+          session's context.
+
+    \item Whether a request typed during a long agent turn is answered at
+          once or queued until the turn ends.
+  \end{itemize}
+\end{faqpair}
+
+\subsubsection*{Technical}
+
+\begin{faqpair}{What are the major technical risks?}\label{faq:tech-risks}
+
+  \textbf{Who writes the next part during a run (high).} The agent that
+  writes the script is the agent doing the coding. A session takes one turn
+  at a time, so a script written in the main session interrupts the coding
+  or waits for it. The script would also fill the coding agent's context.
+  The design answer is a background agent with its own context. The main
+  agent starts it when the show is requested. It writes the outline and the
+  parts and hands each finished script to the daemon. The daemon has no
+  model and cannot ask for part four, so the writer has to stay ahead of
+  the listener unprompted. It learns the listener's position by asking the
+  daemon, and each check costs tokens. The writer ends when the session
+  ends. The show then plays what was already written and stops. A later
+  session starts a new writer from the outline and running summary stored
+  with the show (see \featureref{feat:memory}). Today a chime plays when
+  any sub-agent starts or stops, and the writer must be exempt. None of
+  this has been tried. Four things are unknown. Does the coding task slow?
+  Does the writer's output return into the coding session's context? How
+  many model tokens does the writing spend? What does the listener hear
+  when the writer falls behind?
+
+  \textbf{Stitched dialogue (high).} ElevenLabs recommends at most 2,000
+  characters of text per multi-speaker request
+  \cite{elevenlabs2026dialogue}. The measured narration rate is about 880
+  characters per minute \cite{voxspike2026audiobook}. Dialogue pacing may
+  differ, so applying that rate to a podcast is an assumption. On that
+  assumption a ten-minute episode is about 8,800 characters, or five
+  requests joined end to end. The join was accepted by the API and has not
+  been heard. NotebookLM, with far more tuning, still warns of voice
+  glitches and speakers swapping \cite{notebooklm2026audiooverview}.
+  Mitigation: listen first (see \faqref{faq:validation-plan}). If joins are
+  audible, the fallback is one voiced turn per request through the
+  single-speaker engine. At roughly 90 characters a turn, that is about a
+  hundred requests per episode, with a risk of tone breaks between turns.
+
+  \textbf{Chapter size (medium).} Narration is the easy engine: one request
+  per chapter. ElevenLabs' model documentation lists a 100,000-character
+  limit per request for the current model \cite{elevenlabs2026models}. Its
+  pricing page says 10,000 \cite{elevenlabs2026pricing}. The probe sent
+  3,096. A five-minute chapter is about 4,400 characters and fits under
+  either figure. Longer chapters are unproven until a larger request is
+  sent.
+
+  \textbf{Writing a long book (medium).} A ten-hour book is roughly half a
+  million characters, far more than an agent writes in one turn. The open
+  design question is when chapter seven gets written. Writing all the text
+  at creation makes creation a long job. Writing each chapter as the
+  listener approaches needs an agent available days later. The design
+  assumes the outline and a running summary are stored with the book. Any
+  later session can then write the next chapters from them. That
+  assumption is untested.
+
+  \textbf{Sharing the speakers (medium).} Today music plays at a fixed lower
+  level than speech and chimes, and that works well. Music keeps that
+  behaviour. Chimes play over a spoken show too. Agent speech over a spoken
+  show is the one case that fails. The show pauses for agent speech and for
+  a voice call, then resumes after a set delay. That delay is the one value
+  to tune, and it is a user setting. During playback the daemon reports
+  its position as a heartbeat. The saved position and the progress bar both
+  come from that heartbeat. A saved position in a local store is routine
+  work. The daemon's playback state gains six things. Three are pauses: one
+  for agent speech, one the developer chose, and a wait for a part that is
+  not ready. The others are a timed resume, a saved position per show, and
+  an end state. That is a state machine change and gets a formal model before
+  code.
+
+  \textbf{Time to first audio (unknown).} The target is audio within about
+  two minutes of the request. Nothing has been timed. The wait is the
+  agent's writing time plus generation time. The design shortens both by
+  opening every show with a part about a minute long. The listening session
+  times each step. If the target cannot be met, the opening part gets
+  shorter or music from the library plays during the wait.
+
+  \textbf{One vendor (medium).} Every engine here is ElevenLabs. Its
+  production API for long-form work is closed to this account and answers
+  403. That is why vox calls the plain speech and dialogue endpoints
+  directly \cite{voxspike2026audiobook}. A pricing or model change lands on
+  this feature immediately. Single-narrator audiobooks could run on OpenAI
+  or Polly as a hedge (see \featureref{feat:other-providers}).
+\end{faqpair}
+
+\begin{faqpair}{What does this depend on?}\label{faq:dependencies}
+
+  \textbf{Built already.} The library model that music uses: a named,
+  saved collection of ordered parts, each with its own file. Around it sit
+  a catalog, a filler that generates ahead of playback, tagged export, the
+  Lux player, and the command-line and agent tool paths. Podcasts and
+  audiobooks are two more kinds of the same thing.
+
+  \textbf{ElevenLabs.} Long-form speech, multi-speaker dialogue, and music
+  for theme tunes, on a paid plan.
+
+  \textbf{The agent.} All writing is done by the model in the session. vox
+  ships instructions for each format and has no model of its own. Output
+  quality tracks the model the developer runs.
+
+  \textbf{Not needed.} No punt-labs service, no account, no upload.
+\end{faqpair}
+
+\begin{faqpair}{What is the delivery order, and what gets cut?}\label{faq:timeline}
+
+  In order:
+
+  \begin{enumerate}[leftmargin=1.5em, nosep]
+    \item \textbf{Listening session.} This decides go or stop
+          (see \faqref{faq:validation-plan}).
+
+    \item \textbf{Playback for spoken shows.} This covers in-order play, an
+          end, pausing for agent speech, resuming after a set delay, a
+          position heartbeat, a saved position and a progress bar. Music
+          gets the progress bar too. It is modeled formally first and is
+          testable with any existing audio.
+
+    \item \textbf{Background writer and show memory.} Scripts are written
+          off the main turn, from an outline and running summary stored
+          with the show. Done means a long coding task and a show run side
+          by side, and a new session can write the next part.
+
+    \item \textbf{Audiobook, one narrator.} The simplest engine path, with
+          a one-minute opening part and each script saved as text. The
+          request can set a mood, a language and a level. Done means: ask,
+          hear the opening, keep listening as later chapters arrive, stop
+          and resume next day.
+
+    \item \textbf{Podcast, two hosts.} The dialogue engine, a stable cast
+          and a theme tune, with the same mood and language inputs. Done
+          means the same test as the audiobook, with a series of three
+          episodes.
+
+    \item \textbf{Steering.} Append an episode, regenerate one part, and
+          rewrite what has not been voiced yet.
+
+    \item \textbf{Library and export for both formats.} The Lux player,
+          per-part status, the command line and tagged export. Most of this
+          exists for music.
+  \end{enumerate}
+
+  Items 2 to 7 cover the Must Do list and ship as one release. If scope
+  compresses, every Should Do item waits, starting with character voices.
+  If the release has to be split, items 2 to 4 go first as audiobooks, and
+  podcasts follow. No dates are given because nothing comparable has been
+  built here yet to estimate from.
+\end{faqpair}
+
+\begin{faqpair}{What breaks first if people use this a lot?}\label{faq:scaling}
+
+  The listener's bill, then the disk. An hour of narration every working
+  day is about 1.2 million characters a month. At list price that is a
+  little over ninety dollars \cite{elevenlabs2026pricing}. The entry plans
+  include far fewer characters than that, so a daily listener needs a
+  larger plan or pays for overage. A hobbyist will notice. Audio files
+  accumulate at about a megabyte a minute. Neither is a vox scaling
+  problem. Both need to be visible: credits per part in \texttt{status},
+  and library size in \texttt{vox doctor}.
+\end{faqpair}
+
+\subsubsection*{Business}
+
+\begin{faqpair}{What is the revenue model?}\label{faq:revenue}
+
+  There is none. vox is free under the MIT license and this feature
+  changes nothing about that. The strategic value is identity. A tool that
+  makes a show with you is a different thing from a tool that reads
+  notifications aloud. It is the kind of thing people show each other.
+\end{faqpair}
+
+\begin{faqpair}{What does it cost us?}\label{faq:pl}
+
+  Maintainer time and test credits. Running costs are zero because vox has
+  no service. Every generated minute is paid for by the developer who asked
+  for it. Live testing of long-form audio is the new expense. A full pass
+  over both formats spends a few dollars of credits. A notification test
+  spends a fraction of a cent.
+\end{faqpair}
+
+\begin{faqpair}{How will we know it worked?}\label{faq:metrics}
+
+  vox has no telemetry, so the measures are things a person can report.
+
+  \begin{itemize}[leftmargin=1.5em, nosep]
+    \item \textbf{We use it.} After two weeks, the people building vox
+          still choose a vox-made show over their podcast app during agent
+          runs, unprompted.
+
+    \item \textbf{Finished parts.} At least 70\% of parts that start
+          playing reach their end. The daemon records this in the library
+          on the listener's own machine.
+
+    \item \textbf{Second requests.} Someone who makes one show makes
+          another within a week.
+
+    \item \textbf{The demo test.} A developer shown a mystery set in their
+          own codebase asks how to install it.
+  \end{itemize}
+
+  The decision threshold is two weeks of daily availability. If the
+  builders have gone back to their podcast apps by then, the content is not
+  good enough. Work stops at whatever has shipped.
+\end{faqpair}
+
+\begin{faqpair}{Why now?}\label{faq:why-now}
+
+  Three things are now true. One speech request on the current model
+  produced three and a half minutes of narration
+  \cite{voxspike2026audiobook}. The documented limit per request is at
+  least 10,000 characters \cite{elevenlabs2026models,elevenlabs2026pricing}. The
+  multi-speaker engine returns audio on the same model
+  \cite{voxspike2026audiobook}. And the music playlist in vox became a
+  general library of saved, ordered, replayable parts. Two new formats are
+  additions to something that exists.
+\end{faqpair}
+
+\begin{faqpair}{What are we not building?}\label{faq:not-building}
+
+  A publishing tool, an audio editor, or a notebook product. There is no
+  hosting or distribution of shows. There is no timeline for trimming
+  audio. Nobody is asked to upload sources. There is no language model
+  inside vox and no imitation of an actual person's voice.
+\end{faqpair}
+
+\begin{faqpair}{What does failure look like?}\label{faq:failure}
+
+  \textbf{It is dull.} The likeliest failure. The first show is a delight
+  and the fourth sounds like the first: the same two cheerful voices, the
+  same structure, the same ``great question.'' Listeners go back to shows
+  made by people. Response: the per-format authoring instructions are the
+  product. They get the iteration that the audio pipeline does not need.
+  They are where vibe, cast and form turn into variety.
+
+  \textbf{It is wrong.} A confident host states something false about a
+  subject the listener is trying to learn. One such moment costs the
+  format its trust for teaching, leaving only fiction. Response: lookup
+  before writing, scripts kept as text, and a plain statement in the
+  documentation that this is model-written material.
+
+  \textbf{It is in the way.} Speech fights with reading
+  (see \faqref{faq:focus}) and pausing is fiddly. People conclude that
+  music was the right amount of audio. Response: this is acceptable.
+  Music stays, and the two formats remain available for the waiting.
+\end{faqpair}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FOUR RISKS ASSESSMENT
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+\section*{Risk Assessment}
+
+\renewcommand{\arraystretch}{1.6} % lint-ok
+\begin{tabularx}{\textwidth}{@{} l l X @{}}
+\toprule
+\textbf{\color{SectionBlue}Risk} & \textbf{\color{SectionBlue}Rating} & \textbf{\color{SectionBlue}Assessment} \\
+\midrule
+Value      & \textcolor{RiskRed}{\textbf{High}} &
+  No one has heard a vox-made show. The bet is that a show written for you,
+  about what you chose, inside your session, beats a better-produced show
+  that is none of those things. Novelty will cover the first three
+  episodes. Nothing yet says what covers the tenth. \\
+Usability  & \textcolor{RiskAmber}{\textbf{Medium}} &
+  Asking is one line and matches \texttt{/music}, which people already use.
+  The risk is in the listening. Speech competes with reading, so the
+  feature fits only part of the day. Agent turns are often under a minute,
+  so a talkative agent pauses the show often. The resume delay turns a
+  burst of updates into one pause. The listener can change that delay,
+  pause by hand, or switch the agent to chimes. Pause, resume and
+  place-keeping have to work every time. \\
+Feasibility & \textcolor{RiskRed}{\textbf{High}} &
+  The library, the player and the generation pipeline exist for music. The
+  API calls were made and returned audio. Four things are unproven, and the
+  first has no fallback. Can a
+  background agent write scripts beside a coding task? How does stitched
+  dialogue sound? How long does generation take? How does a book longer
+  than one session get written? \\
+Viability  & \textcolor{RiskAmber}{\textbf{Medium}} &
+  No revenue to validate and no service to run. Two exposures remain. Every
+  engine comes from one vendor. A daily listener pays about ninety dollars
+  a month for something that competes with free podcasts. \\
+\bottomrule
+\end{tabularx}
+\renewcommand{\arraystretch}{1.0}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% FEATURE APPENDIX
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+\section*{Feature Appendix}
+
+\subsection*{Must Do}
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{\texttt{/podcast} and \texttt{/audiobook}}{Two commands, each with its own instructions to the agent on how to write that form. The request is free text. The agent replies with a pitch (title, cast, parts) and starts.}\label{feat:commands}
+
+  \featureitem{Open subject}{Nothing ties a show to the repository. Code, domain, technology, fiction, or a subject unrelated to work are all ordinary requests.}\label{feat:open-subject}
+
+  \featureitem{Vibe as an input}{The session mood that already drives voice and music is passed to the agent when it writes. It affects tone, pace and length.}\label{feat:vibe}
+
+  \featureitem{Language and level}{A show can be requested in a target language at a stated proficiency level.}\label{feat:language}
+
+  \featureitem{Podcast form}{A stable, named cast of hosts in conversation. Episodes stand alone and open with a short recap. A series of one is normal.}\label{feat:podcast}
+
+  \featureitem{Theme tunes}{Each podcast gets one short generated intro and outro from the music engine, made once per series and mixed into every episode.}\label{feat:theme}
+
+  \featureitem{Audiobook form}{One narrator, chapters that follow one another, no limit on length.}\label{feat:audiobook}
+
+  \featureitem{Background writer}{Scripts are written by a background agent with its own context. The coding session's turn and context stay free.}\label{feat:writer}
+
+  \featureitem{Play while generating}{Every show opens with a part about a minute long, which plays when ready. Later parts are generated a part or two ahead of the listener and no further.}\label{feat:lazy}
+
+  \featureitem{In-order playback with an end}{Spoken shows play in sequence and stop after the last part. Music keeps rotating.}\label{feat:sequential}
+
+  \featureitem{Show memory}{Each show stores its outline and a running summary of what has been covered. A later session starts a writer from them, so a series continues days later and the hosts do not repeat themselves.}\label{feat:memory}
+
+  \featureitem{Yield to speech}{A spoken show pauses for agent speech and voice calls. It resumes from the same position a set time after the last spoken word. That delay is a user setting. Chimes play over the show. Music never pauses. A pause the developer chose never resumes by itself.}\label{feat:yield}
+
+  \featureitem{Playback heartbeat and progress bar}{While anything plays, the daemon reports the current part and position at least every 30 seconds. The Lux player draws a progress bar from it for music, shows and books.}\label{feat:progress}
+
+  \featureitem{Keep my place}{The heartbeat position is saved in the local library for every show and book. It survives sessions and daemon restarts. ``Continue'' resumes it.}\label{feat:bookmark}
+
+  \featureitem{One library}{Shows, books and albums are saved in one catalog. One player on the Lux display lists them with titles, parts and progress. The \texttt{vox doctor} command reports the library's size on disk.}\label{feat:library}
+
+  \featureitem{Per-part status}{Each part reports pending, generating, ready or failed with a reason, and the credits it used.}\label{feat:status}
+
+  \featureitem{Scripts kept as text}{The written script of every part is stored beside its audio and can be read.}\label{feat:scripts}
+
+  \featureitem{Steering}{Rewrite parts not yet voiced. Append a part to an existing show. Regenerate one voiced part without touching the others.}\label{feat:steering}
+
+  \featureitem{Command-line parity}{\texttt{vox podcast} and \texttt{vox audiobook} play, pause, list, show status and export with no agent. They also accept a finished script on standard input and generate from it.}\label{feat:cli}
+
+  \featureitem{Export}{Any show or book exports as tagged audio files with its scripts.}\label{feat:export}
+\end{enumerate}
+
+\subsection*{Should Do}
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{Character voices}{Audiobook dialogue lines spoken by a cast of distinct voices through the multi-speaker engine.}\label{feat:characters}
+
+  \featureitem{Call in to the show}{Pause an episode and ask the hosts a question by voice, using the existing vox call. They answer in character and the episode resumes.}\label{feat:call-in}
+
+  \featureitem{The agent offers}{When the session mood has been low for a while, the agent suggests a break and a show to go with it. Off by default.}\label{feat:offers}
+
+  \featureitem{Designed voices}{A host or character voice created from a description (``older, dry, Glaswegian'') and kept with the show.}\label{feat:designed-voices}
+
+  \featureitem{Score and sound effects}{A music bed and effects mixed into audiobook chapters at generation time.}\label{feat:score}
+
+  \featureitem{Other speech providers}{Single-narrator audiobooks through OpenAI or Polly for listeners without ElevenLabs.}\label{feat:other-providers}
+
+  \featureitem{Progress in the terminal}{The same heartbeat drawn as a progress line in a terminal view, for sessions with no Lux display.}\label{feat:progress-tui}
+
+  \featureitem{Cost preview}{Before a long work starts, the pitch states an estimated credit cost per part.}\label{feat:cost-preview}
+\end{enumerate}
+
+\subsection*{Won't Do}
+
+\begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{Publishing}{No feeds, no hosting, no upload to podcast directories. Shows are made for the person who asked. Export covers taking a file elsewhere.}\label{feat:no-publishing}
+
+  \featureitem{An audio editor}{No timeline, trimming or per-sentence regeneration. The unit of change is a part, and the way to change it is to ask.}\label{feat:no-editor}
+
+  \featureitem{Source upload}{No notebook of documents to manage. The agent reads what the session can already reach.}\label{feat:no-upload}
+
+  \featureitem{Two programs at once}{No spoken show over a separately playing music program. Any music under speech is mixed into the part when it is generated.}\label{feat:no-mixing}
+
+  \featureitem{Cloning voices}{No hosts that imitate the voice of an actual person. That needs the person's consent, and vox has no way to check it.}\label{feat:no-cloning}
+
+  \featureitem{A built-in writer}{There is no language model inside vox. The agent in the session writes, and the command line takes finished scripts.}\label{feat:no-llm}
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% REFERENCES
+% ══════════════════════════════════════════════════════════════════════════════
+
+\newpage
+{\emergencystretch=1em
+\printbibliography[title={References}]
+}
+
+\end{document}
