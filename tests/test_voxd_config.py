@@ -378,3 +378,36 @@ class TestVoxdPathHelpersArePure:
 
 # Logging is owned by ``logging_config`` (see test_logging_config.py); the daemon
 # config no longer configures logging.
+
+
+class TestSearchKey:
+    """The research key rides the same keys.env path as the provider keys."""
+
+    def test_a_key_in_keys_env_reaches_the_search_tool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox.voxd.voice_call.lookup.web_search import ExaSearch
+
+        (tmp_path / "keys.env").write_text("EXA_API_KEY=exa-from-file\n")
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+
+        assert "EXA_API_KEY" in _load_keys(tmp_path)
+
+        assert ExaSearch.from_environment() is not None
+
+    def test_the_installer_snapshots_the_search_key_from_the_environment(self) -> None:
+        from punt_vox.service.keys_env_merge import KeysEnvMerge
+
+        merged = KeysEnvMerge.over_text("", {"EXA_API_KEY": " exa-key "}).merged
+
+        assert merged["EXA_API_KEY"] == "exa-key"
+
+    def test_the_search_key_is_held_to_the_header_character_set(self) -> None:
+        from punt_vox.keys import HEADER_CARRIED_KEY_NAMES
+
+        assert "EXA_API_KEY" in HEADER_CARRIED_KEY_NAMES
+
+    def test_the_search_key_never_selects_a_tts_provider(self) -> None:
+        from punt_vox.providers.credentials import ProviderCredentials
+
+        assert "EXA_API_KEY" not in ProviderCredentials().header_carried_env_vars()

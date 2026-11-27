@@ -1,0 +1,76 @@
+mission_id: m-2026-11-25-009
+status: closed
+type: implement
+created_at: "2026-11-25T18:23:25Z"
+updated_at: "2026-11-25T19:31:47Z"
+closed_at: "2026-11-25T19:31:47Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-11-25T18:23:25Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: PL-1497
+write_set:
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+    - .suppression-audit.jsonl
+    - .suppression-relax.json
+    - CHANGELOG.md
+    - README.md
+    - src/punt_vox/service/attributed_health.py
+    - src/punt_vox/service/backend.py
+    - src/punt_vox/service/daemon_probe.py
+    - src/punt_vox/service/health.py
+    - src/punt_vox/service/health_request.py
+    - src/punt_vox/service/lifecycle_status.py
+    - src/punt_vox/service/not_asked.py
+    - src/punt_vox/service/process.py
+    - src/punt_vox/service/published_health.py
+    - src/punt_vox/service/published_port.py
+    - src/punt_vox/service/service_cgroup.py
+    - src/punt_vox/service/stale_port_file.py
+    - src/punt_vox/commands/daemon.py
+    - src/punt_vox/voxd/port_file.py
+    - src/punt_vox/voxd/daemon.py
+    - tests/_lifecycle_fakes.py
+    - tests/test_service_daemon_probe.py
+    - tests/test_service_lifecycle_status.py
+    - tests/test_service_published_port.py
+    - tests/test_service_health.py
+    - tests/test_service_backend.py
+    - tests/test_service_process.py
+    - tests/test_service_stale_port_file.py
+    - tests/test_cli.py
+    - tests/test_voxd_port_file.py
+    - tests/test_voxd_daemon.py
+extract_into:
+    - src/punt_vox/service
+    - tests
+success_criteria:
+    - voxd publishes serve.pid atomically next to serve.port and clears it on shutdown; tests prove both
+    - 'The CLI sends the token only to a live voxd of this user: own serve.port naming the service port, serve.pid alive and a voxd command, loopback bind, accepting listener; a stale port file with a foreign listener is not asked and the reason names the dead publisher'
+    - Port, owner and pid are read from a single stat of the file that was read
+    - may-ask requires at least MIN_HEALTH_S in attributed_health.py and published_health.py
+    - Every unknown reading names the step that spent the deadline, including a sent-but-unanswered published request
+    - PortProbeError on serve.port becomes NotAskedError so attribution runs; not-owned, stat-failed and unparseable each have their own reason
+    - Each new service module has tests/test_service_<name>.py; the vacuous reserve test is gone or real
+    - The health deadline starts before the target lookup
+    - Every commit passes the commit hook; ratchets by scoped oo-ratchet blesses only; no ticket id in .py prose
+    - Service tests pass under -n 2 and the installed vox daemon status prints the running line; both pasted in the result
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+round_decisions:
+    version: 1
+    entries:
+        - id: 6f2b2c0fd3a15749f09dabf65559a88f
+          round: 1
+          created_at: "2026-11-25T18:53:40Z"
+          author: claude
+          recommendation: continue
+context: 'Continuation of m-2026-11-25-008 (closed on its passing round 1) for PL-1497 on branch fix/pl-1497-daemon-status-lsof in the main directory <repo>; same rules (no worktree, no push, hook on every commit, no --no-verify, pytest -n 2 under load 40, no make check/make test). This mission carries the review fix round: eleven findings from the evaluator, silent-failure hunter, code-reviewer and Qodo, already sent to the worker in messages, headed by the High: a stale serve.port after a voxd crash lets another local user who binds 127.0.0.1:8421 receive this user''s token. Ruling: voxd publishes serve.pid next to serve.port (PortFile.write/remove, atomic rename, same discipline), and the CLI asks health only when serve.port is this user''s and names the service port, serve.pid names a pid that os.kill(pid, 0) accepts, the bounded ps identity says the command is voxd, the bind is loopback and the port accepts a connection; otherwise it is not asked, with the reason naming the dead or foreign publisher. Port and owner (and pid) come from a single stat of the file that was read. The write set adds src/punt_vox/voxd/port_file.py, voxd/daemon.py, service/stale_port_file.py and their tests for that purpose. Everything else from the round: may-ask floor at MIN_HEALTH_S; unknown branches name the health miss; PortProbeError becomes NotAskedError; not-owned, stat-failed and unparseable reasons separated; per-module test files for the five new modules; vacuous reserve test removed or made real; the health deadline starts before the target lookup; the ''vox sent it no token'' line names a sent request. Proof: the service test set plus the new files, make check-comments, ruff/mypy/pyright on changed files, then make install, vox daemon restart, vox daemon status and --json pasted. Submit the result to this mission.'

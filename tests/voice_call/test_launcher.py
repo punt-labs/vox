@@ -60,6 +60,10 @@ class _Connector:
     def __init__(self) -> None:
         self.connections: list[tuple[str, ...]] = []
         self.teardowns = 0
+        self.retirements = 0
+
+    def retire_stale(self) -> None:
+        self.retirements += 1
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         self.connections.append(
@@ -201,6 +205,19 @@ class TestInputSelection:
         (peer,) = opener.peers
         assert peer.sent
         assert peer.sent[0].startswith(b"\x05\x00" * 320)
+
+    async def test_old_agents_are_retired_in_the_background_once_connected(
+        self, tmp_path: Path
+    ) -> None:
+        connector = _Connector()
+        launcher = _launcher(tmp_path, connector=connector, opener=_Opener())
+        active = await launcher.launch(
+            uuid4(), {"type": "call_start", "script": _script(tmp_path)}
+        )
+        await active.wait_connected(5)
+        await asyncio.sleep(0.05)
+        await active.cancel()
+        assert connector.retirements == 1
 
     async def test_a_malformed_script_is_refused_before_any_work(
         self, tmp_path: Path

@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 type Arguments = dict[str, object]
 # The cache identity of a request, and the arguments the operation runs with.
 type Request = tuple[Arguments, Arguments]
+# Given the canonical key and the resolved arguments, return the result that
+# holds the request, or None to let it run.
+type Guard = Callable[[str, Arguments], Awaitable[str | None]]
 
 
 @final
@@ -57,21 +60,24 @@ class ToolAnswer:
         operation: Callable[[Arguments], Awaitable[object]],
         *,
         durable: bool,
+        guard: Guard | None = None,  # None: the request needs no confirmation.
     ) -> tuple[str, bool]:
         """Resolve *request*, run *operation* on it, and answer the outcome.
 
         Resolution runs inside the same boundary as the operation: reading the
         allowlist to fill a default project can raise the config fault too.
+        The guard runs before the cache, so what it holds is never stored.
         """
         try:
             identity, resolved = await request()
+            key = ToolResultCache.key(name, identity)
+            if guard is not None and (held := await guard(key, resolved)) is not None:
+                return held, False
 
             async def execute() -> str:
                 return json.dumps(await operation(resolved), ensure_ascii=False)
 
-            result = await self._cache.run(
-                ToolResultCache.key(name, identity), execute, durable=durable
-            )
+            result = await self._cache.run(key, execute, durable=durable)
         except (OSError, UnicodeDecodeError) as exc:
             return self.error(self._fault(name, exc))
         except (

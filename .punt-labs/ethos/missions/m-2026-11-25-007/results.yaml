@@ -1,0 +1,173 @@
+results:
+    - mission: m-2026-11-25-007
+      round: 1
+      created_at: "2026-11-25T14:27:51Z"
+      author: gvr
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 9
+          removed: 0
+        - path: .oo-baseline.json
+          added: 54
+          removed: 2
+        - path: .oo-coupling-audit.jsonl
+          added: 8
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 107
+          removed: 2
+        - path: .suppression-audit.jsonl
+          added: 1
+          removed: 0
+        - path: .suppression-relax.json
+          added: 6
+          removed: 0
+        - path: CHANGELOG.md
+          added: 6
+          removed: 0
+        - path: pyproject.toml
+          added: 1
+          removed: 0
+        - path: src/punt_vox/doctor_call.py
+          added: 4
+          removed: 1
+        - path: src/punt_vox/doctor_call_daemon.py
+          added: 146
+          removed: 0
+        - path: src/punt_vox/types_mic.py
+          added: 64
+          removed: 0
+        - path: src/punt_vox/voxd/handler_registry.py
+          added: 5
+          removed: 10
+        - path: src/punt_vox/voxd/mic_probe.py
+          added: 134
+          removed: 0
+        - path: src/punt_vox/voxd/system_routes.py
+          added: 49
+          removed: 0
+        - path: tests/test_cli.py
+          added: 17
+          removed: 0
+        - path: tests/test_doctor_call.py
+          added: 8
+          removed: 0
+        - path: tests/test_doctor_call_daemon.py
+          added: 126
+          removed: 0
+        - path: tests/test_handler_registry.py
+          added: 29
+          removed: 0
+        - path: tests/test_system_routes.py
+          added: 38
+          removed: 0
+        - path: tests/test_types_mic.py
+          added: 25
+          removed: 0
+        - path: tests/test_voxd_mic_probe.py
+          added: 89
+          removed: 0
+        - path: tests/test_workers.py
+          added: 24
+          removed: 0
+        - path: typings/sounddevice/__init__.pyi
+          added: 5
+          removed: 0
+      evidence:
+        - name: git commit (hook ran; OO_BASE/COUPLING_BASE/SUPPRESSION_BASE=--base-ref MERGE_HEAD) -> 7df986a3 Merge main into fix/pl-1492-doctor-mic-and-allowlist; no MERGE_HEAD left, git grep for conflict markers in src tests typings CHANGELOG.md finds none
+          status: pass
+        - name: src/punt_vox/voxd/workers/repos_handler.py deleted; WorkerReposCheck sends worker_repos through DaemonControl('worker').request('repos'), served by main's AllowlistHandlers; tests/test_workers.py repos test repointed at AllowlistHandlers
+          status: pass
+        - name: uv run pytest -p no:cacheprovider -n 2 tests/test_voxd_mic_probe.py tests/test_doctor_call_daemon.py tests/test_cli.py tests/test_handler_registry.py tests/test_workers.py -> 296 passed in 6.53s
+          status: pass
+        - name: 'make install -> Installed 3 executables: vox, vox-panel, voxd; vox daemon restart -> voxd restarted (pid 92363, port 8421, version 5.1.0) (was pid 69131)'
+          status: pass
+        - name: 'vox doctor -> ''✓ Microphone (voxd): MacBook Air Microphone, 16000 Hz, peak 156 over 15870 samples'' and ''✓ Worker repositories: 1 allowlisted (vox)''; 19 passed, 0 failed'
+          status: pass
+        - name: make check-comments -> exit 0 (ruff ERA001 All checks passed; check_python_docs comments clean)
+          status: pass
+        - name: uv run ruff check <16 changed files> -> All checks passed!, exit 0
+          status: pass
+        - name: 'uv run mypy <15 changed .py files> -> Success: no issues found in 15 source files'
+          status: pass
+        - name: uv run pyright <16 changed files> -> 0 errors, 2 warnings (reportMissingModuleSource for the optional sounddevice extra in mic_probe.py, as in main's other sounddevice importers)
+          status: pass
+        - name: 'post-merge hook view: uv run oo-ratchet oo --check -> PASS: at least one metric improved, no regressions; coupling --check -> PASS: no regressions; suppressions --check -> PASS: suppression count unchanged'
+          status: pass
+      open_questions:
+        - The merge commit's hook ran with OO_BASE, COUPLING_BASE and SUPPRESSION_BASE set to --base-ref MERGE_HEAD (main). Without it the ratchet's base is merge-base(origin/main, HEAD), the five-merges-old fork point, and main's own src/punt_vox/types_cli_options.py (an Annotated-alias module with no classes or functions, merged on main without a baseline entry) reads as NEW with method_ratio 0.0 and fails its absolute threshold. A scoped bless of that file (source PL-1492) records its first score so the next main-side touch does not hit it. Nothing was committed with --no-verify.
+        - 'The branch''s SystemRoutes module was kept (system_routes.py) rather than folded into system_handlers.py: folding gave system_handlers.py 4 classes and efferent coupling 11, both over threshold. With SystemRoutes the registry''s module_size drops 76 -> 71 and its coupling 11 -> 10 against main.'
+      prose: |
+        Resolution followed the contract: main is the base. Ratchet files were taken from
+        main, then earned with one scoped bless per new module (mic_probe.py,
+        doctor_call_daemon.py, types_mic.py, system_routes.py), one for doctor_call.py
+        (three lines and one import to register the two daemon-answered rows), a
+        suppression relax for mic_probe.py's PLC0415 per-file ignore, and a scoped
+        update recording handler_registry.py's improvement. mic_probe.py's module-level
+        sounddevice_capture became the SoundDeviceCapture class so the module passes
+        method_ratio on its own. The sounddevice stub is main's plus sleep().
+    - mission: m-2026-11-25-007
+      round: 2
+      created_at: "2026-11-25T14:52:01Z"
+      author: gvr
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 17
+          removed: 0
+        - path: .oo-baseline.json
+          added: 54
+          removed: 2
+        - path: .oo-coupling-audit.jsonl
+          added: 9
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 107
+          removed: 2
+        - path: src/punt_vox/doctor_call_daemon.py
+          added: 156
+          removed: 0
+        - path: src/punt_vox/types_mic.py
+          added: 74
+          removed: 0
+        - path: src/punt_vox/voxd/mic_probe.py
+          added: 154
+          removed: 0
+        - path: tests/test_doctor_call_daemon.py
+          added: 164
+          removed: 0
+        - path: tests/test_types_mic.py
+          added: 33
+          removed: 0
+        - path: tests/test_voxd_mic_probe.py
+          added: 247
+          removed: 0
+      evidence:
+        - name: 'Finding 1+3 (High, Medium): bdbf1986 ''mic probe captures through the call''s PortAudio backend''. SoundDeviceCapture takes a CaptureBackend (PortAudio() by default), calls backend.devices().input then backend.open(device, samplerate=16000.0, blocksize=0, callback=cb), sounddevice.sleep inside the handle''s lifetime, stream.__exit__ in finally; OSError and UnicodeDecodeError become MicProbeError. Bare query_devices/RawInputStream code deleted. Tests: devices() before open() (events == [''devices'', ''open'', ''sleep 250'', ''exit'']); through the real PortAudio over a fake sounddevice, DeviceTable.open_streams == 1 during sleep and 0 after; OSError and UnicodeDecodeError from the backend raise MicProbeError; a decode error through the handler is an error frame. Failing output before the fix: 5 FAILED with TypeError on the old signature.'
+          status: pass
+        - name: 'Finding 2 (Medium): c5c5fd67 ''doctor tells a microphone that delivered nothing from one that heard silence''. MicProbeReport.delivered (samples > 0); MicCaptureCheck warns ''the device delivered no audio in one second'' with no grant advice when samples == 0, keeps the grant advice for samples > 0 and peak 0. Tests added in test_types_mic.py and test_doctor_call_daemon.py; failing output before the fix: 3 FAILED (AttributeError on delivered; message assertion).'
+          status: pass
+        - name: 'Finding 4 (Medium): 6678643c ''mic probe logs a capture that heard nothing at WARNING''. logger.log(INFO if report.signal else WARNING). caplog test parametrized over (812,16000,INFO), (0,16000,WARNING), (0,0,WARNING); failing output before the fix: 2 of 3 FAILED at INFO.'
+          status: pass
+        - name: 'Finding 5 (Low): cff91689 ''the doctor''s mic test proves the check imports no capture code''. The test now removes sounddevice and punt_vox.voxd.mic_probe from sys.modules, runs the check, and asserts both stay absent and the DaemonControl request was awaited once.'
+          status: pass
+        - name: 'Finding 6 (Low): 11d7ce0f ''doctor names the restart when the daemon does not know the probe''. _DaemonAnswer.reason maps ''unknown message type: ...'' to ''<error>; the running daemon predates this check, run vox daemon restart'' for both the mic and repos checks; two tests, the mic one failed first (AssertionError).'
+          status: pass
+        - name: uv run pytest -p no:cacheprovider -n 2 tests/test_voxd_mic_probe.py tests/test_doctor_call_daemon.py tests/test_types_mic.py tests/test_system_routes.py tests/test_handler_registry.py tests/test_doctor_call.py tests/test_cli.py tests/conversation_mode/test_portaudio.py tests/conversation_mode/test_device_table.py -> 321 passed in 8.52s (uptime 1-min load 6.04 before the run)
+          status: pass
+        - name: 'make check-comments -> ruff ERA001 All checks passed; check_python_docs comments clean, exit 0. ruff check on the 6 changed files -> All checks passed. mypy -> Success: no issues found in 6 source files. pyright -> 0 errors, 2 warnings (reportMissingModuleSource for the optional sounddevice extra in mic_probe.py, as in main''s other sounddevice importers).'
+          status: pass
+        - name: 'make install -> Installed 3 executables: vox, vox-panel, voxd; vox daemon restart -> voxd restarted (pid 22964, port 8421, version 5.1.0) (was pid 92363); vox doctor -> ''✓ Microphone (voxd): MacBook Air Microphone, 16000 Hz, peak 87 over 16140 samples'', ''✓ Worker repositories: 1 allowlisted (vox)'', 19 passed, 0 failed'
+          status: pass
+        - name: 'vox.log after the doctor run: ''06:46:39 [INFO] punt_vox.voxd.conversation_mode.device_table: PortAudio device table re-read from the system: 5 devices, default input #1, default output #2'' then ''06:46:41 [INFO] punt_vox.voxd.mic_probe: mic probe: device=''MacBook Air Microphone'' peak=87 samples=16140'' -- the probe now refreshes the table through the backend'
+          status: pass
+        - name: 'Every commit passed the commit hook with its default base (no OO_BASE override this round); ratchet growth recorded by scoped oo-ratchet blesses only: oo and coupling --rebaseline-files for mic_probe.py (backend parameter, error conversion, log level), oo for types_mic.py (delivered) and doctor_call_daemon.py (third outcome; restart advice)'
+          status: pass
+      prose: |
+        Five commits on fix/pl-1492-doctor-mic-and-allowlist after the merge commit
+        7df986a3: bdbf1986, c5c5fd67, 6678643c, cff91689, 11d7ce0f. Each behaviour
+        change was preceded by a test that failed on the unfixed code. Nothing pushed,
+        nothing with --no-verify, no worktree, no branch.

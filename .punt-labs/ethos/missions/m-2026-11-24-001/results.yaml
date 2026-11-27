@@ -1,0 +1,22 @@
+results:
+    - mission: m-2026-11-24-001
+      round: 1
+      created_at: "2026-11-25T07:02:36Z"
+      author: claude
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/voice_call/call.py
+          added: 0
+          removed: 0
+      evidence:
+        - name: 'Work merged to main as PR 747 (6b6e251d), 2026-11-24: fail a silent microphone and log every call''s lifecycle (PL-1491, PL-1494)'
+          status: pass
+        - name: 'Daemon log on 2026-11-25 shows the required lines on live calls: Call starting with input mode and echo declaration, Call input device with name and rate, Call capture level over the first second, Call tool start_worker ok, Call ended with duration and trace path'
+          status: pass
+        - name: 'Result recorded by the leader after the fact: the worker never submitted one; counts are placeholders because the branch was squash-merged and deleted'
+          status: pass
+      prose: |
+        Leader-recorded closure. The mission's work shipped in PR 747 and is proven
+        by the live-call log lines it specified, observed on three calls on
+        2026-11-25. Recorded to release the write set for PL-1619 and PL-1620.

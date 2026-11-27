@@ -1,0 +1,230 @@
+results:
+    - mission: m-2026-11-25-009
+      round: 1
+      created_at: "2026-11-25T18:51:38Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 32
+          removed: 0
+        - path: .oo-baseline.json
+          added: 94
+          removed: 16
+        - path: .oo-coupling-audit.jsonl
+          added: 23
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 58
+          removed: 9
+        - path: CHANGELOG.md
+          added: 8
+          removed: 3
+        - path: src/punt_vox/service/attributed_health.py
+          added: 2
+          removed: 2
+        - path: src/punt_vox/service/daemon_probe.py
+          added: 28
+          removed: 17
+        - path: src/punt_vox/service/health_request.py
+          added: 5
+          removed: 1
+        - path: src/punt_vox/service/lifecycle_status.py
+          added: 61
+          removed: 20
+        - path: src/punt_vox/service/not_asked.py
+          added: 73
+          removed: 7
+        - path: src/punt_vox/service/published_health.py
+          added: 88
+          removed: 38
+        - path: src/punt_vox/service/published_port.py
+          added: 122
+          removed: 28
+        - path: src/punt_vox/voxd/port_file.py
+          added: 54
+          removed: 42
+        - path: tests/_lifecycle_fakes.py
+          added: 82
+          removed: 6
+        - path: tests/test_service_daemon_probe.py
+          added: 39
+          removed: 302
+        - path: tests/test_service_lifecycle_status.py
+          added: 137
+          removed: 16
+        - path: tests/test_service_published_port.py
+          added: 143
+          removed: 21
+        - path: tests/test_voxd_port_file.py
+          added: 29
+          removed: 2
+      evidence:
+        - name: 'ten commits on fix/pl-1497-daemon-status-lsof, each through .git/hooks/pre-commit (ethos-sealed), no --no-verify: 27cdf6e6 48707aa9 e1be8eee 5c064227 7d41cd81 c0d2e5be 4aa43b83 a6a20c2d 591c5241 5af9a39f'
+          status: pass
+        - name: 'item 1 (High): 5af9a39f voxd publishes serve.pid; gate = own serve.port naming 8421, own serve.pid alive via os.kill(pid, 0) and voxd per bounded ps identity, loopback, listener; stale port file + dead publisher + foreign listener sends nothing: ''voxd pid N that published serve.port is gone; no token sent unattributed'' (real files in test_service_published_health and test_service_published_port; fakes in test_service_lifecycle_status)'
+          status: pass
+        - name: 'item 2: 48707aa9 HealthRequest.MIN_S floor in both gates; wait_up keeps the last real miss. Failing-first: test_a_rescan_that_spends_the_budget_sends_no_token[1.24] and test_published_health_connect_that_leaves_less_than_the_floor_sends_nothing sent the request on the unfixed gates'
+          status: pass
+        - name: 'item 3: e1be8eee every unknown reading names the first ask. Failing-first: three tests with the bare reasons'
+          status: pass
+        - name: 'item 4: 7d41cd81 unreadable serve.port -> NotAskedError, attribution runs. Failing-first: PortProbeError: cannot read .../serve.port: invalid UTF-8 escaped published_health()'
+          status: pass
+        - name: 'item 5/7: 5c064227 not-owned, unparseable, stat-failed each named; stat failure keeps the OS error text (test_a_file_that_cannot_be_statted_raises_with_the_error). Recorded before: ''serve.port names port 8421, not this user''s voxd on 8421'''
+          status: pass
+        - name: 'item 6: c0d2e5be tests/test_service_{attributed_health,health_request,not_asked,published_health,service_cgroup}.py created; moved tests unchanged; shared helpers in _lifecycle_fakes'
+          status: pass
+        - name: 'item 8: c0d2e5be test_status_published_port_health_gets_a_reserved_share deleted (fake spent no clock time; the hung-health test proves the reserve)'
+          status: pass
+        - name: 'item 9: 4aa43b83 deadline starts before the target lookup; lookup_spent names it. Failing-first: assert 2.8 <= 1.5 (the 1.4 s lookup ran twice outside the bound)'
+          status: pass
+        - name: 'item 10: a6a20c2d unattributed-listener reading says ''the token went to the published port and got no answer: <cause>'' when it did. Failing-first: reading still said ''vox sent it no token'''
+          status: pass
+        - name: 'item 11: 591c5241 port, owner (and pid, in 5af9a39f) from one fstat of the descriptor read. Failing-first: AssertionError: stat(path) would describe whatever is at the path now'
+          status: pass
+        - name: 'uptime before the proof run: load averages 4.35 4.89 5.00'
+          status: pass
+        - name: 'timeout 300 uv run pytest -p no:cacheprovider -n 2 <22 files: tests/test_service_daemon_probe.py attributed_health health_request not_asked published_health published_port service_cgroup lifecycle_status health backend process stale_port_file test_cli daemon_process lifecycle lifecycle_start lifecycle_stop lifecycle_system daemon_status test_voxd_port_file test_voxd_daemon test_client_endpoint> -> 693 passed, 3 warnings in 9.58s (the warnings are websockets deprecations from test_voxd_daemon::test_port_zero_reports_the_bound_port, untouched)'
+          status: pass
+        - name: 'uv run mypy src/ tests/ -> Success: no issues found in 1203 source files; pyright on the 18 changed .py files -> 0 errors, 0 warnings'
+          status: pass
+        - name: uv run ruff check / ruff format --check on src/punt_vox/service, voxd/port_file.py, tests/ -> All checks passed! / 651 files already formatted; ruff --select ERA001 . -> All checks passed!; tools/check_python_docs.py comments src tests tools scripts -> exit 0
+          status: pass
+        - name: 'oo-ratchet oo --check -> PASS: at least one metric improved, no regressions; coupling --check -> PASS: no regressions; suppressions --check -> PASS: suppression count unchanged. All growth recorded by --rebaseline-files blesses sourced PL-1497 with reasons, then --update; no hand edits'
+          status: pass
+        - name: 'make install -> Installed 3 executables: vox, vox-panel, voxd; vox daemon restart -> voxd restarted (pid 95309, port 8421, version 5.1.0) (was pid 84805) [launchctl kickstart timed out after 10 s on this loaded machine; the unit came up]'
+          status: pass
+        - name: 'vox daemon status -> ''Daemon: ok on port 8421 / Uptime: 6.0s / Sessions: 1'', exit 0; the run directory now holds serve.pid (5 bytes, 0600) beside serve.port'
+          status: pass
+        - name: 'vox daemon status --json -> {"status": "ok", "port": 8421, "pid": 95309, "daemon_version": "5.1.0", "uptime_seconds": 6.4, "queued": 0, "active_sessions": 1}, exit 0'
+          status: pass
+      open_questions:
+        - 'The five new per-module test files (item 6: tests/test_service_{attributed_health,health_request,not_asked,published_health,service_cgroup}.py, +694 lines) are outside this mission''s write set, so they are omitted from files_changed here; they are committed in c0d2e5be and later. Add them to the set if ethos needs the record.'
+        - 'Slow lsof at the real entry point was not run: the permission system declined running vox daemon status with the 10 s lsof shim (.tmp/pl1497/slowlsof/lsof) on PATH in the previous round; the fake-based tests cover it.'
+      prose: |
+        All eleven review items are fixed, one commit each, on top of the
+        round-1 commit 27cdf6e6. The High (item 1) follows the ruling: voxd's
+        PortFile.write publishes serve.pid by the same atomic rename under the
+        same lock as serve.port, and PortFile.remove clears each only while it
+        is still this daemon's file. The CLI's published door
+        (PublishedPort.publisher, PublishedHealth._gate) asks only when this
+        user's own serve.port names the service port, this user's own serve.pid
+        names a pid that os.kill(pid, 0) accepts, ps cut to the health bound says
+        that pid runs voxd, the bind is loopback, and the port accepts a
+        connection; every closed check names itself. Port, owner and pid come
+        from one fstat of the descriptor each file was read from (items 11 and
+        1), so a file renamed in after the read can never supply the owner.
+
+        Items 2 through 5 and 7 through 10 are as reported in the messages:
+        the HealthRequest.MIN_S floor in both gates with wait_up keeping the
+        last real miss; every unknown reading naming the first ask; an
+        unreadable serve.port closing only the published door; not-owned,
+        unparseable and stat-failed each with their own reason and the OS error
+        text kept; one test file per service module and the vacuous reserve
+        test deleted; the health deadline starting before the installed bind is
+        read; the unattributed-listener reading saying when the token already
+        went out. Each behaviour change has its failing test recorded in the
+        commit message.
+
+        Left untouched and unstaged as instructed: .punt-labs/vox/vox.md,
+        .claude/settings.json, .punt-labs/ethos/missions.jsonl. README not
+        changed: its daemon status row already lists the four states, and the
+        run-file table names only the files a remote client reads.
+    - mission: m-2026-11-25-009
+      round: 2
+      created_at: "2026-11-25T19:18:09Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: .oo-audit.jsonl
+          added: 9
+          removed: 0
+        - path: .oo-baseline.json
+          added: 9
+          removed: 9
+        - path: .oo-coupling-audit.jsonl
+          added: 4
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 4
+          removed: 4
+        - path: CHANGELOG.md
+          added: 6
+          removed: 3
+        - path: src/punt_vox/service/backend.py
+          added: 4
+          removed: 3
+        - path: src/punt_vox/service/not_asked.py
+          added: 16
+          removed: 0
+        - path: src/punt_vox/service/process.py
+          added: 86
+          removed: 0
+        - path: src/punt_vox/service/published_health.py
+          added: 20
+          removed: 3
+        - path: src/punt_vox/service/published_port.py
+          added: 4
+          removed: 1
+        - path: src/punt_vox/voxd/daemon.py
+          added: 9
+          removed: 5
+        - path: tests/_lifecycle_fakes.py
+          added: 2
+          removed: 0
+        - path: tests/test_service_lifecycle_status.py
+          added: 13
+          removed: 1
+        - path: tests/test_service_process.py
+          added: 111
+          removed: 0
+        - path: tests/test_service_published_port.py
+          added: 4
+          removed: 1
+        - path: tests/test_voxd_daemon.py
+          added: 22
+          removed: 0
+      evidence:
+        - name: 'two commits through .git/hooks/pre-commit (ethos-sealed), no --no-verify: bc65be22 (item 2) and 33c432df (item 1)'
+          status: pass
+        - name: 'item 1 (a): VoxDaemon._lifespan removes serve.port and serve.pid first thing on exit, before the worker, task and mpv teardown. Failing-first: test_lifespan_unpublishes_before_the_slow_teardown -> assert [''workers'', ''unpublish''] == [''unpublish'', ''workers'']'
+          status: pass
+        - name: 'item 1 (b): ProcessManager.holds_port(pid, port) proves one pid holds the listener -- lsof -w -nP -t -a -p <pid> -iTCP:<port> -sTCP:LISTEN on macOS, /proc/net/tcp+tcp6 LISTEN inodes against /proc/<pid>/fd on Linux -- cut to the deadline; PublishedHealth._require_holder sends nothing on publisher_without_port or holder_uncheckable. Failing-first: test_a_live_own_voxd_that_does_not_hold_the_port_sends_no_token -> the old gate sent the request'
+          status: pass
+        - name: 'item 2: PublishedPort.PID_MAX (2**31 - 1) bounds the serve.pid parse; oversized digits are pid_unparseable. Failing-first: OverflowError from os.kill on 99999999999999999999 and 2147483648'
+          status: pass
+        - name: 'uptime before the proof run: load averages 4.16 5.96 6.19'
+          status: pass
+        - name: timeout 300 uv run pytest -p no:cacheprovider -n 2 <same 22 files as round 1> -> 709 passed, 3 warnings in 9.77s (websockets deprecations in the untouched test_port_zero_reports_the_bound_port)
+          status: pass
+        - name: 'uv run mypy src/ tests/ -> Success: no issues found in 1203 source files; pyright on the 13 changed .py files -> 0 errors'
+          status: pass
+        - name: ruff check src/punt_vox/service src/punt_vox/voxd tests/ -> All checks passed!; ruff format --check -> 1213 files already formatted; ERA001 -> clean; check_python_docs comments -> exit 0
+          status: pass
+        - name: 'oo-ratchet oo --check -> PASS: at least one metric improved, no regressions; coupling --check -> PASS; suppressions -> unchanged. Blesses sourced PL-1497 with reasons on process.py (oo and coupling), not_asked.py, published_health.py, published_port.py; then --update; no hand edits'
+          status: pass
+        - name: 'make install -> Installed 3 executables: vox, vox-panel, voxd; vox daemon restart -> voxd restarted (pid 569, port 8421, version 5.1.0) (was pid 397) [launchctl kickstart timed out after 10 s on this loaded machine; the unit came up]; serve.pid and serve.port republished at 11:17'
+          status: pass
+        - name: 'vox daemon status (pid 569) -> ''Daemon: ok on port 8421 / Uptime: 28.9s / Sessions: 1'', exit 0; --json -> {"status": "ok", "port": 8421, "pid": 569, "daemon_version": "5.1.0", "uptime_seconds": 29.1, "queued": 0, "active_sessions": 1}, exit 0. The running line therefore passes the new holder check (lsof -a -p on the publisher)'
+          status: pass
+      open_questions:
+        - The five per-module test files from round 1 remain outside the write set (unchanged this round).
+      prose: |
+        Round 2 closes the shutdown window from both sides. voxd unpublishes
+        serve.port and serve.pid as the first act of its lifespan exit, so a
+        process that lingers through worker and player teardown after uvicorn
+        closed its socket is no longer advertised. And the CLI's published door
+        no longer trusts "alive, this user's, running voxd" alone: it asks,
+        within the health bound, whether that pid itself holds the listener on
+        the service port, through a per-process check that never walks every
+        open file (lsof -a -p on macOS; /proc/net/tcp inodes against
+        /proc/<pid>/fd on Linux). A publisher without the port, or a check that
+        cannot be made in time, sends nothing and names itself. The fakes model
+        the holder rule, so the status test that reaches the "token went to the
+        published port" branch now has the publisher exit between the request
+        and attribution, which is the only way that branch is reachable.
+
+        Item 2 bounds the serve.pid parse at pid_t so an oversized number is a
+        named unparseable reading instead of an OverflowError traceback.

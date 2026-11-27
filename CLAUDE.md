@@ -27,6 +27,13 @@ start. Read it before writing code.
 
 @docs/WORKFLOW.md
 
+The PR-loop pseudocode, its GitHub terms and the `EnterPR`/`ExitPR` schemas
+are in [`docs/WORKFLOW-PR-LOOP.md`](docs/WORKFLOW-PR-LOOP.md), a non-autoloaded
+reference: linked, not `@`-imported, so the session's instruction load stays
+under the harness 150k-character limit. Read it before starting a unit of work (step A holds the design-ratification gate for
+architectural units), running a local review or pushing a fix, opening a PR,
+driving remote review, running the demo, or deciding a merge.
+
 The org-wide `punt-kit` standards are the canonical source for how Punt Labs
 tools are built. They are non-autoloaded references — linked, not `@`-imported,
 because each is already carried for per-turn work by a mechanism this repo
@@ -127,7 +134,7 @@ See `docs/architecture.tex` for the full system description.
 
 **The ratchet is tech-debt paydown — make medium-scale improvements, do not squeeze under the limit.** The ratchet exists to retire OO and complexity debt across the *whole* codebase a little at a time, the way you amortize a loan: every commit pays down some principal, no matter which file it touches. This is deliberately counterintuitive — it means taking on scope *beyond* the immediate task, and that added scope is the point, not a distraction from it. When you touch a file, make a *substantive* improvement to it — extract a class, break up a god method, replace a primitive-obsessed signature with a type, collapse a conditional forest — not the smallest metric nudge that scrapes past the "at least one metric improved" gate. Gaming the minimum is the failure mode: it burns more time (and review churn) than a real improvement, and it retires no debt. The waste to eliminate is relitigating tiny ratchet deltas and hunting for the cheapest legal change to pass; the goal is a genuine, medium-scale improvement at *every* opportunity. The test is simple: if the file you touched is meaningfully cleaner than you found it, the ratchet did its job — if you spent that time trying to change as little as possible, you used it wrong. This philosophy is org-wide; it belongs in the workspace ratchet policy (`.claude/rules/python-oo-adoption.md`) as well. **Never game a size or complexity metric by stripping comments or docstrings** — `module_size` is retired by extracting classes and splitting modules, never by compressing prose. OO metrics are not about compressing comments.
 
-**Org standards override review tools.** Qodo is the primary remote reviewer, with one Bugbot run per PR round (at most two rounds); their findings are triaged per `docs/WORKFLOW.md`. When a review suggestion conflicts with rules in `.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
+**Org standards override review tools.** Qodo is the primary remote reviewer (at most two rounds), and Devin Review also reviews once, at open (the merge waits up to 30 minutes for it); their findings are triaged per `docs/WORKFLOW.md`. When a review suggestion conflicts with rules in `.claude/rules/python-*.md`, the rules win. Read the rules before accepting a reviewer's suggestion. PY-CC-1 (`__new__` as constructor) is the most common conflict.
 
 **Verify outputs, not just metrics.** After writing a file, open it and read the content. `make check` passing does not mean the feature works — it means the code compiles and tests pass. Those are necessary but not sufficient.
 
@@ -152,7 +159,7 @@ Bootstrap (first time only): run `make update-oo` to create the initial baseline
 
 ## Development Loop
 
-The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves.
+The development workflow is **three nested loops** — the **backlog loop** (what to work on and in what order), the **PR loop** (one rollback-coherent merge), and the **mission loop** (one delegated piece of work) — defined authoritatively in **[`docs/WORKFLOW.md`](docs/WORKFLOW.md)**, `@`-imported above so it loads at session start. Read it before any code change; the pseudocode and the entry/exit Z schemas at each level are the source of truth for how work moves. Level 2's pseudocode and schemas are in **[`docs/WORKFLOW-PR-LOOP.md`](docs/WORKFLOW-PR-LOOP.md)**, which does not load at session start (see Mandatory Reading).
 
 The vox-specific precision that used to live here now lives in `WORKFLOW.md`, intact: commit-hook checks green for every commit, full `make check` green at handoff or before opening a PR; `make install` + `vox daemon restart` before exercising any MCP/hook/synthesis path, because the daemon serves old code until restarted; `make test`, plus `make test-e2e` against the installed wheel; the local review loop (`code-reviewer`, `silent-failure-hunter`, and `qodo review`; `qodo review` alone on a fix diff under 20 lines, plus `djb` on credential and injection-surface diffs) repeated until a round leaves nothing to fix (at most four fix rounds plus a verifying review), before the PR opens and before every fix push; and the **audio demo confirmed by ear** — the canonical flight in [`docs/testing/manual-tests.md`](docs/testing/manual-tests.md), asking the operator after each audible step, because vox produces audio only a human can judge. The stateful-audio formal-modeling gate is [Formal Modeling (z-spec)](#formal-modeling-z-spec) below; the merge mechanics and recap-email discipline are in the org workflow (`../CLAUDE.md`).
 
@@ -180,6 +187,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 2 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 11 |
 | `call_e2e` | A real `voxd` subprocess places a `vox call --script` call against a fake ElevenLabs Conversational AI agent and fake REST on loopback; scripted PCM in, agent audio through a silent device, no microphone, no credentials | `make test-call-e2e` | Yes, inside the combined coverage job and again as its own step | 2 |
+| `live_call` | An installed `voxd` places a scripted call to the real ElevenLabs agent with the real research tools, judged on the transcript and tool results | `make verify-call` | No: run by the leader before every real-call demo | 6 expectations |
 | `roundtrip` | Real TTS → Whisper/Scribe WER; live cases also `integration` | `make test-roundtrip` / `make test-roundtrip-live` | Offline PR/push; live nightly/manual | 40 |
 | `integration` | Credentialed TTS × STT matrix (also `roundtrip`) | `make test-roundtrip-live` | Nightly/manual | 37 |
 | `sdk` | Real paid Claude Agent SDK session; reserved/empty | `uv run pytest -m sdk` | No | 0 |
@@ -241,7 +249,7 @@ Identity: `agent: claude` per `.punt-labs/ethos.yaml`. All code delegation uses 
 
 **One mission = one task.** Never give an agent multiple steps in a single prompt. Agent timeouts on multi-step prompts leave partial work and cause manual cleanup. One focused task per delegation.
 
-**The COO does not write code.** Every code change, no matter how small, is delegated. There is no threshold below which a change is "too small to delegate." The only files the COO edits directly: `CHANGELOG.md`, `CLAUDE.md`, `DESIGN.md`, `README.md`, design docs, and plan files.
+**The COO does not write code.** Every code change, no matter how small, is delegated. There is no threshold below which a change is "too small to delegate." The only files the COO edits directly: `CHANGELOG.md`, `CLAUDE.md`, `DESIGN.md`, `README.md`, `docs/WORKFLOW.md`, `docs/WORKFLOW-PR-LOOP.md`, design docs, and plan files.
 
 ### Why these pairings
 

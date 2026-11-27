@@ -1,0 +1,49 @@
+mission_id: m-2026-11-25-003
+status: closed
+type: implement
+created_at: "2026-11-25T07:03:36Z"
+updated_at: "2026-11-25T08:03:04Z"
+closed_at: "2026-11-25T08:03:04Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-11-25T07:03:36Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: PL-1620
+write_set:
+    - src/punt_vox/voxd/voice_call
+    - src/punt_vox/voxd/voice_agent/control.py
+    - src/punt_vox/voxd/voice_agent/contracts.py
+    - src/punt_vox/voxd/voice_agent/session.py
+    - src/punt_vox/voxd/voice_agent/_socket.py
+    - src/punt_vox/commands/call.py
+    - tests/voice_call
+    - tests/voice_agent
+    - tests/e2e_call
+    - CHANGELOG.md
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+extract_into:
+    - src/punt_vox/voxd/voice_call
+    - src/punt_vox/voxd/voice_agent
+    - tests/voice_call
+    - tests/voice_agent
+    - tests/e2e_call
+success_criteria:
+    - A call_e2e test fails on the unfixed code because the agent's end-call event is not handled, and passes after the fix; both outputs in the commit message
+    - The role prompt tells the agent to end the call when asked, with one closing sentence first; the agent registration includes the end-call tool and its fingerprint changes
+    - The daemon logs 'Call ended' with the reason and writes the trace summary for an agent-ended call
+    - 'make check green in the worktree: ruff, mypy, pyright, tests, OO/coupling/suppression ratchets with scoped blesses only and a reason each'
+    - CHANGELOG.md entry under Unreleased, naming the one-time vox call teardown
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+round_decisions:
+    version: 1
+    entries: []
+context: 'Jim, 2026-11-25: ''I could not say something like goodbye or end call and have the call end. The agent didn''t know how to end a call.'' The call agent''s tool catalogue (voxd/voice_call/boss_tools.py) has only worker tools and remain_silent; nothing acts on the call. ElevenLabs Conversational AI provides a built-in end_call system tool enabled in the agent configuration. Required: a spoken goodbye / end the call / hang up ends the call. Add the end-call capability to the agent registration (voice_agent/control.py tool catalogue and fingerprint, session options), have the daemon treat the resulting conversation end as a normal call end (call_status ''ended'', transcript and trace written, ''Call ended'' logged with reason), and have the agent say one closing sentence first (seed.py role prompt). The registration fingerprint changes, so document the one-time ''vox call teardown'' in CHANGELOG. Prove it in the call_e2e tier (tests/e2e_call): script the fake agent to emit the end-call event and assert the daemon ends the call cleanly and the CLI exits 0 with ''call ended''. Worktree: <repo>/.claude/worktrees/pl-1620-end-call, branch fix/pl-1620-end-call. Do not touch call_overrides.py, conversation_mode, pcm_stream.py or playback.py (another mission owns them). Commit hook must pass on every commit; first commit within 30 minutes; never push, never create branches, never touch .punt-labs/vox/vox.md.'

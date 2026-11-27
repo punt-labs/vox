@@ -611,7 +611,7 @@ def test_owner_uid_reads_the_real_uid(mock_run: MagicMock) -> None:
     mock_run.return_value = _ran(0, "  1001\n")
     assert ProcessManager().owner_uid(123) == 1001
     argv = mock_run.call_args.args[0]
-    assert argv[:2] == ["ps", "-p"]
+    assert argv[:4] == ["ps", "-ww", "-p", "123"]
     assert "uid=" in argv
 
 
@@ -649,6 +649,8 @@ def test_identity_parses_start_time_and_command(mock_run: MagicMock) -> None:
     assert seen is not None
     assert seen.started == _LSTART
     assert seen.command == "/opt/bin/voxd --port 8421"
+    argv = mock_run.call_args.args[0]
+    assert argv == ["ps", "-ww", "-p", "123", "-o", "lstart=", "-o", "command="]
 
 
 @patch("punt_vox.service.process.subprocess.run")
