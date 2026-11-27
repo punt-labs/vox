@@ -71,7 +71,7 @@ def test_open_failure_lookup_and_successful_retry() -> None:
     assert history.open_failure() is None
 
 
-_BASH = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+_BASH: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
 
 
 def test_a_tool_begun_before_the_boundary_is_not_in_flight() -> None:

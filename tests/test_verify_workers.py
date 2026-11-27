@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
@@ -17,6 +18,16 @@ assert _SPEC.loader is not None
 verify_workers = importlib.util.module_from_spec(_SPEC)
 sys.modules["verify_workers"] = verify_workers
 _SPEC.loader.exec_module(verify_workers)
+
+
+class _Result(Protocol):
+    """The fields of a Cleanup these tests read."""
+
+    @property
+    def left_running(self) -> tuple[str, ...]: ...
+
+    @property
+    def problems(self) -> tuple[str, ...]: ...
 
 
 class _Voxd:
@@ -67,9 +78,10 @@ class _Voxd:
         return subprocess.CompletedProcess(command, self.stop_code, "", "stop broke")
 
 
-def _sweep(monkeypatch: pytest.MonkeyPatch, voxd: _Voxd, *started: str) -> object:
+def _sweep(monkeypatch: pytest.MonkeyPatch, voxd: _Voxd, *started: str) -> _Result:
     monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
-    return verify_workers.WorkerFleet(started).sweep()
+    cleanup: _Result = verify_workers.WorkerFleet(started).sweep()
+    return cleanup
 
 
 def test_no_started_worker_means_no_voxd_command(

@@ -471,6 +471,15 @@ def _stub_script(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
     monkeypatch.setattr(verify_call.CallRun, "_script", script)
 
 
+def _stub_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every status text read as the synthetic trace."""
+
+    def load(status: str) -> list[dict[str, object]]:
+        return _TRACE
+
+    monkeypatch.setattr(verify_call, "load_trace", load)
+
+
 def _cleanup_verdict(cleanup: object, report: str = _GOOD) -> tuple[str, str]:
     judged = verify_call.Judge(
         report, "", search_key=True, trace=_TRACE, cleanup=cleanup
@@ -597,7 +606,7 @@ def test_a_worker_list_failing_after_the_call_does_not_hide_the_verdicts(
     monkeypatch.setattr(verify_call.shutil, "which", _which)
     monkeypatch.setattr(verify_call, "_search_configured", lambda: False)
     _stub_script(monkeypatch, tmp_path)
-    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    _stub_trace(monkeypatch)
     assert verify_call.main() == 1
     out = capsys.readouterr().out
     assert "PASS greeting" in out
@@ -614,7 +623,7 @@ def test_a_clean_run_exits_zero(
     monkeypatch.setattr(verify_call.shutil, "which", _which)
     monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
     _stub_script(monkeypatch, tmp_path)
-    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    _stub_trace(monkeypatch)
     assert verify_call.main() == 0
     assert "PASS worker cleanup" in capsys.readouterr().out
 
@@ -628,6 +637,6 @@ def test_a_leftover_worker_makes_the_run_exit_nonzero(
     monkeypatch.setattr(verify_call.shutil, "which", _which)
     monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
     _stub_script(monkeypatch, tmp_path)
-    monkeypatch.setattr(verify_call, "load_trace", lambda _status: _TRACE)
+    _stub_trace(monkeypatch)
     assert verify_call.main() == 1
     assert "left" in capsys.readouterr().out

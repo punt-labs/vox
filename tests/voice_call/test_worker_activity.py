@@ -105,9 +105,12 @@ def _state_after(*events: tuple[str, dict[str, object]]) -> str:
     return WorkerActivity(worker).state
 
 
-_PROMPT = ("UserPromptSubmit", {"prompt": "go"})
-_STOP = ("Stop", {"last_assistant_message": "done"})
-_TOOL = ("PreToolUse", {"tool_name": "Bash", "tool_input": {"command": "ls"}})
+_PROMPT: tuple[str, dict[str, object]] = ("UserPromptSubmit", {"prompt": "go"})
+_STOP: tuple[str, dict[str, object]] = ("Stop", {"last_assistant_message": "done"})
+_TOOL: tuple[str, dict[str, object]] = (
+    "PreToolUse",
+    {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+)
 
 
 @pytest.mark.parametrize(
