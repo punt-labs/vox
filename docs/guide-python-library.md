@@ -4,6 +4,8 @@ vox is also a Python library. It talks to the same `voxd` daemon as the plugin a
 
 Every `SynthesisSpec` must name a provider. The daemon rejects a request without one (`Unknown provider ''`); it does not guess.
 
+The examples use ElevenLabs, which needs an API key in `keys.env` (see [Configure Providers](https://github.com/punt-labs/vox#configure-providers)). With no key configured, use the operating system's voice instead: `SynthesisSpec(provider="say")` on macOS, `SynthesisSpec(provider="espeak")` on Linux, where `espeak-ng` must be installed.
+
 ## Synchronous Client
 
 ```python
@@ -13,10 +15,10 @@ vox = VoxClientSync()  # connects per call — no setup, no teardown
 
 try:
     # Speak text through the daemon (plays on the daemon's audio device):
-    vox.synthesize("Build finished", SynthesisSpec(voice="sarah", provider="elevenlabs"))
+    spec = SynthesisSpec(voice="sarah", provider="elevenlabs")
+    vox.synthesize("Build finished", spec)
 
     # ...or record into the daemon's store, then fetch the MP3 bytes:
-    spec = SynthesisSpec(voice="matilda", provider="elevenlabs")
     recording = vox.record("Deploy complete", spec)
     audio = vox.fetch(recording.name)
 
