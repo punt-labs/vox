@@ -32,8 +32,14 @@ runs nothing.
 
 The run exits 0 only when every probe reached its assertions and they passed.
 A refused request, a transport error, a reply of the wrong shape, an empty or
-non-audio body, and a Studio project that never converts each record a failed
-verdict for that probe and make the exit status 1. Later probes still run.
+non-audio body, a refused call by either dialogue model, and a Studio project
+that never converts each record a failed verdict for that probe and make the
+exit status 1. Later probes still run.
+
+Without `ffprobe` on `PATH`, audio bodies cannot be checked for a readable
+duration. Each prints a `WARN ... unverified (no ffprobe)` line instead of
+`PASS`, and the run ends with `N audio file(s) unverified (no ffprobe)`. A WARN
+does not fail the run, so read that final line before trusting a zero exit.
 
 The Studio probe fails on accounts without Studio API access: ElevenLabs
 answers `403 invalid_subscription` and asks for the account to be whitelisted.

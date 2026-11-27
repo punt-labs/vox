@@ -28,11 +28,13 @@ if TYPE_CHECKING:
     import pytest
 
 
-def make_zip(members: dict[str, bytes] | None = None) -> bytes:
+def make_zip(
+    members: dict[str, bytes] | None = None, *, compression: int = zipfile.ZIP_STORED
+) -> bytes:
     """Return a real zip archive holding the given members (one by default)."""
     members = {"chapter-1.mp3": MP3} if members is None else members
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+    with zipfile.ZipFile(buffer, "w", compression) as archive:
         for name, data in members.items():
             archive.writestr(name, data)
     return buffer.getvalue()

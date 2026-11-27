@@ -16,12 +16,14 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import time
 import zipfile
+import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +53,7 @@ class Verdicts:
     """Collect PASS/FAIL assertions so main() can set the exit status."""
 
     failures: list[str] = field(default_factory=list[str])
+    unverified: int = 0
 
     def check(self, name: str, *, ok: bool, detail: str = "") -> None:
         print(f"[{name}] {'PASS' if ok else 'FAIL'} {detail}".rstrip())
@@ -65,23 +68,36 @@ class Verdicts:
         return ok
 
     def check_audio(self, name: str, r: httpx.Response, path: Path) -> bool:
-        """Record whether a saved 200 reply is audio: type, length and decodable.
+        """Record whether a saved 200 reply looks like audio.
 
-        ffprobe verifies the saved file. Without ffprobe the body is only
-        unverified, which prints WARN (not PASS) and does not fail the run.
+        Checks the content type, the length and that ffprobe reads a finite,
+        positive duration from the saved file (a container-header read, not a
+        full decode). Without ffprobe the body is unverified: that prints WARN,
+        not PASS, counts toward the final summary and does not fail the run.
         """
         kind = r.headers.get("content-type", "")
         detail = f"{kind or 'no content-type'}, {len(r.content)} bytes"
         if not (kind.startswith("audio/") and len(r.content) >= MIN_AUDIO_BYTES):
             self.check(name, ok=False, detail=detail)
             return False
-        decodes = probe_duration(path)
-        if decodes is None:
+        duration = probe_duration(path)
+        if duration is None:
+            self.unverified += 1
             print(f"[{name}] WARN {detail}, unverified (no ffprobe)")
             return True
-        verdict = "decoded it" if decodes > 0 else "rejected it"
-        self.check(name, ok=decodes > 0, detail=f"{detail}, ffprobe {verdict}")
-        return decodes > 0
+        ok = math.isfinite(duration) and duration > 0
+        read = (
+            f"ffprobe read a duration of {duration:.1f} s"
+            if ok
+            else "ffprobe could not read a finite duration"
+        )
+        self.check(name, ok=ok, detail=f"{detail}, {read}")
+        return ok
+
+    def summary(self) -> None:
+        """Print the durable signal for WARN outcomes, which do not fail the run."""
+        if self.unverified:
+            print(f"{self.unverified} audio file(s) unverified (no ffprobe)")
 
     def check_zip(self, name: str, r: httpx.Response) -> bool:
         """Record whether a reply is a readable zip holding at least one member."""
@@ -89,8 +105,8 @@ class Verdicts:
             with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
                 bad_member = archive.testzip()
                 members = len(archive.namelist())
-        except zipfile.BadZipFile as exc:
-            self.check(name, ok=False, detail=f"not a zip: {exc}")
+        except (zipfile.BadZipFile, zlib.error, NotImplementedError, EOFError) as exc:
+            self.check(name, ok=False, detail=f"unreadable zip: {exc!r}")
             return False
         ok = bad_member is None and members >= 1
         self.check(name, ok=ok, detail=f"{members} members, bad member {bad_member}")
@@ -129,7 +145,7 @@ def probe_duration(path: Path) -> float | None:
 
 def seconds(path: Path) -> str:
     duration = probe_duration(path)
-    if duration:
+    if duration and math.isfinite(duration):
         return f"{duration:.1f}s"
     return f"{path.stat().st_size} bytes"
 
@@ -150,7 +166,7 @@ def save(out: Path, name: str, r: httpx.Response) -> Path:
 
 def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     """v4 text-to-speech: a long chapter in one call, then a stitched follow-on."""
-    text = CHAPTER * 12  # about 5,000 characters
+    text = CHAPTER * 12  # about 3,100 characters
     print(f"[tts] chapter length {len(text)} chars")
     body = {"text": text, "model_id": "eleven_v4"}
     r = c.post(
@@ -185,9 +201,9 @@ def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
 def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     """Text-to-dialogue with 2 voices: does eleven_v4 take them, or only v3?
 
-    A refusal by one model is a finding, but the probe records FAIL when both
-    refuse, and when a 200 from either model carries a body that is not audio
-    (wrong content type or under MIN_AUDIO_BYTES).
+    Each model's call is its own verdict: a refusal, or a 200 whose body is not
+    audio, records FAIL for that model. The overall "dialogue" verdict passes
+    only when both models returned audio.
     """
     inputs = [
         {"text": "[warmly] Professor Chen, the proof has a gap.", "voice_id": SARAH},
@@ -197,7 +213,7 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         },
         {"text": "[curious] And the cat?", "voice_id": SARAH},
     ]
-    accepted = False
+    accepted: list[bool] = []
     for model in ("eleven_v4", "eleven_v3"):
         r = c.post(
             "/v1/text-to-dialogue",
@@ -205,10 +221,14 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
             json={"inputs": inputs, "model_id": model},
         )
         report(f"dialogue-{model}", r)
-        if r.status_code == 200:
+        if verdicts.expect_ok(f"dialogue-{model}", r):
             saved = save(out, f"dialogue-{model}.mp3", r)
-            accepted = verdicts.check_audio(f"dialogue-{model}", r, saved) or accepted
-    verdicts.check("dialogue", ok=accepted, detail="a model accepted two voices")
+            accepted.append(verdicts.check_audio(f"dialogue-{model}", r, saved))
+        else:
+            accepted.append(False)
+    verdicts.check(
+        "dialogue", ok=all(accepted), detail="both models accepted two voices"
+    )
 
 
 def words(text: str) -> str:
@@ -457,6 +477,7 @@ def main(
                 # an unexpected JSON shape (AttributeError: valid JSON that is not an
                 # object); OSError a failed save. Later probes still run.
                 verdicts.check(name, ok=False, detail=repr(exc))
+    verdicts.summary()
     return 1 if verdicts.failures else 0
 
 

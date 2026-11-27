@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -171,6 +173,16 @@ def corrupted_zip() -> bytes:
     return bytes(data)
 
 
+def corrupted_deflated_zip() -> bytes:
+    """A deflated member whose first stream byte is invalid: zlib.error on read."""
+    name = "chapter-1.txt"
+    data = bytearray(
+        make_zip({name: b"hello world " * 500}, compression=zipfile.ZIP_DEFLATED)
+    )
+    data[30 + len(name)] = 0xFF  # 30-byte local header, then name, then the stream
+    return bytes(data)
+
+
 @pytest.mark.parametrize(
     ("body", "verdict"),
     [
@@ -179,6 +191,7 @@ def corrupted_zip() -> bytes:
         pytest.param(b"stub", "FAIL", id="stub"),
         pytest.param(make_zip({}), "FAIL", id="empty-archive"),
         pytest.param(corrupted_zip(), "FAIL", id="crc-mismatch"),
+        pytest.param(corrupted_deflated_zip(), "FAIL", id="zlib-error"),
     ],
 )
 def test_studio_archive_must_be_a_readable_non_empty_zip(
@@ -191,3 +204,29 @@ def test_studio_archive_must_be_a_readable_non_empty_zip(
     FakeClock().install(monkeypatch)
     exit_code("studio", studio_api(snapshots=SNAP, archive=body), tmp_path)
     assert f"[studio-archive] {verdict}" in capsys.readouterr().out
+
+
+def raising(exc: Exception) -> Callable[[zipfile.ZipFile], str | None]:
+    def testzip(_archive: zipfile.ZipFile) -> str | None:
+        raise exc
+
+    return testzip
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [NotImplementedError("compression type 99"), EOFError("truncated")],
+    ids=["unsupported-compression", "truncated"],
+)
+def test_studio_archive_read_errors_fail_instead_of_crashing(
+    exc: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FakeClock().install(monkeypatch)
+    monkeypatch.setattr(zipfile.ZipFile, "testzip", raising(exc))
+    assert exit_code("studio", studio_api(snapshots=SNAP), tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[studio-archive] FAIL unreadable zip" in out
+    assert "[studio-chapters] PASS" in out  # the probe went on to its last step
