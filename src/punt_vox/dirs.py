@@ -42,8 +42,9 @@ def find_config_dir(start: Path | None = None) -> Path | None:
 def writable_config_dir(start: Path | None = None) -> Path | None:
     """Return the config directory a setting write from *start* lands in.
 
-    Inside a git repo, reuse an existing config path as-is, including a
-    symlinked config. If there isn't one, write to the repo root's
+    Inside a git repo, reuse an existing config path, including a symlinked
+    config, and protect first writes of local state. If there isn't a config,
+    write to the repo root's
     ``.punt-labs/vox/``, seeding it from any config inherited from above the
     repo. Outside a git repo, use :func:`find_config_dir` as-is.
 
@@ -52,9 +53,7 @@ def writable_config_dir(start: Path | None = None) -> Path | None:
     """
     found = find_config_dir(start)
     root = find_repo_root(start)
-    if root is None or (found is not None and found.is_relative_to(root)):
-        return found
-    return RepoConfigTarget(root).prepare(found)
+    return found if root is None else RepoConfigTarget(root).prepare(found)
 
 
 def _read_xdg_music_dir() -> Path | None:

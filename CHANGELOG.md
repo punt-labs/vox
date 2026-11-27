@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A first settings write in a Git checkout ignores `vox.local.md` and its locks
+  even before `vox enable`, including when `vox.md` is already tracked. (PL-1605)
+
 - Stopping or replacing voxd no longer depends on the terminal width. `ps`
   cut the daemon's command line at `$COLUMNS`, so with a long install path
   and `COLUMNS=80` a live voxd read as "not voxd" and was left running.
