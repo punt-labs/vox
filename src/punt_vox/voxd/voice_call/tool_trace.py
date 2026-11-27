@@ -26,11 +26,20 @@ class ToolTrace:
         return self
 
     def record(self, call: ClientToolCall, result: str) -> None:
-        """Trace a steer's receipt or a worker_status reading; others leave none."""
+        """Trace a steer receipt, a worker start or a status reading."""
         if call.tool_name == "steer_worker":
             self._receipt(call, result)
+        elif call.tool_name == "start_worker":
+            self._started(result)
         elif call.tool_name == "worker_status":
             self._status(result)
+
+    def _started(self, result: str) -> None:
+        """Trace which worker a start created; its task is the person's words."""
+        started: dict[str, object] = json.loads(result)
+        self._trace.record(
+            "note", "worker_started", {"worker_id": started.get("worker_id")}
+        )
 
     def _receipt(self, call: ClientToolCall, result: str) -> None:
         """Trace a steer's receipt; a held request has none yet."""
@@ -42,7 +51,7 @@ class ToolTrace:
         self._trace.record("note", "worker_steer_receipt", receipt)
 
     def _status(self, result: str) -> None:
-        """Trace the state, lifecycle and activity, without worker-written text."""
+        """Trace the worker, state, lifecycle and activity, minus worker text."""
         status: dict[str, object] = json.loads(result)
         activity = status.get("activity")
         if isinstance(activity, dict):
@@ -56,6 +65,7 @@ class ToolTrace:
             "note",
             "worker_status_result",
             {
+                "worker_id": status.get("worker_id"),
                 "state": status.get("state"),
                 "lifecycle": status.get("lifecycle"),
                 "activity": activity,

@@ -207,10 +207,17 @@ _TRACE: list[dict[str, object]] = [
         "detail": {"tool_name": "worker_status", "is_error": False},
     },
     {
+        "ms": 150,
+        "dir": "note",
+        "type": "worker_started",
+        "detail": {"worker_id": "abcd1234"},
+    },
+    {
         "ms": 206,
         "dir": "note",
         "type": "worker_status_result",
         "detail": {
+            "worker_id": "abcd1234",
             "state": "working",
             "lifecycle": "ready",
             "activity": {"files": [], "tool_in_flight": "Bash"},
@@ -312,7 +319,8 @@ def _worker_status(
 
 
 def _status_row(**detail: object) -> dict[str, object]:
-    return {"ms": 206, "dir": "note", "type": "worker_status_result", "detail": detail}
+    reading = {"worker_id": "abcd1234", **detail}
+    return {"ms": 206, "dir": "note", "type": "worker_status_result", "detail": reading}
 
 
 def _trace_with(row: dict[str, object]) -> list[dict[str, object]]:
@@ -379,18 +387,51 @@ def test_worker_status_fails_when_no_reply_follows_the_result() -> None:
     assert _worker_status(trace=cut) == "FAIL"
 
 
-def test_the_plan_starts_reads_and_stops_the_worker_in_that_order() -> None:
+def test_worker_status_fails_for_a_worker_this_call_never_started() -> None:
+    row = _status_row(
+        worker_id="old-worker", state="working", lifecycle="ready", activity={}
+    )
+    assert _worker_status(trace=_trace_with(row)) == "FAIL"
+
+
+def test_worker_status_fails_when_the_trace_shows_no_worker_started() -> None:
+    bare = [r for r in _TRACE if r.get("type") != "worker_started"]
+    assert _worker_status(trace=bare) == "FAIL"
+
+
+def test_the_plan_confirms_the_start_before_asking_what_the_worker_is_doing() -> None:
     texts = [t.text for t in verify_call.script_plan(search=False)]
     start = next(i for i, t in enumerate(texts) if "start a coding worker" in t)
+    assert texts[start + 1] == "Yes, go ahead."
     status = next(i for i, t in enumerate(texts) if "what the worker is doing" in t)
-    stop = next(i for i, t in enumerate(texts) if "stop the worker" in t)
-    assert start < status < stop
+    assert start + 1 < status
+
+
+def test_the_start_confirmation_pauses_long_enough_for_the_worker_to_launch() -> None:
+    plan = verify_call.script_plan(search=False)
+    start = next(i for i, t in enumerate(plan) if "start a coding worker" in t.text)
+    assert plan[start + 1].pause_s >= 45
+
+
+def test_the_stop_request_names_the_worker_it_started_then_confirms() -> None:
+    texts = [t.text for t in verify_call.script_plan(search=False)]
+    stop = next(i for i, t in enumerate(texts) if "stop" in t and "worker" in t)
+    assert "git status worker you just started" in texts[stop]
     assert texts[stop + 1].lower().startswith("yes")
 
 
 def test_the_worker_task_is_read_only() -> None:
     texts = " ".join(t.text for t in verify_call.script_plan(search=False))
     assert "must not change any file" in texts
+
+
+def _stub_script(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """Replace the audio-generating script step with an empty script path."""
+
+    def script(self: object, *, search: bool) -> Path:
+        return directory / "script.jsonl"
+
+    monkeypatch.setattr(verify_call.CallRun, "_script", script)
 
 
 class _Fleet:
@@ -423,9 +464,7 @@ def test_a_call_stops_a_worker_it_started_and_never_one_it_found(
     fleet = _Fleet()
     run = verify_call.CallRun(tmp_path)
     monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    monkeypatch.setattr(
-        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
-    )
+    _stub_script(monkeypatch, tmp_path)
     run.place(search=False)
     stops = [c for c in fleet.commands if c[-3:-1] == ["worker", "stop"]]
     assert [c[-1] for c in stops] == ["new"]
@@ -450,9 +489,7 @@ def test_a_worker_the_agent_already_stopped_is_not_stopped_again(
 
     fleet = _Stopped()
     monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    monkeypatch.setattr(
-        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
-    )
+    _stub_script(monkeypatch, tmp_path)
     run = verify_call.CallRun(tmp_path)
     run.place(search=False)
     assert run.leftover_workers == []
@@ -471,9 +508,7 @@ def test_an_unreadable_worker_list_refuses_to_place_the_call(
 
     fleet = _Garbled()
     monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    monkeypatch.setattr(
-        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
-    )
+    _stub_script(monkeypatch, tmp_path)
     with pytest.raises(ValueError, match="unreadable"):
         verify_call.CallRun(tmp_path).place(search=False)
     assert not any("--script" in c for c in fleet.commands)
@@ -486,9 +521,7 @@ def test_worker_commands_run_under_a_timeout(
     fleet = _Fleet()
     run = verify_call.CallRun(tmp_path)
     monkeypatch.setattr(verify_call.subprocess, "run", fleet)
-    monkeypatch.setattr(
-        verify_call.CallRun, "_script", lambda _self, **_: tmp_path / "script.jsonl"
-    )
+    _stub_script(monkeypatch, tmp_path)
     run.place(search=False)
     worker = [c for c in fleet.commands if "worker" in c]
     assert worker

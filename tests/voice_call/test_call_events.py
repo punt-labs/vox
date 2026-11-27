@@ -631,8 +631,26 @@ async def test_worker_status_trace_keeps_state_and_activity_but_not_failure_text
     )
     row = json.loads(stream.getvalue())
     assert row["type"] == "worker_status_result"
+    assert row["detail"]["worker_id"] == "abcd1234"
     assert row["detail"]["state"] == "working"
     assert row["detail"]["lifecycle"] == "ready"
     assert row["detail"]["activity"]["tool_in_flight"] == "Read"
     assert row["detail"]["activity"]["files"] == ["a.py"]
     assert "private failure text" not in stream.getvalue()
+
+
+async def test_a_started_worker_is_traced_by_id_without_its_task() -> None:
+    call, workers, stream = _receipt_call()
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall(
+            "start",
+            "start_worker",
+            {"task": "private task words", "project": "/repo"},
+            True,
+        ),
+    )
+    row = json.loads(stream.getvalue())
+    assert row["type"] == "worker_started"
+    assert row["detail"] == {"worker_id": workers.known[-1]["id"]}
+    assert "private task words" not in stream.getvalue()

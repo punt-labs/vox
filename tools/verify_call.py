@@ -44,7 +44,10 @@ _WORKER_START_TURN: Final = (
     "git status and report the result. It must not change any file."
 )
 _WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
-_WORKER_STOP_TURN: Final = "Please stop the worker."
+_WORKER_GO_TURN: Final = "Yes, go ahead."
+_WORKER_STOP_TURN: Final = (
+    "Please stop the git status worker you just started, not any older worker."
+)
 _WORKER_CONFIRM_TURN: Final = "Yes, stop it."
 # The words the agent may speak for a worker; the launch phase is not one.
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
@@ -95,7 +98,8 @@ def script_plan(*, search: bool) -> list[Turn]:
     if search:
         plan.append(Turn(_SEARCH_TURN, 30))
     plan += [
-        Turn(_WORKER_START_TURN, 60),
+        Turn(_WORKER_START_TURN, 25),
+        Turn(_WORKER_GO_TURN, 50),
         Turn(_WORKER_STATUS_TURN, 40),
         Turn(_WORKER_STOP_TURN, 30),
         Turn(_WORKER_CONFIRM_TURN, 25),
@@ -265,6 +269,14 @@ class Judge:
                 return Verdict(name, "FAIL", f"{tool} errored: {calls}")
         if self._trace is None:
             return Verdict(name, "FAIL", "no trace to read the worker_status result")
+        started = {
+            cast("dict[str, object]", row["detail"]).get("worker_id")
+            for row in self._trace
+            if row.get("type") == "worker_started"
+            and isinstance(row.get("detail"), dict)
+        }
+        if not started:
+            return Verdict(name, "FAIL", "the trace shows no worker started")
         readings = [
             cast("dict[str, object]", row["detail"])
             for row in self._trace
@@ -274,6 +286,12 @@ class Judge:
         if not readings:
             return Verdict(name, "FAIL", "the trace holds no worker_status result")
         for reading in readings:
+            if reading.get("worker_id") not in started:
+                return Verdict(
+                    name,
+                    "FAIL",
+                    f"status is for a worker this call never started: {reading}",
+                )
             if fault := self._reading_fault(reading):
                 return Verdict(name, "FAIL", f"{fault}: {reading}")
         if not self._replied_after("worker_status"):
