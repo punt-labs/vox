@@ -35,6 +35,9 @@ class _Result(Protocol):
     @property
     def ignored(self) -> tuple[_Row, ...]: ...
 
+    @property
+    def stopped(self) -> tuple[str, ...]: ...
+
 
 class _Row(Protocol):
     """The fields of a WorkerRow these tests read."""
@@ -301,3 +304,15 @@ def test_a_clean_stop_is_still_checked_when_another_problem_exists(
     cleanup = _sweep(monkeypatch, voxd, "old", "new", before=("old",))
     assert any("existed before" in p for p in cleanup.problems)
     assert any("worker new is still running" in p for p in cleanup.problems)
+
+
+def test_only_a_stop_that_exited_zero_and_ended_the_worker_counts_as_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worked = _sweep(monkeypatch, _Voxd({"new": "ready"}), "new")
+    assert worked.stopped == ("new",)
+    failed = _sweep(monkeypatch, _Voxd({"new": "ready"}, stop_code=1), "new")
+    assert failed.stopped == ()
+    assert failed.left_running == ("new",)
+    unchanged = _sweep(monkeypatch, _Voxd({"new": "ready"}, stop_works=False), "new")
+    assert unchanged.stopped == ()

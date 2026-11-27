@@ -56,6 +56,15 @@ class Cleanup:
         WorkerRow, ...
     ] = ()  # Running, new during the call, not in its trace.
     ignored: tuple[WorkerRow, ...] = ()  # New and already ended: nothing left to stop.
+    stopped: tuple[str, ...] = ()  # Left running, then stopped and confirmed ended.
+
+
+@dataclass(frozen=True, slots=True)
+class _StillRunning:
+    """Workers a stop that exited 0 did not end, with the problems to report."""
+
+    ids: frozenset[str]
+    problems: list[str]
 
 
 @final
@@ -101,27 +110,30 @@ class WorkerFleet:
             f"worker {w} existed before the call, so it was not stopped"
             for w in foreign
         ]
-        stopped: list[str] = []
+        exited_zero: list[str] = []
         for worker in left:
             if fault := self._stop(worker):
                 problems.append(fault)
             else:
-                stopped.append(worker)
-        if stopped:
-            problems += self._still_running(tuple(stopped))
-        return Cleanup(started, left, tuple(problems), unproven, ignored)
+                exited_zero.append(worker)
+        confirmed: tuple[str, ...] = ()
+        if exited_zero:
+            still = self._still_running(tuple(exited_zero))
+            problems += still.problems
+            confirmed = tuple(w for w in exited_zero if w not in still.ids)
+        return Cleanup(started, left, tuple(problems), unproven, ignored, confirmed)
 
-    def _still_running(self, stopped: tuple[str, ...]) -> list[str]:
-        """Return a problem for each worker a successful stop left running."""
+    def _still_running(self, stopped: tuple[str, ...]) -> _StillRunning:
+        """Return which workers a stop that exited 0 left running, and why."""
         try:
             running = {row.id for row in self._rows() if row.running}
         except ValueError as exc:
-            return [str(exc)]
-        return [
-            f"worker {w} is still running after vox worker stop"
-            for w in stopped
-            if w in running
-        ]
+            return _StillRunning(frozenset(stopped), [str(exc)])
+        ids = frozenset(w for w in stopped if w in running)
+        return _StillRunning(
+            ids,
+            [f"worker {w} is still running after vox worker stop" for w in sorted(ids)],
+        )
 
     @classmethod
     def _rows(cls) -> list[WorkerRow]:

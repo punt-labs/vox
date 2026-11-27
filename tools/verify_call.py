@@ -55,6 +55,20 @@ class Trace:
     dropped: int  # Rows that were valid JSON but not objects.
 
 
+def report_of(launch_output: str) -> str:
+    """Return the end-of-call report in a launch's output, after its progress lines.
+
+    ``vox call`` prints one status line for each change while it follows the
+    call, then the report; the report begins at the last ``call ended`` or
+    ``call failed`` line. Without one the whole output stands in.
+    """
+    lines = launch_output.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith(("call ended", "call failed")):
+            return "\n".join(lines[index:]) + "\n"
+    return launch_output
+
+
 def load_trace(status: str) -> Trace | None:
     """Return the trace named by the status text's ``trace:`` line, if readable.
 
@@ -189,7 +203,7 @@ class CallRun:
         """
         if launch is not None and (mine := trace_path(launch.stdout)):
             problems: list[str] = []
-            status = self._read_report(mine, launch.stdout, problems)
+            status = self._read_report(mine, report_of(launch.stdout), problems)
             return mine, status, problems
         if launch is not None and launch.returncode != TIMEOUT_EXIT:
             err = launch.stderr.strip()[:200]

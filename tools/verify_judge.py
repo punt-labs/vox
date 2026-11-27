@@ -143,21 +143,24 @@ class Judge:
         )
 
     def _replied_after(self, tool: str, *, within_turn: bool = False) -> bool:
-        """Return whether an agent reply follows the tool's successful result.
+        """Return whether an agent reply follows a successful result of the tool.
 
         With ``within_turn`` the reply must come before the caller's next turn,
-        so a later answer to some other request is not mistaken for this one.
+        and any one result will do: an earlier unanswered lookup does not hide a
+        later complete exchange, but a reply that only comes after the next turn
+        is not the answer.
         """
         if self._trace is None:
             return False
         results = [
             t for r in self._trace if (t := self._result_time(r, tool)) is not None
         ]
-        if not results:
-            return False
-        first = min(results)
-        limit = self._next_caller_turn(first) if within_turn else float("inf")
-        return any(first < ms < limit for ms in self._times("agent_response"))
+        replies = self._times("agent_response")
+        if not within_turn:
+            return bool(results) and any(ms > min(results) for ms in replies)
+        return any(
+            t < ms < self._next_caller_turn(t) for t in results for ms in replies
+        )
 
     def _next_caller_turn(self, after: float) -> float:
         """Return when the caller next spoke after ``after``; infinity if never."""
@@ -273,11 +276,7 @@ class Judge:
         if cleanup is None:
             return Verdict(name, "FAIL", "no worker cleanup was attempted")
         found = [*cleanup.problems, *(row.describe() for row in cleanup.unproven)]
-        if cleanup.left_running:
-            found.append(
-                f"the agent left {', '.join(cleanup.left_running)} running; "
-                "this run stopped it"
-            )
+        found += self._left_running(cleanup)
         if found:
             return Verdict(name, "FAIL", "; ".join(found))
         if not cleanup.started:
@@ -292,6 +291,22 @@ class Judge:
         return Verdict(
             name, "PASS", f"stop_worker ok; no started worker still running{note}"
         )
+
+    @staticmethod
+    def _left_running(cleanup: Cleanup) -> list[str]:
+        """Say who was left running, and whether this run's stop really ended it."""
+        stopped = [w for w in cleanup.left_running if w in cleanup.stopped]
+        failed = [w for w in cleanup.left_running if w not in cleanup.stopped]
+        found = []
+        if stopped:
+            found.append(
+                f"the agent left {', '.join(stopped)} running; this run stopped it"
+            )
+        if failed:
+            found.append(
+                f"the agent left {', '.join(failed)} running and stopping it failed"
+            )
+        return found
 
     def _silence(self) -> Verdict:
         nags = [t for t in self._agent if _NAG.search(t)]

@@ -731,7 +731,15 @@ def test_a_status_that_belongs_to_another_call_is_not_the_report(
     mine = _trace_file(tmp_path, "new")
     voxd = _Voxd(mine, {}, {"new": "stopped"})
     voxd.status_out = _report(_trace_file(other, "someone-elses"))
+    # A real launch prints its progress lines, then the end-of-call report.
+    voxd.launch_out = (
+        "call connecting | 0 tool calls\n"
+        "call live | 1 tool calls | user: hello\n" + _report(mine)
+    )
     cleanup, status = _place(tmp_path, monkeypatch, voxd)
+    assert status.startswith("call ended")
+    assert verify_judge.is_final(status)
+    assert "call live" not in status
     assert str(mine) in status
     assert "someone-elses" not in status
     assert cleanup.started == ("new",)
@@ -1339,3 +1347,50 @@ def test_a_launch_killed_by_sighup_is_reported_as_exit_minus_one() -> None:
     assert verdict.status == "FAIL"
     assert "exit -1" in verdict.why
     assert "did not return" not in verdict.why
+
+
+def test_a_preliminary_unanswered_lookup_does_not_hide_a_complete_status_exchange() -> (
+    None
+):
+    early: list[dict[str, object]] = [
+        {
+            "ms": 125,
+            "dir": "recv",
+            "type": "agent_tool_response",
+            "detail": {"tool_name": "worker_status", "is_error": False},
+        },
+        {"ms": 130, "dir": "recv", "type": "user_transcript", "detail": {}},
+    ]
+    assert _worker_status(trace=[*_TRACE, *early]) == "PASS"
+
+
+def test_a_status_the_agent_never_answers_before_the_next_turn_still_fails() -> None:
+    early: list[dict[str, object]] = [
+        {
+            "ms": 125,
+            "dir": "recv",
+            "type": "agent_tool_response",
+            "detail": {"tool_name": "worker_status", "is_error": False},
+        },
+        {"ms": 130, "dir": "recv", "type": "user_transcript", "detail": {}},
+    ]
+    silent = [r for r in _TRACE if r["ms"] != 300]
+    silent.append({"ms": 450, "dir": "recv", "type": "agent_response", "detail": {}})
+    assert _worker_status(trace=[*silent, *early]) == "FAIL"
+
+
+def test_a_stop_that_worked_is_said_and_one_that_failed_is_not() -> None:
+    mixed = verify_workers.Cleanup(
+        ("a", "b"),
+        ("a", "b"),
+        ("vox worker stop b failed: exit 1: stop broke",),
+        (),
+        (),
+        ("a",),
+    )
+    status, why = _cleanup_verdict(mixed)
+    assert status == "FAIL"
+    assert "left a running; this run stopped it" in why
+    assert "left b running and stopping it failed" in why
+    assert "left b running; this run stopped it" not in why
+    assert why.count("vox worker stop b failed") == 1
