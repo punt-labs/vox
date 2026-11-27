@@ -401,9 +401,10 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
   rate an hour of narration is about 53,000 characters. The ElevenLabs list
   price for its current speech model is \$0.08 per 1,000 characters on
   every plan \cite{elevenlabs2026pricing}. An hour of narration therefore
-  costs a little over four US dollars. That figure rests on one call. Your
-  account is charged in credits, and the credits charged per character
-  depend on your plan.
+  costs a little over four US dollars on any plan. That figure rests on one
+  call. Your plan's balance is counted in credits, and the number of
+  credits one character uses differs by plan, so the credit count you see
+  will not match another account's.
 
   Two costs are unmeasured. Podcasts use the multi-speaker engine, which
   has not been priced by a test call. Writing the script spends model
@@ -427,8 +428,9 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
   agent, so its model provider has seen it too. On your side, the audio and
   the script are saved on your own machine. There is no punt-labs cloud
   service. Usage telemetry is kept on your machine and sent nowhere unless
-  you opt in. It records which commands ran, which provider was used,
-  whether each succeeded and how long the text was, never the text itself.
+  you opt in. It records which commands, tools and hooks ran, which
+  provider was used, whether each succeeded, whether the cache was hit and
+  how long the text was. It never records the text itself.
 
   If text about your code must not leave your machine, do not ask for shows
   about your code. Shows about pandas are unaffected.
@@ -814,7 +816,8 @@ the one-line installer, restart Claude Code, and type \texttt{/podcast}.
 
     \item \textbf{Finished parts.} At least 70\% of parts that start
           playing reach their end. The daemon records this in the library
-          on the listener's own machine.
+          on the listener's own machine. Each listener reads the figure
+          from \texttt{status} and reports it.
 
     \item \textbf{Second requests.} Someone who makes one show makes
           another within a week.
