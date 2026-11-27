@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, cast, final
+from typing import TYPE_CHECKING, Final, final
+
+from punt_vox.voxd.voice_call.worker_activity import WorkerActivity
 
 if TYPE_CHECKING:
     from punt_vox.voxd.workers.types import WorkerPayload
@@ -33,17 +35,11 @@ class WorkerBrief:
             "task": WorkerBrief._clip(worker["task"]),
             "project": worker["project"],
             "state": worker["state"],
-            "decision_choices": ["approve", "deny"]
-            if isinstance(
-                pending := worker["last_report"].get("pending_decision"), dict
-            )
-            and cast("dict[str, object]", pending).get("notification_type")
-            == "permission_prompt"
-            else [],
+            "decision_choices": WorkerActivity(worker).decision_choices,
         }
 
     @staticmethod
-    def detail(worker: WorkerPayload) -> dict[str, object]:
+    def snapshot(worker: WorkerPayload) -> dict[str, object]:
         """Return the summary plus the worker's latest curated progress."""
         report = worker["last_report"]
         progress = {
@@ -55,6 +51,21 @@ class WorkerBrief:
             **WorkerBrief.summary(worker),
             "branch": worker["branch"],
             "progress": progress,
+        }
+
+    @staticmethod
+    def detail(worker: WorkerPayload, now: float) -> dict[str, object]:
+        """Return the snapshot plus what the worker is doing as of ``now``.
+
+        ``state`` is the spoken word (working, blocked, idle, finished);
+        ``lifecycle`` is the registry's launch phase.
+        """
+        activity = WorkerActivity(worker)
+        return {
+            **WorkerBrief.snapshot(worker),
+            "state": activity.state,
+            "lifecycle": worker["state"],
+            "activity": activity.detail(now),
         }
 
     @staticmethod

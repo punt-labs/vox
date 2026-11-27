@@ -461,3 +461,30 @@ async def test_start_speaks_the_worktree_deadline_through_the_real_registry(
         '{"error": "worker start timed out creating the worktree after 90 s"}',
         True,
     )
+
+
+async def test_status_says_what_the_worker_is_doing_now() -> None:
+    workers = FakeWorkers()
+    workers.known = [
+        payload(
+            "abcd1234",
+            in_flight_tool="Bash",
+            active_files=["/repo/a.py"],
+            open_failure={"relay_seq": 2, "tool": "Edit", "result": "no match"},
+            last_event_at=1000.0,
+            worker_seq=3,
+            prompt_epoch=0,
+        )
+    ]
+    tools = BossTools(workers, workers, clock=lambda: 1042.0)
+    result, error = await tools.answer("worker_status", {"worker_id": "abcd1234"})
+    assert not error
+    status = json.loads(result)
+    assert status["state"] == "working"
+    assert status["lifecycle"] == "ready"
+    assert status["activity"] == {
+        "tool_in_flight": "Bash",
+        "files": ["/repo/a.py"],
+        "open_failure": {"tool": "Edit", "result": "no match"},
+        "seconds_since_last_event": 42,
+    }

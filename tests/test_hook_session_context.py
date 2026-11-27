@@ -59,3 +59,67 @@ def test_non_worker_notifications_do_not_create_worker_decisions() -> None:
 def test_invalid_zero_sequence_is_rejected() -> None:
     with pytest.raises(ValueError, match="expired"):
         SessionContext().ingest(0, "Stop", {})
+
+
+def _tool(session: SessionContext, seq: int, event: str, **fields: object) -> None:
+    payload: dict[str, object] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "make test"},
+        **fields,
+    }
+    session.ingest(seq, event, payload, worker_input=True)
+
+
+def test_a_tool_is_in_flight_until_its_completion_arrives() -> None:
+    session = SessionContext()
+    assert session.snapshot()["in_flight_tool"] is None
+    _tool(session, 1, "PreToolUse")
+    assert session.snapshot()["in_flight_tool"] == "Bash"
+    _tool(session, 2, "PostToolUse", tool_response="ok")
+    assert session.snapshot()["in_flight_tool"] is None
+
+
+def test_a_failed_tool_is_no_longer_in_flight_and_stays_an_open_failure() -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    _tool(session, 2, "PostToolUseFailure", error="exit 2")
+    snapshot = session.snapshot()
+    assert snapshot["in_flight_tool"] is None
+    assert snapshot["open_failure"] == {
+        "relay_seq": 2,
+        "tool": "Bash",
+        "result": "exit 2",
+    }
+
+
+def test_the_newest_unfinished_tool_is_the_one_in_flight() -> None:
+    session = SessionContext()
+    _tool(session, 1, "PreToolUse")
+    session.ingest(
+        2,
+        "PreToolUse",
+        {"tool_name": "Edit", "tool_input": {"file_path": "/repo/a.py"}},
+        worker_input=True,
+    )
+    assert session.snapshot()["in_flight_tool"] == "Edit"
+
+
+def test_last_event_time_follows_worker_events_only() -> None:
+    session = SessionContext()
+    assert session.snapshot()["last_event_at"] == 0.0
+    session.ingest(1, "SessionStart", {}, worker_input=True, at=50.0)
+    session.ingest(2, "Stop", {}, worker_input=False, at=90.0)
+    assert session.snapshot()["last_event_at"] == 50.0
+    session.ingest(3, "Stop", {}, worker_input=True, at=70.0)
+    assert session.snapshot()["last_event_at"] == 70.0
+
+
+def test_in_flight_tool_and_event_time_survive_a_checkpoint_restore() -> None:
+    session = SessionContext()
+    session.ingest(1, "SessionStart", {}, worker_input=True, at=5.0)
+    _tool(session, 2, "PreToolUse")
+    restored = SessionContext()
+    restored.restore(session.checkpoint())
+    snapshot = restored.snapshot()
+    assert snapshot["in_flight_tool"] == "Bash"
+    assert snapshot["last_event_at"] == 5.0

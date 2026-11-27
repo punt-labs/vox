@@ -54,6 +54,17 @@ class HookToolHistory:
                 results.append(update.as_result(sequence))
         return list(files)[-8:], results[-5:]
 
+    def in_flight(self, since: int) -> str | None:  # None when no tool is running.
+        """Return the newest tool begun after ``since`` whose completion is unseen."""
+        running = [
+            (sequence, update.tool)
+            for sequence, update in self._tools.items()
+            if sequence > since
+            and not update.completed
+            and not self._failures.settled(sequence, update)
+        ]
+        return max(running)[1] if running else None
+
     def open_failure(self) -> HookToolResult | None:  # None when no failure remains.
         """Return the newest unresolved failure."""
         return self._failures.latest()

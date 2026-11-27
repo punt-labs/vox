@@ -25,6 +25,7 @@ class SessionContext:
         "_gaps",
         "_goal",
         "_input",
+        "_last_event_at",
         "_started",
         "_tools",
     )
@@ -33,6 +34,7 @@ class SessionContext:
     _assistant: tuple[int, str]
     _gaps: HookGaps
     _goal: tuple[int, str]
+    _last_event_at: float
     _started: bool
     _tools: HookToolHistory
 
@@ -44,6 +46,7 @@ class SessionContext:
         self._gaps = HookGaps()
         self._goal = (0, "")
         self._input = HookInputHistory()
+        self._last_event_at = 0.0
         self._started = False
         self._tools = HookToolHistory()
         return self
@@ -55,9 +58,14 @@ class SessionContext:
         payload: dict[str, object],
         *,
         worker_input: bool = False,
+        at: float = 0.0,
     ) -> None:
-        """Fold a fresh event; duplicates must not change the projection."""
+        """Fold a fresh event; duplicates must not change the projection.
+
+        ``at`` is when voxd received it; only worker hooks move the clock.
+        """
         if worker_input:
+            self._last_event_at = max(self._last_event_at, at)
             self._worker_event(sequence, event, payload)
         if not self._gaps.observe(sequence):
             return
@@ -121,6 +129,7 @@ class SessionContext:
         )
         self._goal = (checkpoint["goal_seq"], checkpoint["goal"] or "")
         self._gaps.restore(checkpoint["gaps"])
+        self._last_event_at = checkpoint["last_event_at"]
         self._tools.restore(checkpoint["tool_history_checkpoint"])
         self._decisions.restore(
             checkpoint["worker_seq"],
@@ -139,10 +148,12 @@ class SessionContext:
             "session_started": self._started,
             "goal": self._goal[1] or None,
             "active_files": files,
+            "in_flight_tool": self._tools.in_flight(self._decisions.prompt_epoch),
             "last_results": results,
             "open_failure": self._tools.open_failure(),
             "last_assistant_message": self._assistant[1] or None,
             "gaps": self._gaps.report(),
             "pending_decision": self._decisions.pending(),
             "prompt_epoch": self._decisions.prompt_epoch,
+            "last_event_at": self._last_event_at,
         }

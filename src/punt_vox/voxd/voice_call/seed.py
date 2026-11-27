@@ -118,7 +118,7 @@ class CallSeed:
 
     def prompt(self, labels: dict[str, str] | None = None) -> str:
         """Return the prompt, dropping the oldest workers until it fits LIMIT."""
-        briefs = [WorkerBrief.detail(worker) for worker in self._workers]
+        briefs = [WorkerBrief.snapshot(worker) for worker in self._workers]
         lookup = labels or {}
         if len(self._render([], lookup).encode()) > self.LIMIT:
             lookup = {}

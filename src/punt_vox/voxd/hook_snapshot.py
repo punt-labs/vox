@@ -16,12 +16,14 @@ class HookContextSnapshot(TypedDict):
     session_started: bool
     goal: str | None  # None until a nonempty prompt arrives.
     active_files: list[str]
+    in_flight_tool: str | None  # None when the worker is between tools.
     last_results: list[HookToolResult]
     open_failure: HookToolResult | None  # None when no failure is unresolved.
     last_assistant_message: str | None  # None until a nonempty Stop message arrives.
     gaps: HookGapReport
     pending_decision: PendingDecision | None  # None when no question is outstanding.
     prompt_epoch: int
+    last_event_at: float  # Epoch seconds of the newest worker hook; 0.0 if none.
 
 
 class WorkerHookCheckpoint(HookContextSnapshot):

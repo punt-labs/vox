@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.hook_context_event import MAX_SEQUENCE, HookIdentity, HookRedaction
@@ -9,6 +10,8 @@ from punt_vox.voxd.hook_session_context import SessionContext
 from punt_vox.voxd.hook_sessions import HookSessions
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.hook_snapshot import HookContextSnapshot, WorkerHookCheckpoint
 
 
@@ -16,12 +19,14 @@ if TYPE_CHECKING:
 class HookContextStore:
     """Own the rolling, in-memory context of the most active sessions."""
 
-    __slots__ = ("_sessions",)
+    __slots__ = ("_clock", "_sessions")
+    _clock: Callable[[], float]
     _sessions: HookSessions
 
-    def __new__(cls) -> Self:
-        """Initialize an empty store before restoring managed checkpoints."""
+    def __new__(cls, clock: Callable[[], float] = time.time) -> Self:
+        """Initialize an empty store; ``clock`` stamps each event's arrival."""
         self = super().__new__(cls)
+        self._clock = clock
         self._sessions = HookSessions()
         return self
 
@@ -36,7 +41,13 @@ class HookContextStore:
         context = self._sessions.get(identity.session)
         if context is None:
             context = SessionContext()
-        context.ingest(sequence, identity.event, sanitized, worker_input=worker_input)
+        context.ingest(
+            sequence,
+            identity.event,
+            sanitized,
+            worker_input=worker_input,
+            at=self._clock(),
+        )
         self._sessions.remember(identity.session, context, managed=worker_input)
 
     def snapshot(self, session: str) -> HookContextSnapshot:

@@ -42,6 +42,11 @@ class HookFailures:
         sequence, update = self._outcomes[subject]
         return update.failed, sequence
 
+    def settled(self, sequence: int, update: ToolUpdate) -> bool:
+        """Return whether a completion for this tool call arrived after sequence."""
+        outcome = self._outcomes.get((update.tool, update.subject))
+        return outcome is not None and outcome[0] > sequence
+
     def latest(self) -> HookToolResult | None:
         """Return the newest unresolved failure, without exposing its subject."""
         failure = max(
