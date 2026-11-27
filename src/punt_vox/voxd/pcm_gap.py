@@ -167,7 +167,7 @@ class GapSmoother:
         self._mode, self._peak, self._pos, self._missing = mode, self._last, 0, 0
 
     def _wind_down(self) -> None:
-        """A short block that is no dry spell: the response ended or was cut."""
+        """Fade out after a short block that is no dry spell (the response ended)."""
         if self._mode == "cut":
             self._end_spell(is_idle=True)
             self._mode = "tail"

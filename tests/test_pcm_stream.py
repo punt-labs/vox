@@ -715,8 +715,10 @@ class TestPcmStreamRaces:
                 report = sink.flush()
                 heard_at_flush = len(device.opened.heard)
                 await asyncio.sleep(0.001)
-            # The device may be mid-pull when the flush lands: one block, no more.
-            after = bytes(device.opened.heard[heard_at_flush + BLOCK * 2 :])
+            # The device may be mid-pull when the flush lands: one block, then
+            # the 3 ms fade-out of the cut sample, no more.
+            allowed = (BLOCK + FADE_FRAMES) * 2
+            after = bytes(device.opened.heard[heard_at_flush + allowed :])
             assert not any(after), "pre-flush audio played after the flush"
             dropped_any |= report.dropped.nbytes > 0
             played_any |= sink.played.nbytes > 0
