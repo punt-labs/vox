@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
@@ -19,6 +19,8 @@ class ClientTool:
     description: str
     # Callers supply arbitrary JSON Schema; the provider allows null for no schema.
     parameters: dict[str, object] | None = None
+    # How long the provider waits for the result; None keeps its own default.
+    response_timeout_secs: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,51 @@ class Registration:
     tool_ids: tuple[str, ...]
     configuration_hash: str
     credential_id: str
+    # Replaced agents and tools awaiting deletion, retried after each call
+    # connects so a slow delete never blocks a call.
+    retired_agents: tuple[str, ...] = ()
+    retired_tools: tuple[str, ...] = ()
+    # What an unfinished replacement has created so far. A finished one empties
+    # these; ids still here at the next start belong to a run that died.
+    pending_agents: tuple[str, ...] = ()
+    pending_tools: tuple[str, ...] = ()
+
+    def remaining(
+        self, agents: tuple[str, ...], tools: tuple[str, ...]
+    ) -> Registration:
+        """Return the record of a teardown that left *agents* and *tools* behind."""
+        return replace(
+            self,
+            agent_id=None,
+            tool_ids=(),
+            retired_agents=agents,
+            retired_tools=tools,
+            pending_agents=(),
+            pending_tools=(),
+        )
+
+    @property
+    def orphaned_agents(self) -> tuple[str, ...]:
+        """Return the agents nothing will use again: retired, or from a dead run."""
+        return (*self.retired_agents, *self.pending_agents)
+
+    @property
+    def orphaned_tools(self) -> tuple[str, ...]:
+        """Return the tools nothing will use again: retired, or from a dead run."""
+        return (*self.retired_tools, *self.pending_tools)
+
+    @property
+    def agents(self) -> tuple[str, ...]:
+        """Return every agent this record names, current or not."""
+        return (
+            *self.orphaned_agents,
+            *(() if self.agent_id is None else (self.agent_id,)),
+        )
+
+    @property
+    def tools(self) -> tuple[str, ...]:
+        """Return every tool this record names, current or not."""
+        return (*self.orphaned_tools, *self.tool_ids)
 
 
 class ToolConfig(TypedDict):
@@ -48,6 +95,7 @@ class ToolConfig(TypedDict):
     expects_response: bool
     # The JSON Schema belongs to the tool author; null means no parameters.
     parameters: dict[str, object] | None
+    response_timeout_secs: NotRequired[int]
 
 
 class CreateToolConfig(TypedDict):
@@ -55,7 +103,9 @@ class CreateToolConfig(TypedDict):
 
 
 class _SystemToolParams(TypedDict):
-    system_tool_type: Literal["end_call"]
+    system_tool_type: Literal["end_call", "skip_turn"]
+    # How long Skip turn waits before the agent may speak; -1 waits indefinitely.
+    wait_timeout_secs: NotRequired[int]
 
 
 class SystemTool(TypedDict):
@@ -69,9 +119,13 @@ class SystemTool(TypedDict):
 
 class BuiltInTools(TypedDict):
     end_call: SystemTool
+    skip_turn: SystemTool
 
 
 class _RegisteredPrompt(TypedDict):
+    prompt: str
+    llm: str
+    timezone: str
     tool_ids: list[str]
     built_in_tools: BuiltInTools
 
@@ -83,7 +137,13 @@ class _RegisteredAgent(TypedDict):
 
 
 class _TTSConfig(TypedDict):
+    voice_id: str
     agent_output_audio_format: str
+
+
+class _TurnConfig(TypedDict):
+    turn_timeout: int
+    turn_eagerness: str
 
 
 class _ASRConfig(TypedDict):
@@ -98,7 +158,12 @@ class _AgentConfig(TypedDict):
     agent: _RegisteredAgent
     tts: _TTSConfig
     asr: _ASRConfig
+    turn: _TurnConfig
     conversation: _ClientEvents
+
+
+class _Privacy(TypedDict):
+    record_voice: bool
 
 
 class _Auth(TypedDict):
@@ -132,6 +197,7 @@ class _Overrides(TypedDict):
 class _PlatformSettings(TypedDict):
     auth: _Auth
     overrides: _Overrides
+    privacy: _Privacy
 
 
 class CreateAgentConfig(TypedDict):

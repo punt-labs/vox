@@ -37,6 +37,7 @@ from punt_vox.types_provider_errors import ProviderUnavailableError
 
 __all__ = [
     "PROVIDER_KEY_NAMES",
+    "SEARCH_KEY_NAME",
     "CredentialRequirement",
     "ProviderCredentials",
 ]
@@ -234,6 +235,10 @@ def _default_requirements() -> dict[str, CredentialRequirement]:
     }
 
 
+# The web-search key the voice call's search tool reads. It is a daemon key like
+# the provider keys, but it is no TTS provider's and never selects one.
+SEARCH_KEY_NAME: str = "EXA_API_KEY"
+
 # The names ``vox daemon install`` may snapshot into ``keys.env`` and voxd
 # loads at startup. Derived from the same requirement dispatch that answers
 # the gate and the status probe, so ``keys.env`` cannot list a variable
@@ -244,6 +249,7 @@ def _default_requirements() -> dict[str, CredentialRequirement]:
 # :meth:`ProviderCredentials.preferred` -- it can propose, never override at
 # run time.
 PROVIDER_KEY_NAMES: frozenset[str] = ProviderCredentials().header_carried_env_vars() | {
+    SEARCH_KEY_NAME,
     "AWS_PROFILE",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_DEFAULT_REGION",

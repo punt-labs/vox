@@ -9,6 +9,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final, Self, final
 
+from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_agent.events import (
     AgentResponse,
     AgentResponseCorrection,
@@ -19,6 +20,7 @@ from punt_vox.voxd.voice_agent.events import (
     UserTranscript,
 )
 from punt_vox.voxd.voice_agent.fault import ConvAIError
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_outcome import CallEnd, CallOutcome
 from punt_vox.voxd.voice_call.progress import CallProgress
@@ -32,7 +34,6 @@ if TYPE_CHECKING:
     from punt_vox.voxd.voice_agent.contracts import SessionOptions
     from punt_vox.voxd.voice_agent.session import Conversation
     from punt_vox.voxd.voice_agent.trace import EventTrace
-    from punt_vox.voxd.voice_call.boss_tools import BossTools
     from punt_vox.voxd.voice_call.call_outcome import CallState
     from punt_vox.voxd.voice_call.contracts import CallInput
     from punt_vox.voxd.voice_call.progress import ProgressEvents
@@ -101,7 +102,8 @@ class VoiceAgentCall:
         """Bind the call's tools, caller audio, speaker, trace and peer opener."""
         self = super().__new__(cls)
         self._tools, self._audio, self._speaker = tools, audio, speaker
-        self._progress, self._trace = CallProgress(progress), trace
+        self._progress = CallProgress(progress, tools.guard.provenance)
+        self._trace = trace
         self._opener = opener
         self._state, self._conversation_id, self._error = "connecting", None, None
         self._ended_by = None
@@ -152,7 +154,8 @@ class VoiceAgentCall:
 
     @staticmethod
     def _failure_text(failure: Exception) -> str:
-        return str(failure) or type(failure).__name__
+        # Notes carry what cleanup could not do, so the caller must see them.
+        return (str(failure) or type(failure).__name__) + LogText.notes(failure)
 
     async def _settle(
         self,
@@ -269,18 +272,36 @@ class VoiceAgentCall:
                 case UserTranscript() as turn:
                     self._progress.activity()
                     self._transcript.record(turn)
+                    self._tools.guard.gate.heard(turn.text)
                 case AgentResponse() | AgentResponseCorrection() as turn:
                     self._transcript.record(turn)
+                    self._tools.guard.gate.agent_spoke(
+                        turn.text
+                        if isinstance(turn, AgentResponse)
+                        else turn.corrected_text
+                    )
                 case AgentToolResponse() as ack:
                     self._acknowledged(ack)
 
     def _acknowledged(self, ack: AgentToolResponse) -> None:
-        """Note the agent's end_call: the close that follows is its hang-up."""
+        """Taint on a tool voxd did not run; note end_call, the agent's hang-up."""
+        self._tools.guard.provenance.observe_tool_response(
+            ack.tool_name or "", ack.tool_type, self._tools.tool_names()
+        )
         if ack.ends_call:
             self._ended_by = CallEnd.AGENT
             self._trace.record(
                 "note", "agent_end_call", {"tool_call_id": ack.tool_call_id}
             )
+
+    def _trace_receipt(self, call: ClientToolCall, result: str) -> None:
+        """Trace a steer's receipt; a held request has none yet."""
+        receipt: dict[str, object] = json.loads(result)
+        if "status" in receipt:
+            return
+        if receipt.get("choice") in ("approve", "deny"):
+            receipt["prompt_seq"] = call.parameters.get("prompt_seq")
+        self._trace.record("note", "worker_steer_receipt", receipt)
 
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
@@ -291,14 +312,13 @@ class VoiceAgentCall:
             answer = ToolReply.failed("tool reply was unreadable")
         CallLog.tool(call.tool_name, answer)
         if call.tool_name == "steer_worker" and not answer.is_error:
-            receipt: dict[str, object] = json.loads(answer.result)
-            if receipt.get("choice") in ("approve", "deny"):
-                receipt["prompt_seq"] = call.parameters.get("prompt_seq")
-            self._trace.record("note", "worker_steer_receipt", receipt)
+            self._trace_receipt(call, answer.result)
         self._tool_calls.append(
             {
                 "tool": call.tool_name,
-                "arguments": call.parameters,
+                "arguments": call.parameters
+                if BossTools.keeps_arguments(call.tool_name)
+                else {},
                 "error": answer.is_error,
             }
         )

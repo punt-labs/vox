@@ -6,16 +6,15 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 from punt_vox.voxd.log_text import LogText
 from punt_vox.voxd.voice_call.active_call import ActiveCall
 from punt_vox.voxd.voice_call.boss_tools import BossTools
 from punt_vox.voxd.voice_call.call import VoiceAgentCall
+from punt_vox.voxd.voice_call.call_audio import CallAudio
 from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_trace import CallTrace
 from punt_vox.voxd.voice_call.cursor_commit import CursorCommit
-from punt_vox.voxd.voice_call.inputs import ScriptInput
-from punt_vox.voxd.voice_call.mic_input import MicInput
+from punt_vox.voxd.voice_call.lookup.tools import ResearchTools
 from punt_vox.voxd.voice_call.return_brief import ReturnBrief
 from punt_vox.voxd.voice_call.speaker import AgentSpeaker
 
@@ -52,6 +51,7 @@ class CallLauncher:
         "_playback",
         "_progress",
         "_projects",
+        "_retiring",
         "_trace_dir",
         "_workers",
     )
@@ -63,6 +63,7 @@ class CallLauncher:
     _hold_music: Callable[[], AbstractContextManager[None]]
     _trace_dir: Path
     _opener: Opener
+    _retiring: set[asyncio.Task[None]]
 
     def __new__(
         cls,
@@ -80,6 +81,7 @@ class CallLauncher:
         self = super().__new__(cls)
         self._workers, self._projects, self._playback = workers, projects, playback
         self._operations, self._progress = operations, progress
+        self._retiring = set()
         self._hold_music, self._trace_dir, self._opener = hold_music, trace_dir, opener
         return self
 
@@ -92,7 +94,7 @@ class CallLauncher:
             OSError: When the trace directory cannot be prepared.
             ConvAIError: When the agent cannot be provisioned.
         """
-        audio = await self._input(msg)
+        audio = await CallAudio.from_message(msg)
         with CallLog.starting(msg):  # A start line always gets an end line.
             await self._operations.prepare()
             await asyncio.to_thread(CursorCommit.prepare, self._trace_dir)
@@ -105,7 +107,10 @@ class CallLauncher:
             returning = ReturnBrief(self._trace_dir / "departure.json")
             call = VoiceAgentCall(
                 BossTools(
-                    self._workers, self._projects, spoken_labels=returning.labels
+                    self._workers,
+                    self._projects,
+                    spoken_labels=returning.labels,
+                    research=ResearchTools.from_environment(),
                 ),
                 audio,
                 AgentSpeaker(self._playback),
@@ -175,14 +180,12 @@ class CallLauncher:
         """Delete the agent registration once outstanding operations settle."""
         await self._operations.teardown()
 
-    @staticmethod
-    async def _input(msg: dict[str, object]) -> CallInput:
-        if "script" in msg:
-            return await asyncio.to_thread(ScriptInput.from_wire, msg["script"])
-        return MicInput.from_wire(msg, MicAudioSource.with_portaudio())
-
     async def _dial(self, returning: ReturnBrief) -> tuple[str, SessionOptions]:
         url, tool_ids = await self._operations.connection(BossTools.CATALOG)
+        # Old agents are deleted in the background, after the new one is in use.
+        retiring = asyncio.create_task(self._operations.retire())
+        self._retiring.add(retiring)
+        retiring.add_done_callback(self._retiring.discard)
         repos, workers = self._projects.repos(), await self._workers.workers()
         return url, await asyncio.to_thread(returning.options, workers, repos, tool_ids)
 

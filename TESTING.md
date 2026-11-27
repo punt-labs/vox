@@ -272,6 +272,7 @@ The tiers below reflect that shape, not a copy of biff's.
 | `slow` (cross-cutting) | Heavy local process/filesystem overhead; currently concurrent logging-process rotation | `uv run pytest -m slow` | Yes, combined coverage job | 2 |
 | `e2e` | Installed-wheel CLI and MCP packaging smoke, not live audio | `make install` then `make test-e2e` | Yes, combined coverage and separate `packaging-e2e` jobs | 11 |
 | `call_e2e` | A real `voxd` subprocess places a `vox call --script` call against a fake ElevenLabs Conversational AI agent and fake REST on loopback; scripted PCM in, agent audio through a silent device, no microphone, no credentials | `make test-call-e2e` | Yes, inside the combined coverage job and again as its own step | 2 |
+| `live_call` | An installed `voxd` places a scripted `vox call` to the real ElevenLabs agent with the real research tools; judged on the call's final transcript and tool results (greeting, `read_docs`, `search_web`, plain words, silence, clean end); needs credentials, `say`, `ffmpeg`; spends credits and plays audio | `make verify-call` after `make install` and `vox daemon restart` | No: run by the leader before every real-call demo | 6 expectations |
 | `roundtrip` | Real TTS → Whisper/Scribe WER, cloud credential rejection, and agent speech | See [Integration Tests](#integration-tests) | Offline PR/push; live nightly/manual | 40 |
 | `playback` | Real daemon → virtual device monitor → Whisper, including live chunk seam | `make test-playback-capture` / `make test-playback-capture-live` | Nightly/manual | 3 |
 | `levels` | Chime/music loudness, silence, track change via ffmpeg + mpv; live music also `integration` | `make test-levels` / `make test-levels-live` | Nightly/manual | 20 |
@@ -507,6 +508,33 @@ make test-e2e
 make coverage
 ```
 
+## Verifying a real call
+
+This is the `live_call` tier. It lets the leader prove a real call works
+without the operator: a real scripted call goes through the installed voxd to
+the real ElevenLabs agent, and the call's own transcript and tool results show
+whether the greeting, the docs lookup, web search, silence handling and
+hang-up all work. The leader runs it in a loop (rebuild, restart voxd,
+`make verify-call`, read the transcript, fix, repeat) until it passes, and only
+then asks the operator to listen. It exists because the unit and fake-endpoint
+tiers can all pass while a real call is broken: on 2026-11-26 a green
+`make check` shipped a wrong DeepWiki tool name, a search key the daemon never
+loaded, and a narrow opener, and a real call found each in minutes.
+The operator's ear is for voice and delivery, which a transcript cannot judge;
+phrase scripted turns plainly, because the synthetic caller's speech is
+transcribed by the agent's recognizer and can be misheard.
+
+`make verify-call` places one real scripted `vox call` through the installed
+voxd to the real ElevenLabs agent, under `timeout` and always stopping the call
+afterwards, and fails (naming each failed expectation) unless the call opens
+with the conversational greeting, answers a repository question through
+`read_docs` in plain words, calls `search_web` when `EXA_API_KEY` is set (a
+distinct SKIP, never a pass, when it is not), never asks "are you there" during
+a long silence, and ends without a `RuntimeWarning`. It needs macOS `say`,
+`ffmpeg`, an installed and restarted voxd and an ElevenLabs key; it spends
+credits and plays audio, so it is not part of `make check`. Run it after
+`make install` and `vox daemon restart`, before the demo.
+
 ## Integration Tests
 
 ### Stage five: playback capture
@@ -636,27 +664,27 @@ the run. To prove Polly on a `ProofBranch`, dispatch with
 
 Combined coverage excludes `roundtrip` and `levels` explicitly, so its selection
 does not depend on whether Whisper or mpv is installed. The dedicated speech job enforces WER;
-the coverage ratchet covers default, slow, subprocess, and packaging tiers.
+the coverage floor covers default, slow, subprocess, and packaging tiers.
 
-Coverage is measured, not subject to an absolute percentage floor (punt-kit
-`ci.md` section 11). On PRs the test job also measures the merge base with the
-target branch in a detached worktree, using that revision's tests/dependencies
-and the current coverage harness/configuration. Both total line coverage and
-total branch coverage must not decrease, implementing the PL-TT-2 no-regression
-policy. The comparison uses exact covered/valid fractions, with no epsilon or
-rounding allowance. A missing, empty, or invalid report fails closed.
+Coverage is gated by an absolute floor: total line coverage and total branch
+coverage must each be at least 95%. The comparison uses exact covered/valid
+fractions (19/20), with no epsilon or rounding allowance. A missing, empty, or
+invalid report fails closed. On PRs the test job also measures the merge base
+with the target branch in a detached worktree, using that revision's
+tests/dependencies and the current coverage harness/configuration. The
+merge-base figures are printed for information and never fail the run.
 
 The base measurement passes the head configuration explicitly with the harness's
 `--rcfile` option. The harness uses that file for pytest-cov, subprocess startup,
 and report generation; it ignores and removes inherited `COVERAGE_RCFILE` from
 the test environment so nested harness calls keep their own configuration.
 
-There is no committed numeric baseline to raise: improvements automatically
-become the comparison point after merging. Never lower a floor or regenerate a
-baseline to bypass a regression; add tests instead. Locally run `make coverage`
-and compare reports with
-`make coverage-compare COVERAGE_BASE=/path/to/base.json`. Without `COVERAGE_BASE`,
-`make coverage-compare` publishes the current totals without a comparison.
+There is no committed numeric baseline: the floor is the constant in
+`tools/compare_coverage.py`. Never lower it to bypass a failure; add tests
+instead. Locally run `make coverage` and check a report with
+`make coverage-compare COVERAGE_BASE=/path/to/base.json` (the base is printed
+alongside the current totals). Without `COVERAGE_BASE`, `make coverage-compare`
+publishes the current totals and checks the floor.
 
 The job summary publishes line and branch percentages. The `coverage` artifact
 contains XML, JSON, and browsable HTML; terminal output lists missing lines.

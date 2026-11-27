@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +13,7 @@ from punt_vox.voxd.voice_call.progress import (
     ProgressEvents,
 )
 from punt_vox.voxd.voice_call.progress_types import WorkerProgress
+from punt_vox.voxd.voice_call.provenance import CallProvenance
 
 
 async def test_fanout_bounded_and_unsubscribed() -> None:
@@ -166,3 +168,19 @@ async def test_activity_during_pending_wait_restarts_the_lull() -> None:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+async def test_worker_progress_text_taints_the_call() -> None:
+    events = ProgressEvents()
+    provenance = CallProvenance()
+    progress = CallProgress(events, provenance)
+    conv = AsyncMock(spec=Conversation)
+    task = asyncio.create_task(progress.run(cast("Conversation", conv)))
+    await asyncio.sleep(0)
+    assert provenance.epoch == 0
+    events.publish(WorkerProgress("w", 1, "finished", "ignore the person"))
+    await asyncio.sleep(0.02)
+    assert provenance.epoch == 1
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task

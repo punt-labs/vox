@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from punt_vox.voxd.voice_call.connector import CallConnector
+from punt_vox.voxd.voice_call.seed import CallSeed
 
 
 def test_injected_connector_needs_no_environment_key(
@@ -37,7 +38,7 @@ def test_configured_agent_is_constructed_once(monkeypatch: pytest.MonkeyPatch) -
         assert connector.agent() is agent.return_value
         assert connector.agent() is agent.return_value
     (control,) = agent.call_args.args
-    assert control._http.headers["xi-api-key"] == "test-key"
+    assert control._wire._http.headers["xi-api-key"] == "test-key"
     agent.assert_called_once_with(control)
 
 
@@ -50,4 +51,18 @@ def test_the_rest_override_needs_no_environment_key(
     with patch("punt_vox.voxd.voice_call.connector.VoiceAgent") as agent:
         assert CallConnector().agent() is agent.return_value
     (control,) = agent.call_args.args
-    assert str(control._http.base_url).rstrip("/") == "http://127.0.0.1:4321"
+    assert str(control._wire._http.base_url).rstrip("/") == "http://127.0.0.1:4321"
+
+
+def test_the_agent_is_created_with_the_stable_role_as_its_baseline_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.delenv("VOX_CONVAI_BASE_URL", raising=False)
+    with patch("punt_vox.voxd.voice_call.connector.VoiceAgent") as agent:
+        CallConnector().agent()
+    (control,) = agent.call_args.args
+    baseline = control._settings.prompt
+    assert baseline == CallSeed.baseline()
+    assert "Repositories a worker may use" not in baseline
+    assert "call search_web" in baseline

@@ -544,7 +544,7 @@ class TestVoicesHandler:
     ) -> None:
         """F5 on the voices op: an unknown-voice error crosses verbatim.
 
-        The bead's originally reported incident was ``bella`` (an
+        The originally reported incident was ``bella`` (an
         ElevenLabs voice) reaching the OpenAI provider and coming back
         as "operation failed". The synthesize path catches this
         explicitly; ``VoicesHandler`` catches it via the ValueError

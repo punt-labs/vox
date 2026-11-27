@@ -4,8 +4,8 @@
 **Date:** 2026-08-29
 **Tracking:** Epic vox-o718
 **Provenance:** Operator rulings and research session of 2026-08-29.
-**Sibling document:** `biff/docs/requirements-biffd-multihost.md` — the
-same program shape for biff, where a daemon must first be extracted.
+**Sibling document:** `biff/docs/design/biffd.md` — biff's daemon design,
+where a daemon must first be extracted (its requirements were retired into it).
 Vox already has its daemon; this document is correspondingly smaller.
 **Relationship to DESIGN.md:** This document states *what* the work
 must achieve. Design missions produce the *how* as DES entries. Where

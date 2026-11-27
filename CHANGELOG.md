@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove temporary synthesized audio when writing it to the daemon cache
   fails, while still reporting the cache error.
 
+- Stopping or replacing voxd no longer depends on the terminal width. `ps`
+  cut the daemon's command line at `$COLUMNS`, so with a long install path
+  and `COLUMNS=80` a live voxd read as "not voxd" and was left running.
+  The process probes now pass `ps -ww`. (PL-1607)
+
 - `vox daemon status` asks voxd for health first, through the port voxd
   published in `serve.port`, with a reserved share of its deadline that the
   `lsof`/`fuser` attribution probes cannot consume. On a loaded Mac, where
