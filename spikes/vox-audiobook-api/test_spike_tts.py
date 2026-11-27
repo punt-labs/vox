@@ -245,3 +245,29 @@ def test_verified_run_prints_no_unverified_summary(
 ) -> None:
     assert exit_code("tts", Api(audio_ok), tmp_path) == 0
     assert "unverified" not in capsys.readouterr().out
+
+
+@needs_ffprobe
+def test_relative_out_dir_with_a_colon_is_still_decoded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ffprobe reads "name:rest/file" as a protocol unless the path is absolute."""
+    monkeypatch.chdir(tmp_path)
+    api = Api(audio_ok)
+    assert spike.main(["2026-11-27T05:31:40", "tts"], make_client=api.client) == 0
+    out = capsys.readouterr().out
+    assert "[tts-long] PASS audio/mpeg, 5004 bytes, ffprobe read a duration" in out
+
+
+def test_dialogue_with_unverified_audio_is_a_warn_not_a_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.shutil, "which", no_ffprobe)
+    assert exit_code("dialogue", dialogue_api(refused=()), tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "[dialogue] WARN both models accepted two voices, audio unverified" in out
+    assert "[dialogue] PASS" not in out

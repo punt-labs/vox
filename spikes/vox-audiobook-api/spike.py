@@ -139,7 +139,8 @@ def probe_duration(path: Path) -> float | None:
             "format=duration",
             "-of",
             "default=nw=1:nk=1",
-            str(path),
+            # Absolute: a relative "2026-11-27T05:31:40/x.mp3" parses as a protocol.
+            str(path.absolute()),
         ],
         capture_output=True,
         text=True,
@@ -222,6 +223,7 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         {"text": "[curious] And the cat?", "voice_id": SARAH},
     ]
     accepted: list[bool] = []
+    unverified_before = verdicts.unverified
     for model in ("eleven_v4", "eleven_v3"):
         r = c.post(
             "/v1/text-to-dialogue",
@@ -234,6 +236,9 @@ def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
             accepted.append(verdicts.check_audio(f"dialogue-{model}", r, saved))
         else:
             accepted.append(False)
+    if all(accepted) and verdicts.unverified > unverified_before:
+        print("[dialogue] WARN both models accepted two voices, audio unverified")
+        return
     verdicts.check(
         "dialogue", ok=all(accepted), detail="both models accepted two voices"
     )
