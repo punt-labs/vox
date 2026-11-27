@@ -64,7 +64,7 @@ class WorkerActivity:
         """Return the tool, files, open failure and silence, omitting what is unseen."""
         files = self._report.get("active_files")
         detail: dict[str, object] = {
-            "files": [f for f in files if isinstance(f, str)]
+            "files": [f for f in cast("list[object]", files) if isinstance(f, str)]
             if isinstance(files, list)
             else []
         }

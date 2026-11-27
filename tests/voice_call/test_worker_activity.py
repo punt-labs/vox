@@ -28,7 +28,9 @@ _IDLE = {"notification_type": "idle_prompt", "message": "Next?", "seq": 5}
     ],
 )
 def test_state_word_from_the_hook_report(report: dict[str, object], word: str) -> None:
-    assert WorkerActivity(payload("w", **report)).state == word
+    worker = payload("w")
+    worker["last_report"] = report
+    assert WorkerActivity(worker).state == word
 
 
 @pytest.mark.parametrize("state", ["exited", "stopped"])
