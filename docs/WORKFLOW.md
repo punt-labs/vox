@@ -231,14 +231,14 @@ size of a PR is an economic decision, not a hygiene one:
   is never held back or split out for tidiness.
 
 The control flow, the terms it reads from GitHub (`round`, `qodo_in`,
-`pending`, `answered(f)`, `demo_exempt`, `tier_covered`, `audible(pr)`, `demo_ok`,
+`pending`, `answered(f)`, `demo_exempt`, `coverage`, `rows_green`, `gaps`, `audible(pr)`, `demo_ok`,
 `reviewed_head`, and the rest), `merge_gate`, `close_out`, `local_review`, and
 the `EnterPR`/`ExitPR` Z schemas are specified in
 [`WORKFLOW-PR-LOOP.md`](WORKFLOW-PR-LOOP.md). It is the authoritative text for
 every PR-loop step and is **not** auto-loaded: read it
 before starting a unit of work (step A holds the design-ratification gate for
 architectural units), running a local review or pushing a fix, opening a PR,
-driving remote review, running the demo, or deciding a merge. The summary that follows (local review, remote review, the demo gate)
+driving remote review, running the demo, or deciding a merge. The summary that follows (local review, remote review, exercising the change before the merge)
 stays here.
 
 ### Local review before the PR
@@ -307,14 +307,22 @@ hook fire, a call. Exercising the code is the whole purpose of this gate.
 CLI and MCP server. `subprocess` runs the real hook scripts and child
 processes. `call_e2e` places a call through a real `voxd`. `roundtrip`
 synthesizes a fixed corpus through the providers, transcribes it back and
-checks the word error rate. When a tier that is green on the PR head exercises
-the changed behavior through its real entry point, that tier is the proof and
-no demo is run (`tier_covered(pr)`). The leader names the tier and the test for
-each changed behavior in a "tier coverage" comment on the PR. A unit test
-against mocks does not count: it exercises the code, not the entry point.
+checks the word error rate. Five more run outside PR CI and count when the
+leader runs them at the PR head and pastes the output: the live `roundtrip`,
+`playback`, `levels`, `agent` and `live_call`. When a tier that is green on
+the PR head exercises the changed behavior through its real entry point, that
+tier is the proof and no demo is run. The leader records it in a "tier
+coverage" comment on the PR: one row per changed behavior, naming the tier and
+the test, or marking the behavior a gap (`coverage(pr)`). A unit test against
+mocks does not count: it exercises the code, not the entry point. A change to
+a test or a workflow after the comment ends its validity, so a named test
+cannot be removed or weakened behind it. A tier that is red or still running
+is fixed or waited for; a demo never stands in for a covered row
+(`rows_green(pr)`).
 
 **A demo is required only for a tier gap**: changed behavior that no automated
-tier exercises. Then the feature is driven by hand through its real entry
+tier exercises (`gaps(pr)`). The demo covers the gaps and nothing else. Then
+the feature is driven by hand through its real entry
 point, with the expected outcome written down first, after `make install` and
 `vox daemon restart` so the running daemon is the just-built code. Machine
 evidence comes from `mic:status`, `vox doctor`, and a grep of `vox.log`. A gap
@@ -327,19 +335,20 @@ the ruling.
 **The ear is asked only for a gap a machine cannot judge.** The roundtrip tier
 proves the synthesis path still speaks intelligibly. It cannot judge that a
 step said the right words, in the right voice, with the delivery, the ducking,
-the chime and its timing. When a PR changes one of those and no tier covers
-it, the operator confirms it by ear: run the canonical flight in
+the chime and its timing, and no tier judges what the Lux display shows. When
+a PR changes one of those, it is a gap, and the operator confirms it by ear: run the canonical flight in
 [`docs/testing/manual-tests.md`](testing/manual-tests.md) and ask after each
 audible step, immediately, because audio impressions decay within seconds.
 This is the one human gate in the loops, and it is a demo, not a diff.
 
 **A gap is also a finding about the tiers.** Where a test could close it, the
-PR adds that test, so the next change to the same behavior needs no demo.
+PR adds that test and the row becomes covered, so neither this change nor the
+next one to the same behavior needs a demo.
 
 **Documentation is never demoed.** Every documentation file outside `plugin/`
-and `src/` is demo-exempt. vox's own settings files (`.punt-labs/vox/vox.md`,
-`vox.local.md`) are configuration, not documentation, whatever their
-extension.
+and `src/` is demo-exempt. A tool's settings file (`.punt-labs/vox/vox.md`,
+`vox.local.md`, `.punt-labs/lux.md`) is configuration, not documentation,
+whatever its extension.
 
 A finding that surfaces after
 the merge is recorded on the PR with the leader's reasoning, by its source's

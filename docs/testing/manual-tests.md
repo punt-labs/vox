@@ -1,8 +1,8 @@
 # Manual Test Flight
 
-Vox produces audio. Tests against logs and exit codes are not sufficient — the operator must hear the output and confirm it matches expectations. This document defines the canonical manual test flight: a short sequence that exercises the synthesis, cache, multi-segment, music, mix, recordings-store, and music-catalog paths through real audio hardware.
+Vox produces audio. Where an automated tier exercises a change through its real entry point, that tier is the proof and this flight is not run (`docs/WORKFLOW.md`, "Exercise before merge"). Some things no tier can judge: which voice speaks, the delivery, whether the music sat under the voice, whether the chime fired at the right moment. For those, tests against logs and exit codes are not sufficient — the operator must hear the output and confirm it matches expectations. This document defines the canonical manual test flight: a short sequence that exercises the synthesis, cache, multi-segment, music, mix, recordings-store, and music-catalog paths through real audio hardware.
 
-Referenced from `CLAUDE.md` inner-loop step 5 ("Exercise manually"). Run this whenever code in `src/punt_vox/voxd/`, `src/punt_vox/providers/`, `src/punt_vox/core.py`, `src/punt_vox/hooks.py`, or `src/punt_vox/server.py` changes in ways that affect runtime behavior.
+Run it when a PR's tier-coverage comment lists an audible gap: a change in `src/punt_vox/voxd/`, `src/punt_vox/providers/`, `src/punt_vox/core.py`, `src/punt_vox/hooks.py`, or `src/punt_vox/server.py` that alters what is heard and that no tier exercises. Run only the steps that cover the gap.
 
 ## Hard rule: ask the operator after every audible step
 
