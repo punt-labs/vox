@@ -611,3 +611,28 @@ async def test_a_provisioning_failure_note_reaches_the_call_status() -> None:
     assert error.startswith("ElevenLabs POST /tools failed (ReadTimeout)")
     assert "tools ['tool_alarm']" in error
     assert call.outcome().error == error
+
+
+async def test_worker_status_trace_keeps_state_and_activity_but_not_failure_text() -> (
+    None
+):
+    call, workers, stream = _receipt_call()
+    workers.known = [
+        payload(
+            "abcd1234",
+            in_flight_tool="Read",
+            active_files=["a.py"],
+            open_failure={"tool": "Bash", "result": "private failure text"},
+        )
+    ]
+    await call._answer(
+        AsyncMock(spec=Conversation),
+        ClientToolCall("status", "worker_status", {"worker_id": "abcd1234"}, True),
+    )
+    row = json.loads(stream.getvalue())
+    assert row["type"] == "worker_status_result"
+    assert row["detail"]["state"] == "working"
+    assert row["detail"]["lifecycle"] == "ready"
+    assert row["detail"]["activity"]["tool_in_flight"] == "Read"
+    assert row["detail"]["activity"]["files"] == ["a.py"]
+    assert "private failure text" not in stream.getvalue()

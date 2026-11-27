@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
@@ -25,6 +24,7 @@ from punt_vox.voxd.voice_call.call_log import CallLog
 from punt_vox.voxd.voice_call.call_outcome import CallEnd, CallOutcome
 from punt_vox.voxd.voice_call.progress import CallProgress
 from punt_vox.voxd.voice_call.tool_reply import ToolReply
+from punt_vox.voxd.voice_call.tool_trace import ToolTrace
 from punt_vox.voxd.voice_call.transcript import CallTranscript
 
 if TYPE_CHECKING:
@@ -294,15 +294,6 @@ class VoiceAgentCall:
                 "note", "agent_end_call", {"tool_call_id": ack.tool_call_id}
             )
 
-    def _trace_receipt(self, call: ClientToolCall, result: str) -> None:
-        """Trace a steer's receipt; a held request has none yet."""
-        receipt: dict[str, object] = json.loads(result)
-        if "status" in receipt:
-            return
-        if receipt.get("choice") in ("approve", "deny"):
-            receipt["prompt_seq"] = call.parameters.get("prompt_seq")
-        self._trace.record("note", "worker_steer_receipt", receipt)
-
     async def _answer(self, conv: Conversation, call: ClientToolCall) -> None:
         result, is_error = await self._tools.answer(call.tool_name, call.parameters)
         try:
@@ -311,8 +302,8 @@ class VoiceAgentCall:
             CallLog.unreadable(call.tool_name, exc)
             answer = ToolReply.failed("tool reply was unreadable")
         CallLog.tool(call.tool_name, answer)
-        if call.tool_name == "steer_worker" and not answer.is_error:
-            self._trace_receipt(call, answer.result)
+        if not answer.is_error:
+            ToolTrace(self._trace).record(call, answer.result)
         self._tool_calls.append(
             {
                 "tool": call.tool_name,
