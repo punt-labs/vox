@@ -7,7 +7,9 @@ import httpx
 import pytest
 
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError
+from punt_vox.voxd.voice_agent.agent_body import AgentBody
 from punt_vox.voxd.voice_agent.call_overrides import LOOPBACK_HOSTS, PLACEHOLDER_KEY
+from punt_vox.voxd.voice_agent.settings import AgentSettings
 
 _API = "https://api.elevenlabs.io"
 _OVERRIDES_LOGGER = "punt_vox.voxd.voice_agent.call_overrides"
@@ -31,7 +33,7 @@ def test_control_rejects_invalid_resource_ids_before_request(resource_id: str) -
         ConvAIControl("test-key", base_url="http://127.0.0.1:1") as control,
         pytest.raises(ConvAIError, match="Invalid ElevenLabs resource ID"),
     ):
-        control.delete_tool(resource_id)
+        control.delete_tool(resource_id, "marker")
 
 
 def test_blank_api_key_is_rejected_before_connecting() -> None:
@@ -42,8 +44,9 @@ def test_blank_api_key_is_rejected_before_connecting() -> None:
 @pytest.mark.parametrize("names", [("",), ("clock", "clock")])
 def test_tool_catalog_requires_distinct_nonempty_names(names: tuple[str, ...]) -> None:
     with pytest.raises(ValueError, match="nonempty and unique"):
-        ConvAIControl.registration_fingerprint(
-            tuple(ClientTool(name, "Return time") for name in names)
+        AgentBody.fingerprint(
+            AgentSettings.minimal(),
+            tuple(ClientTool(name, "Return time") for name in names),
         )
 
 
@@ -68,7 +71,7 @@ def test_missing_or_malformed_signed_url_is_not_exposed(
         ConvAIControl("test-key") as control,
     ):
         with monkeypatch.context() as patch:
-            patch.setattr(control, "_http", client)
+            patch.setattr(control._wire, "_http", client)
             with pytest.raises(ConvAIError, match=error) as failure:
                 control.signed_url("agent_vox")
         assert "private" not in str(failure.value)
@@ -87,7 +90,7 @@ def test_signed_url_connection_failure_is_sanitized(
         ConvAIControl("test-key") as control,
     ):
         with monkeypatch.context() as patch:
-            patch.setattr(control, "_http", client)
+            patch.setattr(control._wire, "_http", client)
             with pytest.raises(
                 ConvAIError, match=r"get-signed-url failed \(ReadError\)"
             ) as failure:
@@ -106,8 +109,8 @@ def test_base_url_env_var_sends_rest_to_loopback_with_a_placeholder_key(
         caplog.at_level("WARNING", logger=_OVERRIDES_LOGGER),
         ConvAIControl("sk-real-looking-key") as control,
     ):
-        assert str(control._http.base_url).rstrip("/") == override
-        assert control._http.headers["xi-api-key"] == PLACEHOLDER_KEY
+        assert str(control._wire._http.base_url).rstrip("/") == override
+        assert control._wire._http.headers["xi-api-key"] == PLACEHOLDER_KEY
     assert "VOX_CONVAI_BASE_URL" in caplog.text
 
 
@@ -116,8 +119,8 @@ def test_the_real_key_is_sent_without_the_override(
 ) -> None:
     monkeypatch.delenv("VOX_CONVAI_BASE_URL", raising=False)
     with ConvAIControl("sk-real-looking-key") as control:
-        assert str(control._http.base_url).rstrip("/") == _API
-        assert control._http.headers["xi-api-key"] == "sk-real-looking-key"
+        assert str(control._wire._http.base_url).rstrip("/") == _API
+        assert control._wire._http.headers["xi-api-key"] == "sk-real-looking-key"
 
 
 @pytest.mark.parametrize(
@@ -152,13 +155,6 @@ def test_loopback_hosts_are_literal_ips_only() -> None:
     assert sorted(LOOPBACK_HOSTS) == ["127.0.0.1", "::1"]
 
 
-# The fingerprint of the boss catalog as provisioned before the agent had its
-# built-in end_call tool. A registration carrying it must not be reused.
-_FINGERPRINT_WITHOUT_END_CALL = (
-    "e103cca8572354fb8a99ca1e995d2a4b95b173af8f25e63ea5032ccac154a02c"
-)
-
-
 def test_the_agent_is_created_with_the_built_in_end_call_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -176,8 +172,8 @@ def test_the_agent_is_created_with_the_built_in_end_call_tool(
         ConvAIControl("test-key") as control,
         monkeypatch.context() as patch,
     ):
-        patch.setattr(control, "_http", client)
-        assert control.create_agent(("tool_1",)) == "agent_vox"
+        patch.setattr(control._wire, "_http", client)
+        assert control.create_agent(("tool_1",), "marker") == "agent_vox"
     (body,) = bodies
     config = cast("dict[str, object]", body["conversation_config"])
     agent = cast("dict[str, object]", config["agent"])
@@ -191,11 +187,27 @@ def test_the_agent_is_created_with_the_built_in_end_call_tool(
     assert "closing sentence" in str(end_call["description"])
 
 
-def test_the_fingerprint_no_longer_matches_a_registration_without_end_call() -> None:
-    """An agent provisioned before end_call is torn down, not reused."""
-    from punt_vox.voxd.voice_call.boss_tools import BossTools
+@pytest.mark.parametrize(
+    ("code", "text"),
+    [
+        (500, "returned HTTP 500"),
+        (401, "check the key's ElevenLabs Agents access"),
+        (404, "no longer exists"),
+    ],
+)
+def test_a_failed_request_says_what_the_status_means(
+    monkeypatch: pytest.MonkeyPatch, code: int, text: str
+) -> None:
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(code)
 
-    ordered = tuple(sorted(BossTools.CATALOG, key=lambda tool: tool.name))
-    assert (
-        ConvAIControl.registration_fingerprint(ordered) != _FINGERPRINT_WITHOUT_END_CALL
-    )
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(respond), base_url="https://test"
+        ) as client,
+        ConvAIControl("test-key") as control,
+        monkeypatch.context() as patch,
+    ):
+        patch.setattr(control._wire, "_http", client)
+        with pytest.raises(ConvAIError, match=text):
+            control.signed_url("agent_vox")

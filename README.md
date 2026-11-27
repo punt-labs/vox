@@ -22,8 +22,9 @@ sink if private logging cannot be configured, with one metadata-only warning.
 Usage telemetry is local-only by default, stored separately in
 `~/.punt-labs/vox/telemetry.db`, with 90-day retention. It captures versioned spans
 for MCP tools, dispatched hooks, top-level CLI commands, and daemon synthesis:
-closed operation/provider names, success/error outcomes, cache hits, and text
-lengths. It never captures text, prompts, paths, credentials, or exception messages.
+closed operation/provider names, start and end times, success/error outcomes,
+cache hits, and text lengths. It never captures text, prompts, paths,
+credentials, or exception messages.
 Unknown operation names become `other`. Shared `punt-observe` configuration owns
 exporters; network export requires explicit opt-in consent.
 

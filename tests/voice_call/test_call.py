@@ -88,6 +88,10 @@ class _Connector:
     def __init__(self, url: str) -> None:
         self.url = url
         self.teardowns = 0
+        self.retirements = 0
+
+    def retire_stale(self) -> None:
+        self.retirements += 1
 
     def connection(self, tools: object) -> tuple[str, tuple[str, ...]]:
         del tools
@@ -1059,6 +1063,9 @@ class _SlowConnector:
         self.release.wait()
         raise ConvAIError("agent provisioning failed")
 
+    def retire_stale(self) -> None:
+        """Nothing is provisioned, so nothing was replaced."""
+
     def teardown(self) -> None:
         raise AssertionError("unexpected teardown")
 
@@ -1217,6 +1224,21 @@ async def test_agent_teardown_resolves_the_cold_connector_off_loop(
 
     assert reply["result"] == {"state": "idle"}
     assert connector.teardowns == 1
+
+
+async def test_a_teardown_that_leaves_resources_behind_is_an_error_reply(
+    tmp_path: Path,
+) -> None:
+    class _Leaving(_Connector):
+        def teardown(self) -> None:
+            raise ConvAIError("tool tool_a: lacks this host's marker; not deleted")
+
+    handlers = _handlers(
+        FakeWorkers(), FakePlayback(), tmp_path, connector=_Leaving("ws://unused")
+    )
+    reply = await _rpc(handlers, {"type": "call_teardown"})
+    assert "tool tool_a: lacks this host's marker" in str(reply.get("message"))
+    assert "result" not in reply
 
 
 async def test_agent_teardown_waits_for_cancelled_call_provisioning(

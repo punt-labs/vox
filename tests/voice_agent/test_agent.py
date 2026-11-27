@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 import stat
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import pytest
@@ -12,104 +11,18 @@ import pytest
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.sibling_lock import SiblingLock
 from punt_vox.voxd.voice_agent import ClientTool, ConvAIControl, ConvAIError, VoiceAgent
-from punt_vox.voxd.voice_agent.call_overrides import PLACEHOLDER_KEY
+
+from .fake_wire import API_KEY, SIGNED_URL
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
+    from .fake_wire import Requests
+
 _CLOCK = ClientTool("clock", "Return UTC time", {"type": "object", "properties": {}})
-_SIGNED_URL = "ws://127.0.0.1:42609/convai?conversation_signature=not-for-logs"
+_SIGNED_URL = SIGNED_URL
 _COMPLETED_REGISTRATION = "voice-agent.json"
-_API_KEY = "localhost-test-key"
-
-
-class Requests:
-    """Record requests and let tests change the server response between calls."""
-
-    calls: list[tuple[str, str, object]]
-    create_tool_id: str
-    disconnect_on_tool_creation: bool
-    create_agent_status: int
-    signed_url_status: int
-    delete_tool_status: int
-    delete_agent_status: int
-    url: str
-
-    def __new__(cls) -> Self:
-        self = super().__new__(cls)
-        self.calls = []
-        self.create_tool_id = "tool_clock"
-        self.disconnect_on_tool_creation = False
-        self.create_agent_status = self.signed_url_status = 200
-        self.delete_tool_status = self.delete_agent_status = 404
-        self.url = ""
-        return self
-
-
-@pytest.fixture
-def wire() -> Iterator[Requests]:
-    requests = Requests()
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            length = int(self.headers["Content-Length"])
-            self._observe(json.loads(self.rfile.read(length)))
-            if self.path == "/v1/convai/tools":
-                if requests.disconnect_on_tool_creation:
-                    self.close_connection = True
-                    return
-                self._reply(200, {"id": requests.create_tool_id})
-            elif self.path == "/v1/convai/agents/create":
-                self._reply(requests.create_agent_status, {"agent_id": "agent_vox"})
-            else:
-                self._reply(500, {})
-
-        def do_GET(self) -> None:
-            self._observe(None)
-            if self.path == "/v1/convai/conversation/get-signed-url?agent_id=agent_vox":
-                self._reply(requests.signed_url_status, {"signed_url": _SIGNED_URL})
-            else:
-                self._reply(500, {})
-
-        def do_DELETE(self) -> None:
-            self._observe(None)
-            if self.path == "/v1/convai/agents/agent_vox?force=true":
-                self._reply(
-                    requests.delete_agent_status, {"secret": "body not for logs"}
-                )
-            elif self.path == "/v1/convai/tools/tool_clock?force=true":
-                self._reply(
-                    requests.delete_tool_status, {"secret": "body not for logs"}
-                )
-            else:
-                self._reply(500, {})
-
-        def _observe(self, body: object) -> None:
-            # A live control sends the key; one built under the REST
-            # override sends the placeholder instead.
-            assert self.headers["xi-api-key"] in {_API_KEY, PLACEHOLDER_KEY}
-            requests.calls.append((self.command, self.path, body))
-
-        def _reply(self, code: int, body: dict[str, object]) -> None:
-            response = json.dumps(body).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(response)))
-            self.end_headers()
-            self.wfile.write(response)
-
-    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
-        requests.url = f"http://127.0.0.1:{server.server_port}"
-        thread = threading.Thread(
-            target=server.serve_forever, kwargs={"poll_interval": 0.01}
-        )
-        thread.start()
-        try:
-            yield requests
-        finally:
-            server.shutdown()
-            thread.join()
+_API_KEY = API_KEY
 
 
 def test_a_fake_call_and_a_live_call_keep_separate_registrations(
@@ -130,6 +43,8 @@ def test_a_fake_call_and_a_live_call_keep_separate_registrations(
     # A live call under the same HOME has no registration yet: it would
     # provision its own, not refuse the fake one as an identity mismatch.
     monkeypatch.delenv("VOX_CONVAI_BASE_URL")
+    # The live account is a different one: it issues ids of its own.
+    wire.next_tool_ids, wire.next_agent_ids = ["tool_live"], ["agent_live"]
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         VoiceAgent(control).connection((_CLOCK,))
     assert live.is_file()
@@ -160,7 +75,10 @@ def test_teardown_under_the_override_removes_the_registration_and_keeps_its_lock
         VoiceAgent(control).teardown()
     port = urlsplit(wire.url).port
     names = sorted(path.name for path in tmp_path.iterdir())
-    assert names == [f".voice-agent.loopback-v4-{port}.json.punt-import.lock"]
+    assert names == [
+        f".voice-agent.loopback-v4-{port}.json.punt-import.lock",
+        f"voice-agent.loopback-v4-{port}.host",
+    ]
 
 
 def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
@@ -176,8 +94,11 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         restarted = VoiceAgent(control, path=config)
         assert restarted.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
-        with pytest.raises(ConvAIError, match="configuration changed"):
-            restarted.connection((ClientTool("new", "Different tool"),))
+        # A changed catalog replaces the agent: no manual teardown first.
+        assert restarted.connection((ClientTool("new", "Different tool"),)) == (
+            _SIGNED_URL,
+            ("tool_clock",),
+        )
         restarted.teardown()
         restarted.teardown()
     assert not config.exists()
@@ -186,15 +107,24 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
         ("POST", "/v1/convai/agents/create"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
         ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
+        ("POST", "/v1/convai/tools"),
+        ("POST", "/v1/convai/agents/create"),
+        ("GET", "/v1/convai/conversation/get-signed-url?agent_id=agent_vox"),
+        # Teardown deletes the replaced agent and tool too, then the current.
         ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
         ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
     ]
     tool = wire.calls[0][2]
+    assert isinstance(tool, dict)
+    marker = tool["tool_config"]["description"].removeprefix("Return UTC time\n\n")
+    assert marker.startswith("[vox-voice-agent host=")
     assert tool == {
         "tool_config": {
             "type": "client",
             "name": "clock",
-            "description": "Return UTC time",
+            "description": f"Return UTC time\n\n{marker}",
             "parameters": _CLOCK.parameters,
             "expects_response": True,
         }
@@ -220,55 +150,26 @@ def test_lazy_agent_persists_and_reuses_id_then_force_deletes(
     )
 
 
-def test_changed_agent_settings_require_teardown(
+def test_changed_agent_settings_replace_the_agent_without_a_teardown(
     tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with ConvAIControl(_API_KEY, base_url=wire.url) as control:
         agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
         agent.connection((_CLOCK,))
         monkeypatch.setattr(
-            "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
+            "punt_vox.voxd.voice_agent.agent_body._OVERRIDABLE",
             {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": False}},
         )
-        with pytest.raises(ConvAIError, match="configuration changed"):
-            agent.connection((_CLOCK,))
-        assert len(wire.calls) == 3
-        agent.teardown()
-
-
-def test_registration_without_first_message_permission_requires_explicit_teardown(
-    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = tmp_path / _COMPLETED_REGISTRATION
-    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config)
-        with monkeypatch.context() as legacy:
-            legacy.setattr(
-                "punt_vox.voxd.voice_agent.control._OVERRIDABLE",
-                {"prompt": {"prompt": True, "tool_ids": True, "tool_ids_strict": True}},
-            )
-            agent.connection((_CLOCK,))
-        wire.calls.clear()
-
-        with pytest.raises(ConvAIError, match="vox call teardown"):
-            agent.connection((_CLOCK,))
-        assert wire.calls == []
-        agent.teardown()
-
-        assert VoiceAgent(control, path=config).connection((_CLOCK,)) == (
-            _SIGNED_URL,
-            ("tool_clock",),
-        )
+        assert agent.connection((_CLOCK,)) == (_SIGNED_URL, ("tool_clock",))
         assert [method for method, _, _ in wire.calls] == [
-            "DELETE",
-            "DELETE",
+            "POST",
+            "POST",
+            "GET",
             "POST",
             "POST",
             "GET",
         ]
-        wire.calls.clear()
-        agent.connection((_CLOCK,))
-        assert [method for method, _, _ in wire.calls] == ["GET"]
+        agent.teardown()
 
 
 def test_teardown_first_keeps_new_config_tree_private(tmp_path: Path) -> None:
@@ -376,42 +277,6 @@ def test_unusable_create_response_warns_about_unrecorded_resource(
     assert "unusable/opaque-id" not in str(error.value)
 
 
-def test_partial_provision_is_cleaned_before_retry(
-    tmp_path: Path, wire: Requests
-) -> None:
-    wire.create_agent_status = 403
-    config = tmp_path / _COMPLETED_REGISTRATION
-    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config)
-        with pytest.raises(ConvAIError, match="HTTP 403"):
-            agent.connection((_CLOCK,))
-        assert json.loads(config.read_text())["tool_ids"] == ["tool_clock"]
-        wire.create_agent_status = 200
-        agent.connection((_CLOCK,))
-        assert wire.calls[2][:2] == ("DELETE", "/v1/convai/tools/tool_clock?force=true")
-
-
-def test_failed_partial_cleanup_blocks_reprovisioning(
-    tmp_path: Path, wire: Requests
-) -> None:
-    wire.create_agent_status = 403
-    config = tmp_path / _COMPLETED_REGISTRATION
-    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
-        agent = VoiceAgent(control, path=config)
-        with pytest.raises(ConvAIError, match="HTTP 403"):
-            agent.connection((_CLOCK,))
-        partial = config.read_bytes()
-        wire.create_agent_status = 200
-        wire.delete_tool_status = 403
-        with pytest.raises(ConvAIError, match="HTTP 403"):
-            agent.connection((_CLOCK,))
-
-    assert config.read_bytes() == partial
-    assert [request[:2] for request in wire.calls[2:]] == [
-        ("DELETE", "/v1/convai/tools/tool_clock?force=true")
-    ]
-
-
 def test_failed_delete_keeps_config_for_retry(tmp_path: Path, wire: Requests) -> None:
     wire.delete_tool_status = 403
     config = tmp_path / _COMPLETED_REGISTRATION
@@ -481,7 +346,7 @@ def test_provisioning_compensates_after_checkpoint_failure(
     cleanup_fails: bool,
 ) -> None:
     original_replace = AtomicFile.replace
-    field = "tool_ids" if kind == "tool" else "agent_id"
+    field = "pending_tools" if kind == "tool" else "pending_agents"
     resource_id = "tool_clock" if kind == "tool" else "agent_vox"
 
     def fail_checkpoint(
@@ -507,7 +372,289 @@ def test_provisioning_compensates_after_checkpoint_failure(
         else:
             with pytest.raises(PermissionError, match="no longer writable"):
                 agent.connection((_CLOCK,))
-    assert wire.calls[-1][:2] == (
+    assert (
         "DELETE",
         f"/v1/convai/{kind}s/{resource_id}?force=true",
-    )
+    ) in [call[:2] for call in wire.calls]
+
+
+def _replace_agent_with_failing_deletes(agent: VoiceAgent, wire: Requests) -> None:
+    """Provision once; from then on every delete the endpoint is asked fails."""
+    agent.connection((_CLOCK,))
+    wire.delete_agent_status = wire.delete_tool_status = 403
+
+
+def test_a_timed_out_delete_of_the_old_agent_never_blocks_the_new_call(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        url, tool_ids = agent.connection((ClientTool("new", "Different tool"),))
+        assert url == _SIGNED_URL
+        assert tool_ids == ("tool_clock",)
+
+
+def test_the_new_agent_is_recorded_before_the_old_one_is_deleted(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+    stored = json.loads(config.read_text())
+    assert stored["agent_id"] == "agent_vox"
+    assert stored["retired_agents"] == ["agent_vox"]
+    assert stored["retired_tools"] == ["tool_clock"]
+
+
+def test_connecting_after_a_change_makes_no_delete_request(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        wire.calls.clear()
+        agent.connection((ClientTool("new", "Different tool"),))
+    assert [method for method, _, _ in wire.calls] == ["POST", "POST", "GET"]
+
+
+def test_retiring_deletes_the_old_resources_and_clears_the_record(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        wire.calls.clear()
+        agent.retire_stale()
+    assert [(m, p) for m, p, _ in wire.calls] == [
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
+    ]
+    stored = json.loads(config.read_text())
+    assert stored["retired_agents"] == []
+    assert stored["retired_tools"] == []
+
+
+def test_a_failed_retirement_is_logged_kept_and_never_raised(
+    tmp_path: Path,
+    wire: Requests,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+        with caplog.at_level("WARNING"):
+            agent.retire_stale()
+    assert "HTTP 403" in caplog.text
+    assert _API_KEY not in caplog.text
+    assert json.loads(config.read_text())["retired_agents"] == ["agent_vox"]
+
+
+def test_retiring_with_nothing_retired_makes_no_request(
+    tmp_path: Path, wire: Requests
+) -> None:
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        wire.calls.clear()
+        agent.retire_stale()
+    assert wire.calls == []
+
+
+def test_teardown_also_deletes_what_is_still_retired(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        _replace_agent_with_failing_deletes(agent, wire)
+        agent.connection((ClientTool("new", "Different tool"),))
+        wire.delete_agent_status = wire.delete_tool_status = 200
+        wire.calls.clear()
+        agent.teardown()
+    deleted = [p for m, p, _ in wire.calls if m == "DELETE"]
+    assert len(deleted) == 4
+    assert not config.exists()
+
+
+def _held_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[threading.Event, threading.Event]:
+    """Make every agent delete wait until released; return (entered, release)."""
+    entered, release = threading.Event(), threading.Event()
+    real = ConvAIControl.delete_agent
+
+    def slow(control: ConvAIControl, agent_id: str, marker: str) -> None:
+        entered.set()
+        assert release.wait(20)
+        real(control, agent_id, marker)
+
+    monkeypatch.setattr(ConvAIControl, "delete_agent", slow)
+    return entered, release
+
+
+def test_a_redial_reaches_the_provider_while_a_retirement_delete_is_held_open(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        redial: list[tuple[str, tuple[str, ...]]] = []
+        dialing = threading.Thread(
+            target=lambda: redial.append(
+                agent.connection((ClientTool("new", "Different tool"),))
+            )
+        )
+        dialing.start()
+        dialing.join(5)
+        finished = not dialing.is_alive()
+        release.set()
+        retiring.join(10)
+        dialing.join(10)
+    assert finished, "a redial waited for the retirement delete"
+    assert redial[0][0] == _SIGNED_URL
+
+
+def test_retirement_is_single_flight(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=tmp_path / _COMPLETED_REGISTRATION)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        first = threading.Thread(target=agent.retire_stale)
+        first.start()
+        assert entered.wait(5)
+        wire.calls.clear()
+        agent.retire_stale()  # A second run while one is in flight does nothing.
+        assert wire.calls == []
+        release.set()
+        first.join(10)
+
+
+def test_removals_are_merged_into_the_latest_registration(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        wire.create_tool_id = "tool_two"
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        wire.create_tool_id = "tool_clock"
+        agent.connection((ClientTool("newer", "Another tool"),))
+        release.set()
+        retiring.join(10)
+    stored = json.loads(config.read_text())
+    # The run deleted the first replaced tool; the tool replaced meanwhile stays.
+    assert stored["retired_tools"] == ["tool_two"]
+    assert stored["tool_ids"] == ["tool_clock"]
+
+
+def _legacy_registration(control: ConvAIControl) -> dict[str, object]:
+    return {
+        "agent_id": "agent_vox",
+        "tool_ids": ["tool_clock"],
+        "configuration_hash": "abc",
+        "credential_id": control.credential_id,
+    }
+
+
+def test_a_registration_without_the_retirement_fields_is_refused(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        config.write_text(json.dumps(_legacy_registration(control)))
+        with pytest.raises(ConvAIError, match="vox call teardown") as caught:
+            VoiceAgent(control, path=config).connection((_CLOCK,))
+    assert "older build" in str(caught.value)
+    assert wire.calls == []
+
+
+def test_teardown_still_removes_a_registration_without_the_retirement_fields(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        VoiceAgent(control, path=config).connection((_CLOCK,))
+        wire.calls.clear()
+        config.write_text(json.dumps(_legacy_registration(control)))
+        VoiceAgent(control, path=config).teardown()
+    assert not config.exists()
+    assert [(m, p) for m, p, _ in wire.calls] == [
+        ("DELETE", "/v1/convai/agents/agent_vox?force=true"),
+        ("DELETE", "/v1/convai/tools/tool_clock?force=true"),
+    ]
+
+
+def test_a_freshly_written_registration_reads_back_without_error(
+    tmp_path: Path, wire: Requests
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        VoiceAgent(control, path=config).connection((_CLOCK,))
+        written = json.loads(config.read_text())
+        assert {"retired_agents", "retired_tools"} <= written.keys()
+        assert VoiceAgent(control, path=config).connection((_CLOCK,))[0] == _SIGNED_URL
+
+
+def test_an_unreadable_registration_is_logged_by_retirement_not_raised(
+    tmp_path: Path, wire: Requests, caplog: pytest.LogCaptureFixture
+) -> None:
+    target = tmp_path / "real.json"
+    target.write_text("{}")
+    link = tmp_path / _COMPLETED_REGISTRATION
+    link.symlink_to(target)
+    with (
+        ConvAIControl(_API_KEY, base_url=wire.url) as control,
+        caplog.at_level("WARNING"),
+    ):
+        VoiceAgent(control, path=link).retire_stale()
+    assert "not retired this time" in caplog.text
+    assert "symbolic link" in caplog.text
+    assert wire.calls == []
+
+
+def test_a_teardown_during_retirement_wins_and_nothing_is_rewritten(
+    tmp_path: Path, wire: Requests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / _COMPLETED_REGISTRATION
+    wire.delete_agent_status = wire.delete_tool_status = 200
+    with ConvAIControl(_API_KEY, base_url=wire.url) as control:
+        agent = VoiceAgent(control, path=config)
+        agent.connection((_CLOCK,))
+        agent.connection((ClientTool("new", "Different tool"),))
+        entered, release = _held_delete(monkeypatch)
+        retiring = threading.Thread(target=agent.retire_stale)
+        retiring.start()
+        assert entered.wait(5)
+        monkeypatch.undo()
+        agent.teardown()
+        release.set()
+        retiring.join(10)
+    assert not config.exists()

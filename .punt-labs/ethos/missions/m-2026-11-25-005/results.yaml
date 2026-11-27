@@ -1,0 +1,23 @@
+results:
+    - mission: m-2026-11-25-005
+      round: 1
+      created_at: "2026-11-25T08:02:37Z"
+      author: claude
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/conversation_mode/device_table.py
+          added: 0
+          removed: 0
+      evidence:
+        - name: Commits a3824d72 and 13b7fe49 on fix/pl-1619-call-devices; PR opened 2026-11-25
+          status: pass
+        - name: 'Worker gvr reported the two defect tests failing on the unfixed code with the stale defaults MacBook Air Microphone and MacBook Air Speakers; leader run on the fixed tree: 163 passed exit 0, ruff mypy pyright clean, OO coupling and suppression ratchets PASS with scoped blesses'
+          status: pass
+        - name: 'Log lines added: PortAudio device table re-read, Call input device, Call output device, Call audio hardware, WARNING Call echo configuration'
+          status: pass
+      prose: |
+        Leader-recorded result. The worker gvr finished and staged the change but
+        its commit was blocked on ratchet blesses outside its write set; the
+        leader recorded the blesses and committed the staged tree after the
+        worker was terminated with the session.

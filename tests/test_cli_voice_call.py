@@ -19,6 +19,8 @@ from punt_vox.commands.call import CallCli
 from punt_vox.commands.voice_call_follow import CallFollower
 from punt_vox.commands.voice_call_status import CallStatusView
 from punt_vox.daemon_control import DaemonControl
+from punt_vox.voxd.voice_agent.wire import REQUEST_TIMEOUT_S
+from punt_vox.voxd.voice_call.boss_tools import BossTools
 
 runner = CliRunner(env={"COLUMNS": "200"})
 _FOLLOW = "punt_vox.commands.voice_call_follow"
@@ -94,6 +96,28 @@ def test_call_teardown_requests_explicit_agent_deletion(state: str) -> None:
     assert result.exit_code == 0, result.output
     assert voxd.sent == [("teardown", {})]
     assert "provision a new agent" in result.output
+
+
+def test_call_teardown_that_leaves_resources_behind_exits_one_naming_them() -> None:
+    leftover = VoxdProtocolError("tool tool_a: lacks this host's marker; not deleted")
+    with patch.object(DaemonControl, "request", side_effect=leftover):
+        result = CliRunner(env={"COLUMNS": "200"}).invoke(
+            CallCli.build_app(), ["teardown"]
+        )
+    assert result.exit_code == 1
+    assert "tool tool_a: lacks this host's marker" in result.output
+    assert "provision a new agent" not in result.output
+
+
+def test_call_teardown_wait_covers_a_full_catalog_of_slow_deletes() -> None:
+    """Each resource costs an ownership read and a delete, each up to the limit."""
+    resources = 1 + len(BossTools.CATALOG)
+    worst_case_s = resources * 2 * REQUEST_TIMEOUT_S
+    with patch.object(DaemonControl, "request", return_value={"state": "idle"}) as rpc:
+        result = runner.invoke(CallCli.build_app(), ["teardown"])
+    assert result.exit_code == 0, result.output
+    assert rpc.await_args is not None
+    assert rpc.await_args.kwargs["timeout"] > worst_case_s
 
 
 def test_call_teardown_allows_the_serial_provider_deletion_budget() -> None:

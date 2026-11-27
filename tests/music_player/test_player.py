@@ -33,9 +33,10 @@ if TYPE_CHECKING:
     type AlbumFactory = Callable[..., Album]
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
-# Ample time for a scheduled background refresh (an in-memory fake store, no
-# real disk) to land and, where one is expected, resubmit.
-_SETTLE_SECONDS = 0.05
+# Upper bound on waiting for the scheduled background refresh to finish. A
+# fixed sleep raced the refresh's worker thread and failed under a loaded
+# full-suite run; waiting on the tasks themselves does not.
+_SETTLE_TIMEOUT_SECONDS = 10.0
 
 
 def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]:
@@ -49,8 +50,11 @@ def _position_text(elements: list[dict[str, object]]) -> str:
 
 
 async def _settle() -> None:
-    """Yield the event loop long enough for a scheduled refresh to complete."""
-    await asyncio.sleep(_SETTLE_SECONDS)
+    """Wait until every background task the player scheduled has finished."""
+    current = asyncio.current_task()
+    pending = {task for task in asyncio.all_tasks() if task is not current}
+    if pending:
+        await asyncio.wait(pending, timeout=_SETTLE_TIMEOUT_SECONDS)
 
 
 @final

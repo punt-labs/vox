@@ -1,0 +1,39 @@
+mission_id: m-2026-11-25-005
+status: closed
+type: implement
+created_at: "2026-11-25T07:04:17Z"
+updated_at: "2026-11-25T08:03:10Z"
+closed_at: "2026-11-25T08:03:10Z"
+leader: claude
+worker: gvr
+evaluator:
+    handle: kpz
+    pinned_at: "2026-11-25T07:04:17Z"
+    hash: 02e9ed19319b070f1fb6e2f34d26a3e2c6e422a7329bb5af677cb8b57c0b0560
+inputs:
+    ticket: PL-1619
+write_set:
+    - src/punt_vox/voxd/conversation_mode
+    - src/punt_vox/voxd/pcm_stream.py
+    - src/punt_vox/voxd/playback.py
+    - tests/conversation_mode
+    - tests/test_pcm_stream.py
+    - tests/test_voxd_playback.py
+    - tests/test_voxd_boot.py
+    - typings/sounddevice
+extract_into:
+    - src/punt_vox/voxd/conversation_mode
+    - tests/conversation_mode
+success_criteria:
+    - A failing test on the unfixed code shows a call opened after a device change still uses the stale default; the fix makes it pass, both outputs recorded in the commit message
+    - The daemon log names both the input and the output device at call start, and flags input and output on different hardware
+    - ruff, mypy, pyright and the test suite green in the worktree; ratchet blesses requested from the leader with a reason each, never a blanket rebaseline
+    - A CHANGELOG line for Unreleased handed to the leader in the result
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+round_decisions:
+    version: 1
+    entries: []
+context: 'A long-running voxd keeps the PortAudio device list it enumerated at startup. On 2026-11-25 Jim connected AirPods after voxd started; music (a fresh mpv process) went to the headphones, but the call captured from ''MacBook Air Microphone'' and played agent audio through the speakers, producing the echo loop. After a daemon restart the same call used the AirPods (capture rms 41 vs 331). Fix in the daemon: at every call start, before any PortAudio stream opens, refresh the device list so input and output follow the system''s current defaults; log the OUTPUT device by name next to the existing ''Call input device'' line (that line lives in conversation_mode/mic_capture.py, which you own; if a line must live in voice_call or voice_agent/call_overrides.py, report the exact line and the leader adds it, those files belong to a parallel mission); and when input and output are on different hardware, log that as the echo configuration. Unit tests with a fake sounddevice prove the refresh and the log lines; the call_e2e tier must stay green (the VOX_PCM_OUTPUT=silent path is unchanged). Worktree: <repo>/.claude/worktrees/pl-1619-call-devices, branch fix/pl-1619-call-devices. CHANGELOG.md and the ratchet files (.oo-baseline.json, .oo-audit.jsonl, .oo-coupling-*.json*) are NOT in your write set because the parallel mission holds them: when the commit hook demands a baseline update or bless, stop, state the file, metric and your one-line reason in a message, and the leader runs the bless in your worktree; hand your CHANGELOG line to the leader in the result. Commit hook must pass on every commit; first commit within 30 minutes; never push, never create branches, never touch .punt-labs/vox/vox.md.'

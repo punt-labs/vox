@@ -1,0 +1,16 @@
+call ended by caller | 1 tool calls | agent: [happy] The freshest open models right now are Thinking Machines' Ink...
+agent: Hi, it's Vox. What are we working on?
+user: What is the Python SDK repository for the Model Context Protocol? Look it up in the docs.
+agent: One moment, let me look that up.
+agent: The modelcontextprotocol python-sdk is the official Python library for building MCP servers and clients.
+It covers tools, resources, prompts and transports.
+user: Please search the web for the latest open source language models.
+agent: One moment, let me search for that.
+
+
+agent: [happy] The freshest open models right now are Thinking Machines' Inkling 2 Mini and Prism's Ternary Bonsai. Want me to dig into any of them?
+user: Give me a minute, I need to think.
+tool: read_docs({}) -> ok
+tool: search_web({}) -> ok
+ended by caller
+trace: /Users/jfreeman/.punt-labs/vox/calls/call-c33301f9a9a840cd91b18e043057a943.jsonl

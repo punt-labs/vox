@@ -37,12 +37,13 @@ def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == _LOGGER]
 
 
-def test_four_header_carried_keys_are_checked() -> None:
-    """The strict set is the two API keys plus the two AWS header values."""
+def test_five_header_carried_keys_are_checked() -> None:
+    """The strict set: the API keys, the two AWS header values, the search key."""
     assert _HEADER_KEYS == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SESSION_TOKEN",
         "ELEVENLABS_API_KEY",
+        "EXA_API_KEY",
         "OPENAI_API_KEY",
     ]
 
