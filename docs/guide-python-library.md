@@ -4,7 +4,7 @@ vox is also a Python library. It talks to the same `voxd` daemon as the plugin a
 
 Every `SynthesisSpec` must name a provider. The daemon rejects a request without one (`Unknown provider ''`); it does not guess.
 
-The examples use ElevenLabs, which needs an API key in `keys.env` (see [Configure Providers](https://github.com/punt-labs/vox#configure-providers)). With no key configured, use the operating system's voice instead: `SynthesisSpec(provider="say")` on macOS, `SynthesisSpec(provider="espeak")` on Linux, where `espeak-ng` must be installed.
+The examples use ElevenLabs, which needs an API key in `keys.env` (see [Configure Providers](https://github.com/punt-labs/vox#configure-providers)). With no key configured, use the operating system's voice instead: `SynthesisSpec(provider="say")` on macOS, `SynthesisSpec(provider="espeak")` on Linux, where `espeak-ng` or `espeak` must be on the daemon's `PATH`. Name the same provider in the `VoiceTarget`.
 
 ## Synchronous Client
 
@@ -22,8 +22,9 @@ try:
     recording = vox.record("Deploy complete", spec)
     audio = vox.fetch(recording.name)
 
-    # List voices for a provider and model (omit the model for its default):
-    print(vox.voices(VoiceTarget("openai", "gpt-4o-mini-tts")))
+    # List voices for a provider; a second argument names a model
+    # (VoiceTarget("openai", "gpt-4o-mini-tts")), omitted for the default:
+    print(vox.voices(VoiceTarget("elevenlabs")))
 except VoxError as exc:  # VoxdConnectionError, VoxdProtocolError, or VoxdRejectionError
     print(f"vox failed: {exc}")
 ```

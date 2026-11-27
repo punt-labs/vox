@@ -313,7 +313,7 @@ spec = SynthesisSpec(voice="sarah", provider="elevenlabs")
 VoxClientSync().synthesize("Build finished", spec)
 ```
 
-The spec must name a provider; the daemon rejects a request without one. ElevenLabs needs an API key (see [Configure Providers](#configure-providers)); with none, use `SynthesisSpec(provider="say")` on macOS or `SynthesisSpec(provider="espeak")` on Linux, where `espeak-ng` must be installed. `VoxClientSync` connects per call; `VoxClient` is the async version. Every failure raises a `VoxError` subclass, results are typed, and the package ships type information (`py.typed`). See the [Python Library Guide](https://github.com/punt-labs/vox/blob/main/docs/guide-python-library.md) for both clients, recording and fetching MP3 bytes, voice listing, and the full list of public names.
+The spec must name a provider; the daemon rejects a request without one. ElevenLabs needs an API key (see [Configure Providers](#configure-providers)); with none, use `SynthesisSpec(provider="say")` on macOS or `SynthesisSpec(provider="espeak")` on Linux, where `espeak-ng` or `espeak` must be on the daemon's `PATH`. `VoxClientSync` connects per call; `VoxClient` is the async version. Every failure raises a `VoxError` subclass, results are typed, and the package ships type information (`py.typed`). See the [Python Library Guide](https://github.com/punt-labs/vox/blob/main/docs/guide-python-library.md) for both clients, recording and fetching MP3 bytes, voice listing, and the full list of public names.
 
 ## Setup
 
