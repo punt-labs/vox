@@ -6,7 +6,13 @@ import math
 from dataclasses import dataclass
 from typing import Final
 
-__all__ = ["PCM_BYTES_PER_S", "Turn", "launch_timeout_s", "script_plan"]
+__all__ = [
+    "PCM_BYTES_PER_S",
+    "WORKER_STATUS_TURN",
+    "Turn",
+    "launch_timeout_s",
+    "script_plan",
+]
 
 # ``vox call --script`` never returns on its own once the script ends: it idles
 # on pings until ``timeout`` kills it, so exit 124 is the normal end of a call.
@@ -27,7 +33,7 @@ _WORKER_START_TURN: Final = (
     "Please start a coding worker in this repository. Its task is to run "
     "git status and report the result. It must not change any file."
 )
-_WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
+WORKER_STATUS_TURN: Final = "Tell me what the worker is doing right now."
 _WORKER_GO_TURN: Final = (
     "Yes."  # The gate accepts only a bare yes from its closed list.
 )
@@ -53,7 +59,7 @@ def script_plan(*, search: bool) -> list[Turn]:
     plan += [
         Turn(_WORKER_START_TURN, 25),
         Turn(_WORKER_GO_TURN, 50),
-        Turn(_WORKER_STATUS_TURN, 40),
+        Turn(WORKER_STATUS_TURN, 40),
         Turn(_WORKER_STOP_TURN, 30),
         Turn(_WORKER_CONFIRM_TURN, 25),
         Turn(_SILENCE_TURN, 40),

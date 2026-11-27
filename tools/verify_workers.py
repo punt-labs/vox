@@ -57,6 +57,7 @@ class Cleanup:
     ] = ()  # Running, new during the call, not in its trace.
     ignored: tuple[WorkerRow, ...] = ()  # New and already ended: nothing left to stop.
     stopped: tuple[str, ...] = ()  # Left running, then stopped and confirmed ended.
+    unconfirmed: tuple[str, ...] = ()  # Stop exited 0; the follow-up list failed.
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,7 @@ class _StillRunning:
 
     ids: frozenset[str]
     problems: list[str]
+    unknown: bool = False  # The worker list failed, so nothing is known.
 
 
 @final
@@ -117,18 +119,25 @@ class WorkerFleet:
             else:
                 exited_zero.append(worker)
         confirmed: tuple[str, ...] = ()
+        unconfirmed: tuple[str, ...] = ()
         if exited_zero:
             still = self._still_running(tuple(exited_zero))
             problems += still.problems
-            confirmed = tuple(w for w in exited_zero if w not in still.ids)
-        return Cleanup(started, left, tuple(problems), unproven, ignored, confirmed)
+            if still.unknown:
+                unconfirmed = tuple(exited_zero)
+            else:
+                confirmed = tuple(w for w in exited_zero if w not in still.ids)
+        return Cleanup(
+            started, left, tuple(problems), unproven, ignored, confirmed, unconfirmed
+        )
 
     def _still_running(self, stopped: tuple[str, ...]) -> _StillRunning:
         """Return which workers a stop that exited 0 left running, and why."""
         try:
             running = {row.id for row in self._rows() if row.running}
         except ValueError as exc:
-            return _StillRunning(frozenset(stopped), [str(exc)])
+            msg = f"stop exited 0 but its result could not be confirmed ({exc})"
+            return _StillRunning(frozenset(stopped), [msg], unknown=True)
         ids = frozenset(w for w in stopped if w in running)
         return _StillRunning(
             ids,

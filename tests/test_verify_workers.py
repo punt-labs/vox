@@ -38,6 +38,9 @@ class _Result(Protocol):
     @property
     def stopped(self) -> tuple[str, ...]: ...
 
+    @property
+    def unconfirmed(self) -> tuple[str, ...]: ...
+
 
 class _Row(Protocol):
     """The fields of a WorkerRow these tests read."""
@@ -64,7 +67,10 @@ class _Voxd:
         stop_works: bool = True,
         raises: type[BaseException] | None = None,
         raise_on: str = "",
+        list_fails_after_stop: bool = False,
     ) -> None:
+        self.list_fails_after_stop = list_fails_after_stop
+        self.stopped_once = False
         self.workers = workers
         self.stop_code = stop_code
         self.list_code = list_code
@@ -86,6 +92,8 @@ class _Voxd:
                 else self.raises()
             )
         if verb == "list":
+            if self.list_fails_after_stop and self.stopped_once:
+                return subprocess.CompletedProcess(command, 1, "", "no voxd")
             out = self.list_out
             if out is None:
                 out = json.dumps(
@@ -97,6 +105,7 @@ class _Voxd:
             return subprocess.CompletedProcess(
                 command, self.list_code, out, "list broke"
             )
+        self.stopped_once = True
         if self.stop_code == 0 and self.stop_works:
             self.workers[command[-1]] = "stopped"
         return subprocess.CompletedProcess(command, self.stop_code, "", "stop broke")
@@ -316,3 +325,17 @@ def test_only_a_stop_that_exited_zero_and_ended_the_worker_counts_as_stopped(
     assert failed.left_running == ("new",)
     unchanged = _sweep(monkeypatch, _Voxd({"new": "ready"}, stop_works=False), "new")
     assert unchanged.stopped == ()
+
+
+def test_a_stop_whose_result_cannot_be_confirmed_is_unconfirmed_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    voxd = _Voxd({"new": "ready"}, list_fails_after_stop=True)
+    cleanup = _sweep(monkeypatch, voxd, "new")
+    assert cleanup.left_running == ("new",)
+    assert cleanup.unconfirmed == ("new",)
+    assert cleanup.stopped == ()
+    assert len(cleanup.problems) == 1
+    assert "stop exited 0 but its result could not be confirmed" in cleanup.problems[0]
+    assert "worker list failed" in cleanup.problems[0]
+    assert "no voxd" in cleanup.problems[0]

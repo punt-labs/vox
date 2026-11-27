@@ -46,9 +46,13 @@ agent: It is sunny in Tokyo.
 user: Please start a coding worker in this repository.
 tool: start_worker({'task': 'git status'}) -> ok
 agent: Started it.
+user: Yes.
+user: Tell me what the worker is doing right now.
 tool: worker_status({'worker_id': 'abcd1234'}) -> ok
 agent: It is running git status.
+user: Please stop the git status worker you just started.
 tool: stop_worker({'worker_id': 'abcd1234'}) -> ok
+user: Yes.
 user: Give me a minute, I need to think.
 ended by caller
 trace: /tmp/call.jsonl
@@ -137,7 +141,16 @@ _WORKER_STATUS = (
 
 
 def test_the_real_status_text_with_worker_turns_passes_every_expectation() -> None:
-    assert set(_verdicts(_WORKER_STATUS).values()) == {"PASS"}
+    turns = _with_caller_turns(1, 2, 3, 4, 130, 190, 400, 450, 500)
+    judged = verify_judge.Judge(
+        _WORKER_STATUS,
+        "",
+        search_key=True,
+        launch_exit=0,
+        trace=turns,
+        cleanup=_CLEAN,
+    ).verdicts()
+    assert {v.status for v in judged} == {"PASS"}
 
 
 def test_a_real_status_text_without_worker_turns_fails_only_the_worker_ones() -> None:
@@ -260,9 +273,23 @@ _TRACE: list[dict[str, object]] = [
         },
     },
     {"ms": 300, "dir": "recv", "type": "agent_response", "detail": {}},
-    {"ms": 190, "dir": "recv", "type": "user_transcript", "detail": {}},
-    {"ms": 400, "dir": "recv", "type": "user_transcript", "detail": {}},
 ]
+_TRACE.extend(
+    {"ms": ms, "dir": "recv", "type": "user_transcript", "detail": {}}
+    for ms in (5, 60, 100, 130, 190, 400, 450, 500)
+)
+
+
+def _with_caller_turns(*times: float) -> list[dict[str, object]]:
+    """Return the synthetic trace with its caller turns at exactly ``times``."""
+    rows: list[dict[str, object]] = [
+        dict(r) for r in _TRACE if r.get("type") != "user_transcript"
+    ]
+    rows.extend(
+        {"ms": ms, "dir": "recv", "type": "user_transcript", "detail": {}}
+        for ms in times
+    )
+    return rows
 
 
 def _with_trace(trace: list[dict[str, object]] | None) -> dict[str, str]:
@@ -830,9 +857,13 @@ def test_a_reply_after_the_next_caller_turn_is_not_the_spoken_status() -> None:
 
 
 def test_a_reply_when_no_caller_turn_follows_is_the_spoken_status() -> None:
-    trace = [r for r in _TRACE if r["ms"] not in (300, 400)]
+    report = _GOOD[: _GOOD.index("user: Please stop")] + "ended by caller\n"
+    trace = _with_caller_turns(5, 60, 100, 130, 190)
     trace.append({"ms": 450, "dir": "recv", "type": "agent_response", "detail": {}})
-    assert _worker_status(trace=trace) == "PASS"
+    judged = verify_judge.Judge(
+        report, "", search_key=True, launch_exit=0, trace=trace, cleanup=_CLEAN
+    ).verdicts()
+    assert next(v for v in judged if v.name == "worker status").status == "PASS"
 
 
 @pytest.mark.parametrize(
@@ -1359,7 +1390,6 @@ def test_a_preliminary_unanswered_lookup_does_not_hide_a_complete_status_exchang
             "type": "agent_tool_response",
             "detail": {"tool_name": "worker_status", "is_error": False},
         },
-        {"ms": 130, "dir": "recv", "type": "user_transcript", "detail": {}},
     ]
     assert _worker_status(trace=[*_TRACE, *early]) == "PASS"
 
@@ -1372,7 +1402,6 @@ def test_a_status_the_agent_never_answers_before_the_next_turn_still_fails() -> 
             "type": "agent_tool_response",
             "detail": {"tool_name": "worker_status", "is_error": False},
         },
-        {"ms": 130, "dir": "recv", "type": "user_transcript", "detail": {}},
     ]
     silent = [r for r in _TRACE if r["ms"] != 300]
     silent.append({"ms": 450, "dir": "recv", "type": "agent_response", "detail": {}})
@@ -1394,3 +1423,73 @@ def test_a_stop_that_worked_is_said_and_one_that_failed_is_not() -> None:
     assert "left b running and stopping it failed" in why
     assert "left b running; this run stopped it" not in why
     assert why.count("vox worker stop b failed") == 1
+
+
+def test_a_lookup_and_reply_during_the_stop_turn_are_not_the_status_answer() -> None:
+    # The status question (190) goes unanswered; the agent looks the worker up
+    # again at the stop request (410) and asks for stop confirmation (440).
+    trace: list[dict[str, object]] = [dict(r) for r in _TRACE if r["ms"] != 300]
+    later: list[dict[str, object]] = [
+        {
+            "ms": 410,
+            "dir": "recv",
+            "type": "agent_tool_response",
+            "detail": {"tool_name": "worker_status", "is_error": False},
+        },
+        {"ms": 440, "dir": "recv", "type": "agent_response", "detail": {}},
+    ]
+    trace += later
+    assert _worker_status(trace=trace) == "FAIL"
+
+
+def test_a_status_question_the_judge_never_heard_fails_the_status_check() -> None:
+    report = _GOOD.replace("user: Tell me what the worker is doing right now.\n", "")
+    judged = verify_judge.Judge(
+        report, "", search_key=True, launch_exit=0, trace=_TRACE, cleanup=_CLEAN
+    ).verdicts()
+    verdict = next(v for v in judged if v.name == "worker status")
+    assert verdict.status == "FAIL"
+    assert "status question" in verdict.why
+
+
+def test_caller_turns_that_do_not_match_the_report_fail_the_status_check() -> None:
+    assert _worker_status(trace=_TRACE[:-1]) == "FAIL"
+
+
+def test_the_scripted_status_turn_is_the_one_the_judge_looks_for() -> None:
+    assert verify_judge.STATUS_ASKED.search(verify_script.WORKER_STATUS_TURN)
+
+
+def test_a_running_worker_is_named_when_its_start_record_was_lost_to_a_bad_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = tmp_path / "call.jsonl"
+    trace.write_text('{"ms": 1, "type": "agent_resp')  # Half-written, nothing else.
+    voxd = _Voxd(trace, {}, {"lost": "ready"})
+    monkeypatch.setattr(verify_call.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_workers.subprocess, "run", voxd)
+    monkeypatch.setattr(verify_call.shutil, "which", _which)
+    monkeypatch.setattr(verify_call, "_search_configured", lambda: True)
+    _stub_script(monkeypatch, tmp_path)
+    assert verify_call.main() == 1
+    out = capsys.readouterr().out
+    assert "FAIL run: trace unreadable" in out
+    assert "worker lost" in out
+    assert "vox worker stop lost" in out
+    assert voxd.stops() == []
+
+
+def test_an_unconfirmed_stop_is_not_called_a_failed_stop() -> None:
+    cleanup = verify_workers.Cleanup(
+        ("a",),
+        ("a",),
+        ("stop exited 0 but its result could not be confirmed (x)",),
+        (),
+        (),
+        (),
+        ("a",),
+    )
+    status, why = _cleanup_verdict(cleanup)
+    assert status == "FAIL"
+    assert "left a running; this run's stop could not be confirmed" in why
+    assert "stopping it failed" not in why

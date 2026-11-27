@@ -13,12 +13,13 @@ from typing import TYPE_CHECKING, Final, Literal, Self, cast, final
 if TYPE_CHECKING:
     from verify_workers import Cleanup
 
-__all__ = ["TIMEOUT_EXIT", "Judge", "Verdict", "is_final"]
+__all__ = ["STATUS_ASKED", "TIMEOUT_EXIT", "Judge", "Verdict", "is_final"]
 
 _OLD_OPENER: Final = re.compile(r"start,? steer,? check,? and stop coding", re.I)
 _NAG: Final = re.compile(r"are you (still )?there|still there", re.I)
 _MARKDOWN: Final = re.compile(r"(^|\s)#{1,6}\s|\*\*|`|^\s*[-*]\s", re.M)
 # The words the agent may speak for a worker; the launch phase is not one.
+STATUS_ASKED: Final = re.compile(r"what the worker is doing", re.I)
 _WORKER_STATES: Final = ("working", "blocked", "idle", "finished")
 _FINAL_STATES: Final = ("call ended", "call failed")
 TIMEOUT_EXIT: Final = 124  # ``timeout`` killed an idle scripted call: its normal end.
@@ -55,12 +56,14 @@ class Judge:
         "_search_key",
         "_tools",
         "_trace",
+        "_users",
     )
     _report: str
     _output: str
     _search_key: bool
     _agent: list[str]
     _tools: list[str]
+    _users: list[str]  # What the caller said, in order, as the report has it.
     _ended: bool
     _launch_exit: int | None  # None: the launch never returned.
     _trace: list[dict[str, object]] | None  # None: no trace was read.
@@ -81,14 +84,15 @@ class Judge:
         self._report, self._output, self._search_key = report, output, search_key
         self._trace, self._cleanup = trace, cleanup
         self._launch_exit = launch_exit
-        self._agent, self._tools, self._ended = self._parse(report)
+        self._agent, self._tools, self._ended, self._users = self._parse(report)
         return self
 
     @staticmethod
-    def _parse(report: str) -> tuple[list[str], list[str], bool]:
-        """Return agent replies (continuation lines joined), tool lines, ended."""
+    def _parse(report: str) -> tuple[list[str], list[str], bool, list[str]]:
+        """Return agent replies (continuations joined), tool lines, ended, users."""
         agent: list[str] = []
         tools: list[str] = []
+        users: list[str] = []
         ended = False
         in_reply = False
         for line in report.splitlines():
@@ -99,11 +103,13 @@ class Judge:
                 in_reply = False
                 if line.startswith("tool: "):
                     tools.append(line)
+                elif line.startswith("user: "):
+                    users.append(line[len("user: ") :])
             elif line.startswith("ended by "):
                 in_reply, ended = False, True
             elif line.strip() and in_reply:
                 agent[-1] += " " + line.strip()
-        return agent, tools, ended
+        return agent, tools, ended, users
 
     def verdicts(self) -> list[Verdict]:
         """Return the eight expectations in order."""
@@ -142,32 +148,49 @@ class Judge:
             "docs", "PASS", f"{len(calls)} read_docs call(s) ok, then a reply"
         )
 
-    def _replied_after(self, tool: str, *, within_turn: bool = False) -> bool:
-        """Return whether an agent reply follows a successful result of the tool.
-
-        With ``within_turn`` the reply must come before the caller's next turn,
-        and any one result will do: an earlier unanswered lookup does not hide a
-        later complete exchange, but a reply that only comes after the next turn
-        is not the answer.
-        """
+    def _replied_after(self, tool: str) -> bool:
+        """Return whether an agent reply follows the tool's successful result."""
         if self._trace is None:
             return False
         results = [
             t for r in self._trace if (t := self._result_time(r, tool)) is not None
         ]
-        replies = self._times("agent_response")
-        if not within_turn:
-            return bool(results) and any(ms > min(results) for ms in replies)
-        return any(
-            t < ms < self._next_caller_turn(t) for t in results for ms in replies
+        return bool(results) and any(
+            ms > min(results) for ms in self._times("agent_response")
         )
 
-    def _next_caller_turn(self, after: float) -> float:
-        """Return when the caller next spoke after ``after``; infinity if never."""
-        return min(
-            (ms for ms in self._times("user_transcript") if ms > after),
-            default=float("inf"),
-        )
+    def _status_window(self) -> tuple[float, float]:
+        """Return when the scripted status turn was open: its start to the next turn.
+
+        The report's caller lines and the trace's ``user_transcript`` rows are
+        the same turns in the same order, so the report names which row asked.
+
+        Raises:
+            ValueError: If the question was never heard or the two disagree.
+        """
+        asked = [i for i, said in enumerate(self._users) if STATUS_ASKED.search(said)]
+        if not asked:
+            raise ValueError("the status question was never heard in the report")
+        turns = sorted(self._times("user_transcript"))
+        if len(turns) != len(self._users):
+            raise ValueError(
+                f"the trace has {len(turns)} caller turns but the report "
+                f"has {len(self._users)}, so the status turn cannot be found"
+            )
+        start = turns[asked[0]]
+        later = turns[asked[0] + 1 :]
+        return start, later[0] if later else float("inf")
+
+    def _answered_in(self, window: tuple[float, float]) -> bool:
+        """Return whether a worker_status result and a reply both fall in the window."""
+        start, end = window
+        results = [
+            t
+            for r in self._trace or []
+            if (t := self._result_time(r, "worker_status")) is not None
+        ]
+        replies = self._times("agent_response")
+        return any(start < t < end and t < ms < end for t in results for ms in replies)
 
     def _times(self, kind: str) -> list[float]:
         """Return the trace time of every row of one type."""
@@ -243,11 +266,16 @@ class Judge:
                 )
             if fault := self._reading_fault(reading):
                 return Verdict(name, "FAIL", f"{fault}: {reading}")
-        if not self._replied_after("worker_status", within_turn=True):
+        try:
+            window = self._status_window()
+        except ValueError as exc:
+            return Verdict(name, "FAIL", str(exc))
+        if not self._answered_in(window):
             return Verdict(
                 name,
                 "FAIL",
-                "no agent reply followed worker_status before the next turn",
+                "no worker_status result and spoken reply fell inside the "
+                "scripted status turn",
             )
         states = ", ".join(str(r["state"]) for r in readings)
         return Verdict(name, "PASS", f"worker_status returned {states} with activity")
@@ -294,17 +322,27 @@ class Judge:
 
     @staticmethod
     def _left_running(cleanup: Cleanup) -> list[str]:
-        """Say who was left running, and whether this run's stop really ended it."""
-        stopped = [w for w in cleanup.left_running if w in cleanup.stopped]
-        failed = [w for w in cleanup.left_running if w not in cleanup.stopped]
+        """Say who was left running, and what this run's stop achieved for each."""
+        said = {
+            "this run stopped it": [
+                w for w in cleanup.left_running if w in cleanup.stopped
+            ],
+            "this run's stop could not be confirmed": [
+                w for w in cleanup.left_running if w in cleanup.unconfirmed
+            ],
+            "and stopping it failed": [
+                w
+                for w in cleanup.left_running
+                if w not in cleanup.stopped and w not in cleanup.unconfirmed
+            ],
+        }
         found = []
-        if stopped:
+        for outcome, workers in said.items():
+            if not workers:
+                continue
+            joiner = " " if outcome.startswith("and") else "; "
             found.append(
-                f"the agent left {', '.join(stopped)} running; this run stopped it"
-            )
-        if failed:
-            found.append(
-                f"the agent left {', '.join(failed)} running and stopping it failed"
+                f"the agent left {', '.join(workers)} running{joiner}{outcome}"
             )
         return found
 
