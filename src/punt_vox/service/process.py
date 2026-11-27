@@ -123,16 +123,9 @@ class ProcessManager:
             cmd = ["lsof", "-w", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"]
         else:
             cmd = ["fuser", f"{port}/tcp"]
-        result = self._probe(cmd)
-        out = result.stdout.strip()
-        if self._found_nothing(result):
+        out = self._probe(cmd, f"port {port}")
+        if out is None:
             return []
-        if result.returncode != 0:
-            msg = (
-                f"cannot inspect port {port}: {cmd[0]} exited "
-                f"{result.returncode}: {result.stderr.strip()}"
-            )
-            raise PortProbeError(msg)
         # isdecimal (not isdigit) is the strict subset int() always accepts:
         # it rejects superscripts like "²" that isdigit would pass.
         return [int(token) for token in re.split(r"[\s:]+", out) if token.isdecimal()]
@@ -178,17 +171,11 @@ class ProcessManager:
             "lsof", "-w", "-nP", "-Fnt", "-a", "-p", str(pid),
             f"-iTCP:{port}", "-sTCP:LISTEN",
         ]  # fmt: skip
-        result = self._probe(cmd)
-        if self._found_nothing(result):
+        out = self._probe(cmd, f"pid {pid} on port {port}")
+        if out is None:
             return False
-        if result.returncode != 0:
-            msg = (
-                f"cannot inspect pid {pid} on port {port}: lsof exited "
-                f"{result.returncode}: {result.stderr.strip()}"
-            )
-            raise PortProbeError(msg)
         family = ""
-        for line in result.stdout.splitlines():
+        for line in out.splitlines():
             if line[:1] == "t":
                 family = line[1:]
             elif line[:1] == "n" and address.lsof_matches(family, line[1:]):
@@ -242,16 +229,19 @@ class ProcessManager:
                 msg = f"cannot read {path}: {exc}"
                 raise PortProbeError(msg) from exc
             forms = address.proc_forms(table)
-            found.update(self._listen_link(path, row, forms) for row in rows)
+            try:
+                found.update(self._listen_link(row, forms) for row in rows)
+            except ValueError as exc:
+                raise PortProbeError(f"cannot parse {path} {exc}") from exc
         found.discard("")
         return frozenset(found)
 
     @classmethod
-    def _listen_link(cls, path: Path, row: str, forms: frozenset[str]) -> str:
-        """Return one *row* of *path*'s socket link if it listens at one of *forms*.
+    def _listen_link(cls, row: str, forms: frozenset[str]) -> str:
+        """Return one table *row*'s socket link if it listens at one of *forms*.
 
         Raises:
-            PortProbeError: If the row is not in the kernel's table format.
+            ValueError: If the row is not in the kernel's table format.
         """
         fields = row.split()
         # local_address is HEXIP:HEXPORT; st is the state; inode is the 10th field.
@@ -262,8 +252,8 @@ class ProcessManager:
             well_formed = int(ip_hex, 16) >= 0 and int(port_hex, 16) >= 0
             inode = fields[9]
         except (IndexError, ValueError) as exc:
-            msg = f"cannot parse {path} row {row.strip()[:24]!r}: {exc}"
-            raise PortProbeError(msg) from exc
+            msg = f"row {row.strip()[:24]!r}: {exc}"
+            raise ValueError(msg) from exc
         if not (well_formed and listens) or local not in forms:
             return ""
         return f"socket:[{inode}]"
@@ -277,16 +267,9 @@ class ProcessManager:
         Raises:
             PortProbeError: If ``ps`` cannot run, fails, or prints no uid.
         """
-        result = self._probe(["ps", "-p", str(pid), "-o", "uid="])
-        if self._found_nothing(result):
+        text = self._probe(["ps", "-ww", "-p", str(pid), "-o", "uid="], f"pid {pid}")
+        if text is None:
             return None
-        if result.returncode != 0:
-            msg = (
-                f"cannot inspect pid {pid}: ps exited {result.returncode}: "
-                f"{result.stderr.strip()}"
-            )
-            raise PortProbeError(msg)
-        text = result.stdout.strip()
         if not text.isdecimal():
             msg = f"cannot inspect pid {pid}: ps printed no uid ({text!r})"
             raise PortProbeError(msg)
@@ -302,17 +285,13 @@ class ProcessManager:
         Raises:
             PortProbeError: If process or port ownership cannot be determined safely.
         """
-        result = self._probe(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="])
-        if self._found_nothing(result):
+        # -ww: ps otherwise cuts the line at $COLUMNS, dropping the program.
+        cmd = ["ps", "-ww", "-p", str(pid), "-o", "lstart=", "-o", "command="]
+        line = self._probe(cmd, f"pid {pid}")
+        if line is None:
             return None
-        if result.returncode != 0:
-            msg = (
-                f"cannot inspect pid {pid}: ps exited {result.returncode}: "
-                f"{result.stderr.strip()}"
-            )
-            raise PortProbeError(msg)
         try:
-            return ProcessIdentity.from_ps(result.stdout.strip())
+            return ProcessIdentity.from_ps(line)
         except ValueError as exc:
             raise PortProbeError(f"cannot inspect pid {pid}: {exc}") from exc
 
@@ -355,17 +334,20 @@ class ProcessManager:
         silence = (result.returncode, result.stdout.strip(), result.stderr.strip())
         return silence == (1, "", "")
 
-    def _probe(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
-        """Run one probe command; raise ``PortProbeError`` if it cannot run.
+    def _probe(self, cmd: list[str], subject: str) -> str | None:
+        """Return *cmd*'s stripped stdout; ``None`` for its silent "no match".
 
         The C locale fixes ``ps -o lstart`` at its 24-character form. The run
         is cut to what this manager's deadline leaves.
+
+        Raises:
+            PortProbeError: If *cmd* cannot run, or fails inspecting *subject*.
         """
         timeout = self._deadline.cap(
             _SUBPROCESS_TIMEOUT_SECONDS, f"cannot run {cmd[0]}"
         )
         try:
-            return subprocess.run(
+            result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -379,6 +361,15 @@ class ProcessManager:
         except (OSError, subprocess.TimeoutExpired) as exc:
             msg = f"cannot run {cmd[0]}: {exc}"
             raise PortProbeError(msg) from exc
+        if self._found_nothing(result):
+            return None
+        if result.returncode != 0:
+            msg = (
+                f"cannot inspect {subject}: {cmd[0]} exited "
+                f"{result.returncode}: {result.stderr.strip()}"
+            )
+            raise PortProbeError(msg)
+        return result.stdout.strip()
 
     def kill_stale_daemon(self) -> bool:
         """Kill a daemon process occupying the port.  Return True if killed.
