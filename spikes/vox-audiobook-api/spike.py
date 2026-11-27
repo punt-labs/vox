@@ -50,6 +50,13 @@ class Verdicts:
         if not ok:
             self.failures.append(name)
 
+    def expect_ok(self, name: str, r: httpx.Response) -> bool:
+        """Record a FAIL unless the response is 200; return whether it was."""
+        ok = r.status_code == 200
+        if not ok:
+            self.check(name, ok=False, detail=f"HTTP {r.status_code}")
+        return ok
+
 
 def client() -> httpx.Client:
     key = os.environ["ELEVENLABS_API_KEY"]
@@ -92,7 +99,7 @@ def save(out: Path, name: str, r: httpx.Response) -> Path:
     return path
 
 
-def probe_tts(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
+def probe_tts(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
     """v4 text-to-speech: a long chapter in one call, then a stitched follow-on."""
     text = CHAPTER * 12  # about 5,000 characters
     print(f"[tts] chapter length {len(text)} chars")
@@ -103,7 +110,7 @@ def probe_tts(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         json=body,
     )
     report("tts-long", r)
-    if r.status_code != 200:
+    if not verdicts.expect_ok("tts-long", r):
         return
     save(out, "tts-long.mp3", r)
     rid = r.headers.get("request-id")
@@ -117,12 +124,15 @@ def probe_tts(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         },
     )
     report("tts-stitched", r2)
-    if r2.status_code == 200:
+    if verdicts.expect_ok("tts-stitched", r2):
         save(out, "tts-stitched.mp3", r2)
 
 
-def probe_dialogue(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
-    """Text-to-dialogue with 2 voices: does eleven_v4 take them, or only v3?"""
+def probe_dialogue(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
+    """Text-to-dialogue with 2 voices: does eleven_v4 take them, or only v3?
+
+    A refusal by one model is a finding; the probe fails only if both refuse.
+    """
     inputs = [
         {"text": "[warmly] Professor Chen, the proof has a gap.", "voice_id": SARAH},
         {
@@ -131,6 +141,7 @@ def probe_dialogue(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         },
         {"text": "[curious] And the cat?", "voice_id": SARAH},
     ]
+    accepted = False
     for model in ("eleven_v4", "eleven_v3"):
         r = c.post(
             "/v1/text-to-dialogue",
@@ -139,7 +150,9 @@ def probe_dialogue(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         )
         report(f"dialogue-{model}", r)
         if r.status_code == 200:
+            accepted = True
             save(out, f"dialogue-{model}.mp3", r)
+    verdicts.check("dialogue", ok=accepted, detail="a model accepted two voices")
 
 
 def words(text: str) -> str:
@@ -169,7 +182,9 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         json={"name": "vox-audiobook-spike", "rules": rules},
     )
     report("pron-create", r)
-    if r.status_code != 200:
+    if not verdicts.expect_ok("pron-create", r):
+        for label in ("with-dict", "without-dict"):
+            verdicts.check(f"pron-{label}", ok=False, detail="no dictionary created")
         return
     loc = {
         "pronunciation_dictionary_id": r.json()["id"],
@@ -219,8 +234,13 @@ def probe_pron(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
         )
 
 
-def probe_studio(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
-    """Studio project from JSON: two chapters, two voices; convert; fetch snapshot."""
+def probe_studio(c: httpx.Client, out: Path, verdicts: Verdicts) -> None:
+    """Studio project from JSON: two chapters, two voices; convert; fetch snapshot.
+
+    A refused create (403 when the account lacks Studio) is an expected account
+    limit, but the probe could not do its job, so it records FAIL and the exit
+    status is 1. A non-200 or non-JSON reply while polling does the same.
+    """
     content = [
         {
             "name": "Chapter 1",
@@ -281,19 +301,24 @@ def probe_studio(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         files={key: (None, value) for key, value in form.items()},
     )
     report("studio-create", r)
-    if r.status_code != 200:
+    if not verdicts.expect_ok("studio-create", r):
         return
     project = r.json().get("project", r.json())
     pid = project["project_id"]
     print(f"[studio] project {pid}, state {project.get('state')}")
     for _ in range(40):
         time.sleep(5)
-        state = c.get(f"/v1/studio/projects/{pid}").json().get("state")
+        polled = c.get(f"/v1/studio/projects/{pid}")
+        if not verdicts.expect_ok("studio-poll", polled):
+            report("studio-poll", polled)
+            return
+        state = polled.json().get("state")  # non-JSON raises; main() records it
         print(f"[studio] state {state}")
         if state == "default":
             break
     snaps = c.get(f"/v1/studio/projects/{pid}/snapshots")
     report("studio-snapshots", snaps)
+    verdicts.expect_ok("studio-snapshots", snaps)
     items: list[dict[str, str]] = (
         snaps.json().get("snapshots", []) if snaps.status_code == 200 else []
     )
@@ -301,9 +326,11 @@ def probe_studio(c: httpx.Client, out: Path, _verdicts: Verdicts) -> None:
         sid: str = items[0]["project_snapshot_id"]
         a = c.post(f"/v1/studio/projects/{pid}/snapshots/{sid}/archive", json={})
         report("studio-archive", a)
-        if a.status_code == 200:
+        if verdicts.expect_ok("studio-archive", a):
             save(out, "studio-book.zip", a)
-    report("studio-chapters", c.get(f"/v1/studio/projects/{pid}/chapters"))
+    chapters = c.get(f"/v1/studio/projects/{pid}/chapters")
+    report("studio-chapters", chapters)
+    verdicts.expect_ok("studio-chapters", chapters)
     print(f"[studio] project left in place for inspection: {pid}")
 
 
@@ -337,8 +364,9 @@ def main(
             print(f"=== {name} ===")
             try:
                 PROBES[name](c, args.out_dir, verdicts)
-            except httpx.HTTPError as exc:
-                print(f"[{name}] transport error: {exc!r}")
+            except (httpx.HTTPError, ValueError) as exc:
+                # ValueError covers json.JSONDecodeError from a non-JSON reply.
+                verdicts.check(name, ok=False, detail=repr(exc))
     return 1 if verdicts.failures else 0
 
 

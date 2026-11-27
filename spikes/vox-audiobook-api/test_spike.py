@@ -22,7 +22,7 @@ class Api:
 
     def __init__(self, handler: Handler) -> None:
         self.requests: list[httpx.Request] = []
-        self._handler = handler
+        self.handler = handler
 
     def client(self) -> httpx.Client:
         return httpx.Client(
@@ -31,7 +31,7 @@ class Api:
 
     def _answer(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return self._handler(request)
+        return self.handler(request)
 
     def paths(self) -> list[str]:
         return [r.url.path for r in self.requests]
@@ -251,9 +251,11 @@ def test_unknown_probe_is_a_usage_error(
     assert not out.exists()
 
 
-def test_main_defaults_to_all_probes_and_exits_zero(tmp_path: Path) -> None:
+def test_main_defaults_to_all_probes_and_exits_one_when_all_refused(
+    tmp_path: Path,
+) -> None:
     api = Api(lambda _r: httpx.Response(403, text="nope"))
-    assert spike.main([str(tmp_path / "out")], make_client=api.client) == 0
+    assert spike.main([str(tmp_path / "out")], make_client=api.client) == 1
     assert api.paths() == [  # every probe ran, each refused at its first call
         f"/v1/text-to-speech/{spike.GEORGE}",
         "/v1/text-to-dialogue",
@@ -266,3 +268,91 @@ def test_main_defaults_to_all_probes_and_exits_zero(tmp_path: Path) -> None:
 def test_main_exits_one_when_a_probe_fails(tmp_path: Path) -> None:
     api = pron_api("same", "same")
     assert spike.main([str(tmp_path / "out"), "pron"], make_client=api.client) == 1
+
+
+def no_sleep(_seconds: float) -> None:
+    """Stand in for time.sleep so polling tests run instantly."""
+
+
+def exit_code(probe: str, api: Api, out: Path) -> int:
+    return spike.main([str(out / "out"), probe], make_client=api.client)
+
+
+def test_pron_refused_create_exits_one_with_fail_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(403, text="no pron"))
+    assert exit_code("pron", api, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[pron-with-dict] FAIL" in out
+    assert "[pron-without-dict] FAIL" in out
+
+
+def test_pron_scribe_timeout_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ok = pron_api("", "")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/speech-to-text":
+            raise httpx.ReadTimeout("scribe too slow", request=request)
+        return ok.handler(request)
+
+    api = Api(handler)
+    assert exit_code("pron", api, tmp_path) == 1
+    assert "[pron] FAIL" in capsys.readouterr().out
+
+
+def test_tts_refusal_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(401, text="bad key"))
+    assert exit_code("tts", api, tmp_path) == 1
+    assert "[tts-long] FAIL" in capsys.readouterr().out
+
+
+def test_tts_success_exits_zero(tmp_path: Path) -> None:
+    assert exit_code("tts", Api(audio_ok), tmp_path) == 0
+
+
+def test_studio_403_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = Api(lambda _r: httpx.Response(403, json={"detail": "plan required"}))
+    assert exit_code("studio", api, tmp_path) == 1
+    assert "[studio-create] FAIL" in capsys.readouterr().out
+
+
+def test_studio_html_error_while_polling_fails_the_probe_and_main_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"project_id": "p1", "state": "converting"})
+        return httpx.Response(500, text="<html>gateway error</html>")
+
+    api = Api(handler)
+    assert exit_code("studio", api, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "[studio-poll] FAIL" in out
+    assert len(api.requests) == 2  # create, one poll; the probe stopped
+
+
+def test_studio_non_json_ok_body_while_polling_is_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spike.time, "sleep", no_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"project_id": "p1"})
+        return httpx.Response(200, text="<html>not json</html>")
+
+    assert exit_code("studio", Api(handler), tmp_path) == 1
+    assert "[studio] FAIL" in capsys.readouterr().out
