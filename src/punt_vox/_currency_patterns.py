@@ -5,28 +5,27 @@ from __future__ import annotations
 import re
 from typing import final
 
-_SIGN = r"[-+\u2212]"
-_WHOLE = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
-_DOTTED = r"\d{1,3}(?:\.\d{3})+"
-_EURO_FRACTION = r",\d{2}(?!\d|[.,]\d)"
-_EURO_DECIMAL = rf"(?:{_DOTTED}|{_WHOLE}){_EURO_FRACTION}"
-_PREFIX_AMOUNT = (
-    rf"(?P<{{p}}sign_before>{_SIGN})?"
-    r"(?P<{p}symbol>{symbol})"
-    rf"(?({{p}}sign_before)|(?P<{{p}}sign_after>{_SIGN})?)"
-    r"(?P<{p}amount>{number})"
-)
-
 
 @final
 class CurrencyPatterns:
     """Build money patterns without extending currency notation in code."""
 
+    SIGN = r"[-+\u2212]"
+    _WHOLE = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
+    DOTTED = r"\d{1,3}(?:\.\d{3})+"
+    _EURO_FRACTION = r",\d{2}(?!\d|[.,]\d)"
+    EURO_DECIMAL = rf"(?:{DOTTED}|{_WHOLE}){_EURO_FRACTION}"
+    _PREFIX_AMOUNT = (
+        rf"(?P<{{p}}sign_before>{SIGN})?"
+        r"(?P<{p}symbol>{symbol})"
+        rf"(?({{p}}sign_before)|(?P<{{p}}sign_after>{SIGN})?)"
+        r"(?P<{p}amount>{number})"
+    )
     NUMBER = rf"{_WHOLE}(?:\.\d+)?|\.\d+"
     BARE_RANGE = (
-        rf"(?:\u2013|-(?(comma_decimal)|(?(euro)(?={_EURO_DECIMAL})|(?!))))"
-        rf"(?P<bare_end>(?(euro)(?P<bare_euro>{_EURO_DECIMAL}"
-        rf"|(?(dotted){_DOTTED}(?!\d|[.,]\d)|(?!)))|(?!))|{NUMBER})"
+        rf"(?:\u2013|-(?(comma_decimal)|(?(euro)(?={EURO_DECIMAL})|(?!))))"
+        rf"(?P<bare_end>(?(euro)(?P<bare_euro>{EURO_DECIMAL}"
+        rf"|(?(dotted){DOTTED}(?!\d|[.,]\d)|(?!)))|(?!))|{NUMBER})"
     )
 
     @classmethod
@@ -52,23 +51,21 @@ class CurrencyPatterns:
     @classmethod
     def code_amount(cls, symbols: str) -> str:
         """Match prefix amounts in code using the original number grammar."""
-        return _PREFIX_AMOUNT.format(p="", symbol=f"[{symbols}]", number=cls.NUMBER)
+        return cls._PREFIX_AMOUNT.format(p="", symbol=f"[{symbols}]", number=cls.NUMBER)
 
     @classmethod
     def prose_amount(cls, symbols: str, prefix: str = "") -> str:
         """Allow a comma decimal only when the euro symbol was matched."""
         symbol = rf"(?P<{prefix}euro>€)|[{symbols.replace('€', '')}]"
-        decimal = rf"(?:(?P<{prefix}dotted>{_DOTTED})|{_WHOLE}){_EURO_FRACTION}"
-        comma = rf"(?({prefix}euro)(?P<{prefix}comma_decimal>{decimal})|(?!))"
-        return _PREFIX_AMOUNT.format(
-            p=prefix, symbol=symbol, number=rf"{comma}|{cls.NUMBER}"
+        return cls._PREFIX_AMOUNT.format(
+            p=prefix,
+            symbol=symbol,
+            number=rf"{cls._euro_prose_number(prefix)}|{cls.NUMBER}",
         )
 
     @classmethod
-    def suffix_amount(cls, symbols: str) -> str:
-        """Match attached suffix amounts including comma decimals before €."""
-        return (
-            rf"(?P<leading>_*[^\w\s~/.,`{symbols}]*?)"
-            rf"(?P<sign>{_SIGN}?)(?P<amount>{_EURO_DECIMAL}(?=€)|{cls.NUMBER})"
-            rf"(?P<symbol>[{symbols}])"
+    def _euro_prose_number(cls, prefix: str) -> str:
+        decimal = (
+            rf"(?:(?P<{prefix}dotted>{cls.DOTTED})|{cls._WHOLE}){cls._EURO_FRACTION}"
         )
+        return rf"(?({prefix}euro)(?P<{prefix}comma_decimal>{decimal})|(?!))"
