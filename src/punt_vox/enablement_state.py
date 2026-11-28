@@ -14,8 +14,10 @@ by git, and not be tracked.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, final
@@ -310,7 +312,17 @@ class PersonalTargetGuard:
         prefix = (
             existing if (not existing or existing.endswith("\n")) else f"{existing}\n"
         )
-        exclude.write_text(f"{prefix}{'\n'.join(missing)}\n", encoding="utf-8")
+        content = f"{prefix}{'\n'.join(missing)}\n"
+        fd, tmp_name = tempfile.mkstemp(
+            dir=exclude.parent, prefix=".exclude.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            Path(tmp_name).replace(exclude)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
 
     def _check_git_untracked(self, rel: Path, original: Path) -> None:
         """Raise ``ValueError`` if *rel* is tracked in the git index."""
