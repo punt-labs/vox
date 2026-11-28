@@ -4174,7 +4174,7 @@ call ends with a raw transcript.
 | Choice | Recommendation |
 |--------|----------------|
 | Brief sent without a per-call "send this?" prompt (`--no-brief`, `/call stop` are the brakes) | yes |
-| Ctrl-C after every question was answered | `partial` |
+| Ctrl-C before the agent has ended the call (after it, `complete`) | `partial` |
 | Briefed calls start workers only when asked | yes |
 | Taint every briefed call (a spoken yes per answer, decision or instruction note) | yes |
 

@@ -791,6 +791,28 @@ spoken yes to the daemon's read-back of it (H9). Only an open point is not
 acting. The daemon also checks an answer against the question and its offered
 options.
 
+\begin{schema}{DeclineNote}
+  \Delta HandoffRecord \\
+  Call \\
+  note? : NOTE
+\where
+  call = live \\
+  handoff = collecting \\
+  note? \in pending \\
+  pending' = pending \setminus \{ note? \} \\
+  noted' = noted \\
+  asked' = asked \\
+  resolved' = resolved \\
+  handoff' = handoff \\
+  tainted' = tainted
+\end{schema}
+
+\texttt{DeclineNote} is the person saying no to a held note, or the
+confirmation gate dropping it. The note leaves \texttt{pending} and is never
+recorded, so a replacement the person confirms is a new note and the declined
+one cannot make the handoff partial. A note still held when the call ends is
+not a decline: it stays pending and the handoff is partial (H6).
+
 \begin{schema}{SealHandoff}
   \Delta HandoffRecord \\
   \Xi Call
@@ -828,6 +850,7 @@ start, receive or record a note, or seal.
   StartPlain \defs (Start \land BeginNoHandoff) \land \Delta Briefed \\
   ReceiveNoteB \defs (ReceiveNote \land \Xi Call) \land \Delta Briefed \\
   NoteDurable \defs (RunDurable \land NoteHandoff) \land \Delta Briefed \\
+  DeclineNoteB \defs (DeclineNote \land \Xi Call) \land \Delta Briefed \\
   ReplayNote \defs Replay \land \Xi HandoffRecord \\
   SealBriefed \defs SealHandoff \land \Delta Briefed \\
   ProvisionAgentB \defs ProvisionAgent \land \Xi HandoffRecord \land \Delta Briefed \\
