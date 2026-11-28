@@ -132,10 +132,10 @@ docs = [
 
 # Keep this group's pin equal to build-system.requires. The runtime builder
 # seeds the locked backend wheel for offline editable installs.
-handoff-runtime = ["uv_build==0.13.1"]
+handoff-runtime = ["uv_build==0.13.10"]
 
 [build-system]
-requires = ["uv_build==0.13.1"]
+requires = ["uv_build==0.13.10"]
 build-backend = "uv_build"
 
 # The parser distributions share an import namespace; install only the fork.
