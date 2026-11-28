@@ -279,7 +279,16 @@ class RepoEnablement:
 
     def _disable_local(self) -> None:
         """Execute personal-scope disable (TED-8, TED-10)."""
-        self._verify_personal_targets()
+        if self._guard is not None:
+            targets: list[Path] = [
+                p
+                for p in (self._marker.path, self._import.path, self._settings.path)
+                if p.exists() or p.is_symlink()
+            ]
+            if self._shared_marker.is_present():
+                targets.append(self._local_disabled.path)
+            if targets:
+                self._guard.verify(*targets)
         self._import.prune()
         self._marker.remove()
         self._settings.deregister()
@@ -300,8 +309,12 @@ class RepoEnablement:
         if self._scope == "local":
             self._local_disabled.remove()
         target_dir = self._marker.path.parent
-        if target_dir.is_symlink():
-            msg = f"refusing to purge symlinked directory {target_dir}"
+        repo_resolved = self._repo_root.resolve()
+        if target_dir.is_symlink() or (
+            target_dir.exists()
+            and not target_dir.resolve().is_relative_to(repo_resolved)
+        ):
+            msg = f"refusing to purge symlinked or external directory {target_dir}"
             raise ValueError(msg)
         if target_dir.exists():
             shutil.rmtree(target_dir)

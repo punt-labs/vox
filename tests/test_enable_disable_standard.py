@@ -369,3 +369,51 @@ async def test_mcp_tools_dormant_when_repo_is_off(
     assert reply["enabled"] is True
     assert reply["scope"] == "local"
     assert reply["status"] == "enabled_local"
+
+
+def test_freshly_enabled_repo_defaults_notify_yes_without_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ConfigStore(None).read() in a freshly enabled repo defaults notify='y'."""
+    repo = _init_repo_with_baseline(tmp_path)
+    RepoEnablement.for_repo(repo, scope="local").enable()
+    _point_repo(monkeypatch, repo)
+    monkeypatch.setattr("punt_vox.config.DEFAULT_CONFIG_DIR", Path(".punt-labs/vox"))
+    monkeypatch.chdir(repo)
+
+    cfg = ConfigStore(None).read()
+    assert cfg.notify == "y"
+    assert not (repo / ".punt-labs" / "vox" / "vox.md").exists()
+    assert not (repo / ".punt-labs" / "vox" / "vox.local.md").exists()
+
+
+@pytest.mark.subprocess
+def test_local_disable_succeeds_when_only_local_dir_is_ignored(
+    tmp_path: Path,
+) -> None:
+    """Local disable only verifies targets it touches (e.g. local/vox/disabled)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "--template=")
+    (repo / ".gitignore").write_text(".punt-labs/local/\n", encoding="utf-8")
+    (repo / ".punt-labs" / "vox").mkdir(parents=True)
+    (repo / ".punt-labs" / "vox" / "enabled").write_text("on\n", encoding="utf-8")
+
+    state = RepoEnablement.for_repo(repo, scope="local").disable()
+    assert state.on is False
+    assert state.status == "disabled_local"
+    assert (repo / ".punt-labs" / "local" / "vox" / "disabled").exists()
+
+
+def test_purge_refuses_symlinked_punt_labs_ancestor(tmp_path: Path) -> None:
+    """Purge refuses when .punt-labs is a symlink pointing outside the repo."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "vox").mkdir(parents=True)
+    (outside / "vox" / "sentinel.txt").write_text("keep\n", encoding="utf-8")
+    (repo / ".punt-labs").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="symlinked or external"):
+        RepoEnablement.for_repo(repo, scope="project").purge()
+    assert (outside / "vox" / "sentinel.txt").exists()

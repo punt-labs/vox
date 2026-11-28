@@ -246,9 +246,12 @@ class ConfigStore:
 
     def _is_repo_enabled(self) -> bool:
         """Return whether this config dir belongs to an enabled repository."""
-        if self._repo_name is None:
-            return False
-        return EnablementState.resolve(self._dir.parent.parent).on
+        if self._repo_name is not None:
+            return EnablementState.resolve(self._dir.parent.parent).on
+        if self._dir == DEFAULT_CONFIG_DIR:
+            state = EnablementState.resolve_cwd()
+            return state is not None and state.on
+        return False
 
     def read_field(self, field: str, *, strict: bool = False) -> str | None:
         """Read a single config field from the appropriate layer.
