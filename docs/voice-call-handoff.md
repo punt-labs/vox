@@ -1,6 +1,6 @@
 # Voice call handoff: a call that starts from a coding session and returns its answers to it
 
-Design for PL-1779. Status: proposed, for the leader's design review. The
+Design for PL-1779. Status: decided as DES-077. The
 Z model is in [`voice-call.tex`](voice-call.tex) (section "Session handoff");
 `fuzz -t docs/voice-call.tex` exits 0.
 

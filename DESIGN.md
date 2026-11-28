@@ -4118,9 +4118,10 @@ made 2026-11-26 and 2026-11-27.
 
 ## DES-077: The Clarification Call — A Session Briefs the Call Agent and Gets the Person's Answers Back
 
-**Status:** proposed (2026-11-28, PL-1779). Design mission `m-2026-11-28-002`,
-accepted by the evaluator in round 2. Waits for the operator's ruling on the
-four choices below; the recommendations are what the design document assumes.
+**Status:** decided (2026-11-28, PL-1779). Design mission `m-2026-11-28-002`,
+accepted by the evaluator in round 2. The operator did not rule on the four
+choices below and told the leader to proceed without waiting, so each
+recommendation stands; the operator can overrule any of them.
 Amends DES-070's sentence "no primary-session snapshot ships" for the briefed
 call only. The full design, with the alternative each decision beat, is
 [`docs/voice-call-handoff.md`](docs/voice-call-handoff.md); the model is the
